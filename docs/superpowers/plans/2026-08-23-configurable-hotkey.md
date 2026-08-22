@@ -17,17 +17,17 @@
 - 修改：`smapi/ModEntry.cs`
 - 测试：`smapi/tests/ModConfigTests.cs`
 
-- [ ] **步骤 1：编写失败的测试**
+- [x] **步骤 1：编写失败的测试**
 
 测试默认值为 `F8`，并验证 `N` 不再是默认触发键；配置文本可被 SMAPI 的 JSON 配置模型读取。
 
-- [ ] **步骤 2：运行测试验证失败**
+- [x] **步骤 2：运行测试验证失败**
 
 运行：`dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\\sbeam\\steamapps\\common\\Stardew Valley"`
 
 预期：新增配置类型或默认值断言失败。
 
-- [ ] **步骤 3：编写最少实现代码**
+- [x] **步骤 3：编写最少实现代码**
 
 新增：
 
@@ -40,11 +40,11 @@ public sealed class ModConfig
 
 在 `ModEntry.Entry` 中调用 `helper.ReadConfig<ModConfig>()`，用 `Enum.TryParse<SButton>` 解析 `DialogueKey`，解析失败时回退到 `SButton.F8`；`OnButtonPressed` 只比较解析后的键。
 
-- [ ] **步骤 4：运行测试验证通过**
+- [x] **步骤 4：运行测试验证通过**
 
 运行同上，预期所有测试通过，并保留原有 BridgeClient/GameStateCollector 行为。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 提交：`feat(SMAPI): 将 AI NPC 快捷键改为可配置 F8`
 
@@ -54,18 +54,18 @@ public sealed class ModConfig
 - 修改：无
 - 验证：`smapi/StardewAI.NPC.csproj`、D 盘 Mod 目录
 
-- [ ] **步骤 1：运行完整测试和构建**
+- [x] **步骤 1：运行完整测试和构建**
 
 运行 Python 测试、C# 测试和构建，预期 Python 52 passed、C# 测试数量不减少、构建 0 警告/0 错误。
 
-- [ ] **步骤 2：部署到游戏 Mod 目录**
+- [x] **步骤 2：部署到游戏 Mod 目录**
 
 运行带 `/p:EnableModDeploy=true` 的构建，仅写入 `D:\sbeam\steamapps\common\Stardew Valley\Mods`。
 
-- [ ] **步骤 3：确认部署产物**
+- [x] **步骤 3：确认部署产物**
 
 检查部署 DLL 与构建 DLL 的 SHA-256 相同，并确认 `config.json` 的默认快捷键为 `F8`（若 SMAPI 已生成配置）。
 
-- [ ] **步骤 4：Commit/交付**
+- [x] **步骤 4：Commit/交付**
 
 确认项目主分支工作树干净，并向用户说明按 `F8` 测试。
