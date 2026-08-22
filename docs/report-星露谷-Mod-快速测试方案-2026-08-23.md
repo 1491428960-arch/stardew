@@ -29,6 +29,8 @@ SMAPI 官方支持用 `--mods-path` 指定独立 mod 目录，专门适合测试
 - 当前项目的 Bridge 测试页位于 `http://127.0.0.1:5678/test`，不需要启动游戏。
 - 当前 C# 回归测试为 23/23，通过配置、Bridge、NPC 名称回退等逻辑；这些测试不需要启动游戏。
 - `StardewAI.NPC` 本身没有声明 SVE、Content Patcher 或其他硬依赖，快捷键和菜单烟测可以使用最小 mod 集合。
+- 已实现 `scripts/start_fast_test.ps1`，支持独立 `Mods-AI-FastTest`、`-IncludeRasmodia` 和 `-NoLaunch`；离线安全测试为 10/10 通过。
+- 当前构建输出不包含 `manifest.json`，启动器会从 `smapi/manifest.json` 一并复制，避免生成无效 Mod 目录。
 
 ## 建议
 
@@ -44,7 +46,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 这能覆盖配置归一化、Bridge 请求、历史记忆、上下文以及 provider 回退，但不能验证游戏按键和菜单。
 
-### P1：建立“AI NPC 快速测试”profile
+### P1：使用“AI NPC 快速测试”profile
 
 建议只放入：
 
@@ -55,13 +57,19 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 用独立的新测试存档，不要直接加载依赖 SVE/SpaceCore 的正式存档。快捷键烟测只需要进入一个普通存档，确认 F8 能打开对话菜单；不需要加载 SVE 全套地图和内容包。
 
-该 profile 可以由 Stardrop 管理，也可以通过 SMAPI 的 `--mods-path` 指向一个独立目录。后者更适合脚本化，例如：
+项目已提供脚本，可直接运行：
 
 ```powershell
-& 'D:\sbeam\steamapps\common\Stardew Valley\StardewModdingAPI.exe' --mods-path 'D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest'
+.\scripts\start_fast_test.ps1
 ```
 
-实际运行前需要先把必要 mod 放进该目录，并确认启动日志顶部的 `Mods go here` 指向这个目录。
+验证 Rasmodia 时运行：
+
+```powershell
+.\scripts\start_fast_test.ps1 -IncludeRasmodia
+```
+
+只同步不启动游戏时增加 `-NoLaunch`。实际启动后仍需确认日志顶部的 `Mods go here` 指向 `Mods-AI-FastTest`。
 
 ### P2：完整 profile 只做最终回归
 
@@ -85,9 +93,12 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 - 2026-08-23 本地 SMAPI 日志：当前完整 profile 启动时加载 22 个代码 mod、8 个内容包，并使用 Stardrop 的自定义 `SELECT~1` mod 路径。
 - 2026-08-23 本地测试：`dotnet test ...` 通过 23/23。
 - 2026-08-23 本地构建：SMAPI mod 构建 0 警告、0 错误。
+- 2026-08-23 本地脚本测试：`test_start_fast_test.ps1` 通过 10/10 个离线场景。
+- 2026-08-23 本地真实路径检查：`start_fast_test.ps1 -NoLaunch` 自动发现 `C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Selected Mods`，生成 `D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest`；基础模式加载 2 个 Mod，`-IncludeRasmodia` 模式加载 3 个 Mod，DLL SHA-256 为 `D6D302FCB605D1A81478A7364C9B91E049B49385E7AEE6DF1D68139421BC18F9`。
 
 ## 限制
 
-- 尚未实测最小 profile 的实际启动耗时；耗时会受磁盘、SMAPI 缓存和存档加载影响。
+- 尚未实测最小 profile 的实际游戏启动耗时；脚本同步耗时已完成真实路径检查，游戏启动耗时仍会受磁盘、SMAPI 缓存和存档加载影响。
 - `--mods-path` 是 SMAPI 官方支持的参数，但 Stardrop 仍可能在自己的 profile 管理流程中覆盖启动参数；使用 Stardrop 时应以启动日志顶部的 `Mods go here` 为准。
 - 最小 profile 只能验证基础 NPC 和菜单流程，不能替代 SVE/娘化/完整 mod 组合的最终兼容性验证。
+- 已实测脚本的离线同步、安全拒绝场景和真实路径同步；尚未在真实游戏进程中替用户完成 F8、GMCM 和独立存档烟测。
