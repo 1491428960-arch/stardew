@@ -7,18 +7,21 @@ namespace StardewAI.NPC;
 public sealed class ModEntry : Mod
 {
     private BridgeClient? bridgeClient;
+    private SButton dialogueKey = SButton.F8;
 
     public override void Entry(IModHelper helper)
     {
+        var config = helper.ReadConfig<ModConfig>();
+        dialogueKey = ModConfig.ParseDialogueKey(config.DialogueKey, SButton.F8);
         GameStateCollector.ConfigureModRegistry(new SmapiModRegistryStatus(helper.ModRegistry));
         bridgeClient = new BridgeClient();
         helper.Events.Input.ButtonPressed += OnButtonPressed;
-        Monitor.Log("AI NPC 原型已加载。按 N 与 Rasmodia 对话。", LogLevel.Info);
+        Monitor.Log($"AI NPC 原型已加载。按 {dialogueKey} 与 Rasmodia 对话。", LogLevel.Info);
     }
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
     {
-        if (e.Button != SButton.N || !Context.IsWorldReady || Game1.activeClickableMenu is not null ||
+        if (e.Button != dialogueKey || !Context.IsWorldReady || Game1.activeClickableMenu is not null ||
             bridgeClient is null)
         {
             return;
