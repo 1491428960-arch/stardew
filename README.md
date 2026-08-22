@@ -3,6 +3,9 @@
 本项目用于探索 Stardew Valley AI NPC 集成方案。Python Bridge 位于
 `bridge/`，当前提供可重复安装和测试的独立工程骨架。
 
+当前开发状态、外部 Mod 目录差异和下一步接力顺序见
+[`docs/handoff-2026-08-23.md`](docs/handoff-2026-08-23.md)。
+
 ## 开发环境
 
 - Python 3.12
