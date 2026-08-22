@@ -54,7 +54,7 @@ class PersonaStore:
 
     def __init__(self, data_dir: str | Path | None = None) -> None:
         self.data_dir = Path(data_dir) if data_dir is not None else (
-            Path(__file__).resolve().parents[2] / "data" / "personas"
+            Path(__file__).resolve().parents[3] / "data" / "personas"
         )
         self._personas = self._load()
 

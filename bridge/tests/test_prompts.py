@@ -26,7 +26,7 @@ except ModuleNotFoundError:
         pytest.fail("Task 4 人物合并模块尚未实现")
 
 
-PERSONAS_DIR = Path(__file__).parents[1] / "data" / "personas"
+PERSONAS_DIR = Path(__file__).parents[2] / "data" / "personas"
 
 
 def test_persona_store_loads_required_json_datasets() -> None:
