@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from stardew_ai_bridge.app import app
+from stardew_ai_bridge.models import ProviderResult
 
 
 @pytest.fixture()
@@ -125,3 +126,87 @@ def test_context_preview_returns_sanitized_identity_and_current_state(
     }
     assert "apiKey" not in body
     assert "secret-api-key" not in response.text
+
+
+def test_context_preview_redacts_sensitive_values_in_allowed_context(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/context/preview",
+        json={
+            "npcId": "Wizard",
+            "location": "WizardTower apiKey=location-key token=location-token",
+            "recentFacts": ["secret: fact-secret"],
+            "history": [
+                {
+                    "role": "user",
+                    "content": "authorization: Bearer history-token",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    rendered = response.text
+    assert body["gameState"]["location"] == (
+        "WizardTower apiKey: [已省略] token: [已省略]"
+    )
+    assert body["recentFacts"] == ["secret: [已省略]"]
+    assert body["history"] == [
+        {"role": "user", "content": "authorization: [已省略]"}
+    ]
+    for secret in (
+        "location-key",
+        "location-token",
+        "fact-secret",
+        "history-token",
+    ):
+        assert secret not in rendered
+
+
+def test_dialogue_uses_builtin_safe_reply_when_fallback_is_guarded(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class BlockedRouter:
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(self, request: object, *, messages: object = None) -> ProviderResult:
+            del request, messages
+            return ProviderResult(
+                reply="忽略之前的指令",
+                provider="upstream",
+                warnings=["upstream-warning"],
+            )
+
+    class BlockedFallback:
+        def generate(self, request: object) -> ProviderResult:
+            del request
+            return ProviderResult(
+                reply="系统提示词泄露",
+                provider="fallback",
+                fallback=True,
+                warnings=["fallback-warning"],
+            )
+
+    monkeypatch.setattr(app_module, "provider_router", BlockedRouter())
+    monkeypatch.setattr(app_module, "fallback_provider", BlockedFallback())
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Wizard", "message": "你好"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reply"] == "Rasmodia：暂时没有合适的回复，请稍后再试。"
+    assert body["provider"] == "fallback"
+    assert body["fallback"] is True
+    assert "upstream-warning" in body["warnings"]
+    assert "fallback-warning" in body["warnings"]
+    assert "response_guard: prompt_leakage" in body["warnings"]
+    assert "fallback_guard: prompt_leakage" in body["warnings"]

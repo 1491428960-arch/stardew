@@ -14,7 +14,7 @@ public sealed class BridgeClientTests
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
-                "{\"reply\":\"Rasmodia：你好\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                "{\"reply\":\"Rasmodia：你好\",\"provider\":\"fake\",\"fallback\":false,\"latencyMs\":37,\"warnings\":[]}",
                 Encoding.UTF8,
                 "application/json"),
         });
@@ -26,6 +26,7 @@ public sealed class BridgeClientTests
         Assert.Equal("Rasmodia：你好", result.Reply);
         Assert.Equal("fake", result.Provider);
         Assert.False(result.Fallback);
+        Assert.Equal(37, result.LatencyMs);
         Assert.NotNull(handler.Request);
         Assert.Equal(HttpMethod.Post, handler.Request!.Method);
         Assert.Equal("http://127.0.0.1:5678/api/dialogue/test", handler.Request.RequestUri!.ToString());
@@ -65,8 +66,15 @@ public sealed class BridgeClientTests
         using var requestJson = JsonDocument.Parse(await handler.Request!.Content!.ReadAsStringAsync());
         var root = requestJson.RootElement;
         Assert.Equal("Rasmodia", root.GetProperty("displayName").GetString());
+        Assert.Equal(
+            new[] { "SVE", "FlashShifter.SVECode" },
+            root.GetProperty("sourceMods").EnumerateArray()
+                .Select(item => item.GetString())
+                .ToArray());
         Assert.Equal("Rasmodia", root.GetProperty("gameState").GetProperty("displayName").GetString());
         Assert.Equal("Summer", root.GetProperty("gameState").GetProperty("season").GetString());
+        Assert.Equal("14", root.GetProperty("gameState").GetProperty("date").GetString());
+        Assert.Equal("rain", root.GetProperty("gameState").GetProperty("weather").GetString());
         Assert.Equal(1830, root.GetProperty("gameState").GetProperty("time").GetInt32());
         Assert.Equal("WizardTower", root.GetProperty("gameState").GetProperty("location").GetString());
         Assert.Equal(128, root.GetProperty("gameState").GetProperty("friendship").GetInt32());

@@ -30,6 +30,7 @@ persona_store = PersonaStore()
 context_builder = ContextBuilder(persona_store)
 prompt_builder = PromptBuilder()
 response_guard = ResponseGuard()
+_SAFE_FALLBACK_REPLY = "Rasmodia：暂时没有合适的回复，请稍后再试。"
 
 _DIALOGUE_FIELDS = {
     "npcId",
@@ -137,12 +138,31 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     guarded = response_guard.check(result.reply)
     if not guarded.accepted:
         fallback = fallback_provider.generate(request)
-        result = fallback.model_copy(
-            update={
-                "fallback": True,
-                "warnings": [*result.warnings, f"response_guard: {guarded.reason}"],
-            }
-        )
+        fallback_guarded = response_guard.check(fallback.reply)
+        warnings = [
+            *result.warnings,
+            f"response_guard: {guarded.reason}",
+            *fallback.warnings,
+        ]
+        if fallback_guarded.accepted:
+            result = fallback.model_copy(
+                update={
+                    "reply": fallback_guarded.text,
+                    "fallback": True,
+                    "warnings": warnings,
+                }
+            )
+        else:
+            result = fallback.model_copy(
+                update={
+                    "reply": _SAFE_FALLBACK_REPLY,
+                    "fallback": True,
+                    "warnings": [
+                        *warnings,
+                        f"fallback_guard: {fallback_guarded.reason}",
+                    ],
+                }
+            )
     elif guarded.text != result.reply:
         result = result.model_copy(update={"reply": guarded.text})
 

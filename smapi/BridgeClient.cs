@@ -34,6 +34,9 @@ public sealed class BridgeDialogueResponse
     [JsonPropertyName("fallback")]
     public bool Fallback { get; init; }
 
+    [JsonPropertyName("latencyMs")]
+    public int LatencyMs { get; init; }
+
     [JsonPropertyName("warnings")]
     public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
 

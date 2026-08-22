@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .personas import PersonaStore
@@ -31,6 +31,31 @@ def _first_value(values: Mapping[str, Any], *names: str) -> Any:
         if name in values:
             return values[name]
     return None
+
+
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(authorization|api[_-]?key|secret|token)\b\s*[:=]\s*"
+    r"(?:bearer\s+)?[^\s,;\]}]+"
+)
+
+
+def _remove_secret_labels(value: str) -> str:
+    return _SECRET_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}: [已省略]",
+        value,
+    )
+
+
+def _sanitize_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _remove_secret_labels(value)
+    if isinstance(value, Mapping):
+        return {key: _sanitize_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_value(item) for item in value)
+    return value
 
 
 class ContextBuilder:
@@ -65,13 +90,17 @@ class ContextBuilder:
         if not source_mods:
             source_mods = state.get("sourceMods", state.get("source_mods", ())) or ()
 
-        source_mod_list = [mod for mod in source_mods if isinstance(mod, str) and mod.strip()]
+        source_mod_list = [
+            _remove_secret_labels(mod.strip())
+            for mod in source_mods
+            if isinstance(mod, str) and mod.strip()
+        ]
         persona = self.persona_store.get_persona(str(npc_id), source_mod_list)
-        identity = {
+        identity = _sanitize_value({
             key: persona[key]
             for key in _IDENTITY_FIELDS
             if key in persona and persona[key] not in (None, "", [], {})
-        }
+        })
         identity.setdefault("npcId", str(npc_id))
 
         game_state: dict[str, Any] = {}
@@ -80,18 +109,28 @@ class ContextBuilder:
             if value is None and key in state:
                 value = state[key]
             if value is not None and value != "":
-                game_state[key] = _text(value) if isinstance(value, str) else value
+                game_state[key] = (
+                    _remove_secret_labels(_text(value))
+                    if isinstance(value, str)
+                    else value
+                )
 
         runtime_display_name = _first_value(values, "displayName", "display_name")
         if runtime_display_name is None:
             runtime_display_name = _first_value(state, "displayName", "display_name")
         if runtime_display_name is not None:
-            display_name = _text(runtime_display_name)
+            display_name = _remove_secret_labels(_text(runtime_display_name))
             if display_name:
                 identity["displayName"] = display_name
 
         facts_input = _first_value(values, "recentFacts", "recent_facts") or ()
-        recent_facts = [item for item in (_text(fact) for fact in facts_input) if item]
+        recent_facts = [
+            item
+            for item in (
+                _remove_secret_labels(_text(fact)) for fact in facts_input
+            )
+            if item
+        ]
 
         history_input = values.get("history", values.get("conversationHistory", ())) or ()
         history: list[dict[str, str]] = []
@@ -99,7 +138,7 @@ class ContextBuilder:
             if not isinstance(item, Mapping):
                 continue
             role = item.get("role")
-            content = _text(item.get("content"))
+            content = _remove_secret_labels(_text(item.get("content")))
             if role in {"user", "assistant"} and content:
                 history.append({"role": role, "content": content})
 
@@ -116,19 +155,11 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(", ", ": "))
 
 
-def _remove_secret_labels(value: str) -> str:
-    return re.sub(
-        r"(?i)(api[_-]?key|secret|token)\s*[:=]\s*[^,\s]+",
-        r"\1: [已省略]",
-        value,
-    )
-
-
 class PromptBuilder:
     """将上下文组装成顺序固定、无凭据的 chat messages。"""
 
     def build(self, context: Mapping[str, Any], player_input: str) -> list[dict[str, str]]:
-        safe_context = {
+        safe_context = _sanitize_value({
             "npcIdentity": {
                 key: context.get("npcIdentity", {}).get(key)
                 for key in _IDENTITY_FIELDS
@@ -157,7 +188,7 @@ class PromptBuilder:
                 and item.get("role") in {"user", "assistant"}
                 and _text(item.get("content"))
             ],
-        }
+        })
         identity = safe_context["npcIdentity"]
         overlay = {
             "modSources": safe_context["modSources"],

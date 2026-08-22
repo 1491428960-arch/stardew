@@ -16,6 +16,7 @@ def test_bridge_project_is_ready_for_development() -> None:
     assert '"fastapi>=' in pyproject
     assert '"httpx>=' in pyproject
     assert '"uvicorn[standard]>=' in pyproject
+    assert '"pydantic>=2.7,<3.0"' in pyproject
     assert '"pytest>=' in pyproject
     assert '"pytest-asyncio>=' in pyproject
     assert PACKAGE_ROOT.is_dir()

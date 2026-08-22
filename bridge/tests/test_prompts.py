@@ -174,3 +174,31 @@ def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
     assert "secret-api-key" not in rendered
     assert "api_key" not in rendered
     assert messages[-1]["content"] == "你好"
+
+
+def test_context_and_prompt_redact_sensitive_values_in_allowed_strings() -> None:
+    context = ContextBuilder(PersonaStore(PERSONAS_DIR)).build(
+        npc_id="Wizard",
+        location="WizardTower apiKey=location-key",
+        recent_facts=["token: fact-token"],
+        history=[
+            {
+                "role": "assistant",
+                "content": "secret: history-secret; authorization: Bearer history-auth",
+            }
+        ],
+    )
+
+    messages = PromptBuilder().build(context, "authorization: Bearer player-key")
+    rendered = json.dumps(messages, ensure_ascii=False)
+    context_rendered = json.dumps(context, ensure_ascii=False)
+
+    for secret in (
+        "location-key",
+        "fact-token",
+        "history-secret",
+        "history-auth",
+        "player-key",
+    ):
+        assert secret not in context_rendered
+        assert secret not in rendered
