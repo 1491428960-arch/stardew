@@ -21,12 +21,13 @@
 | R0 | 静态安全边界 | AST 检查脚本；运行 Bridge pytest、SMAPI `dotnet test`、显式 Windows `dotnet build` | 命令退出码为 0；AST 无禁用写入/注册表调用 |
 | R1 | Bridge 与测试页 | 启动 `scripts/start_bridge.ps1`，打开 `http://127.0.0.1:5678/test`，选择 Rasmodia，发送固定问句 | `/health` 为 `ok`；测试页返回 `provider=fake` 且有回复 |
 | R2 | API 契约 | 调用 `POST /api/dialogue/test`，分别使用 `provider=fake` 和不传 provider；调用 `GET /api/context/preview` | 返回结构包含 `reply`、`provider`、`fallback`、`latencyMs`、`warnings`；上下文含 SVE/娘化来源摘要 |
-| R3 | Bridge 关闭回退 | 停止 Bridge 后启动游戏并按 `F8`（或 `config.json` 中的 `DialogueKey`） | SMAPI 原型不崩溃；C# 客户端记录 `offline`/`fallback`，游戏仍可继续操作 |
+| R3 | Bridge 关闭回退 | 停止 Bridge 后启动游戏并按 GMCM/`config.json` 中的 `DialogueKey`（默认 `F8`） | SMAPI 原型不崩溃；C# 客户端记录 `offline`/`fallback`，游戏仍可继续操作 |
 | R4 | Provider 双失败 | Bridge 配置 local/cloud 均启用但指向不可用地址，发送不指定 provider 的请求 | 回复来自 `fallback`；`warnings` 同时含两个 Provider 失败记录；不泄露 URL 中的凭据 |
-| R5 | SMAPI 原型 | 确认 `AI-SVE-测试` profile 已由 Stardrop 选中，启动脚本并进入存档；按 `F8`（或 `config.json` 中的 `DialogueKey`）与 Rasmodia 对话 | SMAPI 日志显示 mod 加载；出现 Rasmodia 对话菜单；Bridge 在线时显示 AI/fallback 回复 |
-| R6 | SVE 与娘化兼容 | 在同一 profile 中保持 SVE 和娘化 NPC 内容包启用；分别打开 SVE NPC 与 Rasmodia 的资料预览/对话 | `sourceMods`/身份资料保留来源；NPC 不因显示名变化而丢失；上下文保护规则生效 |
-| R7 | 存档安全 | 脚本运行前后对同一 `-SaveRoot` 生成快照；完成 R5/R6 后退出游戏并再次运行快照 | 控制台列出每个文件的大小和 UTC 时间戳变化；脚本不删除、不覆盖、不回滚存档，实际变化由用户判断 |
-| R8 | 日志证据 | 用户明确传入 `-InspectLog -SmapiLogPath <实际日志>`，完成一次 R5 后退出游戏 | 只读输出 SMAPI 日志尾部及匹配的加载/Bridge/异常行；未传 `-InspectLog` 时不得自动读日志 |
+| R5 | SMAPI 原型 | 确认 `AI-SVE-测试` profile 已由 Stardrop 选中，启动脚本并进入存档；按 GMCM/`config.json` 中的 `DialogueKey`（默认 `F8`）与 Rasmodia 对话 | SMAPI 日志显示 mod 加载；出现 Rasmodia 对话菜单；Bridge 在线时显示 AI/fallback 回复 |
+| R6 | GMCM 配置安全回退 | 安装/不安装 GMCM 分别启动；在 GMCM 中保存默认值、非法地址和越界超时 | GMCM 缺失时 mod 正常加载；Reset/Save 可用；非法值回退到本机 `http://127.0.0.1:5678` 与 15 秒 |
+| R7 | SVE 与娘化兼容 | 在同一 profile 中保持 SVE 和娘化 NPC 内容包启用；分别打开 SVE NPC 与 Rasmodia 的资料预览/对话 | `sourceMods`/身份资料保留来源；NPC 不因显示名变化而丢失；上下文保护规则生效 |
+| R8 | 存档安全 | 脚本运行前后对同一 `-SaveRoot` 生成快照；完成 R5/R7 后退出游戏并再次运行快照 | 控制台列出每个文件的大小和 UTC 时间戳变化；脚本不删除、不覆盖、不回滚存档，实际变化由用户判断 |
+| R9 | 日志证据 | 用户明确传入 `-InspectLog -SmapiLogPath <实际日志>`，完成一次 R5 后退出游戏 | 只读输出 SMAPI 日志尾部及匹配的加载/Bridge/异常行；未传 `-InspectLog` 时不得自动读日志 |
 
 ## 推荐运行顺序
 
