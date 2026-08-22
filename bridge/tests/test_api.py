@@ -73,3 +73,55 @@ def test_dialogue_rejects_blank_message(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_test_page_returns_html(client: TestClient) -> None:
+    response = client.get("/test")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert 'id="npc-select"' in response.text
+    assert 'id="reply"' in response.text
+
+
+def test_npcs_returns_persona_database(client: TestClient) -> None:
+    response = client.get("/api/npcs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["npcs"]
+    wizard = next(item for item in body["npcs"] if item["npcId"] == "Wizard")
+    assert wizard["displayName"] == "Wizard"
+
+
+def test_context_preview_returns_sanitized_identity_and_current_state(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/context/preview",
+        json={
+            "npcId": "Wizard",
+            "sourceMods": ["Romanceable Rasmodius"],
+            "date": "春 1 日",
+            "weather": "晴天",
+            "location": "法师塔",
+            "friendship": 128,
+            "relationship": "未婚",
+            "recentFacts": ["玩家刚刚拜访了法师塔"],
+            "apiKey": "secret-api-key",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["npcId"] == "Wizard"
+    assert body["personaSummary"]["displayName"] == "Rasmodia"
+    assert body["gameState"] == {
+        "date": "春 1 日",
+        "weather": "晴天",
+        "location": "法师塔",
+        "friendship": 128,
+        "relationship": "未婚",
+    }
+    assert "apiKey" not in body
+    assert "secret-api-key" not in response.text
