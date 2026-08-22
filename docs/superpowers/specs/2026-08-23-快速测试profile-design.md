@@ -1,7 +1,7 @@
 # AI NPC 快速测试 Profile 设计
 
 日期：2026-08-23  
-状态：已获用户批准，待实现
+状态：已实现
 
 ## 目标
 
@@ -11,7 +11,8 @@
 
 - 不修改现有 `AI-SVE-测试` profile。
 - 不覆盖游戏目录下的正式 `Mods` 目录。
-- 不修改 C 盘系统目录、注册表、Stardrop 全局配置或正式存档。
+- 默认不启动游戏；脚本本身不读写存档。显式启动后，存档隔离依赖用户选择独立测试存档，脚本不声称提供存档目录隔离。
+- 不修改 C 盘系统目录、注册表或 Stardrop 全局配置。
 - 不替代最终的 SVE、男角色娘化和法师娘化兼容性回归。
 - 不实现编译后 C# Mod 的进程内热重载。
 
@@ -26,7 +27,7 @@ D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest\
 └── （可选）Romanceable Rasmodia 的内容包
 ```
 
-启动器不依赖 Stardrop 当前选择状态。它从项目构建产物同步 `StardewAI.NPC`，从游戏正式 `Mods` 目录按明确目录名复制 GMCM，默认不复制其他 Mod。
+启动器不依赖 Stardrop 当前启动 profile。它从项目构建产物同步 `StardewAI.NPC`，从 `-SourceModsPath` 指定的源目录复制 GMCM；未指定时优先检查游戏正式 `Mods`，再检查 Stardrop 的 `Selected Mods`，默认不复制其他 Mod。Stardrop 的 GMCM/Rasmodia Junction 只有在目标位于游戏的 `Mods\Stardrop Installed Mods` 缓存下时才允许读取。
 
 ## 用户入口
 
@@ -36,7 +37,7 @@ D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest\
 .\scripts\start_fast_test.ps1
 ```
 
-用途：验证 Mod 能加载、F8 能响应、GMCM 配置页存在、基础 NPC 对话流程可进入。
+用途：同步并检查 Mod，不启动游戏。需要进入游戏时显式加 `-Launch`。
 
 ### Rasmodia 模式
 
@@ -44,7 +45,7 @@ D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest\
 .\scripts\start_fast_test.ps1 -IncludeRasmodia
 ```
 
-用途：在基础模式上加入已存在的法师娘化内容包，验证 `Wizard` 内部 ID 与 `Rasmodia` 显示名的回退逻辑。
+用途：在基础模式上加入已存在的法师娘化内容包；进入游戏时使用 `-IncludeRasmodia -Launch`，验证 `Wizard` 内部 ID 与 `Rasmodia` 显示名的回退逻辑。
 
 ### 参数覆盖
 
@@ -54,6 +55,7 @@ D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest\
 - `-FastModsPath`：覆盖独立快速测试目录。
 - `-SourceModsPath`：覆盖正式 Mod 源目录。
 - `-ProjectRoot`：覆盖项目目录，默认由脚本位置推导。
+- `-Launch`：显式启动 SMAPI；未传入时只同步和检查。
 - `-NoLaunch`：只执行同步和检查，不启动游戏。
 
 脚本不接受任意递归删除参数，也不清空正式 Mod 目录。同步前只删除快速测试目录中由脚本管理的 `StardewAI.NPC`、GMCM 和本脚本标记的可选内容包。
@@ -67,7 +69,7 @@ D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest\
 5. 复制正式 Mod 目录中明确匹配的 GMCM 目录。
 6. `-IncludeRasmodia` 时复制明确匹配的法师娘化内容包；找不到时给出可读错误并停止启动。
 7. 输出最终 Mod 清单和 DLL SHA-256。
-8. 默认调用：
+8. 只有传入 `-Launch` 时才调用：
 
 ```powershell
 StardewModdingAPI.exe --mods-path <FastModsPath>
@@ -78,7 +80,8 @@ StardewModdingAPI.exe --mods-path <FastModsPath>
 - 所有路径使用 `-LiteralPath` 和解析后的绝对路径。
 - 只允许写入明确的 `FastModsPath`；若目标路径不是该参数指定的快速目录，脚本拒绝执行清理和复制。
 - 不使用 `Remove-Item -Recurse` 清理游戏目录、正式 Mod 目录或用户配置目录。
-- 启动器不会自动打开正式存档；首次使用应在游戏里新建或选择独立测试存档。
+- 启动器默认不会打开存档；传入 `-Launch` 后，首次使用仍应在游戏里新建或选择独立测试存档。
+- `--mods-path` 只隔离 Mod 目录，不能隔离 Stardew Valley 的存档目录。
 - 启动器只负责进程启动，不等待或强制结束游戏进程。
 
 ## 错误处理
@@ -86,7 +89,7 @@ StardewModdingAPI.exe --mods-path <FastModsPath>
 - 游戏目录不存在：停止，并指出需要覆盖的参数。
 - SMAPI 不存在：停止，不执行复制。
 - `StardewAI.NPC.dll` 不存在：停止，不启动旧版本。
-- GMCM 不存在：基础模式停止并提示安装；如果仅做代码加载测试，可通过显式参数跳过 GMCM 检查。
+- GMCM 不存在：基础模式停止并提示安装；快速 profile 需要 GMCM 才能验证 GMCM 配置页。
 - Rasmodia 内容包不存在：只有 `-IncludeRasmodia` 模式停止，基础模式不受影响。
 - 快速目录不是独立目录：停止，防止误操作正式 `Mods`。
 
@@ -121,10 +124,9 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 ## 验收标准
 
-- 一条命令即可启动最小 Mod 集合。
+- 一条命令即可同步最小 Mod 集合；显式增加 `-Launch` 才启动游戏。
 - 不加载完整 SVE 时，F8 与 GMCM 烟测可完成。
-- 同步过程不会修改正式 `Mods`、现有 Stardrop profile 或正式存档。
+- 同步过程不会修改正式 `Mods`、现有 Stardrop profile 或存档；启动后的存档选择由用户负责。
 - 缺少依赖或路径不安全时先报错，不启动游戏。
 - 脚本离线测试和现有 C# 测试均通过。
 - 完整 SVE profile 仍作为最终兼容性测试入口保留。
-

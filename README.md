@@ -60,9 +60,15 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 .\scripts\start_fast_test.ps1 -IncludeRasmodia
 ```
 
-脚本默认把当前构建产物同步到游戏目录下的 `Mods-AI-FastTest`，通过 SMAPI 的 `--mods-path` 启动，不依赖 Stardrop 当前启动 profile。它只复制 `StardewAI.NPC`、GMCM 和按需加入的 Rasmodia 内容包，不修改正式 `Mods`、Stardrop profile、存档或注册表。
+脚本默认只把当前构建产物同步到游戏目录下的 `Mods-AI-FastTest`，不启动游戏。需要启动时显式增加 `-Launch`，脚本通过 SMAPI 的 `--mods-path` 加载独立 Mod 目录，不依赖 Stardrop 当前启动 profile。它只复制 `StardewAI.NPC`、GMCM 和按需加入的 Rasmodia 内容包，不修改正式 `Mods`、Stardrop profile、注册表；启动后的存档选择仍需用户使用独立测试存档，脚本不提供存档目录隔离。
 
-只检查同步结果、不启动游戏：
+启动快速 profile：
+
+```powershell
+.\scripts\start_fast_test.ps1 -Launch
+```
+
+只检查同步结果、不启动游戏（默认行为，也可显式写 `-NoLaunch`）：
 
 ```powershell
 .\scripts\start_fast_test.ps1 -NoLaunch

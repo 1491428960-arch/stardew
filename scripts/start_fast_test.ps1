@@ -3,8 +3,8 @@
     同步并启动 StardewAI.NPC 的独立快速测试 Mod 集合。
 
 .DESCRIPTION
-    默认只同步 StardewAI.NPC 和 Generic Mod Config Menu，使用 SMAPI 的
-    --mods-path 启动独立目录。正式 Mods、Stardrop profile 和存档不会被修改。
+    默认只同步 StardewAI.NPC 和 Generic Mod Config Menu，不启动游戏。显式传入
+    -Launch 后才会使用 SMAPI 的 --mods-path 启动独立目录；存档隔离由用户选择独立测试存档。
 #>
 [CmdletBinding()]
 param(
@@ -14,7 +14,9 @@ param(
     [string]$GmcmSourcePath,
     [string]$RasmodiaSourcePath,
     [string]$ProjectRoot,
+    [string]$SmapiExecutable,
     [switch]$IncludeRasmodia,
+    [switch]$Launch,
     [switch]$NoLaunch
 )
 
@@ -51,6 +53,28 @@ function Test-PathInside {
     return $candidatePath.StartsWith($rootPath + '\', [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Assert-NoReparsePoints {
+    param([Parameter(Mandatory)] [string]$Path)
+
+    $current = Get-NormalizedPath $Path
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "拒绝使用包含 Junction 或符号链接的路径：$current"
+            }
+            $parent = Split-Path -Path $item.FullName -Parent
+        } else {
+            $parent = Split-Path -Path $current -Parent
+        }
+
+        if (-not $parent -or (Test-SamePath -Left $parent -Right $current)) {
+            break
+        }
+        $current = Get-NormalizedPath $parent
+    }
+}
+
 function Require-Directory {
     param(
         [Parameter(Mandatory)] [string]$Path,
@@ -60,19 +84,74 @@ function Require-Directory {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         throw "$Name 不存在或不是目录：$Path"
     }
-    return (Get-NormalizedPath ((Get-Item -LiteralPath $Path).FullName))
+    $resolvedPath = Get-NormalizedPath ((Get-Item -LiteralPath $Path -Force).FullName)
+    Assert-NoReparsePoints -Path $resolvedPath
+    return $resolvedPath
+}
+
+function Require-NamedDirectory {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$ExpectedName,
+        [Parameter(Mandatory)] [string]$Name,
+        [switch]$AllowLeafReparsePoint
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "$Name 不存在或不是目录：$Path"
+    }
+    $resolvedPath = Get-NormalizedPath ((Get-Item -LiteralPath $Path -Force).FullName)
+    if (-not $AllowLeafReparsePoint) {
+        Assert-NoReparsePoints -Path $resolvedPath
+    } else {
+        $parent = Split-Path -Path $resolvedPath -Parent
+        if ($parent) {
+            Assert-NoReparsePoints -Path $parent
+        }
+    }
+    $actualName = (Get-Item -LiteralPath $resolvedPath -Force).Name
+    if (-not [string]::Equals($actualName, $ExpectedName, [StringComparison]::Ordinal)) {
+        throw "$Name 必须是目录 $ExpectedName，实际为：$actualName"
+    }
+    return $resolvedPath
+}
+
+function Assert-StardropSourceLink {
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [Parameter(Mandatory)] [string]$TrustedRoot
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) {
+        return
+    }
+    if ($item.LinkType -ne 'Junction' -or -not $item.Target) {
+        throw "源目录只能是普通目录，或指向 Stardrop 安装缓存的 Junction：$Path"
+    }
+    $targetItem = Get-Item -LiteralPath ([string]$item.Target) -Force -ErrorAction Stop
+    $targetPath = Get-NormalizedPath $targetItem.FullName
+    $trustedPath = Require-Directory -Path $TrustedRoot -Name 'Stardrop 安装缓存目录'
+    if (-not (Test-PathInside -Candidate $targetPath -Root $trustedPath)) {
+        throw "源目录 Junction 目标不在 Stardrop 安装缓存内：$targetPath"
+    }
 }
 
 function Require-File {
     param(
         [Parameter(Mandatory)] [string]$Path,
-        [Parameter(Mandatory)] [string]$Name
+        [Parameter(Mandatory)] [string]$Name,
+        [switch]$AllowReparsePoint
     )
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "$Name 不存在：$Path"
     }
-    return (Get-NormalizedPath ((Get-Item -LiteralPath $Path).FullName))
+    $resolvedPath = Get-NormalizedPath ((Get-Item -LiteralPath $Path -Force).FullName)
+    if (-not $AllowReparsePoint) {
+        Assert-NoReparsePoints -Path $resolvedPath
+    }
+    return $resolvedPath
 }
 
 function Resolve-SourceModsPath {
@@ -112,7 +191,11 @@ function Assert-SafeTarget {
         [Parameter(Mandatory)] [string[]]$ProtectedRoots
     )
 
+    Assert-NoReparsePoints -Path $Target
     foreach ($protectedRoot in $ProtectedRoots) {
+        if (Test-Path -LiteralPath $protectedRoot) {
+            Assert-NoReparsePoints -Path $protectedRoot
+        }
         if ((Test-SamePath -Left $Target -Right $protectedRoot) -or
             (Test-PathInside -Candidate $Target -Root $protectedRoot) -or
             (Test-PathInside -Candidate $protectedRoot -Root $Target)) {
@@ -131,10 +214,14 @@ function Remove-ManagedDirectory {
     if (-not (Test-Path -LiteralPath $managedPath)) {
         return
     }
+    if (-not (Test-Path -LiteralPath $managedPath -PathType Container)) {
+        throw "快速目录中的受控名称不是目录，拒绝删除：$managedPath"
+    }
 
     if (-not (Test-PathInside -Candidate $managedPath -Root $FastRoot)) {
         throw "拒绝清理快速目录之外的路径：$managedPath"
     }
+    Assert-NoReparsePoints -Path $managedPath
     Remove-Item -LiteralPath $managedPath -Recurse -Force
 }
 
@@ -142,6 +229,9 @@ if (-not $ProjectRoot) {
     $ProjectRoot = Get-NormalizedPath (Join-Path $PSScriptRoot '..')
 } else {
     $ProjectRoot = Get-NormalizedPath $ProjectRoot
+}
+if ($Launch -and $NoLaunch) {
+    throw '-Launch 和 -NoLaunch 不能同时使用。'
 }
 if (-not $FastModsPath) {
     $FastModsPath = Join-Path $GamePath 'Mods-AI-FastTest'
@@ -152,7 +242,11 @@ $SourceModsPath = Resolve-SourceModsPath -GameRoot $GamePath -ExplicitPath $Sour
 $FastModsPath = Get-NormalizedPath $FastModsPath
 $ProjectRoot = Require-Directory -Path $ProjectRoot -Name 'ProjectRoot'
 $officialModsPath = Get-NormalizedPath (Join-Path $GamePath 'Mods')
-$smapiPath = Require-File -Path (Join-Path $GamePath 'StardewModdingAPI.exe') -Name 'SMAPI 启动入口'
+$smapiPath = if ($SmapiExecutable) {
+    Require-File -Path $SmapiExecutable -Name 'SMAPI 启动入口'
+} else {
+    Require-File -Path (Join-Path $GamePath 'StardewModdingAPI.exe') -Name 'SMAPI 启动入口'
+}
 $buildPath = Require-Directory -Path (Join-Path $ProjectRoot 'smapi\bin\Debug\net6.0') -Name 'SMAPI 构建目录'
 $dllSourcePath = Require-File -Path (Join-Path $buildPath 'StardewAI.NPC.dll') -Name 'StardewAI.NPC 构建 DLL'
 $manifestSourcePath = Require-File -Path (Join-Path $ProjectRoot 'smapi\manifest.json') -Name 'StardewAI.NPC manifest'
@@ -167,27 +261,32 @@ if (Test-SamePath -Left $FastModsPath -Right $GamePath) {
 }
 
 if ($GmcmSourcePath) {
-    $GmcmSourcePath = Require-Directory -Path $GmcmSourcePath -Name 'GmcmSourcePath'
+    $GmcmSourcePath = Require-NamedDirectory -Path $GmcmSourcePath -ExpectedName 'GenericModConfigMenu' -Name 'GmcmSourcePath' -AllowLeafReparsePoint
 } else {
-    $GmcmSourcePath = Require-Directory -Path (Join-Path $SourceModsPath 'GenericModConfigMenu') -Name 'GenericModConfigMenu 源目录'
+    $GmcmSourcePath = Require-NamedDirectory -Path (Join-Path $SourceModsPath 'GenericModConfigMenu') -ExpectedName 'GenericModConfigMenu' -Name 'GenericModConfigMenu 源目录' -AllowLeafReparsePoint
 }
+Require-File -Path (Join-Path $GmcmSourcePath 'manifest.json') -Name 'GMCM manifest' -AllowReparsePoint | Out-Null
+$stardropCachePath = Join-Path $officialModsPath 'Stardrop Installed Mods'
+Assert-StardropSourceLink -Path $GmcmSourcePath -TrustedRoot $stardropCachePath
 
 if ($IncludeRasmodia) {
     if ($RasmodiaSourcePath) {
-        $RasmodiaSourcePath = Require-Directory -Path $RasmodiaSourcePath -Name 'RasmodiaSourcePath'
+        $RasmodiaSourcePath = Require-NamedDirectory -Path $RasmodiaSourcePath -ExpectedName '[CP] Romanceable Rasmodia' -Name 'RasmodiaSourcePath' -AllowLeafReparsePoint
     } else {
-        $RasmodiaSourcePath = Require-Directory -Path (Join-Path $SourceModsPath '[CP] Romanceable Rasmodia') -Name 'Rasmodia 内容包源目录'
+        $RasmodiaSourcePath = Require-NamedDirectory -Path (Join-Path $SourceModsPath '[CP] Romanceable Rasmodia') -ExpectedName '[CP] Romanceable Rasmodia' -Name 'Rasmodia 内容包源目录' -AllowLeafReparsePoint
     }
+    Require-File -Path (Join-Path $RasmodiaSourcePath 'manifest.json') -Name 'Rasmodia manifest' -AllowReparsePoint | Out-Null
+    Assert-StardropSourceLink -Path $RasmodiaSourcePath -TrustedRoot $stardropCachePath
 }
 
-New-Item -ItemType Directory -Path $FastModsPath -Force | Out-Null
+[IO.Directory]::CreateDirectory($FastModsPath) | Out-Null
 $managedNames = @('StardewAI.NPC', 'GenericModConfigMenu', '[CP] Romanceable Rasmodia')
 foreach ($managedName in $managedNames) {
     Remove-ManagedDirectory -FastRoot $FastModsPath -Name $managedName
 }
 
 $npcTargetPath = Join-Path $FastModsPath 'StardewAI.NPC'
-New-Item -ItemType Directory -Path $npcTargetPath -Force | Out-Null
+[IO.Directory]::CreateDirectory($npcTargetPath) | Out-Null
 Get-ChildItem -LiteralPath $buildPath -File -Force | ForEach-Object {
     Copy-Item -LiteralPath $_.FullName -Destination $npcTargetPath -Force
 }
@@ -208,12 +307,14 @@ Write-Output "SourceModsPath: $SourceModsPath"
 Write-Output "StardewAI.NPC SHA256: $hash"
 Write-Output ('Mods: ' + ($modNames -join ', '))
 
-if ($NoLaunch) {
-    Write-Output 'NoLaunch: 已启用，只完成同步和检查。'
+if (-not $Launch -or $NoLaunch) {
+    Write-Output 'Launch: 未启用，只完成同步和检查。需要启动游戏时请显式添加 -Launch。'
     exit 0
 }
 
 Write-Output "正在启动 SMAPI：$smapiPath --mods-path $FastModsPath"
-$process = Start-Process -FilePath $smapiPath -WorkingDirectory $GamePath -ArgumentList @('--mods-path', $FastModsPath) -PassThru
+$quotedFastModsPath = '"' + $FastModsPath + '"'
+$argumentList = @('--mods-path', $quotedFastModsPath)
+$process = Start-Process -FilePath $smapiPath -WorkingDirectory $GamePath -ArgumentList $argumentList -PassThru
 Write-Output "SMAPI 已启动，PID=$($process.Id)"
 exit 0
