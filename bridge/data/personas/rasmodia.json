@@ -1,0 +1,10 @@
+{
+  "mod": "Romanceable Rasmodius",
+  "personas": {
+    "Wizard": {
+      "displayName": "Rasmodia",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "traveler", "self": "Rasmodia"}
+    }
+  }
+}

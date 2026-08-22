@@ -1,0 +1,10 @@
+{
+  "mod": "SVE",
+  "personas": {
+    "Wizard": {
+      "displayName": "Magnus",
+      "coreTraits": ["掌握更多星界知识"],
+      "addressing": {"self": "Magnus"}
+    }
+  }
+}

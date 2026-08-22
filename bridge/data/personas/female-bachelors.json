@@ -1,0 +1,15 @@
+{
+  "mod": "female-bachelors",
+  "personas": {
+    "Shane": {
+      "displayName": "Shane",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "you", "self": "Shane"}
+    },
+    "Alex": {
+      "displayName": "Alex",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "you", "self": "Alex"}
+    }
+  }
+}

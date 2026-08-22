@@ -1,0 +1,29 @@
+{
+  "mod": "vanilla",
+  "personas": {
+    "Wizard": {
+      "npcId": "Wizard",
+      "displayName": "Wizard",
+      "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
+      "coreTraits": ["谨慎", "博学", "观察敏锐"],
+      "addressing": {"player": "traveler", "self": "Wizard"},
+      "modOverlay": {}
+    },
+    "Shane": {
+      "npcId": "Shane",
+      "displayName": "Shane",
+      "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
+      "coreTraits": ["直率", "疲惫", "愿意改变"],
+      "addressing": {"player": "you", "self": "Shane"},
+      "modOverlay": {}
+    },
+    "Alex": {
+      "npcId": "Alex",
+      "displayName": "Alex",
+      "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
+      "coreTraits": ["自信", "热爱运动", "重视朋友"],
+      "addressing": {"player": "you", "self": "Alex"},
+      "modOverlay": {}
+    }
+  }
+}
