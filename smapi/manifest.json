@@ -1,0 +1,10 @@
+{
+  "Name": "Stardew AI NPC",
+  "Author": "OpenAI",
+  "Version": "0.1.0",
+  "Description": "Local AI dialogue prototype for one NPC.",
+  "UniqueID": "OpenAI.StardewAI.NPC",
+  "EntryDll": "StardewAI.NPC.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}
