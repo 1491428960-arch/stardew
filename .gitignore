@@ -1,0 +1,15 @@
+.worktrees/
+.venv/
+bridge/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+bin/
+obj/
+*.user
+.env
+.env.*
+secrets/
+logs/
+artifacts/
