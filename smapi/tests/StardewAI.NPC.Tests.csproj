@@ -9,6 +9,15 @@
 
   <ItemGroup>
     <ProjectReference Include="../StardewAI.NPC.csproj" />
+    <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.1.1" />
+    <Reference Include="StardewModdingAPI">
+      <HintPath>$(GamePath)\StardewModdingAPI.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SMAPI.Toolkit">
+      <HintPath>$(GamePath)\smapi-internal\SMAPI.Toolkit.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
