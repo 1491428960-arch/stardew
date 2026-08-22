@@ -83,7 +83,66 @@ public sealed class BridgeClientTests
             new[] { "SVE", "FlashShifter.SVECode" },
             root.GetProperty("gameState").GetProperty("sourceMods").EnumerateArray()
                 .Select(item => item.GetString())
-                .ToArray());
+            .ToArray());
+    }
+
+    [Fact]
+    public async Task SendAsync_sends_previous_history_and_state_change_facts_on_second_call()
+    {
+        var handler = new RecordingHandler(requestIndex => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                requestIndex == 0
+                    ? "{\"reply\":\"第一次回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}"
+                    : "{\"reply\":\"第二次回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var firstState = new NpcGameState
+        {
+            NpcId = "Wizard",
+            DisplayName = "Rasmodia",
+            Date = "14",
+            Weather = "clear",
+            Location = "WizardTower",
+            Friendship = 128,
+            Relationship = "friend",
+        };
+        var secondState = new NpcGameState
+        {
+            NpcId = "Wizard",
+            DisplayName = "Rasmodia",
+            Date = "15",
+            Weather = "rain",
+            Location = "Town",
+            Friendship = 140,
+            Relationship = "dating",
+        };
+
+        await client.SendAsync("Wizard", "第一次问题", firstState);
+        await client.SendAsync("Wizard", "第二次问题", secondState);
+
+        Assert.Equal(2, handler.RequestBodies.Count);
+        using var firstRequest = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Empty(firstRequest.RootElement.GetProperty("recentFacts").EnumerateArray());
+        using var secondRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        var root = secondRequest.RootElement;
+        var history = root.GetProperty("history").EnumerateArray().ToArray();
+        Assert.Equal(2, history.Length);
+        Assert.Equal("user", history[0].GetProperty("role").GetString());
+        Assert.Equal("第一次问题", history[0].GetProperty("content").GetString());
+        Assert.Equal("assistant", history[1].GetProperty("role").GetString());
+        Assert.Equal("第一次回复", history[1].GetProperty("content").GetString());
+        var recentFacts = root.GetProperty("recentFacts").EnumerateArray()
+            .Select(item => item.GetString())
+            .Where(item => item is not null)
+            .ToArray();
+        Assert.NotEmpty(recentFacts);
+        Assert.Contains(recentFacts, fact => fact!.Contains("地点"));
+        Assert.Contains(recentFacts, fact => fact!.Contains("WizardTower"));
+        Assert.Contains(recentFacts, fact => fact!.Contains("Town"));
     }
 
     [Fact]
@@ -125,21 +184,24 @@ public sealed class BridgeClientTests
 
     private sealed class RecordingHandler : HttpMessageHandler
     {
-        private readonly Func<HttpRequestMessage, HttpResponseMessage> responder;
-
-        public RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> responder)
+        public RecordingHandler(Func<int, HttpResponseMessage> responder)
         {
             this.responder = responder;
         }
 
         public HttpRequestMessage? Request { get; private set; }
 
+        public List<string> RequestBodies { get; } = new();
+
+        private readonly Func<int, HttpResponseMessage> responder;
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             Request = request;
-            return Task.FromResult(responder(request));
+            RequestBodies.Add(request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult() ?? "");
+            return Task.FromResult(responder(RequestBodies.Count - 1));
         }
     }
 

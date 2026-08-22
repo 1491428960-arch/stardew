@@ -38,6 +38,15 @@ _SECRET_ASSIGNMENT = re.compile(
     r"(?:bearer\s+)?[^\s,;\]}]+"
 )
 
+_SENSITIVE_KEYS = {
+    "authorization",
+    "api-key",
+    "apikey",
+    "password",
+    "secret",
+    "token",
+}
+
 
 def _remove_secret_labels(value: str) -> str:
     return _SECRET_ASSIGNMENT.sub(
@@ -50,7 +59,15 @@ def _sanitize_value(value: Any) -> Any:
     if isinstance(value, str):
         return _remove_secret_labels(value)
     if isinstance(value, Mapping):
-        return {key: _sanitize_value(item) for key, item in value.items()}
+        sanitized: dict[Any, Any] = {}
+        for key, item in value.items():
+            normalized_key = str(key).casefold().replace("_", "-")
+            sanitized[key] = (
+                "[已省略]"
+                if normalized_key in _SENSITIVE_KEYS
+                else _sanitize_value(item)
+            )
+        return sanitized
     if isinstance(value, list):
         return [_sanitize_value(item) for item in value]
     if isinstance(value, tuple):
@@ -110,9 +127,9 @@ class ContextBuilder:
                 value = state[key]
             if value is not None and value != "":
                 game_state[key] = (
-                    _remove_secret_labels(_text(value))
+                    _sanitize_value(_text(value))
                     if isinstance(value, str)
-                    else value
+                    else _sanitize_value(value)
                 )
 
         runtime_display_name = _first_value(values, "displayName", "display_name")

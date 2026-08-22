@@ -21,6 +21,22 @@ public sealed class BridgeDialogueRequest
 
     [JsonPropertyName("gameState")]
     public object? GameState { get; init; }
+
+    [JsonPropertyName("recentFacts")]
+    public IReadOnlyList<string> RecentFacts { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("history")]
+    public IReadOnlyList<BridgeDialogueHistoryItem> History { get; init; } =
+        Array.Empty<BridgeDialogueHistoryItem>();
+}
+
+public sealed class BridgeDialogueHistoryItem
+{
+    [JsonPropertyName("role")]
+    public string Role { get; init; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public string Content { get; init; } = string.Empty;
 }
 
 public sealed class BridgeDialogueResponse
@@ -60,6 +76,9 @@ public sealed class BridgeClient : IDisposable
     private readonly HttpClient httpClient;
     private readonly bool ownsHttpClient;
     private readonly Uri dialogueEndpoint;
+    private readonly object memoryLock = new();
+    private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> historyByNpc = new();
+    private readonly Dictionary<string, NpcGameState> previousStateByNpc = new();
 
     public BridgeClient(
         HttpClient? httpClient = null,
@@ -94,44 +113,65 @@ public sealed class BridgeClient : IDisposable
         try
         {
             var npcGameState = gameState as NpcGameState;
-            using var response = await httpClient.PostAsJsonAsync(
-                dialogueEndpoint,
-                new BridgeDialogueRequest
+            BridgeDialogueRequest request;
+            lock (memoryLock)
+            {
+                request = new BridgeDialogueRequest
                 {
                     NpcId = npcId,
                     Message = message,
                     DisplayName = npcGameState?.DisplayName,
                     SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
                     GameState = gameState,
-                },
+                    RecentFacts = BuildRecentFacts(
+                        previousStateByNpc.GetValueOrDefault(npcId),
+                        npcGameState),
+                    History = historyByNpc.TryGetValue(npcId, out var history)
+                        ? history.ToArray()
+                        : Array.Empty<BridgeDialogueHistoryItem>(),
+                };
+            }
+
+            using var response = await httpClient.PostAsJsonAsync(
+                dialogueEndpoint,
+                request,
                 cancellationToken);
 
+            BridgeDialogueResponse result;
             if (!response.IsSuccessStatusCode)
             {
-                return BridgeDialogueResponse.Offline(
+                result = BridgeDialogueResponse.Offline(
                     $"bridge: HTTP {(int)response.StatusCode} {response.ReasonPhrase}".Trim());
             }
-
-            var result = await response.Content.ReadFromJsonAsync<BridgeDialogueResponse>(
-                cancellationToken: cancellationToken);
-            if (result is null || string.IsNullOrWhiteSpace(result.Reply))
+            else
             {
-                return BridgeDialogueResponse.Offline("bridge: 响应缺少 reply。");
+                var parsed = await response.Content.ReadFromJsonAsync<BridgeDialogueResponse>(
+                    cancellationToken: cancellationToken);
+                result = parsed is null || string.IsNullOrWhiteSpace(parsed.Reply)
+                    ? BridgeDialogueResponse.Offline("bridge: 响应缺少 reply。")
+                    : parsed;
             }
 
+            RememberConversation(npcId, message, result.Reply, npcGameState);
             return result;
         }
         catch (TaskCanceledException)
         {
-            return BridgeDialogueResponse.Offline("bridge: timeout");
+            var result = BridgeDialogueResponse.Offline("bridge: timeout");
+            RememberConversation(npcId, message, result.Reply, gameState as NpcGameState);
+            return result;
         }
         catch (HttpRequestException exception)
         {
-            return BridgeDialogueResponse.Offline($"bridge: offline ({exception.Message})");
+            var result = BridgeDialogueResponse.Offline($"bridge: offline ({exception.Message})");
+            RememberConversation(npcId, message, result.Reply, gameState as NpcGameState);
+            return result;
         }
         catch (JsonException exception)
         {
-            return BridgeDialogueResponse.Offline($"bridge: invalid JSON ({exception.Message})");
+            var result = BridgeDialogueResponse.Offline($"bridge: invalid JSON ({exception.Message})");
+            RememberConversation(npcId, message, result.Reply, gameState as NpcGameState);
+            return result;
         }
     }
 
@@ -149,6 +189,78 @@ public sealed class BridgeClient : IDisposable
             (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
         {
             throw new ArgumentException("Bridge 地址必须是 HTTP(S) 回环地址。", nameof(endpoint));
+        }
+    }
+
+    private void RememberConversation(
+        string npcId,
+        string message,
+        string reply,
+        NpcGameState? currentState)
+    {
+        lock (memoryLock)
+        {
+            if (!historyByNpc.TryGetValue(npcId, out var history))
+            {
+                history = new List<BridgeDialogueHistoryItem>();
+                historyByNpc[npcId] = history;
+            }
+
+            history.Add(new BridgeDialogueHistoryItem { Role = "user", Content = message });
+            history.Add(new BridgeDialogueHistoryItem { Role = "assistant", Content = reply });
+            if (history.Count > 6)
+            {
+                history.RemoveRange(0, history.Count - 6);
+            }
+
+            if (currentState is not null)
+            {
+                previousStateByNpc[npcId] = currentState;
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> BuildRecentFacts(
+        NpcGameState? previous,
+        NpcGameState? current)
+    {
+        if (previous is null || current is null)
+        {
+            return Array.Empty<string>();
+        }
+
+        var facts = new List<string>();
+        AddStringChange(facts, "季节", previous.Season, current.Season);
+        AddStringChange(facts, "日期", previous.Date, current.Date);
+        AddStringChange(facts, "天气", previous.Weather, current.Weather);
+        AddStringChange(facts, "地点", previous.Location, current.Location);
+        AddIntChange(facts, "时间", previous.Time, current.Time);
+        AddIntChange(facts, "好感", previous.Friendship, current.Friendship);
+        AddStringChange(facts, "关系", previous.Relationship, current.Relationship);
+        return facts;
+    }
+
+    private static void AddStringChange(
+        ICollection<string> facts,
+        string label,
+        string? previous,
+        string? current)
+    {
+        if (!string.Equals(previous, current, StringComparison.Ordinal))
+        {
+            facts.Add($"{label}从“{previous ?? "未知"}”变为“{current ?? "未知"}”");
+        }
+    }
+
+    private static void AddIntChange(
+        ICollection<string> facts,
+        string label,
+        int? previous,
+        int? current)
+    {
+        if (previous != current)
+        {
+            facts.Add($"{label}从“{previous?.ToString() ?? "未知"}”变为“{current?.ToString() ?? "未知"}”");
         }
     }
 }

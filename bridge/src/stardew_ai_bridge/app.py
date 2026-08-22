@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from time import perf_counter
 
 from fastapi import FastAPI, HTTPException
@@ -31,6 +31,7 @@ context_builder = ContextBuilder(persona_store)
 prompt_builder = PromptBuilder()
 response_guard = ResponseGuard()
 _SAFE_FALLBACK_REPLY = "Rasmodia：暂时没有合适的回复，请稍后再试。"
+_WARNING_LIMIT = 20
 
 _DIALOGUE_FIELDS = {
     "npcId",
@@ -42,6 +43,21 @@ _DIALOGUE_FIELDS = {
     "history",
     "gameState",
 }
+
+
+def _limit_warnings(warnings: Iterable[str]) -> list[str]:
+    values = list(warnings)
+    guard_indices = [
+        index
+        for index, warning in enumerate(values)
+        if warning.startswith(("response_guard:", "fallback_guard:"))
+    ]
+    selected = set(guard_indices[-_WARNING_LIMIT:])
+    for index in range(len(values) - 1, -1, -1):
+        if len(selected) >= _WARNING_LIMIT:
+            break
+        selected.add(index)
+    return [values[index] for index in sorted(selected)]
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -176,5 +192,5 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         provider=result.provider,
         fallback=result.fallback,
         latencyMs=latency_ms,
-        warnings=result.warnings,
+        warnings=_limit_warnings(result.warnings),
     )
