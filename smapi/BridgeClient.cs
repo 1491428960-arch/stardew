@@ -95,7 +95,10 @@ public sealed class BridgeClient : IDisposable
         this.httpClient = httpClient ?? new HttpClient();
         ownsHttpClient = httpClient is null;
         this.httpClient.Timeout = timeout ?? DefaultTimeout;
-        dialogueEndpoint = new Uri(baseEndpoint, "/api/dialogue/test");
+        var normalizedBaseEndpoint = new Uri(
+            baseEndpoint.AbsoluteUri.TrimEnd('/') + "/",
+            UriKind.Absolute);
+        dialogueEndpoint = new Uri(normalizedBaseEndpoint, "api/dialogue/test");
     }
 
     public async Task<BridgeDialogueResponse> SendAsync(

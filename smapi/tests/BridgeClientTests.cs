@@ -36,6 +36,26 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task SendAsync_preserves_a_custom_bridge_base_path()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"fake\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:6000/base"));
+
+        await client.SendAsync("Rasmodia", "你好");
+
+        Assert.Equal(
+            "http://127.0.0.1:6000/base/api/dialogue/test",
+            handler.Request!.RequestUri!.ToString());
+    }
+
+    [Fact]
     public async Task SendAsync_preserves_npc_game_state_and_legacy_identity_fields()
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
