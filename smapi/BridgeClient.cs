@@ -72,6 +72,10 @@ public sealed class BridgeClient : IDisposable
 {
     public static readonly Uri DefaultEndpoint = new("http://127.0.0.1:5678");
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
+    private const int MaxHistoryItems = 6;
+    private const int MaxHistoryContentLength = 240;
+    private const int MaxMessageLength = 2000;
+    private const int MaxRecentFactLength = 240;
 
     private readonly HttpClient httpClient;
     private readonly bool ownsHttpClient;
@@ -113,13 +117,14 @@ public sealed class BridgeClient : IDisposable
         try
         {
             var npcGameState = gameState as NpcGameState;
+            var boundedMessage = Truncate(message, MaxMessageLength);
             BridgeDialogueRequest request;
             lock (memoryLock)
             {
                 request = new BridgeDialogueRequest
                 {
                     NpcId = npcId,
-                    Message = message,
+                    Message = boundedMessage,
                     DisplayName = npcGameState?.DisplayName,
                     SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
                     GameState = gameState,
@@ -152,25 +157,25 @@ public sealed class BridgeClient : IDisposable
                     : parsed;
             }
 
-            RememberResult(npcId, message, result, npcGameState);
+            RememberResult(npcId, boundedMessage, result, npcGameState);
             return result;
         }
         catch (TaskCanceledException)
         {
             var result = BridgeDialogueResponse.Offline("bridge: timeout");
-            RememberResult(npcId, message, result, gameState as NpcGameState);
+            RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
             return result;
         }
         catch (HttpRequestException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: offline ({exception.Message})");
-            RememberResult(npcId, message, result, gameState as NpcGameState);
+            RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
             return result;
         }
         catch (JsonException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: invalid JSON ({exception.Message})");
-            RememberResult(npcId, message, result, gameState as NpcGameState);
+            RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
             return result;
         }
     }
@@ -198,26 +203,32 @@ public sealed class BridgeClient : IDisposable
         BridgeDialogueResponse result,
         NpcGameState? currentState)
     {
+        if (result.Fallback)
+        {
+            return;
+        }
+
         lock (memoryLock)
         {
-            if (!result.Fallback)
+            if (!historyByNpc.TryGetValue(npcId, out var history))
             {
-                if (!historyByNpc.TryGetValue(npcId, out var history))
-                {
-                    history = new List<BridgeDialogueHistoryItem>();
-                    historyByNpc[npcId] = history;
-                }
+                history = new List<BridgeDialogueHistoryItem>();
+                historyByNpc[npcId] = history;
+            }
 
-                history.Add(new BridgeDialogueHistoryItem { Role = "user", Content = message });
-                history.Add(new BridgeDialogueHistoryItem
-                {
-                    Role = "assistant",
-                    Content = result.Reply,
-                });
-                if (history.Count > 6)
-                {
-                    history.RemoveRange(0, history.Count - 6);
-                }
+            history.Add(new BridgeDialogueHistoryItem
+            {
+                Role = "user",
+                Content = Truncate(message, MaxHistoryContentLength),
+            });
+            history.Add(new BridgeDialogueHistoryItem
+            {
+                Role = "assistant",
+                Content = Truncate(result.Reply, MaxHistoryContentLength),
+            });
+            if (history.Count > MaxHistoryItems)
+            {
+                history.RemoveRange(0, history.Count - MaxHistoryItems);
             }
 
             if (currentState is not null)
@@ -255,7 +266,9 @@ public sealed class BridgeClient : IDisposable
     {
         if (!string.Equals(previous, current, StringComparison.Ordinal))
         {
-            facts.Add($"{label}从“{previous ?? "未知"}”变为“{current ?? "未知"}”");
+            facts.Add(Truncate(
+                $"{label}从“{previous ?? "未知"}”变为“{current ?? "未知"}”",
+                MaxRecentFactLength));
         }
     }
 
@@ -267,7 +280,14 @@ public sealed class BridgeClient : IDisposable
     {
         if (previous != current)
         {
-            facts.Add($"{label}从“{previous?.ToString() ?? "未知"}”变为“{current?.ToString() ?? "未知"}”");
+            facts.Add(Truncate(
+                $"{label}从“{previous?.ToString() ?? "未知"}”变为“{current?.ToString() ?? "未知"}”",
+                MaxRecentFactLength));
         }
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        return value.Length <= maxLength ? value : value[..maxLength];
     }
 }

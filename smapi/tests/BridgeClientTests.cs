@@ -177,6 +177,74 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task SendAsync_does_not_remember_failed_state_before_next_success()
+    {
+        var handler = new RecordingHandler(requestIndex => requestIndex == 0
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            : new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"reply\":\"成功回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var failedState = new NpcGameState
+        {
+            NpcId = "Wizard",
+            Location = "WizardTower",
+            Friendship = 128,
+        };
+        var succeededState = new NpcGameState
+        {
+            NpcId = "Wizard",
+            Location = "Town",
+            Friendship = 140,
+        };
+
+        await client.SendAsync("Wizard", "失败的问题", failedState);
+        await client.SendAsync("Wizard", "成功的问题", succeededState);
+
+        using var secondRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        Assert.Empty(secondRequest.RootElement.GetProperty("recentFacts").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task SendAsync_limits_message_history_and_recent_fact_lengths()
+    {
+        var handler = new RecordingHandler(requestIndex => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new BridgeDialogueResponse
+                {
+                    Reply = requestIndex == 0 ? new string('回', 300) : "成功回复",
+                    Provider = "fake",
+                    Fallback = false,
+                }),
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var firstState = new NpcGameState { NpcId = "Wizard", Location = new string('A', 300) };
+        var secondState = new NpcGameState { NpcId = "Wizard", Location = new string('B', 300) };
+        var longMessage = new string('问', 2500);
+
+        await client.SendAsync("Wizard", longMessage, firstState);
+        await client.SendAsync("Wizard", "第二次问题", secondState);
+
+        using var firstRequest = JsonDocument.Parse(handler.RequestBodies[0]);
+        Assert.Equal(2000, firstRequest.RootElement.GetProperty("message").GetString()!.Length);
+        using var secondRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        var history = secondRequest.RootElement.GetProperty("history").EnumerateArray().ToArray();
+        Assert.All(history, item => Assert.InRange(item.GetProperty("content").GetString()!.Length, 0, 240));
+        Assert.All(
+            secondRequest.RootElement.GetProperty("recentFacts").EnumerateArray(),
+            item => Assert.InRange(item.GetString()!.Length, 0, 240));
+    }
+
+    [Fact]
     public async Task SendAsync_returns_offline_fallback_for_service_unavailable()
     {
         using var httpClient = new HttpClient(
