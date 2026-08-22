@@ -29,7 +29,7 @@ SMAPI 官方支持用 `--mods-path` 指定独立 mod 目录，专门适合测试
 - 当前项目的 Bridge 测试页位于 `http://127.0.0.1:5678/test`，不需要启动游戏。
 - 当前 C# 回归测试为 23/23，通过配置、Bridge、NPC 名称回退等逻辑；这些测试不需要启动游戏。
 - `StardewAI.NPC` 本身没有声明 SVE、Content Patcher 或其他硬依赖，快捷键和菜单烟测可以使用最小 mod 集合。
-- 已实现 `scripts/start_fast_test.ps1`，支持独立 `Mods-AI-FastTest`、`-IncludeRasmodia`、默认不启动和显式 `-Launch`；离线安全测试为 21/21 通过。
+- 已实现 `scripts/start_fast_test.ps1`，支持独立 `Mods-AI-FastTest`、`-IncludeRasmodia`、默认不启动和显式 `-Launch`；离线安全测试为 37/37 通过。
 - 当前构建输出不包含 `manifest.json`，启动器会从 `smapi/manifest.json` 一并复制，避免生成无效 Mod 目录。
 
 ## 建议
@@ -53,7 +53,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 - `StardewAI.NPC`
 - `GenericModConfigMenu`
 - `Console Commands`（可选，便于查看 SMAPI 状态）
-- `Content Patcher` 和 `Romanceable Rasmodia`（只有需要验证 Rasmodia 外观/名字时才放）
+- `Content Patcher`、`Cross-Mod Compatibility Tokens`（CMCT）和 `Romanceable Rasmodia`（验证 Rasmodia 时必须同时加入）
 
 用独立的新测试存档，不要直接加载依赖 SVE/SpaceCore 的正式存档。快捷键烟测只需要进入一个普通存档，确认 F8 能打开对话菜单；不需要加载 SVE 全套地图和内容包。
 
@@ -93,12 +93,13 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 - 2026-08-23 本地 SMAPI 日志：当前完整 profile 启动时加载 22 个代码 mod、8 个内容包，并使用 Stardrop 的自定义 `SELECT~1` mod 路径。
 - 2026-08-23 本地测试：`dotnet test ...` 通过 23/23。
 - 2026-08-23 本地构建：SMAPI mod 构建 0 警告、0 错误。
-- 2026-08-23 本地脚本测试：`test_start_fast_test.ps1` 通过 21/21 个离线场景，覆盖默认不启动、显式 Launch、带空格 `--mods-path`、路径拒绝、额外 Mod 排除、非法源目录、源 Junction 白名单、同名普通文件和目标 Junction 防护。
-- 2026-08-23 本地真实路径检查：`start_fast_test.ps1 -IncludeRasmodia -NoLaunch` 自动发现 `C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Selected Mods`，生成 `D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest`；加载 3 个 Mod，DLL SHA-256 为 `815795C802A00A19BE4B601E7EB818C82F1B74C3F3D515EA325F39AD2A97F167`，未启动游戏。
+- 2026-08-23 本地脚本测试：`test_start_fast_test.ps1` 通过 37/37 个离线场景，覆盖默认不启动、显式 Launch、带空格 `--mods-path`、等待退出、缺少 `windir` 的隔离环境及退出前恢复、路径拒绝、额外 Mod 排除、依赖 UniqueID、源 Junction 白名单、同名普通文件和目标 Junction 防护。
+- 2026-08-23 本地真实路径检查：`start_fast_test.ps1 -IncludeRasmodia -NoLaunch` 自动发现 `C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Selected Mods`，生成 `D:\sbeam\steamapps\common\Stardew Valley\Mods-AI-FastTest`；目录包含 5 个项目，DLL SHA-256 为 `1512CAA0FD1D79BA60D35FEEB5B360AFA57B16EE4B27824D10FD2FBC63ED1322`。
+- 2026-08-23 本地真实启动：SMAPI 从快速目录成功加载 4 个代码 Mod 和 1 个内容包，`Stardew AI NPC` 进入 ready 状态。正常关闭后日志出现 `ClosedGame`、`Disposing`，启动器释放进程句柄且未新增残留进程。
 
 ## 限制
 
-- 尚未实测最小 profile 的实际游戏启动耗时；脚本同步耗时已完成真实路径检查，游戏启动耗时仍会受磁盘、SMAPI 缓存和存档加载影响。
+- 已实测最小 profile 能启动到标题界面并正常退出；存档加载耗时仍会受磁盘、SMAPI 缓存和存档规模影响。
 - `--mods-path` 是 SMAPI 官方支持的参数，但 Stardrop 仍可能在自己的 profile 管理流程中覆盖启动参数；使用 Stardrop 时应以启动日志顶部的 `Mods go here` 为准。
 - 最小 profile 只能验证基础 NPC 和菜单流程，不能替代 SVE/娘化/完整 mod 组合的最终兼容性验证。
 - 已实测脚本的离线同步、安全拒绝场景和真实路径同步；尚未在真实游戏进程中替用户完成 F8、GMCM 和独立存档烟测。

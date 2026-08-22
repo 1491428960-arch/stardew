@@ -154,6 +154,26 @@ function Require-File {
     return $resolvedPath
 }
 
+function Require-ModManifest {
+    param(
+        [Parameter(Mandatory)] [string]$Directory,
+        [Parameter(Mandatory)] [string]$ExpectedUniqueId,
+        [Parameter(Mandatory)] [string]$Name
+    )
+
+    $manifestPath = Require-File -Path (Join-Path $Directory 'manifest.json') -Name "$Name manifest" -AllowReparsePoint
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "$Name manifest 不是有效 JSON：$manifestPath"
+    }
+    $actualUniqueId = [string]$manifest.UniqueID
+    if (-not [string]::Equals($actualUniqueId, $ExpectedUniqueId, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Name manifest UniqueID 不匹配，期望 $ExpectedUniqueId，实际 $actualUniqueId"
+    }
+    return $manifestPath
+}
+
 function Resolve-SourceModsPath {
     param(
         [Parameter(Mandatory)] [string]$GameRoot,
@@ -277,10 +297,24 @@ if ($IncludeRasmodia) {
     }
     Require-File -Path (Join-Path $RasmodiaSourcePath 'manifest.json') -Name 'Rasmodia manifest' -AllowReparsePoint | Out-Null
     Assert-StardropSourceLink -Path $RasmodiaSourcePath -TrustedRoot $stardropCachePath
+
+    $contentPatcherSourcePath = Require-NamedDirectory -Path (Join-Path $SourceModsPath 'ContentPatcher') -ExpectedName 'ContentPatcher' -Name 'Content Patcher 源目录' -AllowLeafReparsePoint
+    Require-ModManifest -Directory $contentPatcherSourcePath -ExpectedUniqueId 'Pathoschild.ContentPatcher' -Name 'Content Patcher' | Out-Null
+    Assert-StardropSourceLink -Path $contentPatcherSourcePath -TrustedRoot $stardropCachePath
+
+    $cmctSourcePath = Require-NamedDirectory -Path (Join-Path $SourceModsPath 'CrossModCompatibilityTokens') -ExpectedName 'CrossModCompatibilityTokens' -Name 'CMCT 源目录' -AllowLeafReparsePoint
+    Require-ModManifest -Directory $cmctSourcePath -ExpectedUniqueId 'Spiderbuttons.CMCT' -Name 'CMCT' | Out-Null
+    Assert-StardropSourceLink -Path $cmctSourcePath -TrustedRoot $stardropCachePath
 }
 
 [IO.Directory]::CreateDirectory($FastModsPath) | Out-Null
-$managedNames = @('StardewAI.NPC', 'GenericModConfigMenu', '[CP] Romanceable Rasmodia')
+$managedNames = @(
+    'StardewAI.NPC',
+    'GenericModConfigMenu',
+    '[CP] Romanceable Rasmodia',
+    'ContentPatcher',
+    'CrossModCompatibilityTokens'
+)
 foreach ($managedName in $managedNames) {
     Remove-ManagedDirectory -FastRoot $FastModsPath -Name $managedName
 }
@@ -294,6 +328,8 @@ Copy-Item -LiteralPath $manifestSourcePath -Destination $npcTargetPath -Force
 Copy-Item -LiteralPath $GmcmSourcePath -Destination $FastModsPath -Recurse -Force
 if ($IncludeRasmodia) {
     Copy-Item -LiteralPath $RasmodiaSourcePath -Destination $FastModsPath -Recurse -Force
+    Copy-Item -LiteralPath $contentPatcherSourcePath -Destination $FastModsPath -Recurse -Force
+    Copy-Item -LiteralPath $cmctSourcePath -Destination $FastModsPath -Recurse -Force
 }
 
 $dllTargetPath = Join-Path $npcTargetPath 'StardewAI.NPC.dll'
@@ -315,6 +351,36 @@ if (-not $Launch -or $NoLaunch) {
 Write-Output "正在启动 SMAPI：$smapiPath --mods-path $FastModsPath"
 $quotedFastModsPath = '"' + $FastModsPath + '"'
 $argumentList = @('--mods-path', $quotedFastModsPath)
-$process = Start-Process -FilePath $smapiPath -WorkingDirectory $GamePath -ArgumentList $argumentList -PassThru
-Write-Output "SMAPI 已启动，PID=$($process.Id)"
+$originalWindir = $env:windir
+$windirWasAdded = $false
+if ([string]::IsNullOrWhiteSpace($env:windir)) {
+    $windowsDirectory = $env:SystemRoot
+    if ([string]::IsNullOrWhiteSpace($windowsDirectory)) {
+        $windowsDirectory = [Environment]::GetEnvironmentVariable('windir', 'Machine')
+    }
+    if ([string]::IsNullOrWhiteSpace($windowsDirectory) -or -not [IO.Directory]::Exists($windowsDirectory)) {
+        throw '当前进程缺少有效的 windir/SystemRoot，无法安全启动 SMAPI。'
+    }
+    $env:windir = $windowsDirectory
+    $windirWasAdded = $true
+    Write-Output "已为 SMAPI 子进程补回 windir：$windowsDirectory"
+}
+try {
+    $process = Start-Process -FilePath $smapiPath -WorkingDirectory $GamePath -ArgumentList $argumentList -PassThru
+    try {
+        Write-Output "SMAPI 已启动，PID=$($process.Id)"
+        $process.WaitForExit()
+    } finally {
+        $process.Dispose()
+    }
+} finally {
+    if ($windirWasAdded) {
+        if ($null -eq $originalWindir) {
+            Remove-Item Env:windir -ErrorAction SilentlyContinue
+        } else {
+            $env:windir = $originalWindir
+        }
+    }
+}
+Write-Output 'SMAPI 已退出，启动器已释放进程句柄。'
 exit 0
