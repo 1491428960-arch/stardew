@@ -6,11 +6,11 @@
 
 对 `scripts/run_smapi_regression.ps1` 运行 PowerShell AST 检查，必须同时满足：
 
-1. 存在可覆盖的真实路径参数：游戏目录、SMAPI 启动入口、`AI-SVE-测试` profile、存档目录、SMAPI 日志和 Bridge 地址；默认游戏入口使用 `D:\sbeam\steamapps\common\Stardew Valley\StardewModdingAPI.exe`，不得依赖 C 盘系统目录、注册表或环境变量推导路径。
-2. profile、Mods 根、存档和日志只通过 `Test-Path`、`Get-Item`、`Get-ChildItem`、`Get-Content` 读取；脚本不得出现删除、覆盖、复制、移动、写文件或注册表调用。
+1. 存在可覆盖的真实路径参数：游戏目录、SMAPI 启动入口、`AI-SVE-测试.json` profile 文件、Stardrop `Selected Mods` 目录、存档目录、SMAPI 日志和 Bridge 地址；默认值为 `C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Profiles\AI-SVE-测试.json`、`C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Selected Mods`，游戏入口为 `D:\sbeam\steamapps\common\Stardew Valley\StardewModdingAPI.exe`。这些是显式参数，不通过注册表或环境变量推导，并允许覆盖。
+2. profile 文件使用 `Leaf` 检查，Selected Mods 和 Mods 根使用 `Container` 检查；它们、存档和日志只通过 `Test-Path`、`Get-Item`、`Get-ChildItem`、`Get-Content` 读取。脚本不得出现删除、覆盖、复制、移动、写文件或注册表调用。
 3. 存档快照只记录相对文件名、大小、`LastWriteTimeUtc`；启动前和 SMAPI 结束后各记录一次，不读取存档内容。
 4. 只有 `-LaunchSmapi` 明确传入时才调用 SMAPI 启动入口；只有 `-InspectLog` 明确传入时才读取日志，且启动前后快照仍然执行。
-5. Bridge 关闭时必须输出可辨识的 `BridgeClosed` 记录，并继续输出只读环境检查结果，不把 Bridge 关闭误判为游戏崩溃。
+5. Bridge 关闭时必须输出可辨识的 `Bridge closed` 记录，并继续输出只读环境检查结果，不把 Bridge 关闭误判为游戏崩溃。
 6. Bridge 在线且 local/cloud 两个 Provider 都失败时，必须记录 `local provider failed`、`cloud provider failed` 和 `fallback` 证据；缺少其中任一项时输出未观测，而不是伪造通过。
 7. 默认路径检查失败时只告警并返回非零状态；不得为了让回归继续而创建 profile、存档目录或修改源 Mods 仓库。
 
@@ -39,4 +39,3 @@ pwsh -NoProfile -File .\scripts\run_smapi_regression.ps1 -LaunchSmapi -InspectLo
 ```
 
 第二条命令会等待用户退出 SMAPI；运行前应确认游戏没有打开重要存档，并保留用户自己的备份。脚本不自动改存档，R5/R6 的“出现对话、兼容性和视觉结果”不能由 pytest 或静态脚本替代。
-

@@ -11,7 +11,8 @@
 param(
     [string]$GamePath = 'D:\sbeam\steamapps\common\Stardew Valley',
     [string]$SmapiExecutable = 'D:\sbeam\steamapps\common\Stardew Valley\StardewModdingAPI.exe',
-    [string]$StardropProfile = 'D:\sbeam\steamapps\common\Stardew Valley\Mods\Stardrop Installed Mods\AI-SVE-测试',
+    [string]$StardropProfile = 'C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Profiles\AI-SVE-测试.json',
+    [string]$SelectedModsPath = 'C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\Selected Mods',
     [string]$SourceModsPath = 'D:\sbeam\steamapps\common\Stardew Valley\Mods',
     [string]$SaveRoot = 'D:\sbeam\userdata\1422226217\413150\ac\WinAppDataRoaming\StardewValley\Saves',
     [string]$SmapiLogPath = 'D:\sbeam\steamapps\common\Stardew Valley\smapi-internal\SMAPI-latest.txt',
@@ -150,12 +151,14 @@ function Test-Bridge {
 Write-Output '=== Stardew AI NPC SMAPI 回归（默认只读） ==='
 Write-Output "GamePath: $GamePath"
 Write-Output "StardropProfile: $StardropProfile"
+Write-Output "SelectedModsPath: $SelectedModsPath"
 Write-Output "SaveRoot: $SaveRoot"
 
 foreach ($pathCheck in @(
     [pscustomobject]@{ Name = 'GamePath'; Path = $GamePath; Type = 'Container' },
     [pscustomobject]@{ Name = 'SMAPI entry'; Path = $SmapiExecutable; Type = 'Leaf' },
-    [pscustomobject]@{ Name = 'AI-SVE-测试 profile'; Path = $StardropProfile; Type = 'Container' },
+    [pscustomobject]@{ Name = 'AI-SVE-测试 profile'; Path = $StardropProfile; Type = 'Leaf' },
+    [pscustomobject]@{ Name = 'Selected Mods (read-only)'; Path = $SelectedModsPath; Type = 'Container' },
     [pscustomobject]@{ Name = 'Source Mods (read-only)'; Path = $SourceModsPath; Type = 'Container' },
     [pscustomobject]@{ Name = 'SaveRoot'; Path = $SaveRoot; Type = 'Container' }
 )) {
@@ -181,8 +184,11 @@ if ($LaunchSmapi) {
     if (-not (Test-Path -LiteralPath $SmapiExecutable -PathType Leaf)) {
         throw "SMAPI 启动入口不存在：$SmapiExecutable"
     }
-    if (-not (Test-Path -LiteralPath $StardropProfile -PathType Container)) {
-        throw "未找到 AI-SVE-测试 profile；为避免启动错误 profile，已拒绝启动：$StardropProfile"
+    if (-not (Test-Path -LiteralPath $StardropProfile -PathType Leaf)) {
+        throw "未找到 AI-SVE-测试 profile 文件；为避免启动错误 profile，已拒绝启动：$StardropProfile"
+    }
+    if (-not (Test-Path -LiteralPath $SelectedModsPath -PathType Container)) {
+        throw "未找到 Stardrop Selected Mods 目录；为避免启动错误 Mods 集合，已拒绝启动：$SelectedModsPath"
     }
 
     Write-Output '正在调用 SMAPI 启动入口；请用户在游戏内完成 R5/R6 后退出游戏。'
