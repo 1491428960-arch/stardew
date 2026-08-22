@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
 import httpx
 import pytest
@@ -231,3 +232,35 @@ def test_openai_compatible_provider_uses_async_http_without_exposing_api_key() -
     assert "secret-key" not in repr(result)
     assert received["authorization"] == "Bearer secret-key"
     assert b"secret-key" not in received["body"]
+
+
+def test_openai_compatible_provider_posts_app_built_messages_unchanged() -> None:
+    received: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        received["body"] = request.read()
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "完整上下文回复"}}]},
+        )
+
+    from stardew_ai_bridge.config import ProviderSettings
+
+    provider = OpenAICompatibleProvider(
+        ProviderSettings(
+            name="local",
+            url="https://local.invalid/v1/chat/completions",
+            model="local-model",
+            timeout=2.0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    messages = [
+        {"role": "system", "name": "game_state", "content": "Summer / 1830"},
+        {"role": "user", "name": "player_input", "content": "你好"},
+    ]
+
+    result = provider.generate(REQUEST, messages=messages)
+
+    assert result.reply == "完整上下文回复"
+    assert json.loads(received["body"])["messages"] == messages  # type: ignore[arg-type]

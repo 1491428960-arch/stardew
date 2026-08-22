@@ -35,6 +35,50 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task SendAsync_preserves_npc_game_state_and_legacy_identity_fields()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var gameState = new NpcGameState
+        {
+            NpcId = "Wizard",
+            DisplayName = "Rasmodia",
+            Season = "Summer",
+            Date = "14",
+            Weather = "rain",
+            Time = 1830,
+            Location = "WizardTower",
+            Friendship = 128,
+            Relationship = "friend",
+            SourceMods = new[] { "SVE", "FlashShifter.SVECode" },
+        };
+
+        await client.SendAsync("Wizard", "你好", gameState);
+
+        using var requestJson = JsonDocument.Parse(await handler.Request!.Content!.ReadAsStringAsync());
+        var root = requestJson.RootElement;
+        Assert.Equal("Rasmodia", root.GetProperty("displayName").GetString());
+        Assert.Equal("Rasmodia", root.GetProperty("gameState").GetProperty("displayName").GetString());
+        Assert.Equal("Summer", root.GetProperty("gameState").GetProperty("season").GetString());
+        Assert.Equal(1830, root.GetProperty("gameState").GetProperty("time").GetInt32());
+        Assert.Equal("WizardTower", root.GetProperty("gameState").GetProperty("location").GetString());
+        Assert.Equal(128, root.GetProperty("gameState").GetProperty("friendship").GetInt32());
+        Assert.Equal("friend", root.GetProperty("gameState").GetProperty("relationship").GetString());
+        Assert.Equal(
+            new[] { "SVE", "FlashShifter.SVECode" },
+            root.GetProperty("gameState").GetProperty("sourceMods").EnumerateArray()
+                .Select(item => item.GetString())
+                .ToArray());
+    }
+
+    [Fact]
     public async Task SendAsync_returns_offline_fallback_for_service_unavailable()
     {
         using var httpClient = new HttpClient(

@@ -16,6 +16,9 @@ public sealed class BridgeDialogueRequest
     [JsonPropertyName("displayName")]
     public string? DisplayName { get; init; }
 
+    [JsonPropertyName("sourceMods")]
+    public IReadOnlyList<string> SourceMods { get; init; } = Array.Empty<string>();
+
     [JsonPropertyName("gameState")]
     public object? GameState { get; init; }
 }
@@ -87,12 +90,15 @@ public sealed class BridgeClient : IDisposable
 
         try
         {
+            var npcGameState = gameState as NpcGameState;
             using var response = await httpClient.PostAsJsonAsync(
                 dialogueEndpoint,
                 new BridgeDialogueRequest
                 {
                     NpcId = npcId,
                     Message = message,
+                    DisplayName = npcGameState?.DisplayName,
+                    SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
                     GameState = gameState,
                 },
                 cancellationToken);

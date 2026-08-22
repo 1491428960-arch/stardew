@@ -38,6 +38,8 @@ _DIALOGUE_FIELDS = {
     "displayName",
     "sourceMods",
     "recentFacts",
+    "history",
+    "gameState",
 }
 
 
@@ -122,7 +124,7 @@ def _validate_dialogue_request(payload: Mapping[str, object]) -> DialogueTestReq
 @app.post("/api/dialogue/test", response_model=DialogueResponse)
 def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     request = _validate_dialogue_request(payload)
-    _build_context(payload)
+    _, prompt = _build_context(payload)
     started_at = perf_counter()
     if (
         not provider_router.has_configured_upstream()
@@ -130,7 +132,7 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     ):
         result = fake_provider.generate(request)
     else:
-        result = provider_router.generate(request)
+        result = provider_router.generate(request, messages=prompt)
 
     guarded = response_guard.check(result.reply)
     if not guarded.accepted:

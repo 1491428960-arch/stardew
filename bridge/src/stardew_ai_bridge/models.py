@@ -46,6 +46,33 @@ class NpcContext(ApiModel):
     )
 
 
+class NpcGameState(ApiModel):
+    npc_id: str | None = Field(default=None, alias="npcId", max_length=100)
+    display_name: str | None = Field(
+        default=None,
+        alias="displayName",
+        max_length=100,
+    )
+    gender: str | None = Field(default=None, max_length=50)
+    season: str | None = Field(default=None, max_length=50)
+    date: str | None = Field(default=None, max_length=100)
+    weather: str | None = Field(default=None, max_length=100)
+    time: int | None = None
+    location: str | None = Field(default=None, max_length=200)
+    friendship: int | None = None
+    relationship: str | None = Field(default=None, max_length=100)
+    source_mods: list[str] = Field(
+        default_factory=list,
+        alias="sourceMods",
+        max_length=50,
+    )
+    warnings: list[str] = Field(default_factory=list, max_length=50)
+
+    _strip_display_name = field_validator("display_name", mode="before")(
+        _strip_text
+    )
+
+
 class DialogueTestRequest(ApiModel):
     npc_id: str = Field(alias="npcId", min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=2000)
@@ -66,6 +93,8 @@ class DialogueTestRequest(ApiModel):
         alias="recentFacts",
         max_length=50,
     )
+    history: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    game_state: NpcGameState | None = Field(default=None, alias="gameState")
 
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
     _strip_message = field_validator("message", mode="before")(_strip_text)
@@ -76,8 +105,12 @@ class DialogueTestRequest(ApiModel):
     def context(self) -> NpcContext:
         return NpcContext(
             npcId=self.npc_id,
-            displayName=self.display_name,
-            sourceMods=self.source_mods,
+            displayName=self.display_name or (
+                self.game_state.display_name if self.game_state else None
+            ),
+            sourceMods=self.source_mods or (
+                self.game_state.source_mods if self.game_state else []
+            ),
             recentFacts=self.recent_facts,
         )
 

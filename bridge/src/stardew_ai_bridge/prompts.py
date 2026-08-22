@@ -9,7 +9,15 @@ from .personas import PersonaStore
 
 
 _IDENTITY_FIELDS = ("npcId", "displayName", "pronouns", "coreTraits", "addressing")
-_STATE_FIELDS = ("date", "weather", "location", "friendship", "relationship")
+_STATE_FIELDS = (
+    "season",
+    "date",
+    "weather",
+    "time",
+    "location",
+    "friendship",
+    "relationship",
+)
 
 
 def _text(value: object, *, limit: int = 240) -> str:
@@ -40,8 +48,22 @@ class ContextBuilder:
         if isinstance(npc_id, Mapping):
             request = dict(npc_id)
             npc_id = str(_first_value(request, "npcId", "npc_id") or "Unknown")
-            source_mods = _first_value(request, "sourceMods", "source_mods") or ()
+            nested_state = request.get("gameState", request.get("game_state", {}))
+            nested_state = (
+                dict(nested_state) if isinstance(nested_state, Mapping) else {}
+            )
+            top_level_mods = _first_value(request, "sourceMods", "source_mods")
+            source_mods = (
+                top_level_mods
+                if top_level_mods is not None
+                else nested_state.get("sourceMods", nested_state.get("source_mods", ()))
+            ) or ()
             values = {**request, **values}
+
+        state_input = values.get("gameState", values.get("game_state", {}))
+        state = dict(state_input) if isinstance(state_input, Mapping) else {}
+        if not source_mods:
+            source_mods = state.get("sourceMods", state.get("source_mods", ())) or ()
 
         source_mod_list = [mod for mod in source_mods if isinstance(mod, str) and mod.strip()]
         persona = self.persona_store.get_persona(str(npc_id), source_mod_list)
@@ -52,8 +74,6 @@ class ContextBuilder:
         }
         identity.setdefault("npcId", str(npc_id))
 
-        state_input = values.get("gameState", values.get("game_state", {}))
-        state = dict(state_input) if isinstance(state_input, Mapping) else {}
         game_state: dict[str, Any] = {}
         for key in _STATE_FIELDS:
             value = _first_value(values, key, {"friendship": "friendship_points"}.get(key, ""))
@@ -61,6 +81,14 @@ class ContextBuilder:
                 value = state[key]
             if value is not None and value != "":
                 game_state[key] = _text(value) if isinstance(value, str) else value
+
+        runtime_display_name = _first_value(values, "displayName", "display_name")
+        if runtime_display_name is None:
+            runtime_display_name = _first_value(state, "displayName", "display_name")
+        if runtime_display_name is not None:
+            display_name = _text(runtime_display_name)
+            if display_name:
+                identity["displayName"] = display_name
 
         facts_input = _first_value(values, "recentFacts", "recent_facts") or ()
         recent_facts = [item for item in (_text(fact) for fact in facts_input) if item]

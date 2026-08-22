@@ -13,7 +13,13 @@ class FallbackProvider:
     def name(self) -> str:
         return "fallback"
 
-    def generate(self, request: DialogueTestRequest) -> ProviderResult:
+    def generate(
+        self,
+        request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
+    ) -> ProviderResult:
+        del messages
         return ProviderResult(
             reply=self.reply,
             provider=self.name,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 from typing import Protocol, runtime_checkable
@@ -21,7 +22,12 @@ class Provider(Protocol):
     def name(self) -> str:
         """返回 Provider 的稳定标识。"""
 
-    def generate(self, request: DialogueTestRequest) -> ProviderResult:
+    def generate(
+        self,
+        request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
+    ) -> ProviderResult:
         """根据一次测试请求生成结构化回复。"""
 
 
@@ -32,7 +38,13 @@ class FakeProvider(Provider):
     def name(self) -> str:
         return "fake"
 
-    def generate(self, request: DialogueTestRequest) -> ProviderResult:
+    def generate(
+        self,
+        request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
+    ) -> ProviderResult:
+        del messages
         return ProviderResult(
             reply=self.REPLY,
             provider=self.name,
@@ -58,9 +70,14 @@ class OpenAICompatibleProvider:
     def name(self) -> str:
         return self.settings.name
 
-    def generate(self, request: DialogueTestRequest) -> ProviderResult:
+    def generate(
+        self,
+        request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
+    ) -> ProviderResult:
         started_at = perf_counter()
-        response = _run_async(self._generate_async(request))
+        response = _run_async(self._generate_async(request, messages=messages))
         return response.model_copy(
             update={
                 "latency_ms": max(
@@ -73,6 +90,8 @@ class OpenAICompatibleProvider:
     async def _generate_async(
         self,
         request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
     ) -> ProviderResult:
         if not self.settings.enabled or not self.settings.url:
             raise ProviderError(f"{self.name} provider is disabled")
@@ -84,7 +103,7 @@ class OpenAICompatibleProvider:
             headers["authorization"] = f"Bearer {self.settings.api_key}"
         payload = {
             "model": self.settings.model,
-            "messages": [
+            "messages": messages or [
                 {
                     "role": "system",
                     "content": (
@@ -214,6 +233,8 @@ class ProviderRouter:
         self,
         request: DialogueTestRequest,
         provider: str | None = None,
+        *,
+        messages: list[dict[str, str]] | None = None,
     ) -> ProviderResult:
         explicit_provider = provider or self._explicit_request_provider(request)
         if explicit_provider == "fake":
@@ -223,7 +244,7 @@ class ProviderRouter:
         started_at = perf_counter()
         for candidate in self._candidates():
             try:
-                result = candidate.generate(request)
+                result = self._generate_candidate(candidate, request, messages)
             except Exception as exc:  # noqa: BLE001 - 路由必须隔离单个上游故障
                 warnings.append(self._warning(candidate, exc))
                 continue
@@ -240,6 +261,24 @@ class ProviderRouter:
             warnings=warnings,
             elapsed_ms=int((perf_counter() - started_at) * 1000),
         )
+
+    @staticmethod
+    def _generate_candidate(
+        candidate: Provider,
+        request: DialogueTestRequest,
+        messages: list[dict[str, str]] | None,
+    ) -> ProviderResult:
+        if messages is None:
+            return candidate.generate(request)
+
+        parameters = inspect.signature(candidate.generate).parameters
+        accepts_messages = "messages" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if accepts_messages:
+            return candidate.generate(request, messages=messages)
+        return candidate.generate(request)
 
     def _candidates(self) -> list[Provider]:
         candidates: list[Provider] = []
