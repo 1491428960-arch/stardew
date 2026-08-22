@@ -1,7 +1,17 @@
 {
   "mod": "Romanceable Rasmodius",
+  "sourceMods": [
+    "Nom0ri.RomRas",
+    "Parrot.RomRas",
+    "Dacar.SeasRomRasmodia"
+  ],
   "personas": {
     "Wizard": {
+      "displayName": "Rasmodia",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "traveler", "self": "Rasmodia"}
+    },
+    "Rasmodia": {
       "displayName": "Rasmodia",
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
       "addressing": {"player": "traveler", "self": "Rasmodia"}

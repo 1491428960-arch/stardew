@@ -1,5 +1,10 @@
 {
   "mod": "female-bachelors",
+  "sourceMods": [
+    "Invatorzen.idcsm",
+    "female.bachelors.beach",
+    "female.bachelors.winter"
+  ],
   "personas": {
     "Shane": {
       "displayName": "Shane",
@@ -10,6 +15,26 @@
       "displayName": "Alex",
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
       "addressing": {"player": "you", "self": "Alex"}
+    },
+    "Elliott": {
+      "displayName": "Elliott",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "you", "self": "Elliott"}
+    },
+    "Harvey": {
+      "displayName": "Harvey",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "you", "self": "Harvey"}
+    },
+    "Sam": {
+      "displayName": "Sam",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "you", "self": "Sam"}
+    },
+    "Sebastian": {
+      "displayName": "Sebastian",
+      "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
+      "addressing": {"player": "you", "self": "Sebastian"}
     }
   }
 }

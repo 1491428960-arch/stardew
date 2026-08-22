@@ -39,12 +39,70 @@ public sealed class NpcGameState
     [JsonPropertyName("relationship")]
     public string? Relationship { get; init; }
 
+    [JsonPropertyName("sourceMods")]
+    public IReadOnlyList<string> SourceMods { get; init; } = Array.Empty<string>();
+
     [JsonPropertyName("warnings")]
     public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
 }
 
+public sealed record RuntimeNpcState(
+    string? NpcId,
+    string? DisplayName,
+    string? Gender,
+    string? Location,
+    int? Friendship,
+    string? Relationship);
+
+public sealed record RuntimeWorldState(
+    string? Season,
+    int? Day,
+    bool? IsRaining,
+    int? Time);
+
+public interface IModRegistryStatus
+{
+    bool IsLoaded(string uniqueId);
+}
+
 public static class GameStateCollector
 {
+    private static readonly IModRegistryStatus EmptyModRegistry = new EmptyModRegistryStatus();
+    private static IModRegistryStatus modRegistry = EmptyModRegistry;
+
+    private static readonly (string Marker, string[] UniqueIds)[] ModFamilies =
+    {
+        (
+            "SVE",
+            new[]
+            {
+                "FlashShifter.SVECode",
+                "FlashShifter.StardewValleyExpandedCP",
+                "FlashShifter.SVE-FTM",
+            }),
+        (
+            "female-bachelors",
+            new[]
+            {
+                "Invatorzen.idcsm",
+                "female.bachelors.beach",
+                "female.bachelors.winter",
+            }),
+        (
+            "Romanceable Rasmodius",
+            new[]
+            {
+                "Nom0ri.RomRas",
+                "Parrot.RomRas",
+                "Dacar.SeasRomRasmodia",
+            }),
+    };
+
+    public static void ConfigureModRegistry(IModRegistryStatus registry)
+    {
+        modRegistry = registry ?? EmptyModRegistry;
+    }
+
     public static NpcGameState Collect(StardewNpc? npc)
     {
         if (npc is null)
@@ -94,18 +152,75 @@ public static class GameStateCollector
             warnings.Add("friendship unavailable");
         }
 
+        var state = Collect(
+            new RuntimeNpcState(npcId, displayName, gender, location, friendship, relationship),
+            new RuntimeWorldState(season, day, isRaining, time),
+            modRegistry);
+
         return new NpcGameState
         {
-            NpcId = npcId,
-            DisplayName = displayName,
-            Gender = gender,
-            Location = location,
-            Season = season,
-            Date = day?.ToString(CultureInfo.InvariantCulture),
+            NpcId = state.NpcId,
+            DisplayName = state.DisplayName,
+            Gender = state.Gender,
+            Location = state.Location,
+            Season = state.Season,
+            Date = state.Date,
+            Weather = state.Weather,
+            Time = state.Time,
+            Friendship = state.Friendship,
+            Relationship = state.Relationship,
+            SourceMods = state.SourceMods,
+            Warnings = warnings.Concat(state.Warnings).Distinct().ToArray(),
+        };
+    }
+
+    public static NpcGameState Collect(
+        RuntimeNpcState npc,
+        RuntimeWorldState world,
+        IModRegistryStatus registry)
+    {
+        var warnings = new List<string>();
+        AddWarningWhenMissing(npc.NpcId, warnings, "npcId");
+        AddWarningWhenMissing(npc.DisplayName, warnings, "displayName");
+        AddWarningWhenMissing(npc.Gender, warnings, "gender");
+        AddWarningWhenMissing(npc.Location, warnings, "location");
+        AddWarningWhenMissing(world.Season, warnings, "season");
+        if (!world.Day.HasValue)
+        {
+            warnings.Add("date unavailable");
+        }
+
+        var weather = world.IsRaining.HasValue
+            ? world.IsRaining.Value ? "rain" : "clear"
+            : null;
+        if (weather is null)
+        {
+            warnings.Add("weather unavailable");
+        }
+
+        if (!world.Time.HasValue)
+        {
+            warnings.Add("time unavailable");
+        }
+
+        if (!npc.Friendship.HasValue)
+        {
+            warnings.Add("friendship unavailable");
+        }
+
+        return new NpcGameState
+        {
+            NpcId = npc.NpcId,
+            DisplayName = npc.DisplayName,
+            Gender = npc.Gender,
+            Location = npc.Location,
+            Season = world.Season,
+            Date = world.Day?.ToString(CultureInfo.InvariantCulture),
             Weather = weather,
-            Time = time,
-            Friendship = friendship,
-            Relationship = relationship,
+            Time = world.Time,
+            Friendship = npc.Friendship,
+            Relationship = npc.Relationship,
+            SourceMods = DetectSourceMods(registry, warnings),
             Warnings = warnings,
         };
     }
@@ -117,7 +232,14 @@ public static class GameStateCollector
 
     private static string? ReadString(object? source, string memberName)
     {
-        return ReadMember(source, memberName)?.ToString();
+        try
+        {
+            return ReadMember(source, memberName)?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? ReadString(
@@ -187,31 +309,112 @@ public static class GameStateCollector
     private static int? ReadStaticInt(string memberName)
     {
         var value = ReadStatic(memberName);
-        return value is null ? null : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        try
+        {
+            return value is null ? null : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool? ReadStaticBool(string memberName)
     {
         var value = ReadStatic(memberName);
-        return value is null ? null : Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+        try
+        {
+            return value is null ? null : Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static (int? Friendship, string? Relationship) ReadFriendship(string? npcId)
     {
-        if (string.IsNullOrWhiteSpace(npcId))
+        try
+        {
+            if (string.IsNullOrWhiteSpace(npcId))
+            {
+                return (null, null);
+            }
+
+            var data = ReadMember(Game1.player, "friendshipData") as IDictionary;
+            if (data is null || !data.Contains(npcId))
+            {
+                return (null, null);
+            }
+
+            var friendship = data[npcId];
+            var points = ReadMember(friendship, "Points");
+            var status = ReadString(friendship, "Status");
+            return (
+                points is null ? null : Convert.ToInt32(points, CultureInfo.InvariantCulture),
+                status);
+        }
+        catch
         {
             return (null, null);
         }
+    }
 
-        var data = ReadMember(Game1.player, "friendshipData") as IDictionary;
-        if (data is null || !data.Contains(npcId))
+    private static IReadOnlyList<string> DetectSourceMods(
+        IModRegistryStatus? registry,
+        ICollection<string> warnings)
+    {
+        var sourceMods = new List<string>();
+        foreach (var family in ModFamilies)
         {
-            return (null, null);
+            var familyLoaded = false;
+            foreach (var uniqueId in family.UniqueIds)
+            {
+                bool loaded;
+                try
+                {
+                    loaded = registry?.IsLoaded(uniqueId) == true;
+                }
+                catch
+                {
+                    loaded = false;
+                    warnings.Add($"mod registry unavailable: {uniqueId}");
+                }
+
+                if (!loaded)
+                {
+                    continue;
+                }
+
+                if (!familyLoaded)
+                {
+                    sourceMods.Add(family.Marker);
+                    familyLoaded = true;
+                }
+
+                sourceMods.Add(uniqueId);
+            }
         }
 
-        var friendship = data[npcId];
-        var points = ReadMember(friendship, "Points");
-        var status = ReadMember(friendship, "Status")?.ToString();
-        return (points is null ? null : Convert.ToInt32(points, CultureInfo.InvariantCulture), status);
+        return sourceMods;
+    }
+
+    private static void AddWarningWhenMissing(
+        string? value,
+        ICollection<string> warnings,
+        string label)
+    {
+        if (value is null)
+        {
+            warnings.Add($"{label} unavailable");
+        }
+    }
+
+    private sealed class EmptyModRegistryStatus : IModRegistryStatus
+    {
+        public bool IsLoaded(string uniqueId)
+        {
+            return false;
+        }
     }
 }

@@ -1,10 +1,50 @@
 {
   "mod": "SVE",
+  "sourceMods": [
+    "FlashShifter.SVECode",
+    "FlashShifter.StardewValleyExpandedCP",
+    "FlashShifter.SVE-FTM"
+  ],
   "personas": {
     "Wizard": {
       "displayName": "Magnus",
       "coreTraits": ["掌握更多星界知识"],
       "addressing": {"self": "Magnus"}
+    },
+    "Sophia": {
+      "displayName": "Sophia",
+      "coreTraits": ["热爱葡萄酒酿造", "敏感而坚韧"],
+      "addressing": {"self": "Sophia"}
+    },
+    "Victor": {
+      "displayName": "Victor",
+      "coreTraits": ["重视工程与创造", "理性克制"],
+      "addressing": {"self": "Victor"}
+    },
+    "Olivia": {
+      "displayName": "Olivia",
+      "coreTraits": ["讲究生活品质", "保护家人"],
+      "addressing": {"self": "Olivia"}
+    },
+    "Andy": {
+      "displayName": "Andy",
+      "coreTraits": ["务实", "珍视农场生活"],
+      "addressing": {"self": "Andy"}
+    },
+    "Lance": {
+      "displayName": "Lance",
+      "coreTraits": ["见多识广", "遵守冒险者准则"],
+      "addressing": {"self": "Lance"}
+    },
+    "Claire": {
+      "displayName": "Claire",
+      "coreTraits": ["谨慎温和", "努力寻找新生活"],
+      "addressing": {"self": "Claire"}
+    },
+    "Morris": {
+      "displayName": "Morris",
+      "coreTraits": ["精于经营", "重视商业结果"],
+      "addressing": {"self": "Morris"}
     }
   }
 }

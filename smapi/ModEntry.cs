@@ -10,6 +10,7 @@ public sealed class ModEntry : Mod
 
     public override void Entry(IModHelper helper)
     {
+        GameStateCollector.ConfigureModRegistry(new SmapiModRegistryStatus(helper.ModRegistry));
         bridgeClient = new BridgeClient();
         helper.Events.Input.ButtonPressed += OnButtonPressed;
         Monitor.Log("AI NPC 原型已加载。按 N 与 Rasmodia 对话。", LogLevel.Info);
@@ -31,5 +32,27 @@ public sealed class ModEntry : Mod
         }
 
         Game1.activeClickableMenu = new DialogueMenu(rasmodia, bridgeClient);
+    }
+
+    private sealed class SmapiModRegistryStatus : IModRegistryStatus
+    {
+        private readonly IModRegistry registry;
+
+        public SmapiModRegistryStatus(IModRegistry registry)
+        {
+            this.registry = registry;
+        }
+
+        public bool IsLoaded(string uniqueId)
+        {
+            try
+            {
+                return registry.IsLoaded(uniqueId);
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 }

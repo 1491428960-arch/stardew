@@ -7,6 +7,25 @@ from pathlib import Path
 from typing import Any
 
 
+_MOD_ALIASES: dict[str, set[str]] = {
+    "sve": {
+        "flashshifter.svecode",
+        "flashshifter.stardewvalleyexpandedcp",
+        "flashshifter.sveftm",
+    },
+    "femalebachelors": {
+        "invatorzen.idcsm",
+        "femalebachelorsbeach",
+        "femalebachelorswinter",
+    },
+    "romanceablerasmodius": {
+        "nom0ri.romras",
+        "parrot.romras",
+        "dacar.seasromrasmodia",
+    },
+}
+
+
 def _normalise_marker(value: object) -> str:
     return "".join(character.lower() for character in str(value) if character.isalnum())
 
@@ -25,7 +44,10 @@ def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str
 
 
 def _marker_matches(marker: object, source_mods: set[str]) -> bool:
-    return _normalise_marker(marker) in source_mods
+    normalised_marker = _normalise_marker(marker)
+    return normalised_marker in source_mods or bool(
+        _MOD_ALIASES.get(normalised_marker, set()) & source_mods
+    )
 
 
 def merge_persona(
@@ -34,19 +56,45 @@ def merge_persona(
 ) -> dict[str, Any]:
     """合并已声明的 Mod 覆盖层，并保证未启用的覆盖层不生效。"""
 
-    active_mods = {_normalise_marker(mod) for mod in source_mods}
+    source_mod_list = list(source_mods)
     overlays = persona.get("modOverlay", {})
     if not isinstance(overlays, Mapping):
         overlays = {}
 
     merged = copy.deepcopy(dict(persona))
     merged["modOverlay"] = {}
-    for marker, overlay in overlays.items():
-        if not _marker_matches(marker, active_mods) or not isinstance(overlay, Mapping):
-            continue
-        merged = _deep_merge(merged, overlay)
-        merged["modOverlay"][str(marker)] = copy.deepcopy(dict(overlay))
+    applied_markers: set[str] = set()
+    for source_mod in source_mod_list:
+        for marker, overlay in overlays.items():
+            marker_key = str(marker)
+            if (
+                marker_key in applied_markers
+                or not _marker_matches(marker, {_normalise_marker(source_mod)})
+                or not isinstance(overlay, Mapping)
+            ):
+                continue
+            merged = _deep_merge(merged, overlay)
+            merged["modOverlay"][marker_key] = copy.deepcopy(dict(overlay))
+            applied_markers.add(marker_key)
     return merged
+
+
+def _mod_markers(payload: Mapping[str, Any], path: Path) -> list[str]:
+    markers: list[str] = []
+    primary_marker = payload.get("mod", path.stem)
+    if isinstance(primary_marker, str) and primary_marker.strip():
+        markers.append(primary_marker)
+
+    raw_markers = payload.get("sourceMods", ())
+    if isinstance(raw_markers, str):
+        raw_markers = [raw_markers]
+    if isinstance(raw_markers, Iterable):
+        markers.extend(
+            str(marker)
+            for marker in raw_markers
+            if str(marker).strip()
+        )
+    return list(dict.fromkeys(markers)) or [path.stem]
 
 
 class PersonaStore:
@@ -69,8 +117,10 @@ class PersonaStore:
             entries = payload.get("personas", payload)
             if not isinstance(entries, Mapping):
                 continue
-            marker = str(payload.get("mod", path.stem))
-            is_vanilla = _normalise_marker(marker) == "vanilla"
+            markers = _mod_markers(payload, path)
+            is_vanilla = any(
+                _normalise_marker(marker) == "vanilla" for marker in markers
+            )
             for npc_id, raw_persona in entries.items():
                 if not isinstance(raw_persona, Mapping):
                     continue
@@ -91,9 +141,10 @@ class PersonaStore:
                         "modOverlay": {},
                     },
                 )
-                base.setdefault("modOverlay", {})[marker] = copy.deepcopy(
-                    dict(raw_persona)
-                )
+                for marker in markers:
+                    base.setdefault("modOverlay", {})[marker] = copy.deepcopy(
+                        dict(raw_persona)
+                    )
         return personas
 
     def get_persona(
