@@ -96,10 +96,17 @@ public sealed class ModEntry : Mod
             return;
         }
 
-        var rasmodia = Game1.getCharacterFromName("Rasmodia");
+        var targetName = NpcTargetResolver.ResolveTargetName(
+            candidate => Game1.getCharacterFromName(candidate) is not null);
+        if (targetName is null)
+        {
+            Monitor.Log("未找到 Rasmodia/Wizard；请确认对应 NPC 内容包已启用。", LogLevel.Warn);
+            return;
+        }
+
+        var rasmodia = Game1.getCharacterFromName(targetName);
         if (rasmodia is null)
         {
-            Monitor.Log("未找到 Rasmodia；请确认对应 NPC 内容包已启用。", LogLevel.Warn);
             return;
         }
 
