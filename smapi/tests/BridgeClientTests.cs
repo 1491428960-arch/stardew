@@ -146,6 +146,37 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task SendAsync_does_not_remember_failed_fallback_before_next_success()
+    {
+        var handler = new RecordingHandler(requestIndex => requestIndex == 0
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            : new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"reply\":\"成功回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                    Encoding.UTF8,
+                    "application/json"),
+            });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var state = new NpcGameState
+        {
+            NpcId = "Wizard",
+            DisplayName = "Rasmodia",
+            Location = "WizardTower",
+            Friendship = 128,
+        };
+
+        var failed = await client.SendAsync("Wizard", "失败的问题", state);
+        var succeeded = await client.SendAsync("Wizard", "成功的问题", state);
+
+        Assert.True(failed.Fallback);
+        Assert.False(succeeded.Fallback);
+        using var secondRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        Assert.Empty(secondRequest.RootElement.GetProperty("history").EnumerateArray());
+    }
+
+    [Fact]
     public async Task SendAsync_returns_offline_fallback_for_service_unavailable()
     {
         using var httpClient = new HttpClient(

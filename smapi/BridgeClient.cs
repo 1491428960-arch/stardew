@@ -152,25 +152,25 @@ public sealed class BridgeClient : IDisposable
                     : parsed;
             }
 
-            RememberConversation(npcId, message, result.Reply, npcGameState);
+            RememberResult(npcId, message, result, npcGameState);
             return result;
         }
         catch (TaskCanceledException)
         {
             var result = BridgeDialogueResponse.Offline("bridge: timeout");
-            RememberConversation(npcId, message, result.Reply, gameState as NpcGameState);
+            RememberResult(npcId, message, result, gameState as NpcGameState);
             return result;
         }
         catch (HttpRequestException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: offline ({exception.Message})");
-            RememberConversation(npcId, message, result.Reply, gameState as NpcGameState);
+            RememberResult(npcId, message, result, gameState as NpcGameState);
             return result;
         }
         catch (JsonException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: invalid JSON ({exception.Message})");
-            RememberConversation(npcId, message, result.Reply, gameState as NpcGameState);
+            RememberResult(npcId, message, result, gameState as NpcGameState);
             return result;
         }
     }
@@ -192,25 +192,32 @@ public sealed class BridgeClient : IDisposable
         }
     }
 
-    private void RememberConversation(
+    private void RememberResult(
         string npcId,
         string message,
-        string reply,
+        BridgeDialogueResponse result,
         NpcGameState? currentState)
     {
         lock (memoryLock)
         {
-            if (!historyByNpc.TryGetValue(npcId, out var history))
+            if (!result.Fallback)
             {
-                history = new List<BridgeDialogueHistoryItem>();
-                historyByNpc[npcId] = history;
-            }
+                if (!historyByNpc.TryGetValue(npcId, out var history))
+                {
+                    history = new List<BridgeDialogueHistoryItem>();
+                    historyByNpc[npcId] = history;
+                }
 
-            history.Add(new BridgeDialogueHistoryItem { Role = "user", Content = message });
-            history.Add(new BridgeDialogueHistoryItem { Role = "assistant", Content = reply });
-            if (history.Count > 6)
-            {
-                history.RemoveRange(0, history.Count - 6);
+                history.Add(new BridgeDialogueHistoryItem { Role = "user", Content = message });
+                history.Add(new BridgeDialogueHistoryItem
+                {
+                    Role = "assistant",
+                    Content = result.Reply,
+                });
+                if (history.Count > 6)
+                {
+                    history.RemoveRange(0, history.Count - 6);
+                }
             }
 
             if (currentState is not null)
