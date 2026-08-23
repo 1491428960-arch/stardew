@@ -1,0 +1,235 @@
+using System.Text.Json.Serialization;
+
+namespace StardewAI.NPC;
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum MemorySource
+{
+    VanillaEvent,
+    ModEvent,
+    Gift,
+    ScheduleObservation,
+    PlayerChat,
+    NpcNpcEvent,
+    SystemInference,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum MemoryKnowledgeScope
+{
+    Private,
+    Participants,
+    NpcGroup,
+    Public,
+    PlayerOnly,
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum MemoryStatus
+{
+    Active,
+    Corrected,
+    Superseded,
+    Forgotten,
+}
+
+public sealed record StoryEventRecord
+{
+    [JsonPropertyName("eventId")]
+    public string EventId { get; init; } = string.Empty;
+
+    [JsonPropertyName("sourceMod")]
+    public string SourceMod { get; init; } = string.Empty;
+
+    [JsonPropertyName("sourceKey")]
+    public string SourceKey { get; init; } = string.Empty;
+
+    [JsonPropertyName("participants")]
+    public IReadOnlyList<string> Participants { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "unknown";
+
+    [JsonPropertyName("gameDate")]
+    public string GameDate { get; init; } = string.Empty;
+
+    [JsonPropertyName("canonical")]
+    public bool Canonical { get; init; }
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; init; } = string.Empty;
+}
+
+public sealed record KnowledgeRecord
+{
+    [JsonPropertyName("memoryId")]
+    public string MemoryId { get; init; } = string.Empty;
+
+    [JsonPropertyName("ownerNpcId")]
+    public string OwnerNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("knowledgeScope")]
+    public MemoryKnowledgeScope? KnowledgeScope { get; init; }
+
+    [JsonPropertyName("knownBy")]
+    public IReadOnlyList<string> KnownBy { get; init; } = Array.Empty<string>();
+}
+
+public sealed record RelationshipEdgeRecord
+{
+    [JsonPropertyName("fromNpcId")]
+    public string FromNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("toNpcId")]
+    public string ToNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("relationType")]
+    public string RelationType { get; init; } = string.Empty;
+
+    [JsonPropertyName("strength")]
+    public double Strength { get; init; }
+
+    [JsonPropertyName("tension")]
+    public double Tension { get; init; }
+
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = string.Empty;
+
+    [JsonPropertyName("canonical")]
+    public bool Canonical { get; init; }
+
+    [JsonPropertyName("updatedOn")]
+    public string UpdatedOn { get; init; } = string.Empty;
+}
+
+public sealed record InteractionProgress
+{
+    private static readonly HashSet<string> MajorStages = new(StringComparer.Ordinal)
+    {
+        "恋爱",
+        "订婚/结婚",
+        "婚后",
+        "育儿",
+    };
+
+    [JsonPropertyName("npcId")]
+    public string NpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("stage")]
+    public string Stage { get; init; } = string.Empty;
+
+    [JsonPropertyName("effectiveSessions")]
+    public int EffectiveSessions { get; init; }
+
+    [JsonPropertyName("requiredSessions")]
+    public int RequiredSessions { get; init; }
+
+    [JsonPropertyName("lastCountedGameDate")]
+    public string? LastCountedGameDate { get; init; }
+
+    [JsonPropertyName("lastInteractionFingerprint")]
+    public string? LastInteractionFingerprint { get; init; }
+
+    public static InteractionProgress Create(string npcId, string stage)
+    {
+        if (string.IsNullOrWhiteSpace(npcId))
+        {
+            throw new ArgumentException("NPC ID 不能为空。", nameof(npcId));
+        }
+
+        if (string.IsNullOrWhiteSpace(stage))
+        {
+            throw new ArgumentException("关系阶段不能为空。", nameof(stage));
+        }
+
+        return new InteractionProgress
+        {
+            NpcId = npcId.Trim(),
+            Stage = stage.Trim(),
+            RequiredSessions = MajorStages.Contains(stage.Trim()) ? 5 : 4,
+        };
+    }
+}
+
+public sealed record ConversationAttempt(
+    string GameDate,
+    string PlayerMessage,
+    string NpcReply,
+    bool UsedFallback);
+
+public sealed record MemoryRecord
+{
+    [JsonPropertyName("memoryId")]
+    public string MemoryId { get; init; } = string.Empty;
+
+    [JsonPropertyName("ownerNpcId")]
+    public string OwnerNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = "fact";
+
+    [JsonPropertyName("content")]
+    public string Content { get; init; } = string.Empty;
+
+    [JsonPropertyName("source")]
+    public MemorySource? Source { get; init; }
+
+    [JsonPropertyName("confidence")]
+    public double? Confidence { get; init; }
+
+    [JsonPropertyName("gameDate")]
+    public string GameDate { get; init; } = string.Empty;
+
+    [JsonPropertyName("participants")]
+    public IReadOnlyList<string> Participants { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("knowledgeScope")]
+    public MemoryKnowledgeScope? KnowledgeScope { get; init; }
+
+    [JsonPropertyName("knownBy")]
+    public IReadOnlyList<string> KnownBy { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("importance")]
+    public int Importance { get; init; }
+
+    [JsonPropertyName("canonical")]
+    public bool Canonical { get; init; }
+
+    [JsonPropertyName("expiresOn")]
+    public string? ExpiresOn { get; init; }
+
+    [JsonPropertyName("status")]
+    public MemoryStatus Status { get; init; } = MemoryStatus.Active;
+
+    [JsonPropertyName("evidence")]
+    public string Evidence { get; init; } = string.Empty;
+}
+
+public sealed record StoryStateEnvelope
+{
+    public const int CurrentSchemaVersion = 1;
+
+    [JsonPropertyName("schemaVersion")]
+    public int SchemaVersion { get; init; } = CurrentSchemaVersion;
+
+    [JsonPropertyName("memories")]
+    public IReadOnlyList<MemoryRecord> Memories { get; init; } = Array.Empty<MemoryRecord>();
+
+    [JsonPropertyName("storyEvents")]
+    public IReadOnlyList<StoryEventRecord> StoryEvents { get; init; } = Array.Empty<StoryEventRecord>();
+
+    [JsonPropertyName("knowledge")]
+    public IReadOnlyList<KnowledgeRecord> Knowledge { get; init; } = Array.Empty<KnowledgeRecord>();
+
+    [JsonPropertyName("relationships")]
+    public IReadOnlyList<RelationshipEdgeRecord> Relationships { get; init; } = Array.Empty<RelationshipEdgeRecord>();
+
+    [JsonPropertyName("interactionProgresses")]
+    public IReadOnlyList<InteractionProgress> InteractionProgresses { get; init; } = Array.Empty<InteractionProgress>();
+
+    public static StoryStateEnvelope Empty => new();
+}
+
+public sealed record StoryStateLoadResult(
+    StoryStateEnvelope State,
+    IReadOnlyList<string> Warnings);

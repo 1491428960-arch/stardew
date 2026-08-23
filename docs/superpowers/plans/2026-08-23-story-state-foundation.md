@@ -64,7 +64,7 @@ public void Memory_requires_source_confidence_date_participants_and_scope()
 运行：
 
 ```powershell
-dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~StoryStateValidationTests
+dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false --filter FullyQualifiedName~StoryStateValidationTests
 ```
 
 预期：编译失败，提示 `MemoryRecord` 或 `StoryStateValidation` 尚未定义。
@@ -152,7 +152,7 @@ public sealed record ConversationAttempt(
     string NpcReply,
     bool UsedFallback);
 
-public sealed class MemoryRecord
+public sealed record MemoryRecord
 {
     public string MemoryId { get; init; } = "";
     public string OwnerNpcId { get; init; } = "";
@@ -217,7 +217,7 @@ public void Serialize_and_load_preserves_schema_version_and_memory_provenance()
 运行：
 
 ```powershell
-dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~StoryStateSerializerTests
+dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false --filter FullyQualifiedName~StoryStateSerializerTests
 ```
 
 预期：编译失败，提示 `StoryStateEnvelope` 或 `StoryStateSerializer` 尚未定义。
@@ -315,7 +315,7 @@ private static ConversationAttempt Attempt(
 运行：
 
 ```powershell
-dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~InteractionProgressRulesTests
+dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false --filter FullyQualifiedName~InteractionProgressRulesTests
 ```
 
 预期：编译失败，提示互动规则类型尚未定义。
@@ -359,7 +359,7 @@ git commit -m "feat(关系阶段): 添加有效互动计数门槛"
 运行：
 
 ```powershell
-dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley"
+dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false
 $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\bridge\src'
 & 'C:\Users\Lenovo\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m pytest -q -p no:cacheprovider
 ```
