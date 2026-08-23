@@ -2,9 +2,15 @@ namespace StardewAI.NPC;
 
 public static class StoryStateValidation
 {
-    public static IReadOnlyList<string> Validate(MemoryRecord memory)
+    public static IReadOnlyList<string> Validate(MemoryRecord? memory)
     {
         var errors = new List<string>();
+        if (memory is null)
+        {
+            errors.Add("memory record is null");
+            return errors;
+        }
+
         if (string.IsNullOrWhiteSpace(memory.MemoryId))
         {
             errors.Add("memoryId is required");

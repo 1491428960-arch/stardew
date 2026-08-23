@@ -48,6 +48,7 @@ public sealed class StoryStateSerializerTests
         {
           "schemaVersion": 1,
           "memories": [
+            null,
             {
               "memoryId": "memory-1",
               "ownerNpcId": "Sophia",

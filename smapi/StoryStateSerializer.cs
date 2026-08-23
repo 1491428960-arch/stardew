@@ -74,7 +74,7 @@ public static class StoryStateSerializer
                 continue;
             }
 
-            var memoryId = string.IsNullOrWhiteSpace(memory.MemoryId)
+            var memoryId = memory is null || string.IsNullOrWhiteSpace(memory.MemoryId)
                 ? "unknown"
                 : memory.MemoryId.Trim();
             warnings.Add($"memory {memoryId} skipped: {string.Join(", ", errors)}");
@@ -101,7 +101,7 @@ public static class StoryStateSerializer
             var memoryErrors = StoryStateValidation.Validate(memory);
             if (memoryErrors.Count > 0)
             {
-                var memoryId = string.IsNullOrWhiteSpace(memory.MemoryId)
+                var memoryId = memory is null || string.IsNullOrWhiteSpace(memory.MemoryId)
                     ? "unknown"
                     : memory.MemoryId.Trim();
                 errors.Add($"{memoryId}: {string.Join(", ", memoryErrors)}");
