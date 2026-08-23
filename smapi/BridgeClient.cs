@@ -13,6 +13,12 @@ public sealed class BridgeDialogueRequest
     [JsonPropertyName("message")]
     public string Message { get; init; } = string.Empty;
 
+    [JsonPropertyName("intent")]
+    public string Intent { get; init; } = ConversationIntent.Chat;
+
+    [JsonPropertyName("itemContext")]
+    public ItemConversationContext? ItemContext { get; init; }
+
     [JsonPropertyName("displayName")]
     public string? DisplayName { get; init; }
 
@@ -68,7 +74,7 @@ public sealed class BridgeDialogueResponse
     }
 }
 
-public sealed class BridgeClient : IDisposable
+public sealed class BridgeClient : IDisposable, IConversationTransport
 {
     public static readonly Uri DefaultEndpoint = new("http://127.0.0.1:5678");
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
@@ -107,7 +113,9 @@ public sealed class BridgeClient : IDisposable
         string message,
         object? gameState = null,
         CancellationToken cancellationToken = default,
-        IReadOnlyList<string>? memoryFacts = null)
+        IReadOnlyList<string>? memoryFacts = null,
+        string intent = ConversationIntent.Chat,
+        ItemConversationContext? itemContext = null)
     {
         if (string.IsNullOrWhiteSpace(npcId))
         {
@@ -130,6 +138,8 @@ public sealed class BridgeClient : IDisposable
                 {
                     NpcId = npcId,
                     Message = boundedMessage,
+                    Intent = string.IsNullOrWhiteSpace(intent) ? ConversationIntent.Chat : intent,
+                    ItemContext = itemContext,
                     DisplayName = npcGameState?.DisplayName,
                     SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
                     GameState = gameState,
@@ -185,6 +195,20 @@ public sealed class BridgeClient : IDisposable
             RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
             return result;
         }
+    }
+
+    async Task<BridgeDialogueResponse> IConversationTransport.SendAsync(
+        ConversationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return await SendAsync(
+            request.NpcId,
+            request.Message,
+            request.GameState,
+            cancellationToken,
+            request.RecentFacts,
+            request.Intent,
+            request.ItemContext);
     }
 
     public void Dispose()

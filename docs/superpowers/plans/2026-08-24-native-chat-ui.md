@@ -62,7 +62,7 @@
 - 修改：`smapi/BridgeClient.cs`
 - 测试：`smapi/tests/ConversationServiceTests.cs`、`smapi/tests/BridgeClientTests.cs`
 
-- [ ] **步骤 1：编写失败的 C# 测试**
+- [x] **步骤 1：编写失败的 C# 测试**
 
 在 `ConversationServiceTests.cs` 先定义传输替身和最小行为：
 
@@ -102,7 +102,7 @@ public async Task TopicRequestDoesNotWriteMemoryUntilPlayerReplies()
 
 在 `BridgeClientTests.cs` 增加 JSON 契约断言：普通旧调用使用 `intent=chat`，物品调用同时发送 `intent=item` 和 `itemContext`，请求中不出现绝对路径或凭据字段。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：
 
@@ -112,7 +112,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：新增测试因 `ConversationService`、`ConversationIntent` 和 `itemContext` 尚未定义而失败；既有测试仍可编译。
 
-- [ ] **步骤 3：实现最小契约和服务**
+- [x] **步骤 3：实现最小契约和服务**
 
 在 `ConversationModels.cs` 中固定字段名和意图值：
 
@@ -165,11 +165,11 @@ Task<ConversationTurnResult> RequestTopicAsync(
 
 普通消息和物品互动成功后调用现有 `StoryStateStore.RecordConversation`；主动话题只返回 NPC 开场，不写记忆、不增加有效互动次数。`BridgeClient` 实现 `IConversationTransport`，原有 `SendAsync(npcId, message, ...)` 保留并内部使用 `intent=chat`。
 
-- [ ] **步骤 4：运行测试确认通过**
+- [x] **步骤 4：运行测试确认通过**
 
 运行同一条 `dotnet test` 命令，预期新增和既有 Bridge 测试全部通过。
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add smapi/ConversationModels.cs smapi/IConversationTransport.cs smapi/ConversationService.cs smapi/BridgeClient.cs smapi/tests/ConversationServiceTests.cs smapi/tests/BridgeClientTests.cs

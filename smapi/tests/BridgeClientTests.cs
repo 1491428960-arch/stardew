@@ -33,6 +33,7 @@ public sealed class BridgeClientTests
         using var requestJson = JsonDocument.Parse(await handler.Request.Content!.ReadAsStringAsync());
         Assert.Equal("Rasmodia", requestJson.RootElement.GetProperty("npcId").GetString());
         Assert.Equal("你好", requestJson.RootElement.GetProperty("message").GetString());
+        Assert.Equal("chat", requestJson.RootElement.GetProperty("intent").GetString());
     }
 
     [Fact]
@@ -138,6 +139,42 @@ public sealed class BridgeClientTests
             .Select(item => item.GetString())
             .ToArray();
         Assert.Contains(facts, fact => fact == "记忆（Spring 14）：玩家关心了葡萄园。");
+    }
+
+    [Fact]
+    public async Task SendAsync_sends_item_intent_and_safe_item_context()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"看起来不错。\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var item = new ItemConversationContext(
+            "74",
+            "黄金南瓜",
+            "礼物",
+            0,
+            "share",
+            4);
+
+        await client.SendAsync(
+            "Rasmodia",
+            "我想给你看看这个。",
+            new NpcGameState { NpcId = "Rasmodia", Date = "Spring 1" },
+            intent: ConversationIntent.Item,
+            itemContext: item);
+
+        using var request = JsonDocument.Parse(await handler.Request!.Content!.ReadAsStringAsync());
+        var root = request.RootElement;
+        Assert.Equal("item", root.GetProperty("intent").GetString());
+        Assert.Equal("74", root.GetProperty("itemContext").GetProperty("itemId").GetString());
+        Assert.Equal("黄金南瓜", root.GetProperty("itemContext").GetProperty("displayName").GetString());
+        Assert.Equal("share", root.GetProperty("itemContext").GetProperty("action").GetString());
+        Assert.False(root.GetProperty("itemContext").TryGetProperty("sourcePath", out _));
     }
 
     [Fact]
