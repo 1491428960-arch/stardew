@@ -27,6 +27,7 @@ public class ChatInputMenu : IClickableMenu
     private readonly TextBox inputBox;
     private ChatLayout layout;
     private string uiHint = "输入一句话，或者让她先找个话题。";
+    private ItemConversationSelection? pendingGiftSelection;
     private bool sending;
     private bool closed;
 
@@ -114,7 +115,7 @@ public class ChatInputMenu : IClickableMenu
 
         if (layout.InventoryButton.Contains(x, y))
         {
-            uiHint = "背包选择将在下一阶段启用。";
+            OpenInventoryPicker();
             return;
         }
 
@@ -229,7 +230,10 @@ public class ChatInputMenu : IClickableMenu
         await SendAsync(null, ConversationIntent.Topic).ConfigureAwait(true);
     }
 
-    private async Task SendAsync(string? message, string intent)
+    private async Task SendAsync(
+        string? message,
+        string intent,
+        ItemConversationContext? itemContext = null)
     {
         sending = true;
         uiHint = "正在思考……";
@@ -244,7 +248,8 @@ public class ChatInputMenu : IClickableMenu
                 : await conversationService.SendAsync(
                     state,
                     message ?? string.Empty,
-                    cancellationSource.Token).ConfigureAwait(true);
+                    cancellationSource.Token,
+                    itemContext).ConfigureAwait(true);
 
             var reply = result.Fallback
                 ? "暂时联系不上她，可以稍后重试。"
@@ -278,6 +283,116 @@ public class ChatInputMenu : IClickableMenu
     {
         _ = sender;
         _ = SendCurrentAsync();
+    }
+
+    private void OpenInventoryPicker()
+    {
+        if (sending || closed)
+        {
+            return;
+        }
+
+        SuspendInput();
+        Game1.activeClickableMenu = new InventoryItemPicker(
+            npc,
+            OnItemSelected,
+            OnItemPickerCanceled);
+    }
+
+    private void OnItemPickerCanceled()
+    {
+        Game1.activeClickableMenu = this;
+        ResumeInput();
+    }
+
+    private void OnItemSelected(ItemConversationSelection selection)
+    {
+        Game1.activeClickableMenu = this;
+        ResumeInput();
+
+        if (selection.Action == ItemInteractionAction.Gift)
+        {
+            pendingGiftSelection = selection;
+            OfferGiftConfirmation(selection);
+            return;
+        }
+
+        AddItemMessage(selection);
+        _ = SendItemAsync(selection);
+    }
+
+    private void OfferGiftConfirmation(ItemConversationSelection selection)
+    {
+        if (Game1.currentLocation is null)
+        {
+            pendingGiftSelection = null;
+            uiHint = "当前地点无法完成赠送。";
+            return;
+        }
+
+        SuspendInput();
+        var responses = new[]
+        {
+            new Response("gift_confirm", "确定赠送"),
+            new Response("gift_cancel", "先不送了"),
+        };
+        Game1.currentLocation.createQuestionDialogue(
+            $"要把 {selection.Snapshot.DisplayName} 送给 {npc.displayName} 吗？",
+            responses,
+            (farmer, answer) => HandleGiftConfirmation(answer),
+            npc);
+    }
+
+    private void HandleGiftConfirmation(string answer)
+    {
+        var selection = pendingGiftSelection;
+        pendingGiftSelection = null;
+        Game1.activeClickableMenu = this;
+        ResumeInput();
+        if (selection is null || !string.Equals(answer, "gift_confirm", StringComparison.Ordinal))
+        {
+            uiHint = "这次先不送了。";
+            return;
+        }
+
+        if (!VanillaGiftHandler.TryGive(npc, selection.Item, Game1.player))
+        {
+            uiHint = "这件物品现在没法送出去。";
+            return;
+        }
+
+        AddItemMessage(selection);
+        _ = SendItemAsync(selection);
+    }
+
+    private void AddItemMessage(ItemConversationSelection selection)
+    {
+        var action = selection.Action switch
+        {
+            ItemInteractionAction.Display => "展示",
+            ItemInteractionAction.Share => "分享",
+            ItemInteractionAction.Gift => "送出",
+            _ => "拿出",
+        };
+        messages.Add(new ChatDisplayMessage(
+            "player",
+            $"（{action}了 {selection.Snapshot.DisplayName}）"));
+        TrimMessages();
+    }
+
+    private async Task SendItemAsync(ItemConversationSelection selection)
+    {
+        var message = selection.Action switch
+        {
+            ItemInteractionAction.Display => $"我想给你看看这个：{selection.Snapshot.DisplayName}。",
+            ItemInteractionAction.Share => $"我们一起分享这个：{selection.Snapshot.DisplayName}。",
+            ItemInteractionAction.Gift => $"我把{selection.Snapshot.DisplayName}送给你。",
+            _ => $"我拿出了{selection.Snapshot.DisplayName}。",
+        };
+        await SendAsync(
+            message,
+            ConversationIntent.Item,
+            selection.ToConversationContext()).ConfigureAwait(true);
     }
 
     private string NormalizeReply(string reply)
@@ -387,7 +502,7 @@ public class ChatInputMenu : IClickableMenu
     {
         DrawButton(b, layout.SendButton, "发送", enabled: !sending);
         DrawButton(b, layout.TopicButton, "找话题", enabled: !sending);
-        DrawButton(b, layout.InventoryButton, "物品", enabled: false);
+        DrawButton(b, layout.InventoryButton, "物品", enabled: !sending);
         DrawButton(b, layout.CloseButton, "结束", enabled: true);
         inputBox.Draw(b, drawShadow: true);
     }
@@ -444,6 +559,23 @@ public class ChatInputMenu : IClickableMenu
         if (ReferenceEquals(Game1.keyboardDispatcher.Subscriber, inputBox))
         {
             Game1.keyboardDispatcher.Subscriber = previousKeyboardSubscriber;
+        }
+    }
+
+    private void SuspendInput()
+    {
+        if (ReferenceEquals(Game1.keyboardDispatcher.Subscriber, inputBox))
+        {
+            Game1.keyboardDispatcher.Subscriber = null;
+        }
+    }
+
+    private void ResumeInput()
+    {
+        if (!closed)
+        {
+            inputBox.SelectMe();
+            Game1.keyboardDispatcher.Subscriber = inputBox;
         }
     }
 }

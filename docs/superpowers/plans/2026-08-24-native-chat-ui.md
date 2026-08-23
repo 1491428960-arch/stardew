@@ -473,7 +473,7 @@ git commit -m "feat(面对面): 添加原版寒暄后的续聊选择"
 - 修改：`smapi/ChatInputMenu.cs`、`smapi/ConversationService.cs`、`smapi/BridgeClient.cs`
 - 测试：`smapi/tests/ItemInteractionRulesTests.cs`、`smapi/tests/BridgeClientTests.cs`
 
-- [ ] **步骤 1：编写失败的物品规则测试**
+- [x] **步骤 1：编写失败的物品规则测试**
 
 ```csharp
 [Fact]
@@ -500,13 +500,13 @@ public void GiftRequiresExplicitConfirmation()
 }
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~ItemInteractionRulesTests
 ```
 
-- [ ] **步骤 3：实现选择器和原版适配器**
+- [x] **步骤 3：实现选择器和原版适配器**
 
 `InventoryItemPicker` 使用 `Game1.player.Items` 绘制原版物品格，点击后返回不可变 `ItemSnapshot`，再显示「展示」「分享」「赠送」「取消」。选中阶段不修改背包；只有确认赠送后才调用 `VanillaGiftHandler`。`VanillaGiftHandler` 封装 Stardew Valley 1.6 的公开 NPC 接收物品入口，禁止在 Mod 中自行扣除 `Item.Stack`。
 
@@ -514,14 +514,14 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 `ChatInputMenu` 的背包按钮打开选择器；选择展示或分享后回到聊天菜单并发送 `intent=item`；赠送确认成功后再发送一条结果消息，失败和取消均不写记忆。
 
-- [ ] **步骤 4：运行 C# 全量测试和构建**
+- [x] **步骤 4：运行 C# 全量测试和构建**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false /p:BundleExtraAssemblies=Game
 dotnet build smapi/StardewAI.NPC.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false /p:BundleExtraAssemblies=Game
 ```
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add smapi/ItemInteractionModels.cs smapi/InventoryItemPicker.cs smapi/VanillaGiftHandler.cs smapi/ChatInputMenu.cs smapi/ConversationService.cs smapi/BridgeClient.cs smapi/tests/ItemInteractionRulesTests.cs smapi/tests/BridgeClientTests.cs
