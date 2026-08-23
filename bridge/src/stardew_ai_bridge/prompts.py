@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .personas import PersonaStore
+from .profile_index import ProfileIndexStore
 
 
 _IDENTITY_FIELDS = ("npcId", "displayName", "pronouns", "coreTraits", "addressing")
@@ -16,7 +17,11 @@ _STATE_FIELDS = (
     "time",
     "location",
     "friendship",
+    "friendshipHearts",
     "relationship",
+    "marriageStatus",
+    "childrenCount",
+    "completedEventIds",
 )
 
 
@@ -78,8 +83,13 @@ def _sanitize_value(value: Any) -> Any:
 class ContextBuilder:
     """从游戏请求中提取有限且稳定的 NPC 对话上下文。"""
 
-    def __init__(self, persona_store: PersonaStore | None = None) -> None:
+    def __init__(
+        self,
+        persona_store: PersonaStore | None = None,
+        profile_index: ProfileIndexStore | None = None,
+    ) -> None:
         self.persona_store = persona_store or PersonaStore()
+        self.profile_index = profile_index
 
     def build(
         self,
@@ -126,11 +136,19 @@ class ContextBuilder:
             if value is None and key in state:
                 value = state[key]
             if value is not None and value != "":
-                game_state[key] = (
-                    _sanitize_value(_text(value))
-                    if isinstance(value, str)
-                    else _sanitize_value(value)
-                )
+                if key == "completedEventIds":
+                    event_values = value if isinstance(value, (list, tuple)) else ()
+                    game_state[key] = [
+                        _remove_secret_labels(_text(item, limit=120))
+                        for item in event_values
+                        if _text(item, limit=120)
+                    ][:128]
+                else:
+                    game_state[key] = (
+                        _sanitize_value(_text(value))
+                        if isinstance(value, str)
+                        else _sanitize_value(value)
+                    )
 
         runtime_display_name = _first_value(values, "displayName", "display_name")
         if runtime_display_name is None:
@@ -159,13 +177,27 @@ class ContextBuilder:
             if role in {"user", "assistant"} and content:
                 history.append({"role": role, "content": content})
 
-        return {
+        context: dict[str, Any] = {
             "npcIdentity": identity,
             "modSources": source_mod_list,
             "gameState": game_state,
             "recentFacts": recent_facts,
             "history": history,
         }
+        if self.profile_index is not None:
+            style_samples = self.profile_index.style_samples(
+                str(npc_id),
+                source_mod_list,
+            )
+            story_events = self.profile_index.story_events(
+                str(npc_id),
+                source_mod_list,
+            )
+            if style_samples:
+                context["styleSamples"] = style_samples
+            if story_events:
+                context["storyEvents"] = story_events
+        return context
 
 
 def _json(value: object) -> str:
@@ -204,6 +236,54 @@ class PromptBuilder:
                 if isinstance(item, Mapping)
                 and item.get("role") in {"user", "assistant"}
                 and _text(item.get("content"))
+            ],
+            "styleSamples": [
+                {
+                    key: _text(item.get(key), limit=240)
+                    for key in (
+                        "sampleId",
+                        "npcId",
+                        "sourceMod",
+                        "sourceKey",
+                        "text",
+                        "evidenceKind",
+                    )
+                    if key in item and _text(item.get(key), limit=240)
+                }
+                for item in context.get("styleSamples", ())
+                if isinstance(item, Mapping) and _text(item.get("text"))
+            ],
+            "storyEvents": [
+                {
+                    key: (
+                        [
+                            _text(participant, limit=100)
+                            for participant in item.get("participants", ())
+                            if _text(participant, limit=100)
+                        ]
+                        if key == "participants"
+                        else item.get(key)
+                        if key == "canonical"
+                        else _text(item.get(key), limit=240)
+                    )
+                    for key in (
+                        "eventId",
+                        "sourceMod",
+                        "sourceKey",
+                        "participants",
+                        "status",
+                        "gameDate",
+                        "summary",
+                        "canonical",
+                    )
+                    if key in item and item.get(key) not in (None, "", [], {})
+                }
+                for item in context.get("storyEvents", ())
+                if isinstance(item, Mapping)
+                and (
+                    _text(item.get("summary"))
+                    or _text(item.get("sourceKey"))
+                )
             ],
         })
         identity = safe_context["npcIdentity"]
@@ -244,6 +324,26 @@ class PromptBuilder:
                 }),
             },
         ]
+        if safe_context["styleSamples"]:
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "style_evidence",
+                    "content": _json({
+                        "styleSamples": safe_context["styleSamples"][:8],
+                    }),
+                }
+            )
+        if safe_context["storyEvents"]:
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "story_facts",
+                    "content": _json({
+                        "storyEvents": safe_context["storyEvents"][:8],
+                    }),
+                }
+            )
         history = safe_context["history"]
         if history:
             messages.extend(

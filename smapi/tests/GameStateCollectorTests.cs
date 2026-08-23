@@ -75,6 +75,38 @@ public sealed class GameStateCollectorTests
         Assert.Empty(result.SourceMods);
     }
 
+    [Fact]
+    public void Collect_exposes_vanilla_hearts_and_story_state_without_changing_points()
+    {
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female", friendship: 1250),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(
+                MarriageStatus: "married",
+                ChildrenCount: 2,
+                CompletedEventIds: new[] { "evt-sophia-1", "evt-sophia-1", "" }));
+
+        Assert.Equal(1250, result.Friendship);
+        Assert.Equal(5, result.FriendshipHearts);
+        Assert.Equal("married", result.MarriageStatus);
+        Assert.Equal(2, result.ChildrenCount);
+        Assert.Equal(new[] { "evt-sophia-1" }, result.CompletedEventIds);
+    }
+
+    [Fact]
+    public void Collect_uses_relationship_as_marriage_status_when_story_state_omits_it()
+    {
+        var result = GameStateCollector.Collect(
+            Npc("Wizard", "Rasmodia", "Female", relationship: "married"),
+            World(),
+            new FakeModRegistry());
+
+        Assert.Equal("married", result.MarriageStatus);
+        Assert.Null(result.ChildrenCount);
+        Assert.Empty(result.CompletedEventIds);
+    }
+
     private static RuntimeNpcState Npc(
         string npcId,
         string displayName,

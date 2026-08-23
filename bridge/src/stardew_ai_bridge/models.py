@@ -60,7 +60,29 @@ class NpcGameState(ApiModel):
     time: int | None = None
     location: str | None = Field(default=None, max_length=200)
     friendship: int | None = None
+    friendship_hearts: int | None = Field(
+        default=None,
+        alias="friendshipHearts",
+        ge=0,
+        le=14,
+    )
     relationship: str | None = Field(default=None, max_length=100)
+    marriage_status: str | None = Field(
+        default=None,
+        alias="marriageStatus",
+        max_length=100,
+    )
+    children_count: int | None = Field(
+        default=None,
+        alias="childrenCount",
+        ge=0,
+        le=20,
+    )
+    completed_event_ids: list[str] = Field(
+        default_factory=list,
+        alias="completedEventIds",
+        max_length=128,
+    )
     source_mods: list[str] = Field(
         default_factory=list,
         alias="sourceMods",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from time import perf_counter
 
 from fastapi import FastAPI, HTTPException
@@ -12,6 +13,7 @@ from .fallback import FallbackProvider
 from .guard import ResponseGuard
 from .models import DialogueResponse, DialogueTestRequest, HealthResponse
 from .personas import PersonaStore
+from .profile_index import ProfileIndexStore
 from .providers import FakeProvider, ProviderRouter
 from .prompts import ContextBuilder, PromptBuilder
 from .test_page import TEST_PAGE_HTML
@@ -27,7 +29,9 @@ provider_router = ProviderRouter.from_settings(
     fallback_provider=fallback_provider,
 )
 persona_store = PersonaStore()
-context_builder = ContextBuilder(persona_store)
+profile_index_path = Path(__file__).resolve().parents[3] / "data" / "generated" / "profile-index.json"
+profile_index_store = ProfileIndexStore(profile_index_path)
+context_builder = ContextBuilder(persona_store, profile_index_store)
 prompt_builder = PromptBuilder()
 response_guard = ResponseGuard()
 _SAFE_FALLBACK_REPLY = "Rasmodia：暂时没有合适的回复，请稍后再试。"
@@ -104,7 +108,7 @@ def _build_context(payload: Mapping[str, object]) -> tuple[
 def preview_context(payload: dict[str, object]) -> dict[str, object]:
     context, prompt = _build_context(payload)
     identity = context["npcIdentity"]
-    return {
+    response: dict[str, object] = {
         "npcId": identity["npcId"],
         "personaSummary": identity,
         "gameState": context["gameState"],
@@ -116,6 +120,10 @@ def preview_context(payload: dict[str, object]) -> dict[str, object]:
             for message in prompt
         ],
     }
+    for key in ("styleSamples", "storyEvents"):
+        if key in context:
+            response[key] = context[key]
+    return response
 
 
 def _validate_dialogue_request(payload: Mapping[str, object]) -> DialogueTestRequest:

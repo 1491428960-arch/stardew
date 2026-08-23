@@ -73,6 +73,37 @@ def test_context_builder_merges_nested_state_and_legacy_top_level_fields() -> No
     assert context["history"] == ROOT_PAYLOAD["history"]
 
 
+def test_request_context_accepts_vanilla_story_state_fields() -> None:
+    payload = {
+        **ROOT_PAYLOAD,
+        "gameState": {
+            **ROOT_PAYLOAD["gameState"],
+            "friendshipHearts": 5,
+            "marriageStatus": "married",
+            "childrenCount": 2,
+            "completedEventIds": ["evt-1", "evt-2"],
+        },
+    }
+
+    request = DialogueTestRequest.model_validate(payload)
+    context = ContextBuilder().build(payload)
+
+    assert request.game_state is not None
+    assert request.game_state.friendship_hearts == 5
+    assert request.game_state.marriage_status == "married"
+    assert request.game_state.children_count == 2
+    assert request.game_state.completed_event_ids == ["evt-1", "evt-2"]
+    assert context["gameState"]["friendshipHearts"] == 5
+    assert context["gameState"]["marriageStatus"] == "married"
+    assert context["gameState"]["childrenCount"] == 2
+    assert context["gameState"]["completedEventIds"] == ["evt-1", "evt-2"]
+    rendered = json.dumps(PromptBuilder().build(context, payload["message"]), ensure_ascii=False)
+    assert "friendshipHearts" in rendered
+    assert "marriageStatus" in rendered
+    assert "childrenCount" in rendered
+    assert "evt-1" in rendered
+
+
 def test_prompt_contains_persona_state_mods_facts_and_history() -> None:
     context = ContextBuilder().build(ROOT_PAYLOAD)
     messages = PromptBuilder().build(context, ROOT_PAYLOAD["message"])

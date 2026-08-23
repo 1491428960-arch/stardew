@@ -36,8 +36,20 @@ public sealed class NpcGameState
     [JsonPropertyName("friendship")]
     public int? Friendship { get; init; }
 
+    [JsonPropertyName("friendshipHearts")]
+    public int? FriendshipHearts { get; init; }
+
     [JsonPropertyName("relationship")]
     public string? Relationship { get; init; }
+
+    [JsonPropertyName("marriageStatus")]
+    public string? MarriageStatus { get; init; }
+
+    [JsonPropertyName("childrenCount")]
+    public int? ChildrenCount { get; init; }
+
+    [JsonPropertyName("completedEventIds")]
+    public IReadOnlyList<string> CompletedEventIds { get; init; } = Array.Empty<string>();
 
     [JsonPropertyName("sourceMods")]
     public IReadOnlyList<string> SourceMods { get; init; } = Array.Empty<string>();
@@ -53,6 +65,11 @@ public sealed record RuntimeNpcState(
     string? Location,
     int? Friendship,
     string? Relationship);
+
+public sealed record RuntimeStoryState(
+    string? MarriageStatus = null,
+    int? ChildrenCount = null,
+    IReadOnlyList<string>? CompletedEventIds = null);
 
 public sealed record RuntimeWorldState(
     string? Season,
@@ -155,7 +172,8 @@ public static class GameStateCollector
         var state = Collect(
             new RuntimeNpcState(npcId, displayName, gender, location, friendship, relationship),
             new RuntimeWorldState(season, day, isRaining, time),
-            modRegistry);
+            modRegistry,
+            ReadRuntimeStoryState(npcId, relationship));
 
         return new NpcGameState
         {
@@ -168,7 +186,11 @@ public static class GameStateCollector
             Weather = state.Weather,
             Time = state.Time,
             Friendship = state.Friendship,
+            FriendshipHearts = state.FriendshipHearts,
             Relationship = state.Relationship,
+            MarriageStatus = state.MarriageStatus,
+            ChildrenCount = state.ChildrenCount,
+            CompletedEventIds = state.CompletedEventIds,
             SourceMods = state.SourceMods,
             Warnings = warnings.Concat(state.Warnings).Distinct().ToArray(),
         };
@@ -177,9 +199,11 @@ public static class GameStateCollector
     public static NpcGameState Collect(
         RuntimeNpcState npc,
         RuntimeWorldState world,
-        IModRegistryStatus registry)
+        IModRegistryStatus registry,
+        RuntimeStoryState? story = null)
     {
         var warnings = new List<string>();
+        var normalizedStory = NormalizeStoryState(story, npc.Relationship);
         AddWarningWhenMissing(npc.NpcId, warnings, "npcId");
         AddWarningWhenMissing(npc.DisplayName, warnings, "displayName");
         AddWarningWhenMissing(npc.Gender, warnings, "gender");
@@ -219,7 +243,11 @@ public static class GameStateCollector
             Weather = weather,
             Time = world.Time,
             Friendship = npc.Friendship,
+            FriendshipHearts = ToFriendshipHearts(npc.Friendship),
             Relationship = npc.Relationship,
+            MarriageStatus = normalizedStory.MarriageStatus,
+            ChildrenCount = normalizedStory.ChildrenCount,
+            CompletedEventIds = normalizedStory.CompletedEventIds ?? Array.Empty<string>(),
             SourceMods = DetectSourceMods(registry, warnings),
             Warnings = warnings,
         };
@@ -301,6 +329,25 @@ public static class GameStateCollector
         }
     }
 
+    private static object? ReadMethod(object? source, string methodName)
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var method = source.GetType().GetMethod(methodName, flags, Type.EmptyTypes);
+            return method?.Invoke(source, null);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string? ReadStaticString(string memberName)
     {
         return ReadStatic(memberName)?.ToString();
@@ -358,6 +405,128 @@ public static class GameStateCollector
         {
             return (null, null);
         }
+    }
+
+    private static RuntimeStoryState ReadRuntimeStoryState(
+        string? npcId,
+        string? relationship)
+    {
+        var marriageStatus = DeriveMarriageStatus(relationship);
+        var spouse = ReadString(Game1.player, "spouse");
+        var childrenCount = string.Equals(spouse, npcId, StringComparison.OrdinalIgnoreCase)
+            ? ReadChildrenCount()
+            : null;
+        var completedEventIds = ReadEnumerableStrings(
+            ReadMember(Game1.player, "eventsSeen"),
+            maxCount: 128);
+
+        return new RuntimeStoryState(marriageStatus, childrenCount, completedEventIds);
+    }
+
+    private static RuntimeStoryState NormalizeStoryState(
+        RuntimeStoryState? story,
+        string? relationship)
+    {
+        var marriageStatus = story?.MarriageStatus;
+        if (string.IsNullOrWhiteSpace(marriageStatus))
+        {
+            marriageStatus = DeriveMarriageStatus(relationship);
+        }
+
+        var childrenCount = story?.ChildrenCount;
+        if (childrenCount is < 0)
+        {
+            childrenCount = null;
+        }
+
+        return new RuntimeStoryState(
+            string.IsNullOrWhiteSpace(marriageStatus) ? null : marriageStatus.Trim(),
+            childrenCount,
+            NormalizeEventIds(story?.CompletedEventIds));
+    }
+
+    private static string? DeriveMarriageStatus(string? relationship)
+    {
+        if (string.IsNullOrWhiteSpace(relationship))
+        {
+            return null;
+        }
+
+        var normalized = relationship.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "married" or "roommate" or "dating" or "divorced" => normalized,
+            _ => null,
+        };
+    }
+
+    private static int? ToFriendshipHearts(int? friendship)
+    {
+        return friendship.HasValue
+            ? Math.Clamp(friendship.Value / 250, 0, 14)
+            : null;
+    }
+
+    private static int? ReadChildrenCount()
+    {
+        var children = ReadMethod(Game1.player, "getChildren") ??
+                       ReadMember(Game1.player, "children");
+        if (children is not IEnumerable values)
+        {
+            return null;
+        }
+
+        var count = 0;
+        foreach (var _ in values)
+        {
+            count++;
+        }
+
+        return Math.Max(0, count);
+    }
+
+    private static IReadOnlyList<string> ReadEnumerableStrings(
+        object? source,
+        int maxCount)
+    {
+        if (source is not IEnumerable values)
+        {
+            return Array.Empty<string>();
+        }
+
+        var result = new List<string>();
+        foreach (var value in values)
+        {
+            var text = value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(text) || result.Contains(text, StringComparer.Ordinal))
+            {
+                continue;
+            }
+
+            result.Add(text);
+            if (result.Count >= maxCount)
+            {
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    private static IReadOnlyList<string> NormalizeEventIds(
+        IReadOnlyList<string>? eventIds)
+    {
+        if (eventIds is null || eventIds.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return eventIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Take(128)
+            .ToArray();
     }
 
     private static IReadOnlyList<string> DetectSourceMods(

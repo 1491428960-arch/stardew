@@ -324,3 +324,125 @@ class ProfileIndexBuilder:
                         "evidenceKind": "dialogue",
                     }
                 )
+
+
+def _source_matches(candidate: object, source_mods: Iterable[str]) -> bool:
+    candidate_marker = _normalise_marker(candidate)
+    if candidate_marker == "vanilla":
+        return True
+    requested = {
+        _normalise_marker(source_mod)
+        for source_mod in source_mods
+        if isinstance(source_mod, str) and source_mod.strip()
+    }
+    if not requested:
+        return False
+    return any(
+        candidate_marker == marker
+        or candidate_marker in marker
+        or marker in candidate_marker
+        for marker in requested
+    )
+
+
+class ProfileIndexStore:
+    """只读检索派生索引，并把来源路径等构建元数据隔离在 Bridge 外。"""
+
+    _STYLE_FIELDS = (
+        "sampleId",
+        "npcId",
+        "sourceMod",
+        "sourceKey",
+        "text",
+        "evidenceKind",
+    )
+    _EVENT_FIELDS = (
+        "eventId",
+        "sourceMod",
+        "sourceKey",
+        "participants",
+        "status",
+        "gameDate",
+        "summary",
+        "canonical",
+    )
+
+    def __init__(self, index_path: str | Path) -> None:
+        self.index_path = Path(index_path)
+        self._index = self._load()
+
+    def style_samples(
+        self,
+        npc_id: str,
+        source_mods: Iterable[str],
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(npc_id, str) or not npc_id.strip():
+            return []
+        capped_limit = max(0, min(int(limit), 8))
+        if capped_limit == 0:
+            return []
+        result: list[dict[str, Any]] = []
+        for raw_sample in self._index.get("styleSamples", []):
+            if not isinstance(raw_sample, Mapping):
+                continue
+            if str(raw_sample.get("npcId", "")).casefold() != npc_id.casefold():
+                continue
+            if not _source_matches(raw_sample.get("sourceMod"), source_mods):
+                continue
+            text = raw_sample.get("text")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            result.append(self._select_fields(raw_sample, self._STYLE_FIELDS))
+            if len(result) >= capped_limit:
+                break
+        return result
+
+    def story_events(
+        self,
+        npc_id: str,
+        source_mods: Iterable[str],
+        limit: int = 8,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(npc_id, str) or not npc_id.strip():
+            return []
+        capped_limit = max(0, min(int(limit), 8))
+        if capped_limit == 0:
+            return []
+        result: list[dict[str, Any]] = []
+        for raw_event in self._index.get("storyEvents", []):
+            if not isinstance(raw_event, Mapping):
+                continue
+            participants = raw_event.get("participants", ())
+            if not isinstance(participants, list) or not any(
+                isinstance(participant, str)
+                and participant.casefold() == npc_id.casefold()
+                for participant in participants
+            ):
+                continue
+            if not _source_matches(raw_event.get("sourceMod"), source_mods):
+                continue
+            result.append(self._select_fields(raw_event, self._EVENT_FIELDS))
+            if len(result) >= capped_limit:
+                break
+        return result
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            payload = json.loads(self.index_path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(payload, Mapping) or payload.get("schemaVersion") != 1:
+            return {}
+        return dict(payload)
+
+    @staticmethod
+    def _select_fields(
+        value: Mapping[str, Any],
+        fields: Iterable[str],
+    ) -> dict[str, Any]:
+        return {
+            field: value[field]
+            for field in fields
+            if field in value and value[field] not in (None, "", [], {})
+        }

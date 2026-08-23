@@ -77,7 +77,11 @@ public sealed class BridgeClientTests
             Time = 1830,
             Location = "WizardTower",
             Friendship = 128,
+            FriendshipHearts = 5,
             Relationship = "friend",
+            MarriageStatus = "dating",
+            ChildrenCount = 0,
+            CompletedEventIds = new[] { "evt-1" },
             SourceMods = new[] { "SVE", "FlashShifter.SVECode" },
         };
 
@@ -98,7 +102,11 @@ public sealed class BridgeClientTests
         Assert.Equal(1830, root.GetProperty("gameState").GetProperty("time").GetInt32());
         Assert.Equal("WizardTower", root.GetProperty("gameState").GetProperty("location").GetString());
         Assert.Equal(128, root.GetProperty("gameState").GetProperty("friendship").GetInt32());
+        Assert.Equal(5, root.GetProperty("gameState").GetProperty("friendshipHearts").GetInt32());
         Assert.Equal("friend", root.GetProperty("gameState").GetProperty("relationship").GetString());
+        Assert.Equal("dating", root.GetProperty("gameState").GetProperty("marriageStatus").GetString());
+        Assert.Equal(0, root.GetProperty("gameState").GetProperty("childrenCount").GetInt32());
+        Assert.Equal("evt-1", root.GetProperty("gameState").GetProperty("completedEventIds")[0].GetString());
         Assert.Equal(
             new[] { "SVE", "FlashShifter.SVECode" },
             root.GetProperty("gameState").GetProperty("sourceMods").EnumerateArray()
@@ -128,7 +136,11 @@ public sealed class BridgeClientTests
             Weather = "clear",
             Location = "WizardTower",
             Friendship = 128,
+            FriendshipHearts = 5,
             Relationship = "friend",
+            MarriageStatus = "dating",
+            ChildrenCount = 0,
+            CompletedEventIds = new[] { "evt-1" },
         };
         var secondState = new NpcGameState
         {
@@ -138,7 +150,11 @@ public sealed class BridgeClientTests
             Weather = "rain",
             Location = "Town",
             Friendship = 140,
+            FriendshipHearts = 6,
             Relationship = "dating",
+            MarriageStatus = "married",
+            ChildrenCount = 1,
+            CompletedEventIds = new[] { "evt-1", "evt-2" },
         };
 
         await client.SendAsync("Wizard", "第一次问题", firstState);
@@ -163,6 +179,10 @@ public sealed class BridgeClientTests
         Assert.Contains(recentFacts, fact => fact!.Contains("地点"));
         Assert.Contains(recentFacts, fact => fact!.Contains("WizardTower"));
         Assert.Contains(recentFacts, fact => fact!.Contains("Town"));
+        Assert.Contains(recentFacts, fact => fact!.Contains("心级"));
+        Assert.Contains(recentFacts, fact => fact!.Contains("婚姻状态"));
+        Assert.Contains(recentFacts, fact => fact!.Contains("孩子数量"));
+        Assert.Contains(recentFacts, fact => fact!.Contains("剧情事件"));
     }
 
     [Fact]

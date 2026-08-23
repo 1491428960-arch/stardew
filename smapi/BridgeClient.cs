@@ -257,8 +257,35 @@ public sealed class BridgeClient : IDisposable
         AddStringChange(facts, "地点", previous.Location, current.Location);
         AddIntChange(facts, "时间", previous.Time, current.Time);
         AddIntChange(facts, "好感", previous.Friendship, current.Friendship);
+        AddIntChange(facts, "心级", previous.FriendshipHearts, current.FriendshipHearts);
         AddStringChange(facts, "关系", previous.Relationship, current.Relationship);
+        AddStringChange(facts, "婚姻状态", previous.MarriageStatus, current.MarriageStatus);
+        AddIntChange(facts, "孩子数量", previous.ChildrenCount, current.ChildrenCount);
+        AddEventChanges(facts, previous.CompletedEventIds, current.CompletedEventIds);
         return facts;
+    }
+
+    private static void AddEventChanges(
+        ICollection<string> facts,
+        IReadOnlyList<string> previous,
+        IReadOnlyList<string> current)
+    {
+        var previousSet = previous.ToHashSet(StringComparer.Ordinal);
+        var currentSet = current.ToHashSet(StringComparer.Ordinal);
+        if (previousSet.SetEquals(currentSet))
+        {
+            return;
+        }
+
+        var previousText = previousSet.Count == 0
+            ? "无"
+            : string.Join(", ", previousSet.OrderBy(value => value, StringComparer.Ordinal));
+        var currentText = currentSet.Count == 0
+            ? "无"
+            : string.Join(", ", currentSet.OrderBy(value => value, StringComparer.Ordinal));
+        facts.Add(Truncate(
+            $"剧情事件从“{previousText}”变为“{currentText}”",
+            MaxRecentFactLength));
     }
 
     private static void AddStringChange(
