@@ -10,6 +10,7 @@ public sealed class ModEntry : Mod
     private ModConfig config = ModConfig.CreateDefault();
     private BridgeClient? bridgeClient;
     private KeybindList dialogueKey = new(SButton.F8);
+    private readonly StoryStateStore storyStateStore = new();
 
     public override void Entry(IModHelper helper)
     {
@@ -18,7 +19,46 @@ public sealed class ModEntry : Mod
         GameStateCollector.ConfigureModRegistry(new SmapiModRegistryStatus(helper.ModRegistry));
         helper.Events.Input.ButtonPressed += OnButtonPressed;
         helper.Events.GameLoop.GameLaunched += OnGameLaunched;
+        helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
+        helper.Events.GameLoop.Saving += OnSaving;
+        helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
         Monitor.Log($"AI NPC 原型已加载。按 {dialogueKey} 与 Rasmodia 对话。", LogLevel.Info);
+    }
+
+    private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
+    {
+        try
+        {
+            storyStateStore.Load(Helper.Data.ReadSaveData<string>(StoryStateSerializer.StorageKey));
+            foreach (var warning in storyStateStore.LastWarnings)
+            {
+                Monitor.Log($"故事状态已降级：{warning}", LogLevel.Warn);
+            }
+        }
+        catch (Exception exception)
+        {
+            storyStateStore.Reset();
+            Monitor.Log($"读取故事状态失败，已使用空状态：{exception.Message}", LogLevel.Warn);
+        }
+    }
+
+    private void OnSaving(object? sender, SavingEventArgs e)
+    {
+        try
+        {
+            Helper.Data.WriteSaveData(
+                StoryStateSerializer.StorageKey,
+                storyStateStore.Serialize());
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"保存故事状态失败，已跳过本次写入：{exception.Message}", LogLevel.Warn);
+        }
+    }
+
+    private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
+    {
+        storyStateStore.Reset();
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)

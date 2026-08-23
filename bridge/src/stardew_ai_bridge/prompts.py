@@ -192,6 +192,11 @@ class ContextBuilder:
             story_events = self.profile_index.story_events(
                 str(npc_id),
                 source_mod_list,
+                completed_event_ids=(
+                    state.get("completedEventIds", ())
+                    if isinstance(state.get("completedEventIds", ()), (list, tuple))
+                    else ()
+                ),
             )
             if style_samples:
                 context["styleSamples"] = style_samples

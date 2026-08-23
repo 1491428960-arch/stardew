@@ -403,12 +403,18 @@ class ProfileIndexStore:
         npc_id: str,
         source_mods: Iterable[str],
         limit: int = 8,
+        completed_event_ids: Iterable[str] = (),
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
         capped_limit = max(0, min(int(limit), 8))
         if capped_limit == 0:
             return []
+        completed_keys = {
+            value.strip().casefold()
+            for value in completed_event_ids
+            if isinstance(value, str) and value.strip()
+        }
         result: list[dict[str, Any]] = []
         for raw_event in self._index.get("storyEvents", []):
             if not isinstance(raw_event, Mapping):
@@ -422,7 +428,15 @@ class ProfileIndexStore:
                 continue
             if not _source_matches(raw_event.get("sourceMod"), source_mods):
                 continue
-            result.append(self._select_fields(raw_event, self._EVENT_FIELDS))
+            selected = self._select_fields(raw_event, self._EVENT_FIELDS)
+            event_keys = {
+                str(raw_event.get(field, "")).strip().casefold()
+                for field in ("eventId", "sourceKey")
+                if raw_event.get(field)
+            }
+            if completed_keys.intersection(event_keys):
+                selected["status"] = "completed"
+            result.append(selected)
             if len(result) >= capped_limit:
                 break
         return result

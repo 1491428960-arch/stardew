@@ -131,6 +131,29 @@ def test_context_builder_adds_only_current_npc_index_evidence(
     assert "sourcePath" not in json.dumps(context, ensure_ascii=False)
 
 
+def test_context_marks_index_event_completed_when_runtime_flag_matches(
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / "profile-index.json"
+    _write_index(index_path)
+    builder = ContextBuilder(
+        PersonaStore(Path(__file__).parents[2] / "data" / "personas"),
+        ProfileIndexStore(index_path),
+    )
+
+    context = builder.build(
+        {
+            "npcId": "Sophia",
+            "sourceMods": ["SVE"],
+            "gameState": {
+                "completedEventIds": ["sve:event-1"],
+            },
+        }
+    )
+
+    assert context["storyEvents"][0]["status"] == "completed"
+
+
 def test_context_without_index_keeps_legacy_shape() -> None:
     builder = ContextBuilder(PersonaStore(Path(__file__).parents[2] / "data" / "personas"))
 
