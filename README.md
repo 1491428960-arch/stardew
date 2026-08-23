@@ -41,6 +41,8 @@ py -3.12 -m venv .venv
 
 默认监听 http://127.0.0.1:5678；测试页为 /test，健康检查为 /health，对话接口为 POST /api/dialogue/test。Provider 按 local → cloud → fallback 回退；Bridge 关闭、超时或两个 Provider 均失败时，SMAPI 客户端保持 offline/fallback，不阻断游戏。
 
+当前 `codex/story-memory` 工作树还包含故事状态基础层：版本化记忆记录、知识范围、关系进度和有效互动门槛。它目前只提供纯 C# 模型、校验和序列化，不会修改原版剧情、NPC 日程或现有 UI；接入游戏事件和存档生命周期前不会影响正式游戏行为。
+
 SMAPI 原型默认按 F8 触发 Rasmodia 对话。安装 Generic Mod Config Menu（GMCM）后，可在游戏内配置 `DialogueKey`、`EnableDialogue`、`BridgeEndpoint` 和 `BridgeTimeoutSeconds`；未安装 GMCM 时配置页会安全跳过。配置仍可直接写入 `config.json`，非法快捷键、非本机回环地址和越界超时会回退到安全默认值。SVE 和娘化 NPC 资料通过 npcId、显示名和来源 mod 兼容，实际是否加载成功需用户在 AI-SVE-测试 profile 内进入游戏确认。回归脚本只读检查 profile、Mods、日志和存档元数据，记录运行前后存档大小/时间戳；默认不启动游戏、不删除或覆盖存档、不修改源 Mods 仓库、不写注册表。实际存档变化、SVE/娘化加载、游戏内对话和日志证据必须由用户亲自操作确认。
 
 ## 快速测试 profile
@@ -48,7 +50,7 @@ SMAPI 原型默认按 F8 触发 Rasmodia 对话。安装 Generic Mod Config Menu
 修改 C# 代码后，先运行毫秒级自动化测试：
 
 ```powershell
-dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley"
+dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false /p:BundleExtraAssemblies=Game
 ```
 
 需要验证 F8、GMCM 或基础 NPC 菜单时，使用独立的快速测试目录：
