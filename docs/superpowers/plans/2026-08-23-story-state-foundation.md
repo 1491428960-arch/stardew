@@ -35,7 +35,7 @@
 - 创建：`smapi/StoryStateModels.cs`
 - 测试：`smapi/tests/StoryStateValidationTests.cs`
 
-- [ ] **步骤 1：编写失败的字段校验测试**
+- [x] **步骤 1：编写失败的字段校验测试**
 
 ```csharp
 [Fact]
@@ -59,7 +59,7 @@ public void Memory_requires_source_confidence_date_participants_and_scope()
 }
 ```
 
-- [ ] **步骤 2：运行测试确认因类型不存在而失败**
+- [x] **步骤 2：运行测试确认因类型不存在而失败**
 
 运行：
 
@@ -69,7 +69,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：编译失败，提示 `MemoryRecord` 或 `StoryStateValidation` 尚未定义。
 
-- [ ] **步骤 3：实现最小模型和校验**
+- [x] **步骤 3：实现最小模型和校验**
 
 在 `StoryStateModels.cs` 中定义以下可序列化字段：
 
@@ -174,11 +174,11 @@ public sealed record MemoryRecord
 
 `StoryStateValidation.Validate` 必须返回错误列表：空字符串字段、空参与者、置信度不在 `[0, 1]`、重要性不在 `[0, 3]` 都是错误；合法记录返回空列表。
 
-- [ ] **步骤 4：运行测试确认字段校验通过**
+- [x] **步骤 4：运行测试确认字段校验通过**
 
 运行同一步骤 2 的命令，预期：字段完整性、空参与者、置信度越界和重要性越界测试全部通过。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add smapi/StoryStateModels.cs smapi/StoryStateValidation.cs smapi/tests/StoryStateValidationTests.cs
@@ -191,7 +191,7 @@ git commit -m "feat(记忆模型): 添加故事状态与记忆字段校验"
 - 创建：`smapi/StoryStateSerializer.cs`
 - 测试：`smapi/tests/StoryStateSerializerTests.cs`
 
-- [ ] **步骤 1：编写失败的序列化测试**
+- [x] **步骤 1：编写失败的序列化测试**
 
 ```csharp
 [Fact]
@@ -212,7 +212,7 @@ public void Serialize_and_load_preserves_schema_version_and_memory_provenance()
 }
 ```
 
-- [ ] **步骤 2：运行测试确认因序列化器不存在而失败**
+- [x] **步骤 2：运行测试确认因序列化器不存在而失败**
 
 运行：
 
@@ -222,7 +222,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：编译失败，提示 `StoryStateEnvelope` 或 `StoryStateSerializer` 尚未定义。
 
-- [ ] **步骤 3：实现版本化序列化和降级**
+- [x] **步骤 3：实现版本化序列化和降级**
 
 `StoryStateEnvelope` 固定 `SchemaVersion = 1`，包含 memories、story events、knowledge、relationships 和 interaction progress。`StoryStateSerializer.Load` 遵循以下规则：
 
@@ -259,11 +259,11 @@ public static class StoryStateSerializer
 
 测试文件中的 `ValidMemory()` 是一个只返回完整合法记录的私有辅助函数，内容固定为 `Sophia`、`player`、`Spring 14` 和 `MemorySource.PlayerChat`，不读取外部文件。
 
-- [ ] **步骤 4：运行测试确认序列化、坏记录和未知版本通过**
+- [x] **步骤 4：运行测试确认序列化、坏记录和未知版本通过**
 
 运行同一步骤 2 的命令，预期：所有测试通过，覆盖 JSON 损坏、未知版本和单条坏记忆跳过。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add smapi/StoryStateSerializer.cs smapi/tests/StoryStateSerializerTests.cs
@@ -276,7 +276,7 @@ git commit -m "feat(持久化): 添加版本化故事状态序列化"
 - 创建：`smapi/InteractionProgressRules.cs`
 - 测试：`smapi/tests/InteractionProgressRulesTests.cs`
 
-- [ ] **步骤 1：编写失败的互动门槛测试**
+- [x] **步骤 1：编写失败的互动门槛测试**
 
 ```csharp
 [Fact]
@@ -310,7 +310,7 @@ private static ConversationAttempt Attempt(
         fallback);
 ```
 
-- [ ] **步骤 2：运行测试确认因规则类不存在而失败**
+- [x] **步骤 2：运行测试确认因规则类不存在而失败**
 
 运行：
 
@@ -320,7 +320,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：编译失败，提示互动规则类型尚未定义。
 
-- [ ] **步骤 3：实现最小互动规则**
+- [x] **步骤 3：实现最小互动规则**
 
 `ConversationAttempt` 必须包含游戏日期、玩家消息、NPC 回复和 `UsedFallback`。`InteractionProgressRules.Record` 只在以下条件全部满足时增加一次计数：消息和回复非空、未使用 fallback、当天尚未计数、消息指纹不同于上一次有效会话。普通阶段默认需要 4 次有效互动；恋爱、订婚/结婚、婚后和育儿阶段默认需要 5 次。
 
@@ -337,11 +337,11 @@ public static class InteractionProgressRules
 
 `InteractionProgress.Create` 根据阶段名称设置门槛：`恋爱`、`订婚/结婚`、`婚后`、`育儿` 为 5，其余阶段为 4；初始计数为 0，最近日期和消息指纹为空。
 
-- [ ] **步骤 4：运行测试确认规则通过**
+- [x] **步骤 4：运行测试确认规则通过**
 
 运行同一步骤 2 的命令，预期：无效会话不计数、同日最多计数 1 次、普通阶段门槛为 4、重大阶段门槛为 5。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add smapi/InteractionProgressRules.cs smapi/tests/InteractionProgressRulesTests.cs
@@ -354,7 +354,7 @@ git commit -m "feat(关系阶段): 添加有效互动计数门槛"
 - 修改：`docs/handoff-2026-08-23.md`
 - 修改：`README.md`
 
-- [ ] **步骤 1：运行完整自动化测试**
+- [x] **步骤 1：运行完整自动化测试**
 
 运行：
 
@@ -366,11 +366,11 @@ $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\br
 
 预期：C# 和 Bridge 测试均退出码为 0；若环境无法写入项目 `obj`，必须改用已批准的提升权限重新运行，不能把权限错误当作测试通过。
 
-- [ ] **步骤 2：补充交接记录**
+- [x] **步骤 2：补充交接记录**
 
 在交接文档中记录基础模型、序列化格式、测试命令和当前尚未接入游戏生命周期的边界；明确本里程碑不包含 UI、日程修改和真实存档回归。
 
-- [ ] **步骤 3：Commit**
+- [x] **步骤 3：Commit**
 
 ```powershell
 git add docs/handoff-2026-08-23.md README.md
