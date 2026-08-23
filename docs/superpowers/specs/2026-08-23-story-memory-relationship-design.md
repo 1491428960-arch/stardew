@@ -91,6 +91,8 @@
 
 重要剧情、承诺、婚姻、孩子和重大冲突使用高 `importance`，不自动过期。普通寒暄和低价值 NPC-NPC 小事只保留摘要，并按时间衰减。出现矛盾时不覆盖原记录，而是建立 `corrected` 或 `superseded` 记录，保留可追溯关系。
 
+序列化模型会把 `source`、`confidence` 和 `knowledgeScope` 定义为可检测缺失的字段。JSON 缺少其中任一字段时必须拒绝该记录，不能把枚举或数值默认值当成有效来源。
+
 ### 2.4 `KnowledgeRecord`
 
 `KnowledgeRecord` 是 `StoryEvent` 到 NPC 的知识投影，用于防止全知视角。

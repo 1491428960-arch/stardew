@@ -158,11 +158,11 @@ public sealed class MemoryRecord
     public string OwnerNpcId { get; init; } = "";
     public string Kind { get; init; } = "fact";
     public string Content { get; init; } = "";
-    public MemorySource Source { get; init; }
-    public double Confidence { get; init; }
+    public MemorySource? Source { get; init; }
+    public double? Confidence { get; init; }
     public string GameDate { get; init; } = "";
     public IReadOnlyList<string> Participants { get; init; } = Array.Empty<string>();
-    public MemoryKnowledgeScope KnowledgeScope { get; init; }
+    public MemoryKnowledgeScope? KnowledgeScope { get; init; }
     public IReadOnlyList<string> KnownBy { get; init; } = Array.Empty<string>();
     public int Importance { get; init; }
     public bool Canonical { get; init; }
