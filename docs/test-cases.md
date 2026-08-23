@@ -20,10 +20,14 @@
 | --- | --- | --- | --- |
 | R0 | 静态安全边界 | AST 检查脚本；运行 Bridge pytest、SMAPI `dotnet test`、显式 Windows `dotnet build` | 命令退出码为 0；AST 无禁用写入/注册表调用 |
 | R1 | Bridge 与测试页 | 启动 `scripts/start_bridge.ps1`，打开 `http://127.0.0.1:5678/test`，选择 Rasmodia，发送固定问句 | `/health` 为 `ok`；测试页返回 `provider=fake` 且有回复 |
-| R2 | API 契约 | 调用 `POST /api/dialogue/test`，分别使用 `provider=fake` 和不传 provider；调用 `GET /api/context/preview` | 返回结构包含 `reply`、`provider`、`fallback`、`latencyMs`、`warnings`；上下文含 SVE/娘化来源摘要 |
-| R3 | Bridge 关闭回退 | 停止 Bridge 后启动游戏并按 GMCM/`config.json` 中的 `DialogueKey`（默认 `F8`） | SMAPI 原型不崩溃；C# 客户端记录 `offline`/`fallback`，游戏仍可继续操作 |
+| R2 | API 契约 | 调用 `POST /api/dialogue/test`，分别使用 `provider=fake` 和不传 provider；再用 `intent=topic`、`intent=item` 调用 `/api/context/preview` | 返回结构包含 `reply`、`provider`、`fallback`、`latencyMs`、`warnings`；新请求含 `interaction` 摘要，旧请求仍保持兼容 |
+| R3 | Bridge 关闭回退 | 停止 Bridge 后启动游戏并按 GMCM/`config.json` 中的 `DialogueKey`（默认 `F8`） | SMAPI 不崩溃；界面显示「暂时联系不上她，可以重试或结束」，游戏仍可继续操作 |
 | R4 | Provider 双失败 | Bridge 配置 local/cloud 均启用但指向不可用地址，发送不指定 provider 的请求 | 回复来自 `fallback`；`warnings` 同时含两个 Provider 失败记录；不泄露 URL 中的凭据 |
-| R5 | SMAPI 原型 | 确认 `AI-SVE-测试` profile 已由 Stardrop 选中，启动脚本并进入存档；按 GMCM/`config.json` 中的 `DialogueKey`（默认 `F8`）与 Rasmodia 对话 | SMAPI 日志显示 mod 加载；出现 Rasmodia 对话菜单；Bridge 在线时显示 AI/fallback 回复 |
+| R5 | 原生聊天入口 | 确认 `AI-SVE-测试` profile 已由 Stardrop 选中，启动脚本并进入独立存档；按 `F8` 与 Rasmodia/Wizard 对话 | SMAPI 日志显示 Mod 加载；出现原生风格 `ChatInputMenu`，支持中文 Enter、连续对话和 AI/fallback 回复 |
+| R10 | 面对面续聊 | 在世界中走到 NPC 面前按原版交互键，先看完原版寒暄，再选择「继续聊聊」或「先告辞」 | 原版对白未被替换；仅在自然关闭后出现一次续聊选择；继续后进入与 F8 相同的聊天菜单 |
+| R11 | 主动话题 | 在 `ChatInputMenu` 点击「找话题」 | Bridge 请求 `intent=topic`；NPC 主动抛出符合关系、地点和当天情境的话题；该动作不单独写入玩家记忆 |
+| R12 | 物品互动 | 点击「物品」，从原版背包选择武器或食物，分别测试「展示」「分享」「赠送」 | 选择和展示/分享不减少堆叠；Bridge 收到 `intent=item` 和物品白名单上下文；赠送必须二次确认，确认后由原版收礼逻辑处理 |
+| R13 | 资源清理 | 发送中按「结束」、关闭物品选择器、返回标题、切换存档 | 输入订阅解除；未完成请求不再回写菜单；Bridge 和会话服务释放，不残留旧菜单或后台请求 |
 | R6 | GMCM 配置安全回退 | 安装/不安装 GMCM 分别启动；在 GMCM 中保存默认值、非法地址和越界超时 | GMCM 缺失时 mod 正常加载；Reset/Save 可用；非法值回退到本机 `http://127.0.0.1:5678` 与 15 秒 |
 | R7 | SVE 与娘化兼容 | 在同一 profile 中保持 SVE 和娘化 NPC 内容包启用；分别打开 SVE NPC 与 Rasmodia 的资料预览/对话 | `sourceMods`/身份资料保留来源；NPC 不因显示名变化而丢失；上下文保护规则生效 |
 | R8 | 存档安全 | 脚本运行前后对同一 `-SaveRoot` 生成快照；完成 R5/R7 后退出游戏并再次运行快照 | 控制台列出每个文件的大小和 UTC 时间戳变化；脚本不删除、不覆盖、不回滚存档，实际变化由用户判断 |
@@ -34,7 +38,7 @@
 先执行 R0，再执行 R1～R4 的游戏外/Bridge 回归，最后由用户执行 R5～R8。示例：
 
 ```powershell
-Set-Location E:\workspace\projects\stardew-ai-npc\.worktrees\ai-npc-bridge
+Set-Location E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory
 pwsh -NoProfile -File .\scripts\run_smapi_regression.ps1
 pwsh -NoProfile -File .\scripts\run_smapi_regression.ps1 -LaunchSmapi -InspectLog -SmapiLogPath <实际 SMAPI-latest.txt>
 ```

@@ -6,6 +6,12 @@
 当前开发状态、外部 Mod 目录差异和下一步接力顺序见
 [`docs/handoff-2026-08-23.md`](docs/handoff-2026-08-23.md)。
 
+当前 `codex/story-memory` 已将原型入口迁移为原生风格聊天流程：面对面互动先由
+Stardew Valley 显示原版寒暄，关闭后可选择「继续聊聊」；`F8` 与面对面续聊共用
+`ChatInputMenu`。菜单使用原版 `DialogueBox`、`TextBox`、头像和 `InventoryMenu`，
+支持中文 Enter 发送、连续对话、NPC 主动找话题，以及背包物品的展示、分享和确认赠送。
+Smartphone 不属于当前方案；物品预览不扣背包，确认赠送才调用原版 NPC 收礼入口。
+
 ## 开发环境
 
 - Python 3.12
@@ -39,7 +45,9 @@ py -3.12 -m venv .venv
 .\scripts\start_bridge.ps1
 ~~~
 
-默认监听 http://127.0.0.1:5678；测试页为 /test，健康检查为 /health，对话接口为 POST /api/dialogue/test。Provider 按 local → cloud → fallback 回退；Bridge 关闭、超时或两个 Provider 均失败时，SMAPI 客户端保持 offline/fallback，不阻断游戏。
+默认监听 http://127.0.0.1:5678；测试页为 /test，健康检查为 /health，对话接口为 POST /api/dialogue/test。Provider 按 local → cloud → fallback 回退；Bridge 关闭、超时或两个 Provider 均失败时，SMAPI 客户端保持 offline/fallback，不阻断游戏，界面只显示「暂时联系不上她，可以重试或结束」。
+
+对话请求的 `intent` 支持 `chat`、`topic`、`item`；物品互动的 `itemContext` 只允许物品 ID、显示名、类别、品质、动作和原版偏好结果。旧请求省略这些字段时仍按普通聊天处理。
 
 当前 `codex/story-memory` 工作树还包含故事状态基础层：版本化记忆记录、知识范围、关系进度和有效互动门槛。它目前只提供纯 C# 模型、校验和序列化，不会修改原版剧情、NPC 日程或现有 UI；接入游戏事件和存档生命周期前不会影响正式游戏行为。
 
@@ -59,7 +67,7 @@ Bridge 启动时会自动尝试读取 `data/generated/profile-index.json`，按�
 
 Bridge 返回正式回复后，面对面入口会把一条带日期、参与者、来源和知识范围的短记忆写入故事状态，并在后续对话中只回送当前 NPC 最近几条记忆；fallback、缺少游戏日期和空消息不会写入。记忆按稳定指纹去重并保留最近 200 条，阶段进度仍按原版心级和每天最多一次有效互动计算。
 
-SMAPI 原型默认按 F8 触发 Rasmodia 对话。安装 Generic Mod Config Menu（GMCM）后，可在游戏内配置 `DialogueKey`、`EnableDialogue`、`BridgeEndpoint` 和 `BridgeTimeoutSeconds`；未安装 GMCM 时配置页会安全跳过。配置仍可直接写入 `config.json`，非法快捷键、非本机回环地址和越界超时会回退到安全默认值。SVE 和娘化 NPC 资料通过 npcId、显示名和来源 mod 兼容，实际是否加载成功需用户在 AI-SVE-测试 profile 内进入游戏确认。回归脚本只读检查 profile、Mods、日志和存档元数据，记录运行前后存档大小/时间戳；默认不启动游戏、不删除或覆盖存档、不修改源 Mods 仓库、不写注册表。实际存档变化、SVE/娘化加载、游戏内对话和日志证据必须由用户亲自操作确认。
+SMAPI 默认按 F8 打开 Rasmodia/Wizard 目标的聊天菜单。安装 Generic Mod Config Menu（GMCM）后，可在游戏内配置 `DialogueKey`、`EnableDialogue`、`BridgeEndpoint` 和 `BridgeTimeoutSeconds`；未安装 GMCM 时配置页会安全跳过。配置仍可直接写入 `config.json`，非法快捷键、非本机回环地址和越界超时会回退到安全默认值。SVE 和娘化 NPC 资料通过 npcId、显示名和来源 mod 兼容，实际是否加载成功需用户在 AI-SVE-测试 profile 内进入游戏确认。回归脚本只读检查 profile、Mods、日志和存档元数据，记录运行前后存档大小/时间戳；默认不启动游戏、不删除或覆盖存档、不修改源 Mods 仓库、不写注册表。实际存档变化、SVE/娘化加载、原版寒暄后的续聊、物品赠送和日志证据必须由用户亲自操作确认。
 
 ## 快速测试 profile
 

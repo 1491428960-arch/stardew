@@ -632,11 +632,11 @@ git commit -m "feat(Bridge): 支持主动话题和物品上下文"
 - 修改：`README.md`、`docs/test-cases.md`、`docs/handoff-2026-08-23.md`
 - 不修改：源 Mods 仓库和主分支
 
-- [ ] **步骤 1：更新文档**
+- [x] **步骤 1：更新文档**
 
 README 和测试用例必须明确：F8 与面对面共用 `ChatInputMenu`；原版寒暄先显示；主动话题和背包按钮属于正式 UI；Smartphone 不属于当前方案；Bridge 离线时只显示可理解的短提示。交接文档记录新增 C# 测试数量、实际游戏验证边界和最新提交。
 
-- [ ] **步骤 2：运行静态和单元验证**
+- [x] **步骤 2：运行静态和单元验证**
 
 ```powershell
 git diff --check
@@ -647,7 +647,7 @@ $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\br
 
 预期：`git diff --check` 无输出，C# 和 Bridge 均为 0 失败。
 
-- [ ] **步骤 3：同步独立快速 profile**
+- [x] **步骤 3：同步独立快速 profile**
 
 ```powershell
 .\scripts\start_fast_test.ps1 -IncludeRasmodia -NoLaunch
@@ -659,7 +659,7 @@ $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\br
 
 启动 Bridge 和独立快速 profile，使用独立测试存档依次验证：原版寒暄→续聊选择、F8 聊天、中文 Enter 发送、连续 3～4 轮、NPC 主动找话题、背包展示/分享、确认赠送、关闭 Bridge 后重试/退出、保存/读档/返回标题。记录 SMAPI 日志中 Mod 加载、Bridge 请求、无异常和菜单清理证据；不把 Fake Provider 回复误判为真实模型质量。
 
-- [ ] **步骤 5：提交文档和验证记录**
+- [x] **步骤 5：提交文档和验证记录**
 
 ```powershell
 git add README.md docs/test-cases.md docs/handoff-2026-08-23.md
