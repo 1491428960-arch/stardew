@@ -185,7 +185,7 @@ git commit -m "feat(会话): 统一聊天意图和服务层"
 - 创建：`smapi/ChatLayoutRules.cs`
 - 测试：`smapi/tests/ChatLayoutRulesTests.cs`
 
-- [ ] **步骤 1：编写失败的布局测试**
+- [x] **步骤 1：编写失败的布局测试**
 
 ```csharp
 [Theory]
@@ -208,7 +208,7 @@ public void LayoutFitsViewportAndKeepsActionButtonsSeparated(int viewportWidth, 
 
 同时测试 `ChatLayoutRules.VisibleMessages` 只保留最近消息，不能返回空消息或超过消息区高度。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：
 
@@ -218,7 +218,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：因布局类型和计算方法尚未存在而失败。
 
-- [ ] **步骤 3：实现布局规则**
+- [x] **步骤 3：实现布局规则**
 
 实现 `ChatLayout` 记录和 `ChatLayoutRules.Calculate`：面板宽度取 `Clamp(viewportWidth * 0.68f, 760, viewportWidth - 48)`，高度取 `Clamp(viewportHeight * 0.55f, 420, viewportHeight - 48)`；操作区按固定间距从右向左排列，输入框占剩余宽度。小窗口下优先缩短输入框，不允许按钮互相覆盖。
 
@@ -236,11 +236,11 @@ public sealed record ChatLayout(
     Rectangle CloseButton);
 ```
 
-- [ ] **步骤 4：运行测试确认通过**
+- [x] **步骤 4：运行测试确认通过**
 
 运行同一条 `dotnet test` 命令，预期所有布局测试通过。
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add smapi/ChatLayoutRules.cs smapi/tests/ChatLayoutRulesTests.cs
