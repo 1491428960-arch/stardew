@@ -9,6 +9,7 @@ public sealed class ModEntry : Mod
 {
     private ModConfig config = ModConfig.CreateDefault();
     private BridgeClient? bridgeClient;
+    private ConversationService? conversationService;
     private KeybindList dialogueKey = new(SButton.F8);
     private readonly StoryStateStore storyStateStore = new();
 
@@ -27,6 +28,11 @@ public sealed class ModEntry : Mod
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        if (config.EnableDialogue && conversationService is null)
+        {
+            ApplyConfig();
+        }
+
         try
         {
             storyStateStore.Load(Helper.Data.ReadSaveData<string>(StoryStateSerializer.StorageKey));
@@ -58,6 +64,16 @@ public sealed class ModEntry : Mod
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        if (Game1.activeClickableMenu is ChatInputMenu)
+        {
+            Game1.activeClickableMenu.exitThisMenuNoSound();
+        }
+
+        conversationService?.Cancel();
+        conversationService?.Dispose();
+        conversationService = null;
+        bridgeClient?.Dispose();
+        bridgeClient = null;
         storyStateStore.Reset();
     }
 
@@ -119,6 +135,9 @@ public sealed class ModEntry : Mod
     private void ApplyConfig()
     {
         config = config.Normalize();
+        conversationService?.Cancel();
+        conversationService?.Dispose();
+        conversationService = null;
         dialogueKey = config.DialogueKey;
         bridgeClient?.Dispose();
         bridgeClient = config.EnableDialogue
@@ -126,12 +145,19 @@ public sealed class ModEntry : Mod
                 endpoint: new Uri(config.BridgeEndpoint),
                 timeout: TimeSpan.FromSeconds(config.BridgeTimeoutSeconds))
             : null;
+        if (bridgeClient is not null)
+        {
+            conversationService = new ConversationService(bridgeClient, storyStateStore);
+        }
     }
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
     {
-        if (!config.EnableDialogue || !dialogueKey.JustPressed() || !Context.IsWorldReady || Game1.activeClickableMenu is not null ||
-            bridgeClient is null)
+        if (!dialogueKey.JustPressed() || !DialogueEntryRules.CanOpen(
+                config.EnableDialogue,
+                Context.IsWorldReady,
+                Game1.activeClickableMenu is not null,
+                conversationService is not null))
         {
             return;
         }
@@ -150,7 +176,11 @@ public sealed class ModEntry : Mod
             return;
         }
 
-        Game1.activeClickableMenu = new DialogueMenu(rasmodia, bridgeClient, storyStateStore);
+        Game1.activeClickableMenu = new ChatInputMenu(
+            rasmodia,
+            conversationService!,
+            storyStateStore,
+            () => Monitor.Log("AI 聊天已结束。", LogLevel.Trace));
     }
 
     private sealed class SmapiModRegistryStatus : IModRegistryStatus

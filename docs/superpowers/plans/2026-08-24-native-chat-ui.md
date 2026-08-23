@@ -335,7 +335,7 @@ git commit -m "feat(UI): 替换调试菜单为原生聊天界面"
 - 修改：`smapi/ModEntry.cs`、`smapi/DialogueMenu.cs`
 - 测试：`smapi/tests/NpcTargetResolverTests.cs`、`smapi/tests/ConversationServiceTests.cs`
 
-- [ ] **步骤 1：编写入口回归测试**
+- [x] **步骤 1：编写入口回归测试**
 
 增加纯规则断言：禁用配置、非世界状态、已有菜单、Bridge 为空时不得创建聊天菜单；F8 目标仍按现有 Rasmodia/Wizard 双 ID 规则解析。
 
@@ -354,7 +354,7 @@ public void HotkeyGuardRejectsUnsafeEntry(
 }
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~NpcTargetResolverTests
@@ -362,7 +362,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：新增入口保护规则尚未定义而失败。
 
-- [ ] **步骤 3：实现入口迁移**
+- [x] **步骤 3：实现入口迁移**
 
 在 `ModEntry` 中创建一次 `ConversationService`，`ApplyConfig` 时更新 Bridge 传输；`OnButtonPressed` 只负责检查配置、解析 NPC 并创建 `ChatInputMenu`：
 
@@ -385,14 +385,14 @@ Game1.activeClickableMenu = new ChatInputMenu(
 
 `OnReturnedToTitle`、`OnSaveLoaded` 和 `ApplyConfig` 必须调用服务的 `Cancel`/`Dispose`，避免退出后异步回调访问旧菜单或旧 HTTP 客户端。
 
-- [ ] **步骤 4：运行全量测试和差异检查**
+- [x] **步骤 4：运行全量测试和差异检查**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false /p:BundleExtraAssemblies=Game
 git diff --check
 ```
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add smapi/ModEntry.cs smapi/DialogueMenu.cs smapi/tests/NpcTargetResolverTests.cs
