@@ -257,7 +257,7 @@ git commit -m "feat(UI): 添加自适应聊天布局规则"
 - 修改：`smapi/DialogueMenu.cs`
 - 测试：沿用 `ChatLayoutRulesTests.cs`，在 `ConversationServiceTests.cs` 增加菜单关闭和重复发送场景的服务测试
 
-- [ ] **步骤 1：编写失败的服务状态测试**
+- [x] **步骤 1：编写失败的服务状态测试**
 
 ```csharp
 [Fact]
@@ -277,7 +277,7 @@ public async Task SendingSecondMessageWhileFirstIsPendingIsRejected()
 
 菜单的行为由这些可观察状态固定：`Idle`、`Sending`、`ShowingReply`、`Failed`、`Closed`。关闭时必须取消令牌并阻止异步回调再次写入菜单。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 运行：
 
@@ -287,7 +287,7 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：并发发送测试失败。
 
-- [ ] **步骤 3：实现 `ChatInputMenu`**
+- [x] **步骤 3：实现 `ChatInputMenu`**
 
 构造函数固定为：
 
@@ -310,7 +310,7 @@ public ChatInputMenu(
 
 `DialogueMenu` 改为转发到 `ChatInputMenu` 的兼容入口，确保旧构造调用不会继续绘制旧 UI；新代码不直接在 `DialogueMenu` 中调用 `BridgeClient`。
 
-- [ ] **步骤 4：运行 C# 全量测试和构建**
+- [x] **步骤 4：运行 C# 全量测试和构建**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false /p:BundleExtraAssemblies=Game
@@ -319,7 +319,7 @@ dotnet build smapi/StardewAI.NPC.csproj --no-restore /p:OS=Windows_NT /p:GamePat
 
 预期：C# 测试通过，Mod DLL 构建成功；不得出现未释放的 `KeyboardDispatcher` 订阅编译错误。
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add smapi/ChatInputMenu.cs smapi/DialogueMenu.cs smapi/tests/ConversationServiceTests.cs
