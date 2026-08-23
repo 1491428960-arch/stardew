@@ -46,7 +46,8 @@ public sealed class DialogueMenu : IClickableMenu
                 npc.Name,
                 message,
                 state,
-                cancellationToken);
+                cancellationToken,
+                memoryFacts: storyStateStore?.RecentMemoryFacts(npc.Name));
             if (!response.Fallback)
             {
                 storyStateStore?.RecordConversation(state, message, response.Reply, usedFallback: false);

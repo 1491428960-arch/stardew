@@ -94,4 +94,46 @@ public sealed class StoryStateStoreTests
         Assert.Single(store.State.InteractionProgresses);
         Assert.Equal("Spring 14", store.State.Memories[0].GameDate);
     }
+
+    [Fact]
+    public void RecentMemoryFacts_returns_only_the_current_npc_and_caps_results()
+    {
+        var store = new StoryStateStore();
+        var state = StoryStateEnvelope.Empty with
+        {
+            Memories = Enumerable.Range(1, 8)
+                .Select(index => new MemoryRecord
+                {
+                    MemoryId = $"sophia-{index}",
+                    OwnerNpcId = "Sophia",
+                    Content = $"Sophia 记忆 {index}",
+                    Source = MemorySource.PlayerChat,
+                    Confidence = 0.8,
+                    GameDate = $"Spring {index}",
+                    Participants = new[] { "Sophia", "player" },
+                    KnowledgeScope = MemoryKnowledgeScope.Participants,
+                    KnownBy = new[] { "Sophia", "player" },
+                })
+                .Append(new MemoryRecord
+                {
+                    MemoryId = "wizard-1",
+                    OwnerNpcId = "Wizard",
+                    Content = "不应泄露给 Sophia",
+                    Source = MemorySource.PlayerChat,
+                    Confidence = 0.8,
+                    GameDate = "Spring 9",
+                    Participants = new[] { "Wizard", "player" },
+                    KnowledgeScope = MemoryKnowledgeScope.Participants,
+                    KnownBy = new[] { "Wizard", "player" },
+                })
+                .ToArray(),
+        };
+        store.Replace(state);
+
+        var facts = store.RecentMemoryFacts("Sophia", limit: 6);
+
+        Assert.Equal(6, facts.Count);
+        Assert.All(facts, fact => Assert.Contains("Sophia", fact));
+        Assert.DoesNotContain(facts, fact => fact.Contains("Wizard"));
+    }
 }

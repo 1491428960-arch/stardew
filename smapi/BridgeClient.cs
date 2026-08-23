@@ -76,6 +76,7 @@ public sealed class BridgeClient : IDisposable
     private const int MaxHistoryContentLength = 240;
     private const int MaxMessageLength = 2000;
     private const int MaxRecentFactLength = 240;
+    private const int MaxRecentFactItems = 20;
 
     private readonly HttpClient httpClient;
     private readonly bool ownsHttpClient;
@@ -105,7 +106,8 @@ public sealed class BridgeClient : IDisposable
         string npcId,
         string message,
         object? gameState = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? memoryFacts = null)
     {
         if (string.IsNullOrWhiteSpace(npcId))
         {
@@ -131,9 +133,11 @@ public sealed class BridgeClient : IDisposable
                     DisplayName = npcGameState?.DisplayName,
                     SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
                     GameState = gameState,
-                    RecentFacts = BuildRecentFacts(
-                        previousStateByNpc.GetValueOrDefault(npcId),
-                        npcGameState),
+                    RecentFacts = MergeRecentFacts(
+                        BuildRecentFacts(
+                            previousStateByNpc.GetValueOrDefault(npcId),
+                            npcGameState),
+                        memoryFacts),
                     History = historyByNpc.TryGetValue(npcId, out var history)
                         ? history.ToArray()
                         : Array.Empty<BridgeDialogueHistoryItem>(),
@@ -263,6 +267,24 @@ public sealed class BridgeClient : IDisposable
         AddIntChange(facts, "孩子数量", previous.ChildrenCount, current.ChildrenCount);
         AddEventChanges(facts, previous.CompletedEventIds, current.CompletedEventIds);
         return facts;
+    }
+
+    private static IReadOnlyList<string> MergeRecentFacts(
+        IReadOnlyList<string> stateFacts,
+        IReadOnlyList<string>? memoryFacts)
+    {
+        var facts = stateFacts.ToList();
+        foreach (var memoryFact in memoryFacts ?? Array.Empty<string>())
+        {
+            if (string.IsNullOrWhiteSpace(memoryFact))
+            {
+                continue;
+            }
+
+            facts.Add(Truncate(memoryFact.Trim(), MaxRecentFactLength));
+        }
+
+        return facts.Take(MaxRecentFactItems).ToArray();
     }
 
     private static void AddEventChanges(

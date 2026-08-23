@@ -35,6 +35,27 @@ public sealed class StoryStateStore
             usedFallback));
     }
 
+    public IReadOnlyList<string> RecentMemoryFacts(string npcId, int limit = 6)
+    {
+        if (string.IsNullOrWhiteSpace(npcId) || limit <= 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var cappedLimit = Math.Min(limit, 8);
+        return State.Memories
+            .Reverse()
+            .Where(memory =>
+                string.Equals(memory.OwnerNpcId, npcId, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(memory.Content))
+            .Take(cappedLimit)
+            .Select(memory =>
+                string.IsNullOrWhiteSpace(memory.GameDate)
+                    ? memory.Content.Trim()
+                    : $"记忆（{memory.GameDate.Trim()}）：{memory.Content.Trim()}")
+            .ToArray();
+    }
+
     public void Replace(StoryStateEnvelope state)
     {
         ArgumentNullException.ThrowIfNull(state);

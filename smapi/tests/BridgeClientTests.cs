@@ -115,6 +115,32 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task SendAsync_adds_persistent_memory_facts_to_recent_facts()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        await client.SendAsync(
+            "Sophia",
+            "你好",
+            cancellationToken: default,
+            memoryFacts: new[] { "记忆（Spring 14）：玩家关心了葡萄园。" });
+
+        using var request = JsonDocument.Parse(await handler.Request!.Content!.ReadAsStringAsync());
+        var facts = request.RootElement.GetProperty("recentFacts").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+        Assert.Contains(facts, fact => fact == "记忆（Spring 14）：玩家关心了葡萄园。");
+    }
+
+    [Fact]
     public async Task SendAsync_sends_previous_history_and_state_change_facts_on_second_call()
     {
         var handler = new RecordingHandler(requestIndex => new HttpResponseMessage(HttpStatusCode.OK)
