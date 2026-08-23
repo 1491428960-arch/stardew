@@ -603,7 +603,7 @@ class DialogueTestRequest(ApiModel):
     item_context: ItemContext | None = Field(default=None, alias="itemContext")
 ```
 
-`app.py` 将 `intent` 和 `itemContext` 加入 `_DIALOGUE_FIELDS`，`ContextBuilder` 和 `PromptBuilder` 只读取上述白名单。`PromptBuilder` 为 `topic` 添加「请主动提出一个符合当前关系和场景的自然话题」的独立上下文消息；为 `item` 添加物品动作、类别、品质和原版偏好结果；普通聊天的消息顺序和旧请求保持不变。
+`app.py` 将 `intent` 和 `itemContext` 加入 `_DIALOGUE_FIELDS`，`ContextBuilder` 和 `PromptBuilder` 只读取上述白名单。`/api/context/preview` 额外返回 `interaction` 摘要（只含 `intent` 和经过白名单过滤的 `itemContext`），不返回原始请求或绝对路径。`PromptBuilder` 为 `topic` 添加「请主动提出一个符合当前关系和场景的自然话题」的独立上下文消息；为 `item` 添加物品动作、类别、品质和原版偏好结果；普通聊天的消息顺序和旧请求保持不变。
 
 `/api/dialogue/test` 的 Fake Provider 继续返回固定测试回复，不改变现有回退行为。
 
