@@ -1,4 +1,6 @@
-# Stardew AI NPC 双入口对话体验设计
+# Stardew AI NPC 双入口对话体验设计（历史草案）
+
+> 本文档是 2026-08-23 的历史草案，曾包含 Smartphone 入口。当前方案已改为原生风格聊天界面，不接入 Smartphone；请以 [2026-08-24 原生风格 AI 聊天界面设计](superpowers/specs/2026-08-24-native-chat-ui-design.md) 为准。
 
 ## 1. 背景与结论
 
