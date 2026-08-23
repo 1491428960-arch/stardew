@@ -537,7 +537,7 @@ git commit -m "feat(物品): 添加背包展示分享和原版赠送"
 - 修改：`bridge/src/stardew_ai_bridge/models.py`、`bridge/src/stardew_ai_bridge/app.py`、`bridge/src/stardew_ai_bridge/prompts.py`
 - 测试：`bridge/tests/test_chat_intents.py`、`bridge/tests/test_api.py`、`bridge/tests/test_game_context_contract.py`
 
-- [ ] **步骤 1：编写失败的 Python 测试**
+- [x] **步骤 1：编写失败的 Python 测试**
 
 ```python
 def test_topic_intent_adds_active_opening_instruction(client: TestClient) -> None:
@@ -575,7 +575,7 @@ def test_item_context_is_allowlisted_and_does_not_accept_unknown_fields(client):
 
 测试还要确认缺少 `intent` 时默认为 `chat`，非法意图和未知物品字段返回 422，Prompt 不出现绝对路径、Token 或完整原始 Mod 文本。
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 ```powershell
 $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\bridge\src'
@@ -584,7 +584,7 @@ $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\br
 
 预期：新测试因 `intent`、`itemContext` 和 Prompt 摘要字段尚未定义而失败。
 
-- [ ] **步骤 3：实现 Pydantic 契约和 Prompt 分支**
+- [x] **步骤 3：实现 Pydantic 契约和 Prompt 分支**
 
 在 `models.py` 中新增：
 
@@ -607,7 +607,7 @@ class DialogueTestRequest(ApiModel):
 
 `/api/dialogue/test` 的 Fake Provider 继续返回固定测试回复，不改变现有回退行为。
 
-- [ ] **步骤 4：运行 Bridge 全量测试**
+- [x] **步骤 4：运行 Bridge 全量测试**
 
 ```powershell
 $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\bridge\src'
@@ -616,7 +616,7 @@ $env:PYTHONPATH='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory\br
 
 预期：全部通过，允许保留现有 Starlette/httpx 弃用警告。
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add bridge/src/stardew_ai_bridge/models.py bridge/src/stardew_ai_bridge/app.py bridge/src/stardew_ai_bridge/prompts.py bridge/tests/test_chat_intents.py bridge/tests/test_api.py bridge/tests/test_game_context_contract.py

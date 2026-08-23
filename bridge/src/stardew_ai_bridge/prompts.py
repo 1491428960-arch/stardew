@@ -23,6 +23,15 @@ _STATE_FIELDS = (
     "childrenCount",
     "completedEventIds",
 )
+_INTERACTION_INTENTS = {"chat", "topic", "item"}
+_ITEM_CONTEXT_FIELDS = (
+    "itemId",
+    "displayName",
+    "category",
+    "quality",
+    "action",
+    "giftTaste",
+)
 
 
 def _text(value: object, *, limit: int = 240) -> str:
@@ -78,6 +87,25 @@ def _sanitize_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(_sanitize_value(item) for item in value)
     return value
+
+
+def _build_interaction(values: Mapping[str, Any]) -> dict[str, Any]:
+    raw_intent = _text(values.get("intent"), limit=20).casefold()
+    intent = raw_intent if raw_intent in _INTERACTION_INTENTS else "chat"
+    interaction: dict[str, Any] = {"intent": intent}
+    raw_item_context = values.get("itemContext", values.get("item_context"))
+    if isinstance(raw_item_context, Mapping):
+        item_context: dict[str, Any] = {}
+        for key in _ITEM_CONTEXT_FIELDS:
+            value = raw_item_context.get(key)
+            if key in {"quality", "giftTaste"}:
+                if isinstance(value, int):
+                    item_context[key] = value
+            elif isinstance(value, str) and value.strip():
+                item_context[key] = _remove_secret_labels(_text(value, limit=120))
+        if item_context:
+            interaction["itemContext"] = item_context
+    return interaction
 
 
 class ContextBuilder:
@@ -184,6 +212,8 @@ class ContextBuilder:
             "recentFacts": recent_facts,
             "history": history,
         }
+        if "intent" in values or "itemContext" in values or "item_context" in values:
+            context["interaction"] = _build_interaction(values)
         if self.profile_index is not None:
             style_samples = self.profile_index.style_samples(
                 str(npc_id),
@@ -213,7 +243,7 @@ class PromptBuilder:
     """将上下文组装成顺序固定、无凭据的 chat messages。"""
 
     def build(self, context: Mapping[str, Any], player_input: str) -> list[dict[str, str]]:
-        safe_context = _sanitize_value({
+        safe_context_data: dict[str, Any] = {
             "npcIdentity": {
                 key: context.get("npcIdentity", {}).get(key)
                 for key in _IDENTITY_FIELDS
@@ -290,7 +320,14 @@ class PromptBuilder:
                     or _text(item.get("sourceKey"))
                 )
             ],
-        })
+        }
+        if "interaction" in context:
+            safe_context_data["interaction"] = _build_interaction(
+                context["interaction"]
+                if isinstance(context["interaction"], Mapping)
+                else {}
+            )
+        safe_context = _sanitize_value(safe_context_data)
         identity = safe_context["npcIdentity"]
         overlay = {
             "modSources": safe_context["modSources"],
@@ -329,6 +366,22 @@ class PromptBuilder:
                 }),
             },
         ]
+        if "interaction" in safe_context:
+            interaction = safe_context["interaction"]
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "interaction",
+                    "content": _json({
+                        **interaction,
+                        "instruction": {
+                            "chat": "正常回应玩家当前的话题。",
+                            "topic": "由 NPC 主动找一个自然、符合当前情境的话题，不要解释技术状态。",
+                            "item": "根据 NPC 的喜好和关系回应玩家展示、分享或赠送的物品，不替游戏修改物品或好感度。",
+                        }[interaction["intent"]],
+                    }),
+                }
+            )
         if safe_context["styleSamples"]:
             messages.append(
                 {

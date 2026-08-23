@@ -46,6 +46,8 @@ _DIALOGUE_FIELDS = {
     "recentFacts",
     "history",
     "gameState",
+    "intent",
+    "itemContext",
 }
 
 
@@ -120,6 +122,8 @@ def preview_context(payload: dict[str, object]) -> dict[str, object]:
             for message in prompt
         ],
     }
+    if "interaction" in context:
+        response["interaction"] = context["interaction"]
     for key in ("styleSamples", "storyEvents"):
         if key in context:
             response[key] = context[key]

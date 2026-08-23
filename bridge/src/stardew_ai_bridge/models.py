@@ -95,6 +95,25 @@ class NpcGameState(ApiModel):
     )
 
 
+class ItemConversationContext(ApiModel):
+    item_id: str = Field(alias="itemId", min_length=1, max_length=100)
+    display_name: str = Field(
+        alias="displayName",
+        min_length=1,
+        max_length=100,
+    )
+    category: str = Field(min_length=1, max_length=100)
+    quality: int = Field(ge=0, le=4)
+    action: Literal["display", "share", "gift"]
+    gift_taste: int = Field(alias="giftTaste", ge=-10, le=10)
+
+    _strip_item_id = field_validator("item_id", mode="before")(_strip_text)
+    _strip_display_name = field_validator("display_name", mode="before")(
+        _strip_text
+    )
+    _strip_category = field_validator("category", mode="before")(_strip_text)
+
+
 class DialogueTestRequest(ApiModel):
     npc_id: str = Field(alias="npcId", min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=2000)
@@ -117,6 +136,11 @@ class DialogueTestRequest(ApiModel):
     )
     history: list[dict[str, object]] = Field(default_factory=list, max_length=50)
     game_state: NpcGameState | None = Field(default=None, alias="gameState")
+    intent: Literal["chat", "topic", "item"] = "chat"
+    item_context: ItemConversationContext | None = Field(
+        default=None,
+        alias="itemContext",
+    )
 
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
     _strip_message = field_validator("message", mode="before")(_strip_text)
