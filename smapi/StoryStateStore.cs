@@ -21,6 +21,20 @@ public sealed class StoryStateStore
         return StoryStateSerializer.Serialize(State);
     }
 
+    public void RecordConversation(
+        NpcGameState gameState,
+        string playerMessage,
+        string npcReply,
+        bool usedFallback)
+    {
+        Replace(ConversationStateRules.RecordConversation(
+            State,
+            gameState,
+            playerMessage,
+            npcReply,
+            usedFallback));
+    }
+
     public void Replace(StoryStateEnvelope state)
     {
         ArgumentNullException.ThrowIfNull(state);

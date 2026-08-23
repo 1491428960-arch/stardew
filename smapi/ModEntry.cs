@@ -150,7 +150,7 @@ public sealed class ModEntry : Mod
             return;
         }
 
-        Game1.activeClickableMenu = new DialogueMenu(rasmodia, bridgeClient);
+        Game1.activeClickableMenu = new DialogueMenu(rasmodia, bridgeClient, storyStateStore);
     }
 
     private sealed class SmapiModRegistryStatus : IModRegistryStatus

@@ -73,4 +73,25 @@ public sealed class StoryStateStoreTests
         Assert.Empty(store.State.Relationships);
         Assert.Empty(store.LastWarnings);
     }
+
+    [Fact]
+    public void RecordConversation_updates_the_loaded_state_for_the_next_save()
+    {
+        var store = new StoryStateStore();
+        store.RecordConversation(
+            new NpcGameState
+            {
+                NpcId = "Sophia",
+                Date = "Spring 14",
+                FriendshipHearts = 6,
+                Relationship = "friend",
+            },
+            "葡萄园最近怎么样？",
+            "最近还不错。",
+            usedFallback: false);
+
+        Assert.Single(store.State.Memories);
+        Assert.Single(store.State.InteractionProgresses);
+        Assert.Equal("Spring 14", store.State.Memories[0].GameDate);
+    }
 }

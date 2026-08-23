@@ -18,13 +18,18 @@ public sealed class DialogueMenu : IClickableMenu
 {
     private readonly BridgeClient bridgeClient;
     private readonly StardewNpc npc;
+    private readonly StoryStateStore? storyStateStore;
     private string reply = "点击菜单发送“你好”。";
 
-    public DialogueMenu(StardewNpc npc, BridgeClient bridgeClient)
+    public DialogueMenu(
+        StardewNpc npc,
+        BridgeClient bridgeClient,
+        StoryStateStore? storyStateStore = null)
         : base(Game1.viewport.Width / 2 - 300, Game1.viewport.Height / 2 - 180, 600, 360)
     {
         this.npc = npc;
         this.bridgeClient = bridgeClient;
+        this.storyStateStore = storyStateStore;
     }
 
     public DialogueStatus Status { get; private set; } = DialogueStatus.Idle;
@@ -42,6 +47,10 @@ public sealed class DialogueMenu : IClickableMenu
                 message,
                 state,
                 cancellationToken);
+            if (!response.Fallback)
+            {
+                storyStateStore?.RecordConversation(state, message, response.Reply, usedFallback: false);
+            }
             reply = response.Reply;
             Status = response.Fallback ? DialogueStatus.Failed : DialogueStatus.Success;
         }
