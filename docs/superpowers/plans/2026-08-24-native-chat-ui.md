@@ -409,7 +409,7 @@ git commit -m "feat(入口): 接入正式聊天菜单和生命周期"
 - 修改：`smapi/ModEntry.cs`
 - 测试：`smapi/tests/FaceToFaceStateRulesTests.cs`
 
-- [ ] **步骤 1：编写失败的状态机测试**
+- [x] **步骤 1：编写失败的状态机测试**
 
 ```csharp
 [Fact]
@@ -435,7 +435,7 @@ public void EventAndFestivalNeverOfferContinuation()
 }
 ```
 
-- [ ] **步骤 2：运行测试确认失败**
+- [x] **步骤 2：运行测试确认失败**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~FaceToFaceStateRulesTests
@@ -443,20 +443,20 @@ dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT
 
 预期：状态和规则类型尚未定义而失败。
 
-- [ ] **步骤 3：实现协调器**
+- [x] **步骤 3：实现协调器**
 
 `FaceToFaceConversationCoordinator` 通过 `Display.MenuChanged` 观察 `DialogueBox` 的打开和关闭，并读取 `Game1.currentSpeaker` 作为 NPC；只在世界已加载、非事件、非节日、没有其他菜单接管时进入候选状态。原版菜单打开期间不替换 `Game1.activeClickableMenu`。
 
 对话关闭时调用 `Game1.currentLocation.createQuestionDialogue`，选项固定为「继续聊聊」和「先告辞」；回调只改变状态，不直接发送 Bridge 请求。续聊菜单关闭、存档、返回标题、NPC 失效时清理协调器。
 
-- [ ] **步骤 4：运行状态机测试和构建**
+- [x] **步骤 4：运行状态机测试和构建**
 
 ```powershell
 dotnet test smapi/tests/StardewAI.NPC.Tests.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" --filter FullyQualifiedName~FaceToFaceStateRulesTests
 dotnet build smapi/StardewAI.NPC.csproj --no-restore /p:OS=Windows_NT /p:GamePath="D:\sbeam\steamapps\common\Stardew Valley" /p:EnableModDeploy=false /p:EnableModZip=false /p:BundleExtraAssemblies=Game
 ```
 
-- [ ] **步骤 5：提交**
+- [x] **步骤 5：提交**
 
 ```powershell
 git add smapi/FaceToFaceConversationCoordinator.cs smapi/FaceToFaceStateRules.cs smapi/ModEntry.cs smapi/tests/FaceToFaceStateRulesTests.cs

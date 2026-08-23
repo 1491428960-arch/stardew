@@ -12,13 +12,18 @@ public sealed class ModEntry : Mod
     private ConversationService? conversationService;
     private KeybindList dialogueKey = new(SButton.F8);
     private readonly StoryStateStore storyStateStore = new();
+    private FaceToFaceConversationCoordinator? faceToFaceCoordinator;
 
     public override void Entry(IModHelper helper)
     {
         config = helper.ReadConfig<ModConfig>().Normalize();
         ApplyConfig();
+        faceToFaceCoordinator = new FaceToFaceConversationCoordinator(
+            conversationService,
+            storyStateStore);
         GameStateCollector.ConfigureModRegistry(new SmapiModRegistryStatus(helper.ModRegistry));
         helper.Events.Input.ButtonPressed += OnButtonPressed;
+        helper.Events.Display.MenuChanged += faceToFaceCoordinator.OnMenuChanged;
         helper.Events.GameLoop.GameLaunched += OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
         helper.Events.GameLoop.Saving += OnSaving;
@@ -72,6 +77,7 @@ public sealed class ModEntry : Mod
         conversationService?.Cancel();
         conversationService?.Dispose();
         conversationService = null;
+        faceToFaceCoordinator?.UpdateService(null);
         bridgeClient?.Dispose();
         bridgeClient = null;
         storyStateStore.Reset();
@@ -149,6 +155,7 @@ public sealed class ModEntry : Mod
         {
             conversationService = new ConversationService(bridgeClient, storyStateStore);
         }
+        faceToFaceCoordinator?.UpdateService(conversationService);
     }
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
