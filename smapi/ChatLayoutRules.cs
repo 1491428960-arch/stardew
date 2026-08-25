@@ -8,6 +8,8 @@ public sealed record ChatLayout(
     Rectangle Panel,
     Rectangle Header,
     Rectangle MessageArea,
+    Rectangle ConversationArea,
+    Rectangle ProfilePanel,
     Rectangle InputBox,
     Rectangle SendButton,
     Rectangle TopicButton,
@@ -22,6 +24,9 @@ public static class ChatLayoutRules
     private const int FooterHeight = 112;
     private const int HeaderHeight = 92;
     private const int ActionGap = 8;
+    private const int ProfileWidth = 280;
+    private const int ProfileHeight = 112;
+    private const int MinimumConversationWidth = 240;
 
     public static ChatLayout Calculate(int viewportWidth, int viewportHeight)
     {
@@ -69,40 +74,66 @@ public static class ChatLayoutRules
             panel.Width - (SafeMargin * 2),
             Math.Max(40, footer.Y - header.Bottom - (ActionGap * 2)));
 
-        const int sendWidth = 96;
-        const int topicWidth = 128;
-        const int inventoryWidth = 104;
-        const int closeWidth = 96;
+        var showProfile = messageArea.Width >=
+            MinimumConversationWidth + ProfileWidth + ActionGap;
+        var profilePanel = showProfile
+            ? new Rectangle(
+                messageArea.Right - ProfileWidth,
+                messageArea.Y,
+                ProfileWidth,
+                Math.Min(ProfileHeight, messageArea.Height))
+            : Rectangle.Empty;
+        var conversationArea = new Rectangle(
+            messageArea.X,
+            messageArea.Y,
+            showProfile
+                ? messageArea.Width - ProfileWidth - ActionGap
+                : messageArea.Width,
+            messageArea.Height);
+
+        var compactActions = footer.Width < 600;
+        var veryCompactActions = footer.Width < 420;
+        var buttonGap = veryCompactActions
+            ? 4
+            : compactActions
+                ? 6
+                : ActionGap;
+        var sendWidth = veryCompactActions ? 56 : compactActions ? 72 : 96;
+        var topicWidth = veryCompactActions ? 72 : compactActions ? 96 : 128;
+        var inventoryWidth = veryCompactActions ? 62 : compactActions ? 84 : 104;
+        var closeWidth = veryCompactActions ? 56 : compactActions ? 72 : 96;
         var closeButton = new Rectangle(
             footer.Right - closeWidth,
             footer.Y,
             closeWidth,
             footer.Height);
         var inventoryButton = new Rectangle(
-            closeButton.X - ActionGap - inventoryWidth,
+            closeButton.X - buttonGap - inventoryWidth,
             footer.Y,
             inventoryWidth,
             footer.Height);
         var topicButton = new Rectangle(
-            inventoryButton.X - ActionGap - topicWidth,
+            inventoryButton.X - buttonGap - topicWidth,
             footer.Y,
             topicWidth,
             footer.Height);
         var sendButton = new Rectangle(
-            topicButton.X - ActionGap - sendWidth,
+            topicButton.X - buttonGap - sendWidth,
             footer.Y,
             sendWidth,
             footer.Height);
         var inputBox = new Rectangle(
             footer.X,
             footer.Y,
-            Math.Max(120, sendButton.X - footer.X - ActionGap),
+            Math.Max(120, sendButton.X - footer.X - buttonGap),
             footer.Height);
 
         return new ChatLayout(
             panel,
             header,
             messageArea,
+            conversationArea,
+            profilePanel,
             inputBox,
             sendButton,
             topicButton,
@@ -125,4 +156,10 @@ public static class ChatLayoutRules
             .TakeLast(maximumCount)
             .ToArray();
     }
+
+    public static bool ShouldDrawHeaderTitle() => false;
+
+    public static bool ShouldDrawHeaderStatus() => false;
+
+    public static bool ShouldDrawFriendshipMeter(int? hearts) => hearts.HasValue;
 }
