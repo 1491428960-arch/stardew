@@ -24,6 +24,7 @@ public class ChatInputMenu : IClickableMenu
     private readonly ConversationService conversationService;
     private readonly StoryStateStore storyStateStore;
     private readonly Action onClosed;
+    private readonly int? friendshipHeartsOverride;
     private readonly CancellationTokenSource cancellationSource = new();
     private readonly List<ChatDisplayMessage> messages = new();
     private readonly KeyboardSubscriberLease<IKeyboardSubscriber> keyboardSubscriberLease;
@@ -38,7 +39,9 @@ public class ChatInputMenu : IClickableMenu
         StardewNpc npc,
         ConversationService conversationService,
         StoryStateStore storyStateStore,
-        Action onClosed)
+        Action onClosed,
+        IReadOnlyList<ChatDisplayMessage>? initialMessages = null,
+        int? friendshipHeartsOverride = null)
         : base(0, 0, 1, 1)
     {
         this.npc = npc ?? throw new ArgumentNullException(nameof(npc));
@@ -47,6 +50,13 @@ public class ChatInputMenu : IClickableMenu
         this.storyStateStore = storyStateStore ??
             throw new ArgumentNullException(nameof(storyStateStore));
         this.onClosed = onClosed;
+        this.friendshipHeartsOverride = friendshipHeartsOverride;
+
+        if (initialMessages is { Count: > 0 })
+        {
+            messages.AddRange(initialMessages.Take(MaxMessageCount));
+            uiHint = string.Empty;
+        }
 
         layout = ChatLayoutRules.Calculate(Game1.viewport.Width, Game1.viewport.Height);
         xPositionOnScreen = layout.Panel.X;
@@ -451,7 +461,7 @@ public class ChatInputMenu : IClickableMenu
         }
         if (ChatLayoutRules.ShouldDrawHeaderStatus())
         {
-            var relationship = GameStateCollector.Collect(npc).FriendshipHearts is { } hearts
+            var relationship = GetFriendshipHearts() is { } hearts
                 ? $"原版好感度 · {hearts} 心"
                 : "原版好感度 · 未知";
             b.DrawString(
@@ -593,8 +603,7 @@ public class ChatInputMenu : IClickableMenu
             new Vector2(infoX, infoY),
             Color.Black);
 
-        var state = GameStateCollector.Collect(npc);
-        var hearts = state.FriendshipHearts;
+        var hearts = GetFriendshipHearts();
         var relationship = hearts is { } value ? $"好感度 {value} 心" : "好感度未知";
         b.DrawString(
             Game1.smallFont,
@@ -620,6 +629,11 @@ public class ChatInputMenu : IClickableMenu
                 }
             }
         }
+    }
+
+    private int? GetFriendshipHearts()
+    {
+        return friendshipHeartsOverride ?? GameStateCollector.Collect(npc).FriendshipHearts;
     }
 
     private static void DrawButton(

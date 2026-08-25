@@ -19,6 +19,10 @@ public sealed record VisualTestOptions(
     int? BackBufferWidth = null,
     int? BackBufferHeight = null);
 
+public sealed record VisualTestScenarioContent(
+    IReadOnlyList<ChatDisplayMessage> InitialMessages,
+    int? FriendshipHearts);
+
 public static class VisualTestHarnessRules
 {
     public const string EnabledVariable = "STARDEW_AI_NPC_VISUAL_TEST";
@@ -29,6 +33,31 @@ public static class VisualTestHarnessRules
     public const string BackBufferHeightVariable = "STARDEW_AI_NPC_VISUAL_BACKBUFFER_HEIGHT";
     public const string DefaultSaveName = "test_447101921";
     public const string DefaultScenarioId = "chat-empty";
+    public const string WideContentScenarioId = "chat-profile-strip-wide-content";
+
+    private static readonly VisualTestScenarioContent EmptyScenarioContent =
+        new(Array.Empty<ChatDisplayMessage>(), null);
+
+    private static readonly VisualTestScenarioContent WideContentScenario =
+        new(
+            new[]
+            {
+                new ChatDisplayMessage(
+                    "npc",
+                    "今天的风很舒服，像是从山谷一路带着松木和薄荷的味道吹过来。"),
+                new ChatDisplayMessage(
+                    "player",
+                    "最近在整理农场，也在试着把每天遇到的小事记下来。"),
+                new ChatDisplayMessage(
+                    "npc",
+                    "这听起来不错。记忆不会因为写得简短就失去温度，反而更容易在以后重新找到当时的心情。" +
+                    "等你下次回头看的时候，也许会发现今天的自己已经悄悄走了很远。" +
+                    "所以不用急着把每件事都解释清楚，先把真正想留下的片段记下来，时间会帮你把它们串成一段温柔的故事。"),
+                new ChatDisplayMessage(
+                    "player",
+                    "那我先记下：今天早上和你聊了这件事，也记得给自己留一点休息的时间。"),
+            },
+            5);
 
     public static bool IsEnabled(string? value)
     {
@@ -64,6 +93,16 @@ public static class VisualTestHarnessRules
     {
         return loadGateSatisfied && fadeClear && !menuOpened && gameReady &&
             openAtTick >= 0 && ticks >= openAtTick;
+    }
+
+    public static VisualTestScenarioContent GetScenarioContent(string? scenarioId)
+    {
+        return string.Equals(
+                scenarioId,
+                WideContentScenarioId,
+                StringComparison.OrdinalIgnoreCase)
+            ? WideContentScenario
+            : EmptyScenarioContent;
     }
 
     public static VisualTestOptions Parse(IReadOnlyDictionary<string, string?> environment)
@@ -384,14 +423,20 @@ public sealed class VisualTestHarness
             return;
         }
 
+        var scenario = VisualTestHarnessRules.GetScenarioContent(options.ScenarioId);
         menu = new ChatInputMenu(
             npc,
             service,
             storyStateStore,
-            () => monitor.Log("视觉测试聊天菜单已关闭。", LogLevel.Trace));
+            () => monitor.Log("视觉测试聊天菜单已关闭。", LogLevel.Trace),
+            scenario.InitialMessages,
+            scenario.FriendshipHearts);
         Game1.activeClickableMenu = menu;
         menuOpened = true;
-        monitor.Log("视觉测试已打开真实聊天菜单，等待 Rendered 帧。", LogLevel.Trace);
+        monitor.Log(
+            $"视觉测试已打开真实聊天菜单，预置消息={scenario.InitialMessages.Count}；" +
+            $"好感度覆盖={(scenario.FriendshipHearts?.ToString() ?? "无")}；等待 Rendered 帧。",
+            LogLevel.Trace);
     }
 
     private void OnRenderedActiveMenu(object? sender, RenderedActiveMenuEventArgs e)

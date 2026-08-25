@@ -47,6 +47,33 @@ public sealed class VisualTestHarnessRulesTests
     }
 
     [Fact]
+    public void ContentScenarioSeedsRepresentativeConversationAndKnownFriendship()
+    {
+        var scenario = VisualTestHarnessRules.GetScenarioContent(
+            "chat-profile-strip-wide-content");
+
+        Assert.Equal(5, scenario.FriendshipHearts);
+        Assert.Contains(
+            scenario.InitialMessages,
+            message => message.Role == "npc" &&
+                message.Content.Contains("今天的风", StringComparison.Ordinal));
+        Assert.Contains(
+            scenario.InitialMessages,
+            message => message.Role == "player" &&
+                message.Content.Contains("最近在整理", StringComparison.Ordinal));
+        Assert.True(scenario.InitialMessages.Count >= 4);
+    }
+
+    [Fact]
+    public void UnknownScenarioUsesEmptyConversationWithoutFriendshipOverride()
+    {
+        var scenario = VisualTestHarnessRules.GetScenarioContent("chat-empty");
+
+        Assert.Empty(scenario.InitialMessages);
+        Assert.Null(scenario.FriendshipHearts);
+    }
+
+    [Fact]
     public void ExplicitBackBufferRequiresBothPositiveDimensions()
     {
         Assert.Throws<ArgumentException>(() => VisualTestHarnessRules.Parse(
