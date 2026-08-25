@@ -12,10 +12,13 @@ namespace StardewAI.NPC;
 /// </summary>
 public class ChatInputMenu : IClickableMenu
 {
-    private const int MessagePadding = 16;
+    private const int MessagePadding = 12;
     private const int PortraitSize = 64;
+    private const int BubblePadding = 12;
+    private const int BubbleGap = 8;
     private const int MessageLineSpacing = 4;
     private const int MaxMessageCount = 24;
+    private const int MaxVisibleMessageCount = 8;
 
     private readonly StardewNpc npc;
     private readonly ConversationService conversationService;
@@ -23,7 +26,7 @@ public class ChatInputMenu : IClickableMenu
     private readonly Action onClosed;
     private readonly CancellationTokenSource cancellationSource = new();
     private readonly List<ChatDisplayMessage> messages = new();
-    private readonly IKeyboardSubscriber? previousKeyboardSubscriber;
+    private readonly KeyboardSubscriberLease<IKeyboardSubscriber> keyboardSubscriberLease;
     private readonly TextBox inputBox;
     private ChatLayout layout;
     private string uiHint = "输入一句话，或者让她先找个话题。";
@@ -64,10 +67,11 @@ public class ChatInputMenu : IClickableMenu
             Text = string.Empty,
         };
         inputBox.OnEnterPressed += OnInputEnterPressed;
+        keyboardSubscriberLease = new KeyboardSubscriberLease<IKeyboardSubscriber>(
+            () => Game1.keyboardDispatcher.Subscriber,
+            subscriber => Game1.keyboardDispatcher.Subscriber = subscriber);
+        keyboardSubscriberLease.Acquire(inputBox);
         inputBox.SelectMe();
-
-        previousKeyboardSubscriber = Game1.keyboardDispatcher.Subscriber;
-        Game1.keyboardDispatcher.Subscriber = inputBox;
     }
 
     public IReadOnlyList<ChatDisplayMessage> Messages => messages;
@@ -146,7 +150,6 @@ public class ChatInputMenu : IClickableMenu
             return;
         }
 
-        inputBox.Update();
         base.update(time);
     }
 
@@ -432,84 +435,201 @@ public class ChatInputMenu : IClickableMenu
         b.Draw(
             Game1.fadeToBlackRect,
             new Rectangle(0, 0, viewport.Width, viewport.Height),
-            Color.Black * 0.35f);
+            Color.Black * 0.42f);
     }
 
     private void DrawHeader(SpriteBatch b)
     {
-        var portrait = npc.Portrait;
-        if (portrait is not null)
-        {
-            b.Draw(
-                portrait,
-                new Rectangle(
-                    layout.Header.X,
-                    layout.Header.Y,
-                    PortraitSize,
-                    PortraitSize),
-                new Rectangle(0, 0, PortraitSize, PortraitSize),
-                Color.White);
-        }
-
         var title = $"和 {npc.displayName} 聊聊";
-        b.DrawString(
-            Game1.dialogueFont,
-            title,
-            new Vector2(layout.Header.X + PortraitSize + MessagePadding, layout.Header.Y + 8),
-            Color.Black);
-        var relationship = GameStateCollector.Collect(npc).FriendshipHearts is { } hearts
-            ? $"好感度：{hearts} 心"
-            : "好感度：未知";
-        b.DrawString(
-            Game1.smallFont,
-            relationship,
-            new Vector2(layout.Header.X + PortraitSize + MessagePadding, layout.Header.Y + 48),
-            Color.DarkSlateGray);
+        if (ChatLayoutRules.ShouldDrawHeaderTitle())
+        {
+            b.DrawString(
+                Game1.dialogueFont,
+                title,
+                new Vector2(layout.Header.X + MessagePadding, layout.Header.Y + 8),
+                Color.Black);
+        }
+        if (ChatLayoutRules.ShouldDrawHeaderStatus())
+        {
+            var relationship = GameStateCollector.Collect(npc).FriendshipHearts is { } hearts
+                ? $"原版好感度 · {hearts} 心"
+                : "原版好感度 · 未知";
+            b.DrawString(
+                Game1.smallFont,
+                relationship,
+                new Vector2(layout.Header.X + MessagePadding, layout.Header.Y + 48),
+                Color.DarkSlateGray);
+        }
     }
 
     private void DrawMessages(SpriteBatch b)
     {
-        var visible = ChatLayoutRules.VisibleMessages(messages, MaxMessageCount);
-        var y = layout.MessageArea.Y + MessagePadding;
-        var maxWidth = layout.MessageArea.Width - (MessagePadding * 2);
+        var area = layout.ConversationArea;
+        var visible = ChatLayoutRules.VisibleMessages(messages, MaxVisibleMessageCount);
+        var y = area.Y + MessagePadding;
+        var maxWidth = area.Width - (MessagePadding * 2);
         foreach (var message in visible)
         {
-            var speaker = message.Role == "player" ? "你" : npc.displayName;
-            var color = message.Role == "player" ? Color.DarkSlateBlue : Color.Black;
-            foreach (var line in WrapText($"{speaker}：{message.Content}", maxWidth))
+            var isPlayer = message.Role == "player";
+            var speaker = isPlayer ? "你" : npc.displayName;
+            var lines = WrapText(message.Content, Math.Max(80, maxWidth - (BubblePadding * 2)))
+                .ToArray();
+            if (lines.Length == 0)
             {
-                if (y + Game1.smallFont.LineSpacing > layout.MessageArea.Bottom - MessagePadding)
-                {
-                    return;
-                }
-
-                b.DrawString(Game1.smallFont, line, new Vector2(layout.MessageArea.X + MessagePadding, y), color);
-                y += Game1.smallFont.LineSpacing + MessageLineSpacing;
+                continue;
             }
+
+            var textWidth = lines.Max(line => Game1.smallFont.MeasureString(line).X);
+            var bubbleWidth = Math.Clamp(
+                (int)Math.Ceiling(textWidth + (BubblePadding * 2)),
+                180,
+                maxWidth);
+            var bubbleHeight = (BubblePadding * 2)
+                + Game1.smallFont.LineSpacing
+                + MessageLineSpacing
+                + (lines.Length * Game1.smallFont.LineSpacing)
+                + ((lines.Length - 1) * MessageLineSpacing);
+            if (y + bubbleHeight > area.Bottom - MessagePadding)
+            {
+                break;
+            }
+
+            var bubbleX = isPlayer
+                ? area.Right - MessagePadding - bubbleWidth
+                : area.X + MessagePadding;
+            var bubble = new Rectangle(bubbleX, y, bubbleWidth, bubbleHeight);
+            drawTextureBox(
+                b,
+                bubble.X,
+                bubble.Y,
+                bubble.Width,
+                bubble.Height,
+                isPlayer ? new Color(226, 239, 246) : new Color(239, 231, 244));
+
+            var speakerColor = isPlayer ? Color.DarkSlateBlue : Color.DarkMagenta;
+            b.DrawString(
+                Game1.smallFont,
+                speaker,
+                new Vector2(bubble.X + BubblePadding, bubble.Y + BubblePadding),
+                speakerColor);
+            var lineY = bubble.Y + BubblePadding + Game1.smallFont.LineSpacing + MessageLineSpacing;
+            foreach (var line in lines)
+            {
+                b.DrawString(
+                    Game1.smallFont,
+                    line,
+                    new Vector2(bubble.X + BubblePadding, lineY),
+                    Color.Black);
+                lineY += Game1.smallFont.LineSpacing + MessageLineSpacing;
+            }
+
+            y += bubbleHeight + BubbleGap;
         }
 
-        if (!string.IsNullOrWhiteSpace(uiHint) && y < layout.MessageArea.Bottom - MessagePadding)
+        if (!string.IsNullOrWhiteSpace(uiHint) && y < area.Bottom - MessagePadding)
         {
             b.DrawString(
                 Game1.smallFont,
                 uiHint,
-                new Vector2(layout.MessageArea.X + MessagePadding, y),
+                new Vector2(area.X + MessagePadding, y),
                 Color.Gray);
         }
+
+        DrawProfile(b);
     }
 
     private void DrawFooter(SpriteBatch b)
     {
-        DrawButton(b, layout.SendButton, "发送", enabled: !sending);
-        DrawButton(b, layout.TopicButton, "找话题", enabled: !sending);
-        DrawButton(b, layout.InventoryButton, "物品", enabled: !sending);
-        DrawButton(b, layout.CloseButton, "结束", enabled: true);
+        DrawButton(b, layout.SendButton, "发送", enabled: !sending, tint: new Color(235, 246, 236));
+        DrawButton(b, layout.TopicButton, "找话题", enabled: !sending, tint: new Color(239, 231, 244));
+        DrawButton(b, layout.InventoryButton, "物品", enabled: !sending, tint: new Color(235, 240, 246));
+        DrawButton(b, layout.CloseButton, "结束", enabled: true, tint: new Color(247, 232, 227));
         inputBox.Draw(b, drawShadow: true);
     }
 
-    private static void DrawButton(SpriteBatch b, Rectangle bounds, string label, bool enabled)
+    private void DrawProfile(SpriteBatch b)
     {
-        drawTextureBox(b, bounds.X, bounds.Y, bounds.Width, bounds.Height, enabled ? Color.White : Color.Gray);
+        if (layout.ProfilePanel == Rectangle.Empty)
+        {
+            return;
+        }
+
+        var panel = layout.ProfilePanel;
+        drawTextureBox(
+            b,
+            panel.X,
+            panel.Y,
+            panel.Width,
+            panel.Height,
+            new Color(248, 240, 224));
+
+        var portrait = npc.Portrait;
+        var portraitFrame = new Rectangle(
+            panel.X + MessagePadding,
+            panel.Y + ((panel.Height - PortraitSize) / 2),
+            PortraitSize,
+            PortraitSize);
+        if (portrait is not null)
+        {
+            drawTextureBox(
+                b,
+                portraitFrame.X - 6,
+                portraitFrame.Y - 6,
+                portraitFrame.Width + 12,
+                portraitFrame.Height + 12,
+                Color.White);
+            b.Draw(
+                portrait,
+                portraitFrame,
+                new Rectangle(0, 0, PortraitSize, PortraitSize),
+                Color.White);
+        }
+
+        var infoX = portraitFrame.Right + MessagePadding;
+        var infoY = panel.Y + 22;
+        b.DrawString(
+            Game1.smallFont,
+            npc.displayName,
+            new Vector2(infoX, infoY),
+            Color.Black);
+
+        var state = GameStateCollector.Collect(npc);
+        var hearts = state.FriendshipHearts;
+        var relationship = hearts is { } value ? $"好感度 {value} 心" : "好感度未知";
+        b.DrawString(
+            Game1.smallFont,
+            relationship,
+            new Vector2(infoX, infoY + 28),
+            Color.DarkSlateGray);
+
+        if (ChatLayoutRules.ShouldDrawFriendshipMeter(hearts))
+        {
+            var meter = new Rectangle(
+                infoX,
+                panel.Bottom - MessagePadding - 10,
+                panel.Right - infoX - MessagePadding,
+                10);
+            b.Draw(Game1.fadeToBlackRect, meter, new Color(206, 195, 180));
+            if (hearts is { } friendshipHearts && meter.Width > 0)
+            {
+                var filledWidth = (int)Math.Round(
+                    meter.Width * Math.Clamp(friendshipHearts / 10f, 0f, 1f));
+                if (filledWidth > 0)
+                {
+                    b.Draw(Game1.fadeToBlackRect, new Rectangle(meter.X, meter.Y, filledWidth, meter.Height), new Color(181, 137, 191));
+                }
+            }
+        }
+    }
+
+    private static void DrawButton(
+        SpriteBatch b,
+        Rectangle bounds,
+        string label,
+        bool enabled,
+        Color tint)
+    {
+        drawTextureBox(b, bounds.X, bounds.Y, bounds.Width, bounds.Height, enabled ? tint : Color.Gray);
         var size = Game1.smallFont.MeasureString(label);
         b.DrawString(
             Game1.smallFont,
@@ -556,26 +676,23 @@ public class ChatInputMenu : IClickableMenu
 
     private void CleanupKeyboardSubscriber()
     {
-        if (ReferenceEquals(Game1.keyboardDispatcher.Subscriber, inputBox))
-        {
-            Game1.keyboardDispatcher.Subscriber = previousKeyboardSubscriber;
-        }
+        keyboardSubscriberLease.Release();
     }
 
     private void SuspendInput()
     {
-        if (ReferenceEquals(Game1.keyboardDispatcher.Subscriber, inputBox))
-        {
-            Game1.keyboardDispatcher.Subscriber = null;
-        }
+        keyboardSubscriberLease.Suspend();
     }
 
     private void ResumeInput()
     {
         if (!closed)
         {
-            inputBox.SelectMe();
-            Game1.keyboardDispatcher.Subscriber = inputBox;
+            keyboardSubscriberLease.Resume();
+            if (ReferenceEquals(Game1.keyboardDispatcher.Subscriber, inputBox))
+            {
+                inputBox.SelectMe();
+            }
         }
     }
 }
