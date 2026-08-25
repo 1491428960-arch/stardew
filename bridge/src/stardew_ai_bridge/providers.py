@@ -32,7 +32,50 @@ class Provider(Protocol):
 
 
 class FakeProvider(Provider):
-    REPLY = "Rasmodia：你好，这是一条固定的 Fake Provider 测试回复。"
+    """不联网的确定性演示 Provider；它不是语言模型。"""
+
+    DEMO_MARKER = "【本地演示·非真实 AI】"
+
+    _NPC_LABELS = {
+        "rasmodia": "Rasmodia",
+        "wizard": "Rasmodia",
+        "stardewai_npc_test": "Rasmodia（测试）",
+    }
+
+    _SEASONS = {
+        "spring": "春天",
+        "summer": "夏天",
+        "fall": "秋天",
+        "autumn": "秋天",
+        "winter": "冬天",
+        "春": "春天",
+        "夏": "夏天",
+        "秋": "秋天",
+        "冬": "冬天",
+    }
+    _WEATHER = {
+        "sunny": "晴天",
+        "sun": "晴天",
+        "rain": "雨天",
+        "rainy": "雨天",
+        "storm": "雷雨天",
+        "wind": "有风的天气",
+        "snow": "雪天",
+        "festival": "节日天气",
+        "晴": "晴天",
+        "雨": "雨天",
+        "雷": "雷雨天",
+        "雪": "雪天",
+    }
+    _RELATIONSHIP_LABELS = {
+        "stranger": "初识",
+        "acquaintance": "熟悉",
+        "friend": "朋友",
+        "close": "亲近",
+        "dating": "恋爱",
+        "married": "婚后",
+        "parent": "育儿",
+    }
 
     @property
     def name(self) -> str:
@@ -46,11 +89,147 @@ class FakeProvider(Provider):
     ) -> ProviderResult:
         del messages
         return ProviderResult(
-            reply=self.REPLY,
+            reply=self._build_demo_reply(request),
             provider=self.name,
             fallback=False,
             latencyMs=0,
             warnings=[],
+        )
+
+    def _build_demo_reply(self, request: DialogueTestRequest) -> str:
+        # Fake mode is reachable without an upstream model, so never reflect
+        # request-controlled identity, message, fact, or item text. Only exact
+        # known IDs are mapped to fixed labels.
+        display_name = self._NPC_LABELS.get(request.npc_id.strip().lower(), "NPC")
+        state = request.game_state
+        context_parts: list[str] = []
+        if state is not None:
+            season = self._normalise_context(state.season, self._SEASONS)
+            weather = self._normalise_context(state.weather, self._WEATHER)
+            if season:
+                context_parts.append(season)
+            if weather:
+                context_parts.append(weather)
+            time_label = self._time_label(state.time)
+            if time_label:
+                context_parts.append(time_label)
+
+        context_text = "、".join(context_parts)
+        relationship_stage = self._relationship_stage(state)
+        relationship_label = self._RELATIONSHIP_LABELS[relationship_stage]
+        history_count = self._history_count(request.history)
+        history_text = (
+            f"我们已经聊过 {history_count} 条消息"
+            if history_count
+            else "这是本次对话的开场"
+        )
+        if request.intent == "topic":
+            body = (
+                f"我来主动找话题：现在是{context_text or '今天'}，"
+                f"我们处在{relationship_label}阶段。"
+                "你最近有什么想聊的日常吗？"
+            )
+        elif request.intent == "item" and request.item_context is not None:
+            action = {
+                "display": "拿出来给我看",
+                "share": "和我分享",
+                "gift": "准备送给我",
+            }[request.item_context.action]
+            body = (
+                f"我们处在{relationship_label}阶段，我看到你把这件物品{action}了。"
+                "这个版本只按物品字段选择预设话术。"
+            )
+        elif "天气" in request.message or "下雨" in request.message:
+            body = (
+                f"{context_text or '当前天气'}确实会改变一天的安排。"
+                f"我们处在{relationship_label}阶段，"
+                "这句回复来自游戏时间与天气字段。"
+            )
+        elif any(word in request.message for word in ("关系", "好感", "心")):
+            hearts = state.friendship_hearts if state is not None else None
+            body = (
+                f"当前关系记录是 {hearts} 颗心，阶段是{relationship_label}。"
+                if hearts is not None
+                else f"当前请求里没有可用的关系心级，暂按{relationship_label}阶段演示。"
+            )
+        elif request.recent_facts:
+            body = (
+                f"我们处在{relationship_label}阶段，收到了最近 "
+                f"{len(request.recent_facts)} 条事实记录，"
+                "但演示模式不会自行补写剧情。"
+            )
+        else:
+            prefix = f"现在是{context_text}。" if context_text else ""
+            body = (
+                f"{prefix}我们处在{relationship_label}阶段，{history_text}。"
+                "我收到了你的话，"
+                "这里只会按少量游戏字段选择预设回复。"
+            )
+
+        return f"{self.DEMO_MARKER}{display_name}：{body}"
+
+    @staticmethod
+    def _normalise_context(
+        value: str | None,
+        mapping: dict[str, str],
+    ) -> str | None:
+        if not value:
+            return None
+        normalized = value.strip().lower()
+        if normalized in mapping:
+            return mapping[normalized]
+        for marker, label in mapping.items():
+            if marker in normalized:
+                return label
+        return None
+
+    @staticmethod
+    def _time_label(time_value: int | None) -> str | None:
+        if time_value is None:
+            return None
+        if time_value < 1200:
+            return "早上"
+        if time_value < 1800:
+            return "下午"
+        return "晚上"
+
+    @classmethod
+    def _relationship_stage(cls, state: NpcGameState | None) -> str:
+        if state is None:
+            return "stranger"
+        if state.children_count is not None and state.children_count > 0:
+            return "parent"
+        marriage = (state.marriage_status or "").strip().casefold()
+        if marriage in {"married", "spouse", "partner", "roommate"}:
+            return "married"
+        relationship = (state.relationship or "").strip().casefold()
+        if relationship in {
+            "dating",
+            "engaged",
+            "fiance",
+            "fiancé",
+            "girlfriend",
+            "boyfriend",
+        }:
+            return "dating"
+        hearts = state.friendship_hearts or 0
+        if hearts >= 8:
+            return "close"
+        if hearts >= 6:
+            return "friend"
+        if hearts >= 3:
+            return "acquaintance"
+        return "stranger"
+
+    @staticmethod
+    def _history_count(history: list[dict[str, object]]) -> int:
+        return sum(
+            1
+            for item in history
+            if isinstance(item, dict)
+            and item.get("role") in {"user", "assistant"}
+            and isinstance(item.get("content"), str)
+            and bool(item["content"].strip())
         )
 
 
