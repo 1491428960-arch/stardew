@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     同步并启动 StardewAI.NPC 的独立快速测试 Mod 集合。
 
@@ -270,6 +270,22 @@ $smapiPath = if ($SmapiExecutable) {
 $buildPath = Require-Directory -Path (Join-Path $ProjectRoot 'smapi\bin\Debug\net6.0') -Name 'SMAPI 构建目录'
 $dllSourcePath = Require-File -Path (Join-Path $buildPath 'StardewAI.NPC.dll') -Name 'StardewAI.NPC 构建 DLL'
 $manifestSourcePath = Require-File -Path (Join-Path $ProjectRoot 'smapi\manifest.json') -Name 'StardewAI.NPC manifest'
+$sourceRoot = Join-Path $ProjectRoot 'smapi'
+if (Test-Path -LiteralPath $sourceRoot -PathType Container) {
+    $sourceFiles = @(
+        Get-ChildItem -LiteralPath $sourceRoot -Filter '*.cs' -File -Recurse |
+            Where-Object { $_.FullName -notmatch '[\\/]((bin|obj|tests))[\\/]' }
+    )
+    if ($sourceFiles.Count -gt 0) {
+        $latestSource = $sourceFiles |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+        $dllInfo = Get-Item -LiteralPath $dllSourcePath
+        if ($latestSource.LastWriteTimeUtc -gt $dllInfo.LastWriteTimeUtc) {
+            throw "源码文件晚于构建 DLL，拒绝同步旧产物：$($latestSource.FullName) / $dllSourcePath。请先重新构建。"
+        }
+    }
+}
 
 Assert-SafeTarget -Target $FastModsPath -ProtectedRoots @(
     $officialModsPath,

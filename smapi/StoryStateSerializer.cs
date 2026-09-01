@@ -5,7 +5,7 @@ namespace StardewAI.NPC;
 
 public static class StoryStateSerializer
 {
-    public const string StorageKey = "stardew-ai-npc/story-state/v1";
+    public const string StorageKey = "stardew-ai-npc.story-state.v1";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

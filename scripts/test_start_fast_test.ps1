@@ -64,6 +64,14 @@ function Invoke-Launcher {
     }
 }
 
+$scriptBytes = [IO.File]::ReadAllBytes($scriptPath)
+Assert-True (
+    $scriptBytes.Length -ge 3 -and
+    $scriptBytes[0] -eq 0xEF -and
+    $scriptBytes[1] -eq 0xBB -and
+    $scriptBytes[2] -eq 0xBF
+) '快速测试脚本带 UTF-8 BOM，可被 Windows PowerShell 正确解析'
+
 try {
     foreach ($directory in @($buildPath, $gamePath, $officialModsPath, $gmcmSourcePath, $rasmodiaSourcePath, $contentPatcherSourcePath, $cmctSourcePath, (Join-Path $gmcmSourcePath 'assets'), (Join-Path $rasmodiaSourcePath 'assets'), (Join-Path $sourceModsPath 'ExtraMod'))) {
         [IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -181,6 +189,12 @@ try {
     Assert-True ($backToBasic.ExitCode -eq 0) '从 Rasmodia 模式切回基础模式成功'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fastModsPath 'ContentPatcher'))) '基础模式清理 Rasmodia 留下的 Content Patcher'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fastModsPath 'CrossModCompatibilityTokens'))) '基础模式清理 Rasmodia 留下的 CMCT'
+
+    $sourceCodePath = Join-Path $projectRoot 'smapi\StaleBuildSentinel.cs'
+    Set-Content -LiteralPath $sourceCodePath -Value '// newer source than the fake build artifact' -NoNewline
+    $staleBuild = Invoke-Launcher
+    Assert-True ($staleBuild.ExitCode -ne 0 -and $staleBuild.Output -match '源码') '源码晚于构建 DLL 时拒绝同步旧产物'
+    Remove-Item -LiteralPath $sourceCodePath -Force
 
     $identitySentinelPath = Join-Path $fastModsPath 'StardewAI.NPC\identity-sentinel.txt'
     Set-Content -LiteralPath $identitySentinelPath -Value 'keep' -NoNewline

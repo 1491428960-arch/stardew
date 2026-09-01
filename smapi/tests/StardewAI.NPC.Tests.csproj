@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <OS Condition="'$(OS)' == ''">Windows_NT</OS>
+    <EnableModDeploy>false</EnableModDeploy>
+    <EnableModZip>false</EnableModZip>
+    <EnableGameDebugging>false</EnableGameDebugging>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +22,18 @@
       <HintPath>$(GamePath)\smapi-internal\SMAPI.Toolkit.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <None Include="$(GamePath)\MonoGame.Framework.dll"
+          Link="MonoGame.Framework.dll"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(GamePath)\StardewModdingAPI.dll"
+          Link="StardewModdingAPI.dll"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(GamePath)\Stardew Valley.dll;$(GamePath)\StardewValley.GameData.dll;$(GamePath)\BmFont.dll;$(GamePath)\GalaxyCSharp.dll;$(GamePath)\Lidgren.Network.dll;$(GamePath)\SkiaSharp.dll;$(GamePath)\Steamworks.NET.dll;$(GamePath)\System.Data.HashFunction.Core.dll;$(GamePath)\System.Data.HashFunction.Interfaces.dll;$(GamePath)\System.Data.HashFunction.xxHash.dll;$(GamePath)\TextCopy.dll;$(GamePath)\xTile.dll"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$(GamePath)\smapi-internal\0Harmony.dll;$(GamePath)\smapi-internal\Mono.Cecil.dll;$(GamePath)\smapi-internal\Mono.Cecil.Pdb.dll;$(GamePath)\smapi-internal\MonoMod.Common.dll;$(GamePath)\smapi-internal\Pintail.dll;$(GamePath)\smapi-internal\SMAPI.Toolkit.CoreInterfaces.dll;$(GamePath)\smapi-internal\TMXTile.dll"
+          Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />

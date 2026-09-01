@@ -157,7 +157,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             using var response = await httpClient.PostAsJsonAsync(
                 dialogueEndpoint,
                 request,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
 
             BridgeDialogueResponse result;
             if (!response.IsSuccessStatusCode)
@@ -168,7 +168,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             else
             {
                 var parsed = await response.Content.ReadFromJsonAsync<BridgeDialogueResponse>(
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 result = parsed is null || string.IsNullOrWhiteSpace(parsed.Reply)
                     ? BridgeDialogueResponse.Offline("bridge: 响应缺少 reply。")
                     : parsed;
@@ -208,7 +208,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             cancellationToken,
             request.RecentFacts,
             request.Intent,
-            request.ItemContext);
+            request.ItemContext).ConfigureAwait(false);
     }
 
     public void Dispose()

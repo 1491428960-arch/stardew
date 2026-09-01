@@ -2,6 +2,58 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
+import re
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_LOCAL_ENV_KEYS = frozenset(
+    {
+        "BRIDGE_DIALOGUE_SESSION_PATH",
+        "BRIDGE_FALLBACK_REPLY",
+        "BRIDGE_PROFILE_INDEX",
+        *{
+            f"BRIDGE_{provider}_{suffix}"
+            for provider in ("LOCAL", "CLOUD")
+            for suffix in (
+                "URL",
+                "BASE_URL",
+                "MODEL",
+                "API_KEY",
+                "TIMEOUT",
+                "ENABLED",
+                "API_MODE",
+            )
+        },
+    }
+)
+_ENV_ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+
+
+def _parse_local_env_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def load_local_env(path: str | Path | None = None) -> None:
+    """加载项目级本机配置，且不覆盖进程环境变量。"""
+
+    env_path = Path(path) if path is not None else _PROJECT_ROOT / ".env.local"
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _ENV_ASSIGNMENT.match(line)
+        if match is None:
+            continue
+        name, raw_value = match.groups()
+        if name not in _LOCAL_ENV_KEYS or name in os.environ:
+            continue
+        os.environ[name] = _parse_local_env_value(raw_value)
 
 
 def _first_env(*names: str, default: str | None = None) -> str | None:
@@ -40,6 +92,7 @@ class ProviderSettings:
     api_key: str | None = None
     timeout: float = 10.0
     enabled: bool = True
+    api_mode: str = "openai"
 
     @property
     def base_url(self) -> str | None:
@@ -65,6 +118,9 @@ class ProviderSettings:
             api_key=_first_env(f"{prefix}_API_KEY"),
             timeout=_env_float(f"{prefix}_TIMEOUT", default=default_timeout),
             enabled=_env_bool(f"{prefix}_ENABLED", default=url is not None),
+            api_mode=(
+                _first_env(f"{prefix}_API_MODE", default="openai") or "openai"
+            ).lower(),
         )
 
 
@@ -80,6 +136,7 @@ class BridgeSettings:
     )
     cloud_enabled: bool = False
     fallback_reply: str = "Rasmodia：暂时没有合适的回复，请稍后再试。"
+    profile_index_path: str | None = None
 
     @property
     def local_provider(self) -> ProviderSettings:
@@ -94,7 +151,7 @@ class BridgeSettings:
         local = ProviderSettings.from_env(
             "BRIDGE_LOCAL",
             name="local",
-            default_timeout=5.0,
+            default_timeout=45.0,
         )
         cloud = ProviderSettings.from_env(
             "BRIDGE_CLOUD",
@@ -109,4 +166,5 @@ class BridgeSettings:
                 _first_env("BRIDGE_FALLBACK_REPLY", default=cls.fallback_reply)
                 or cls.fallback_reply
             ),
+            profile_index_path=_first_env("BRIDGE_PROFILE_INDEX"),
         )

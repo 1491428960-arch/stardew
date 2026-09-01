@@ -6,6 +6,12 @@ namespace StardewAI.NPC.Tests;
 public sealed class StoryStateSerializerTests
 {
     [Fact]
+    public void StorageKeyUsesSmapiCompatibleCharacters()
+    {
+        Assert.Matches("^[A-Za-z0-9_.-]+$", StoryStateSerializer.StorageKey);
+    }
+
+    [Fact]
     public void Serialize_and_load_preserves_schema_version_and_memory_provenance()
     {
         var state = StoryStateEnvelope.Empty with

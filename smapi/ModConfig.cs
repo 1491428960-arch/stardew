@@ -13,6 +13,21 @@ public sealed class ModConfig
 
     public bool EnableDialogue { get; set; } = true;
 
+    /// <summary>
+    /// 是否记录 Rendered 事件的窗口帧率，用于游戏内性能诊断；普通运行默认关闭。
+    /// </summary>
+    public bool EnablePerformanceDiagnostics { get; set; }
+
+    /// <summary>
+    /// 允许单人游戏提前进入已识别的 NPC 住宅；个人测试档默认开启。
+    /// </summary>
+    public bool EnableHouseAccess { get; set; } = true;
+
+    /// <summary>
+    /// 是否连同住宅与商店共用的复合建筑一起放宽；个人测试档默认开启。
+    /// </summary>
+    public bool AllowMixedBuildingAccess { get; set; } = true;
+
     public string BridgeEndpoint { get; set; } = "http://127.0.0.1:5678";
 
     public int BridgeTimeoutSeconds { get; set; } = DefaultBridgeTimeoutSeconds;
@@ -27,6 +42,9 @@ public sealed class ModConfig
                 ? DialogueKey
                 : new KeybindList(SButton.F8),
             EnableDialogue = EnableDialogue,
+            EnablePerformanceDiagnostics = EnablePerformanceDiagnostics,
+            EnableHouseAccess = EnableHouseAccess,
+            AllowMixedBuildingAccess = AllowMixedBuildingAccess,
             BridgeEndpoint = IsSafeEndpoint(BridgeEndpoint)
                 ? new Uri(BridgeEndpoint).ToString().TrimEnd('/')
                 : "http://127.0.0.1:5678",

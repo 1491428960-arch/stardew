@@ -15,10 +15,13 @@ public class ChatInputMenu : IClickableMenu
     private const int MessagePadding = 12;
     private const int PortraitSize = 64;
     private const int BubblePadding = 12;
+    private const int BubbleSafetyMargin = 8;
     private const int BubbleGap = 8;
     private const int MessageLineSpacing = 4;
-    private const int MaxMessageCount = 24;
-    private const int MaxVisibleMessageCount = 8;
+    private const int ScrollBarWidth = 12;
+    private const int ScrollBarGap = 8;
+    private const int ScrollBarMinThumb = 24;
+    private const int ScrollPageStep = 3;
 
     private readonly StardewNpc npc;
     private readonly ConversationService conversationService;
@@ -29,11 +32,17 @@ public class ChatInputMenu : IClickableMenu
     private readonly List<ChatDisplayMessage> messages = new();
     private readonly KeyboardSubscriberLease<IKeyboardSubscriber> keyboardSubscriberLease;
     private readonly TextBox inputBox;
+    private readonly TaskResultPump<ConversationTurnResult> pendingRequest = new();
     private ChatLayout layout;
+    private Rectangle scrollBarTrack = Rectangle.Empty;
+    private Rectangle scrollBarThumb = Rectangle.Empty;
     private string uiHint = "输入一句话，或者让她先找个话题。";
     private ItemConversationSelection? pendingGiftSelection;
+    private int scrollMaxStartIndex;
+    private int scrollStartIndex;
     private bool sending;
     private bool closed;
+    private bool followLatest = true;
 
     public ChatInputMenu(
         StardewNpc npc,
@@ -54,7 +63,7 @@ public class ChatInputMenu : IClickableMenu
 
         if (initialMessages is { Count: > 0 })
         {
-            messages.AddRange(initialMessages.Take(MaxMessageCount));
+            messages.AddRange(initialMessages);
             uiHint = string.Empty;
         }
 
@@ -115,6 +124,12 @@ public class ChatInputMenu : IClickableMenu
             return;
         }
 
+        if (scrollBarTrack.Contains(x, y) && scrollMaxStartIndex > 0)
+        {
+            SetScrollFromPointer(y);
+            return;
+        }
+
         if (layout.SendButton.Contains(x, y))
         {
             _ = SendCurrentAsync();
@@ -150,7 +165,42 @@ public class ChatInputMenu : IClickableMenu
             return;
         }
 
+        if (key == Keys.PageUp)
+        {
+            MoveScroll(-ScrollPageStep);
+            return;
+        }
+
+        if (key == Keys.PageDown)
+        {
+            MoveScroll(ScrollPageStep);
+            return;
+        }
+
+        if (key == Keys.Home)
+        {
+            scrollStartIndex = 0;
+            followLatest = false;
+            return;
+        }
+
+        if (key == Keys.End)
+        {
+            JumpToLatest();
+            return;
+        }
+
         base.receiveKeyPress(key);
+    }
+
+    public override void receiveScrollWheelAction(int direction)
+    {
+        if (closed || direction == 0)
+        {
+            return;
+        }
+
+        MoveScroll(direction > 0 ? -1 : 1);
     }
 
     public override void update(GameTime time)
@@ -160,6 +210,7 @@ public class ChatInputMenu : IClickableMenu
             return;
         }
 
+        PumpPendingRequest();
         base.update(time);
     }
 
@@ -167,6 +218,7 @@ public class ChatInputMenu : IClickableMenu
     {
         CleanupKeyboardSubscriber();
         cancellationSource.Cancel();
+        pendingRequest.Clear();
         cancellationSource.Dispose();
         base.cleanupBeforeExit();
     }
@@ -178,6 +230,10 @@ public class ChatInputMenu : IClickableMenu
             return;
         }
 
+        // Some Stardew menu states can render while skipping the regular
+        // IClickableMenu.update callback. Poll here as a second safe point so
+        // a completed request is never left showing “正在思考……”.
+        PumpPendingRequest();
         layout = ChatLayoutRules.Calculate(Game1.viewport.Width, Game1.viewport.Height);
         xPositionOnScreen = layout.Panel.X;
         yPositionOnScreen = layout.Panel.Y;
@@ -213,37 +269,36 @@ public class ChatInputMenu : IClickableMenu
         exitThisMenu();
     }
 
-    protected virtual async Task SendCurrentAsync()
+    protected virtual Task SendCurrentAsync()
     {
         if (sending)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var message = inputBox.Text.Trim();
         if (message.Length == 0)
         {
             uiHint = "先写点什么吧。";
-            return;
+            return Task.CompletedTask;
         }
 
         inputBox.Text = string.Empty;
-        messages.Add(new ChatDisplayMessage("player", message));
-        TrimMessages();
-        await SendAsync(message, ConversationIntent.Chat).ConfigureAwait(true);
+        AddMessage(new ChatDisplayMessage("player", message));
+        return SendAsync(message, ConversationIntent.Chat);
     }
 
-    protected virtual async Task RequestTopicAsync()
+    protected virtual Task RequestTopicAsync()
     {
         if (sending)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        await SendAsync(null, ConversationIntent.Topic).ConfigureAwait(true);
+        return SendAsync(null, ConversationIntent.Topic);
     }
 
-    private async Task SendAsync(
+    private Task SendAsync(
         string? message,
         string intent,
         ItemConversationContext? itemContext = null)
@@ -254,42 +309,76 @@ public class ChatInputMenu : IClickableMenu
         try
         {
             var state = GameStateCollector.Collect(npc);
-            var result = intent == ConversationIntent.Topic
-                ? await conversationService.RequestTopicAsync(
+            var request = intent == ConversationIntent.Topic
+                ? conversationService.RequestTopicAsync(
                     state,
-                    cancellationSource.Token).ConfigureAwait(true)
-                : await conversationService.SendAsync(
+                    cancellationSource.Token)
+                : conversationService.SendAsync(
                     state,
                     message ?? string.Empty,
                     cancellationSource.Token,
-                    itemContext).ConfigureAwait(true);
-
-            var reply = result.Fallback
-                ? "暂时联系不上她，可以稍后重试。"
-                : NormalizeReply(result.Reply);
-            messages.Add(new ChatDisplayMessage("npc", reply));
-            TrimMessages();
-            uiHint = result.Fallback
-                ? "暂时联系不上她，可以重试或结束。"
-                : "";
+                    itemContext);
+            pendingRequest.Start(request);
         }
-        catch (OperationCanceledException)
+        catch (Exception exception)
         {
-            if (!closed)
-            {
-                uiHint = "对话已取消。";
-            }
-        }
-        catch (Exception)
-        {
-            messages.Add(new ChatDisplayMessage("npc", "刚才没听清，我们稍后再聊吧。"));
-            TrimMessages();
-            uiHint = "暂时联系不上她，可以重试或结束。";
-        }
-        finally
-        {
+            ApplyRequestError(exception);
             sending = false;
         }
+
+        return Task.CompletedTask;
+    }
+
+    private void PumpPendingRequest()
+    {
+        if (!pendingRequest.TryTakeCompleted(out var result, out var error))
+        {
+            return;
+        }
+
+        if (error is not null)
+        {
+            ApplyRequestError(error);
+        }
+        else
+        {
+            ApplyResponse(result);
+        }
+
+        sending = false;
+    }
+
+    private void ApplyRequestError(Exception exception)
+    {
+        if (closed)
+        {
+            return;
+        }
+
+        if (exception is OperationCanceledException)
+        {
+            uiHint = "对话已取消。";
+            return;
+        }
+
+        AddMessage(new ChatDisplayMessage("npc", "刚才没听清，我们稍后再聊吧。"));
+        uiHint = "暂时联系不上她，可以重试或结束。";
+    }
+
+    private void ApplyResponse(ConversationTurnResult result)
+    {
+        if (closed)
+        {
+            return;
+        }
+
+        var reply = result.Fallback
+            ? "暂时联系不上她，可以稍后重试。"
+            : NormalizeReply(result.Reply);
+        AddMessage(new ChatDisplayMessage("npc", reply));
+        uiHint = result.Fallback
+            ? "暂时联系不上她，可以重试或结束。"
+            : "";
     }
 
     private void OnInputEnterPressed(TextBox sender)
@@ -387,10 +476,9 @@ public class ChatInputMenu : IClickableMenu
             ItemInteractionAction.Gift => "送出",
             _ => "拿出",
         };
-        messages.Add(new ChatDisplayMessage(
+        AddMessage(new ChatDisplayMessage(
             "player",
             $"（{action}了 {selection.Snapshot.DisplayName}）"));
-        TrimMessages();
     }
 
     private async Task SendItemAsync(ItemConversationSelection selection)
@@ -431,12 +519,53 @@ public class ChatInputMenu : IClickableMenu
         return normalized;
     }
 
-    private void TrimMessages()
+    private void AddMessage(ChatDisplayMessage message)
     {
-        if (messages.Count > MaxMessageCount)
+        messages.Add(message);
+        followLatest = true;
+    }
+
+    private void MoveScroll(int delta)
+    {
+        if (scrollMaxStartIndex <= 0)
         {
-            messages.RemoveRange(0, messages.Count - MaxMessageCount);
+            return;
         }
+
+        followLatest = false;
+        scrollStartIndex = ChatScrollRules.MoveStartIndex(
+            scrollStartIndex,
+            delta,
+            scrollMaxStartIndex);
+        if (scrollStartIndex == scrollMaxStartIndex)
+        {
+            followLatest = true;
+        }
+    }
+
+    private void JumpToLatest()
+    {
+        scrollStartIndex = scrollMaxStartIndex;
+        followLatest = true;
+    }
+
+    private void SetScrollFromPointer(int pointerY)
+    {
+        if (scrollBarTrack == Rectangle.Empty || scrollBarThumb == Rectangle.Empty ||
+            scrollMaxStartIndex <= 0)
+        {
+            return;
+        }
+
+        var travel = Math.Max(0, scrollBarTrack.Height - scrollBarThumb.Height);
+        var relative = Math.Clamp(
+            pointerY - scrollBarTrack.Y - (scrollBarThumb.Height / 2),
+            0,
+            travel);
+        scrollStartIndex = travel == 0
+            ? scrollMaxStartIndex
+            : (int)Math.Round(scrollMaxStartIndex * (relative / (double)travel));
+        followLatest = scrollStartIndex == scrollMaxStartIndex;
     }
 
     private void DrawBackdrop(SpriteBatch b)
@@ -475,30 +604,81 @@ public class ChatInputMenu : IClickableMenu
     private void DrawMessages(SpriteBatch b)
     {
         var area = layout.ConversationArea;
-        var visible = ChatLayoutRules.VisibleMessages(messages, MaxVisibleMessageCount);
+        var history = messages
+            .Where(message => message is not null && !string.IsNullOrWhiteSpace(message.Content))
+            .ToArray();
+        var maxWidth = Math.Max(
+            80,
+            area.Width
+                - (MessagePadding * 2)
+                - ScrollBarWidth
+                - ScrollBarGap);
+        var contentWidth = Math.Max(
+            80,
+            maxWidth - (BubblePadding * 2) - BubbleSafetyMargin);
+        var measure = (string value) => Game1.smallFont.MeasureString(value).X;
+        var lineHeight = Game1.smallFont.LineSpacing + MessageLineSpacing;
+        var fixedHeight = (BubblePadding * 2)
+            + Game1.smallFont.LineSpacing
+            + MessageLineSpacing;
+        var availableHeight = Math.Max(
+            1,
+            area.Height - (MessagePadding * 2) - BubbleSafetyMargin);
+        var latestWindow = ChatTextLayoutRules.SelectLatestThatFit(
+            history,
+            history.Length == 0 ? 1 : history.Length,
+            availableHeight,
+            BubbleGap,
+            message =>
+            {
+                var lineCount = ChatTextLayoutRules.Wrap(message.Content, contentWidth, measure).Count;
+                return fixedHeight
+                    + (lineCount * Game1.smallFont.LineSpacing)
+                    + ((lineCount - 1) * MessageLineSpacing);
+            });
+        scrollMaxStartIndex = Math.Max(0, history.Length - latestWindow.Count);
+        if (followLatest)
+        {
+            scrollStartIndex = scrollMaxStartIndex;
+        }
+
+        scrollStartIndex = ChatScrollRules.ClampStartIndex(
+            scrollStartIndex,
+            scrollMaxStartIndex);
         var y = area.Y + MessagePadding;
-        var maxWidth = area.Width - (MessagePadding * 2);
-        foreach (var message in visible)
+        foreach (var message in history.Skip(scrollStartIndex))
         {
             var isPlayer = message.Role == "player";
             var speaker = isPlayer ? "你" : npc.displayName;
-            var lines = WrapText(message.Content, Math.Max(80, maxWidth - (BubblePadding * 2)))
-                .ToArray();
-            if (lines.Length == 0)
+            var lines = ChatTextLayoutRules.Wrap(message.Content, contentWidth, measure);
+            if (lines.Count == 0)
             {
                 continue;
             }
 
-            var textWidth = lines.Max(line => Game1.smallFont.MeasureString(line).X);
+            var remainingHeight = area.Bottom - MessagePadding - BubbleSafetyMargin - y;
+            var maxLineCount = (remainingHeight - fixedHeight + MessageLineSpacing) / lineHeight;
+            if (maxLineCount <= 0)
+            {
+                break;
+            }
+
+            lines = ChatTextLayoutRules.Fit(
+                lines,
+                maxLineCount,
+                contentWidth,
+                measure);
+
+            var textWidth = lines.Max(line => measure(line));
             var bubbleWidth = Math.Clamp(
                 (int)Math.Ceiling(textWidth + (BubblePadding * 2)),
-                180,
+                Math.Min(180, maxWidth),
                 maxWidth);
             var bubbleHeight = (BubblePadding * 2)
                 + Game1.smallFont.LineSpacing
                 + MessageLineSpacing
-                + (lines.Length * Game1.smallFont.LineSpacing)
-                + ((lines.Length - 1) * MessageLineSpacing);
+                + (lines.Count * Game1.smallFont.LineSpacing)
+                + ((lines.Count - 1) * MessageLineSpacing);
             if (y + bubbleHeight > area.Bottom - MessagePadding)
             {
                 break;
@@ -536,6 +716,13 @@ public class ChatInputMenu : IClickableMenu
             y += bubbleHeight + BubbleGap;
         }
 
+        UpdateScrollBar(
+            area,
+            history.Length,
+            Math.Max(1, latestWindow.Count),
+            scrollStartIndex);
+        DrawScrollBar(b);
+
         if (!string.IsNullOrWhiteSpace(uiHint) && y < area.Bottom - MessagePadding)
         {
             b.DrawString(
@@ -546,6 +733,60 @@ public class ChatInputMenu : IClickableMenu
         }
 
         DrawProfile(b);
+    }
+
+    private void UpdateScrollBar(
+        Rectangle area,
+        int itemCount,
+        int visibleCount,
+        int startIndex)
+    {
+        if (itemCount <= 0 || scrollMaxStartIndex <= 0)
+        {
+            scrollBarTrack = Rectangle.Empty;
+            scrollBarThumb = Rectangle.Empty;
+            return;
+        }
+
+        var trackHeight = Math.Max(1, area.Height - (MessagePadding * 2));
+        scrollBarTrack = new Rectangle(
+            area.Right - MessagePadding - ScrollBarWidth,
+            area.Y + MessagePadding,
+            ScrollBarWidth,
+            trackHeight);
+        var thumbHeight = Math.Clamp(
+            (int)Math.Round(trackHeight * (visibleCount / (double)itemCount)),
+            Math.Min(ScrollBarMinThumb, trackHeight),
+            trackHeight);
+        var thumbTravel = trackHeight - thumbHeight;
+        var thumbFraction = scrollMaxStartIndex == 0
+            ? 0d
+            : startIndex / (double)scrollMaxStartIndex;
+        var thumbY = scrollBarTrack.Y + (int)Math.Round(thumbTravel * thumbFraction);
+        scrollBarThumb = new Rectangle(
+            scrollBarTrack.X,
+            thumbY,
+            scrollBarTrack.Width,
+            thumbHeight);
+    }
+
+    private void DrawScrollBar(SpriteBatch b)
+    {
+        if (scrollBarTrack == Rectangle.Empty)
+        {
+            return;
+        }
+
+        b.Draw(
+            Game1.fadeToBlackRect,
+            scrollBarTrack,
+            new Color(205, 190, 167) * 0.72f);
+        b.Draw(
+            Game1.fadeToBlackRect,
+            scrollBarThumb,
+            followLatest
+                ? new Color(120, 84, 56)
+                : new Color(154, 112, 76));
     }
 
     private void DrawFooter(SpriteBatch b)
@@ -650,34 +891,6 @@ public class ChatInputMenu : IClickableMenu
             label,
             new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
             enabled ? Color.Black : Color.DimGray);
-    }
-
-    private static IEnumerable<string> WrapText(string text, int maxWidth)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            yield break;
-        }
-
-        var current = string.Empty;
-        foreach (var character in text)
-        {
-            var candidate = current + character;
-            if (current.Length > 0 && Game1.smallFont.MeasureString(candidate).X > maxWidth)
-            {
-                yield return current;
-                current = character.ToString();
-            }
-            else
-            {
-                current = candidate;
-            }
-        }
-
-        if (current.Length > 0)
-        {
-            yield return current;
-        }
     }
 
     private void UpdateInputBoxBounds()

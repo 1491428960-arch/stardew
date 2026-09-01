@@ -6,28 +6,109 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .source_aliases import normalize_source_marker, source_matches
 
-_MOD_ALIASES: dict[str, set[str]] = {
-    "sve": {
-        "flashshifter.svecode",
-        "flashshifter.stardewvalleyexpandedcp",
-        "flashshifter.sveftm",
+
+_STAGE_KEYS = (
+    "stranger",
+    "acquaintance",
+    "friend",
+    "close",
+    "dating",
+    "married",
+    "parent",
+)
+
+_DEFAULT_VOICE_STYLE = {
+    "tone": "保持核心性格的一致性；资料不足时谨慎、简短，不用夸张语气填空",
+    "sentencePattern": [
+        "先回应玩家当前问题，再决定是否展开",
+        "不确定时明确说明不确定",
+        "关系变近后更具体，但不编造未发生的经历",
+    ],
+    "responseRules": [
+        "先直接回应玩家当前问题",
+        "一次只处理一个话题，不用反问强行延长",
+        "没有证据时保留不确定性",
+    ],
+    "preferredTopics": ["当前地点和日常活动", "已确认的近期事件"],
+    "openers": ["嗯，怎么了？"],
+    "closers": ["先这样吧。"],
+    "avoid": ["把未触发剧情说成事实", "替 NPC 或玩家做决定"],
+    "emotionRange": ["平静", "好奇", "谨慎", "亲近时更坦率"],
+}
+
+_DEFAULT_STAGE_PROFILES = {
+    "stranger": {
+        "addressing": "沿用原版或资料中已确认的称谓",
+        "openness": "低",
+        "topicPool": ["天气", "当前地点", "日常工作"],
+        "boundaries": ["不主动谈未确认的私人经历"],
     },
-    "femalebachelors": {
-        "invatorzen.idcsm",
-        "femalebachelorsbeach",
-        "femalebachelorswinter",
+    "acquaintance": {
+        "addressing": "称谓保持自然、不过度亲密",
+        "openness": "试探",
+        "topicPool": ["小镇日常", "已确认的兴趣", "近期见闻"],
+        "boundaries": ["被追问时可以结束话题"],
     },
-    "romanceablerasmodius": {
-        "nom0ri.romras",
-        "parrot.romras",
-        "dacar.seasromrasmodia",
+    "friend": {
+        "addressing": "可自然使用名字",
+        "openness": "愿意分享已确认的近况",
+        "topicPool": ["共同经历", "日常压力", "兴趣和计划"],
+        "boundaries": ["不替对方承诺或下结论"],
     },
+    "close": {
+        "addressing": "自然使用名字，语气更放松",
+        "openness": "能讨论脆弱或犹豫，但仍保留边界",
+        "topicPool": ["长期目标", "彼此的边界", "共同记忆"],
+        "boundaries": ["冲突后先确认对方是否愿意继续"],
+    },
+    "dating": {
+        "addressing": "亲密但保持平等",
+        "openness": "主动表达在意和顾虑",
+        "topicPool": ["共同安排", "约会和兴趣", "对未来的想象"],
+        "boundaries": ["亲密不等于控制或共享全部秘密"],
+    },
+    "married": {
+        "addressing": "亲密而平等",
+        "openness": "愿意共同讨论生活决定",
+        "topicPool": ["共同生活", "家庭分工", "彼此的压力"],
+        "boundaries": ["重要决定需要双方确认"],
+    },
+    "parent": {
+        "addressing": "亲密而平等",
+        "openness": "更重视安全、解释和耐心",
+        "topicPool": ["家庭日常", "孩子的安全感", "如何保留个人空间"],
+        "boundaries": ["不把孩子置于成人冲突或秘密中"],
+    },
+}
+
+_DEFAULT_KNOWLEDGE_RULES = {
+    "canDiscuss": [
+        "自己已确认的日常活动",
+        "玩家明确告诉 NPC 的近况",
+        "运行时已确认且有来源的原版或 Mod 事件",
+    ],
+    "cannotAssume": [
+        "未触发的事件结果",
+        "其他人的秘密、感情和家庭决定",
+        "没有来源证据的传闻",
+    ],
+    "secrecy": "资料不足时保留不确定性，不把猜测说成记忆或剧情事实",
 }
 
 
 def _normalise_marker(value: object) -> str:
-    return "".join(character.lower() for character in str(value) if character.isalnum())
+    return normalize_source_marker(value)
+
+
+def canonical_npc_id(npc_id: object) -> str:
+    """将游戏中的别名归并到唯一 NPC ID。"""
+
+    value = str(npc_id).strip()
+    if value.casefold() in {"wizard", "rasmodia"}:
+        return "Wizard"
+    return value
 
 
 def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
@@ -44,10 +125,7 @@ def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str
 
 
 def _marker_matches(marker: object, source_mods: set[str]) -> bool:
-    normalised_marker = _normalise_marker(marker)
-    return normalised_marker in source_mods or bool(
-        _MOD_ALIASES.get(normalised_marker, set()) & source_mods
-    )
+    return source_matches(marker, source_mods)
 
 
 def merge_persona(
@@ -77,6 +155,36 @@ def merge_persona(
             merged["modOverlay"][marker_key] = copy.deepcopy(dict(overlay))
             applied_markers.add(marker_key)
     return merged
+
+
+def _ensure_profile_layers(persona: Mapping[str, Any]) -> dict[str, Any]:
+    """为尚未手工细化的角色补充保守默认层，定制字段优先。"""
+
+    enriched = copy.deepcopy(dict(persona))
+    voice_style = enriched.get("voiceStyle")
+    enriched["voiceStyle"] = _deep_merge(
+        _DEFAULT_VOICE_STYLE,
+        voice_style if isinstance(voice_style, Mapping) else {},
+    )
+
+    stage_profiles = enriched.get("stageProfiles")
+    stage_profiles = stage_profiles if isinstance(stage_profiles, Mapping) else {}
+    enriched["stageProfiles"] = {
+        stage: _deep_merge(
+            _DEFAULT_STAGE_PROFILES[stage],
+            stage_profiles.get(stage)
+            if isinstance(stage_profiles.get(stage), Mapping)
+            else {},
+        )
+        for stage in _STAGE_KEYS
+    }
+
+    knowledge_rules = enriched.get("knowledgeRules")
+    enriched["knowledgeRules"] = _deep_merge(
+        _DEFAULT_KNOWLEDGE_RULES,
+        knowledge_rules if isinstance(knowledge_rules, Mapping) else {},
+    )
+    return enriched
 
 
 def _mod_markers(payload: Mapping[str, Any], path: Path) -> list[str]:
@@ -124,7 +232,7 @@ class PersonaStore:
             for npc_id, raw_persona in entries.items():
                 if not isinstance(raw_persona, Mapping):
                     continue
-                npc_key = str(npc_id)
+                npc_key = canonical_npc_id(npc_id)
                 if is_vanilla:
                     personas[npc_key] = copy.deepcopy(dict(raw_persona))
                     personas[npc_key].setdefault("npcId", npc_key)
@@ -152,22 +260,29 @@ class PersonaStore:
         npc_id: str,
         source_mods: Iterable[str] = (),
     ) -> dict[str, Any]:
+        canonical_id = canonical_npc_id(npc_id)
         key = next(
-            (candidate for candidate in self._personas if candidate.casefold() == npc_id.casefold()),
-            npc_id,
+            (
+                candidate
+                for candidate in self._personas
+                if candidate.casefold() == canonical_id.casefold()
+            ),
+            canonical_id,
         )
         base = self._personas.get(
             key,
             {
-                "npcId": npc_id,
-                "displayName": npc_id,
+                "npcId": canonical_id,
+                "displayName": canonical_id,
                 "pronouns": {},
                 "coreTraits": [],
                 "addressing": {},
                 "modOverlay": {},
             },
         )
-        return merge_persona(base, source_mods)
+        merged = _ensure_profile_layers(merge_persona(base, source_mods))
+        merged["npcId"] = canonical_id
+        return merged
 
     def load(self, npc_id: str, source_mods: Iterable[str] = ()) -> dict[str, Any]:
         return self.get_persona(npc_id, source_mods)

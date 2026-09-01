@@ -114,10 +114,18 @@ class ItemConversationContext(ApiModel):
     _strip_category = field_validator("category", mode="before")(_strip_text)
 
 
+class ProviderUsage(ApiModel):
+    """Provider 返回的标准化 token 用量；字段缺失时保留为 None。"""
+
+    input_tokens: int | None = Field(default=None, alias="inputTokens", ge=0)
+    output_tokens: int | None = Field(default=None, alias="outputTokens", ge=0)
+    total_tokens: int | None = Field(default=None, alias="totalTokens", ge=0)
+
+
 class DialogueTestRequest(ApiModel):
     npc_id: str = Field(alias="npcId", min_length=1, max_length=100)
     message: str = Field(min_length=1, max_length=2000)
-    provider: Literal["fake"] = "fake"
+    provider: Literal["fake", "auto", "local", "cloud"] = "fake"
     display_name: str | None = Field(
         default=None,
         alias="displayName",
@@ -137,6 +145,7 @@ class DialogueTestRequest(ApiModel):
     history: list[dict[str, object]] = Field(default_factory=list, max_length=50)
     game_state: NpcGameState | None = Field(default=None, alias="gameState")
     intent: Literal["chat", "topic", "item"] = "chat"
+    channel: Literal["remote", "face_to_face"] | None = None
     item_context: ItemConversationContext | None = Field(
         default=None,
         alias="itemContext",
@@ -167,6 +176,7 @@ class ProviderResult(ApiModel):
     fallback: bool = False
     latency_ms: int = Field(default=0, alias="latencyMs", ge=0)
     warnings: list[str] = Field(default_factory=list, max_length=20)
+    usage: ProviderUsage | None = None
 
     _strip_reply = field_validator("reply", mode="before")(_strip_text)
     _strip_provider = field_validator("provider", mode="before")(_strip_text)
@@ -178,6 +188,7 @@ class DialogueResponse(ApiModel):
     fallback: bool = False
     latency_ms: int = Field(alias="latencyMs", ge=0)
     warnings: list[str] = Field(default_factory=list, max_length=20)
+    usage: ProviderUsage | None = None
 
     _strip_reply = field_validator("reply", mode="before")(_strip_text)
     _strip_provider = field_validator("provider", mode="before")(_strip_text)

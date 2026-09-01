@@ -388,13 +388,12 @@ public static class GameStateCollector
                 return (null, null);
             }
 
-            var data = ReadMember(Game1.player, "friendshipData") as IDictionary;
-            if (data is null || !data.Contains(npcId))
+            var data = ReadMember(Game1.player, "friendshipData");
+            if (!FriendshipDataAccessor.TryGetValue(data, npcId, out var friendship))
             {
                 return (null, null);
             }
 
-            var friendship = data[npcId];
             var points = ReadMember(friendship, "Points");
             var status = ReadString(friendship, "Status");
             return (

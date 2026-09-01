@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import json
+from typing import Iterable
+
+import pytest
+
+try:
+    from stardew_ai_bridge.behavior_quality import REVIEW_DIMENSIONS
+    from stardew_ai_bridge.quality_pipeline import CharacterQualityPipeline
+except ModuleNotFoundError:
+    REVIEW_DIMENSIONS = ()
+    CharacterQualityPipeline = None  # type: ignore[assignment]
+
+
+SCENARIO = {
+    "scenarioId": "shane-acquaintance-coop",
+    "npcId": "Shane",
+    "sourceMods": ["vanilla"],
+    "channels": ["face_to_face"],
+    "relationshipStages": ["acquaintance"],
+    "speechFunction": "answer_directly",
+    "topic": "chicken",
+    "emotion": "tired_dry_humor",
+    "playerInput": "鸡舍今天忙吗？",
+}
+
+
+def draft_json(reply: str, example_id: str) -> str:
+    return json.dumps(
+        {
+            "exampleId": example_id,
+            "npcId": "Shane",
+            "sourceMods": ["vanilla"],
+            "channels": ["face_to_face"],
+            "relationshipStages": ["acquaintance"],
+            "speechFunction": "answer_directly",
+            "topic": "chicken",
+            "emotion": "tired_dry_humor",
+            "playerInput": SCENARIO["playerInput"],
+            "npcReply": reply,
+            "sourceType": "model_draft",
+        },
+        ensure_ascii=False,
+    )
+
+
+def revised_json(reply: str, example_id: str) -> str:
+    value = json.loads(draft_json(reply, example_id))
+    value["sourceType"] = "model_revision"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def review_json(tag: str | None = None) -> str:
+    value = {
+        "stardewVoice": 1 if tag else 2,
+        "characterDistinctiveness": 2,
+        "relationshipFit": 2,
+        "channelFit": 2,
+        "topicResponse": 2,
+        "contextContinuity": 2,
+        "naturalChinese": 1 if tag else 2,
+        "boundarySafety": 2,
+        "hardErrors": [],
+        "tags": [tag] if tag else [],
+    }
+    return json.dumps(value, ensure_ascii=False)
+
+
+class ScriptedGenerator:
+    def __init__(self, outputs: Iterable[str]) -> None:
+        self.outputs = list(outputs)
+        self.calls: list[list[dict[str, str]]] = []
+
+    def generate(self, messages: list[dict[str, str]]) -> str:
+        self.calls.append(messages)
+        if not self.outputs:
+            raise AssertionError("测试生成器输出已耗尽")
+        return self.outputs.pop(0)
+
+
+def test_pipeline_requires_real_implementation() -> None:
+    if CharacterQualityPipeline is None:
+        pytest.fail("Task 2 Draft/Review/Revise 流水线尚未实现")
+
+
+def test_pipeline_revises_once_and_only_explicit_ids_are_approved() -> None:
+    if CharacterQualityPipeline is None:
+        pytest.fail("Task 2 Draft/Review/Revise 流水线尚未实现")
+    generator = ScriptedGenerator(
+        [
+            draft_json("感谢你的关心。综合来看，鸡舍运营情况总体良好。", "draft-1"),
+            review_json("too_formal"),
+            revised_json("还行。没着火，就算顺利。", "draft-1"),
+            review_json(),
+        ]
+    )
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+        approved_ids=("draft-1",),
+    )
+
+    assert run.revision_count == 1
+    assert run.review_count == 2
+    assert [item["npcReply"] for item in run.approved] == [
+        "还行。没着火，就算顺利。"
+    ]
+    assert [messages[0]["name"] for messages in generator.calls] == [
+        "draft",
+        "review",
+        "revise",
+        "review",
+    ]
+
+
+def test_pipeline_rejects_invalid_review_without_revision_loop() -> None:
+    if CharacterQualityPipeline is None:
+        pytest.fail("Task 2 Draft/Review/Revise 流水线尚未实现")
+    generator = ScriptedGenerator(
+        [draft_json("候选回复", "draft-1"), "不是 JSON"]
+    )
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    assert run.approved == []
+    assert run.revision_count == 0
+    assert run.review_count == 0
+    assert run.rejections[0]["reasons"] == ["invalid_review"]
+    assert len(generator.calls) == 2
+
+
+def test_pipeline_does_not_approve_candidate_without_explicit_id() -> None:
+    if CharacterQualityPipeline is None:
+        pytest.fail("Task 2 Draft/Review/Revise 流水线尚未实现")
+    generator = ScriptedGenerator(
+        [draft_json("候选回复", "draft-1"), review_json()]
+    )
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    assert run.approved == []
+    assert run.rejections == []
+
+
+def test_pipeline_draft_instruction_requires_npc_reply_field() -> None:
+    generator = ScriptedGenerator(
+        [draft_json("候选回复", "draft-1"), review_json()]
+    )
+
+    CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    assert "npcReply" in generator.calls[0][0]["content"]
+
+
+def test_pipeline_review_instruction_lists_fixed_dimensions_and_score_range() -> None:
+    generator = ScriptedGenerator(
+        [draft_json("候选回复", "draft-1"), review_json()]
+    )
+
+    CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    instruction = generator.calls[1][0]["content"]
+    assert all(dimension in instruction for dimension in REVIEW_DIMENSIONS)
+    assert "0～2" in instruction
+    assert "hardErrors" in instruction
+    assert "tags" in instruction

@@ -22,4 +22,40 @@ public sealed class NpcTargetResolverTests
 
         Assert.Equal("Rasmodia", resolved);
     }
+
+    [Fact]
+    public void Selects_a_nearby_friendship_npc_when_no_legacy_template_is_present()
+    {
+        var resolved = NpcTargetResolver.SelectFriendshipTarget(new[]
+        {
+            new NpcTargetCandidate("Caroline", true, false, 9f, false),
+            new NpcTargetCandidate("Marnie", true, true, 25f, false),
+        });
+
+        Assert.Equal("Marnie", resolved?.NpcId);
+    }
+
+    [Fact]
+    public void Interaction_target_beats_a_closer_friendship_npc()
+    {
+        var resolved = NpcTargetResolver.SelectFriendshipTarget(new[]
+        {
+            new NpcTargetCandidate("Caroline", true, true, 4f, false),
+            new NpcTargetCandidate("Marnie", true, true, 25f, true),
+        });
+
+        Assert.Equal("Marnie", resolved?.NpcId);
+    }
+
+    [Fact]
+    public void Ignores_npcs_without_friendship_records_and_empty_candidates()
+    {
+        var resolved = NpcTargetResolver.SelectFriendshipTarget(new[]
+        {
+            new NpcTargetCandidate("", true, true, 1f, true),
+            new NpcTargetCandidate("Pierre", false, true, 1f, true),
+        });
+
+        Assert.Null(resolved);
+    }
 }

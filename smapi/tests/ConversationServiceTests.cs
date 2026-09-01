@@ -52,6 +52,37 @@ public sealed class ConversationServiceTests
         await first;
     }
 
+    [Fact]
+    public async Task TopicRequest_completes_without_a_game_synchronization_context_pump()
+    {
+        var transport = new AwaitableTransport();
+        var service = new ConversationService(transport, new StoryStateStore());
+        var previousContext = SynchronizationContext.Current;
+
+        try
+        {
+            // MonoGame/SMAPI may install a context which isn't pumped while a
+            // menu is waiting on an async request. The service must not capture
+            // that context for its completion continuation.
+            SynchronizationContext.SetSynchronizationContext(
+                new NonPumpingSynchronizationContext());
+            var pending = service.RequestTopicAsync(TestNpcState(), CancellationToken.None);
+            transport.Release();
+            // Restore the test runner context before awaiting so the assertion
+            // itself can resume; the request continuation still targets the
+            // deliberately non-pumping context captured above.
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.Equal("完成。", result.Reply);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
     private static NpcGameState TestNpcState()
     {
         return new NpcGameState
@@ -113,6 +144,40 @@ public sealed class ConversationServiceTests
         public void Release()
         {
             release.TrySetResult(null);
+        }
+    }
+
+    private sealed class AwaitableTransport : IConversationTransport
+    {
+        private readonly TaskCompletionSource<BridgeDialogueResponse> response =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<BridgeDialogueResponse> SendAsync(
+            ConversationRequest request,
+            CancellationToken cancellationToken)
+        {
+            _ = request;
+            return response.Task.WaitAsync(cancellationToken);
+        }
+
+        public void Release()
+        {
+            response.TrySetResult(new BridgeDialogueResponse
+            {
+                Reply = "完成。",
+                Provider = "fake",
+            });
+        }
+    }
+
+    private sealed class NonPumpingSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            _ = d;
+            _ = state;
+            // Deliberately drop callbacks to model a context which is not
+            // pumped by the game while an async menu request is in flight.
         }
     }
 }

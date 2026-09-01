@@ -12,11 +12,48 @@ def client() -> TestClient:
     return TestClient(app)
 
 
-def test_health_reports_bridge_ready(client: TestClient) -> None:
+def test_health_reports_bridge_ready(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class EmptyRouter:
+        local_provider = None
+        cloud_provider = None
+        cloud_enabled = False
+        default_provider = "auto"
+
+    monkeypatch.setattr(app_module, "provider_router", EmptyRouter())
+
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "provider": "fake"}
+
+
+def test_health_reports_selected_default_provider_instead_of_local_availability(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class StubProvider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class CloudDefaultRouter:
+        local_provider = StubProvider("local")
+        cloud_provider = StubProvider("cloud")
+        cloud_enabled = False
+        default_provider = "cloud"
+
+    monkeypatch.setattr(app_module, "provider_router", CloudDefaultRouter())
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "provider": "cloud"}
 
 
 def test_fake_dialogue_returns_structured_response(client: TestClient) -> None:
@@ -29,6 +66,8 @@ def test_fake_dialogue_returns_structured_response(client: TestClient) -> None:
     body = response.json()
     assert body["reply"]
     assert "Rasmodia" in body["reply"]
+    assert "本地演示" in body["reply"]
+    assert "非真实 AI" in body["reply"]
     assert body["provider"] == "fake"
     assert body["fallback"] is False
     assert isinstance(body["latencyMs"], int)
@@ -36,10 +75,14 @@ def test_fake_dialogue_returns_structured_response(client: TestClient) -> None:
     assert body["warnings"] == []
 
 
-def test_dialogue_uses_fake_provider_by_default(client: TestClient) -> None:
+def test_dialogue_can_explicitly_use_fake_provider(client: TestClient) -> None:
     response = client.post(
         "/api/dialogue/test",
-        json={"npcId": "Rasmodia", "message": "今天过得怎么样？"},
+        json={
+            "npcId": "Rasmodia",
+            "message": "今天过得怎么样？",
+            "provider": "fake",
+        },
     )
 
     assert response.status_code == 200
@@ -57,6 +100,7 @@ def test_dialogue_response_uses_camel_case_contract_fields(
             "sourceMods": ["SVE", "Romanceable Rasmodia"],
             "recentFacts": ["玩家刚刚拜访了法师塔"],
             "message": "你好",
+            "provider": "fake",
         },
     )
 
@@ -64,7 +108,108 @@ def test_dialogue_response_uses_camel_case_contract_fields(
     body = response.json()
     assert "latencyMs" in body
     assert "latency_ms" not in body
-    assert set(body) == {"reply", "provider", "fallback", "latencyMs", "warnings"}
+    assert set(body) == {
+        "reply",
+        "provider",
+        "fallback",
+        "latencyMs",
+        "warnings",
+        "usage",
+    }
+    assert body["usage"] is None
+
+
+def test_dialogue_accepts_optional_conversation_channel(client: TestClient) -> None:
+    response = client.post(
+        "/api/dialogue/test",
+        json={
+            "npcId": "Shane",
+            "message": "鸡舍今天忙吗？",
+            "channel": "face_to_face",
+            "provider": "fake",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_dialogue_can_explicitly_use_cloud_provider(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class CloudRouter:
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            assert getattr(request, "provider") == "cloud"
+            assert messages
+            return ProviderResult(reply="今天见到你真好。", provider="cloud")
+
+    monkeypatch.setattr(app_module, "provider_router", CloudRouter())
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={
+            "npcId": "Rasmodia",
+            "message": "你好",
+            "provider": "cloud",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "cloud"
+    assert response.json()["reply"] == "今天见到你真好。"
+
+
+def test_dialogue_response_forwards_provider_usage(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.models import ProviderUsage
+
+    class UsageRouter:
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            del request, messages
+            return ProviderResult(
+                reply="这次回复带有用量。",
+                provider="cloud",
+                usage=ProviderUsage(
+                    inputTokens=123,
+                    outputTokens=17,
+                    totalTokens=140,
+                ),
+            )
+
+    monkeypatch.setattr(app_module, "provider_router", UsageRouter())
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Wizard", "message": "你好", "provider": "cloud"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["usage"] == {
+        "inputTokens": 123,
+        "outputTokens": 17,
+        "totalTokens": 140,
+    }
 
 
 def test_dialogue_rejects_blank_message(client: TestClient) -> None:
@@ -81,6 +226,14 @@ def test_test_page_returns_html(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
+    assert 'id="test-case-browser"' in response.text
+    assert 'id="case-list"' in response.text
+
+
+def test_chat_test_page_keeps_existing_dialogue_lab(client: TestClient) -> None:
+    response = client.get("/test/chat")
+
+    assert response.status_code == 200
     assert 'id="npc-select"' in response.text
     assert 'id="reply"' in response.text
 
@@ -93,6 +246,71 @@ def test_npcs_returns_persona_database(client: TestClient) -> None:
     assert body["npcs"]
     wizard = next(item for item in body["npcs"] if item["npcId"] == "Wizard")
     assert wizard["displayName"] == "Wizard"
+
+
+def test_npcs_merges_index_catalog_with_personas_and_exposes_evidence(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.personas import PersonaStore
+    from stardew_ai_bridge.profile_index import ProfileIndexStore
+
+    persona_dir = tmp_path / "personas"
+    persona_dir.mkdir()
+    (persona_dir / "vanilla.json").write_text(
+        json.dumps(
+            {
+                "mod": "vanilla",
+                "personas": {
+                    "Caroline": {"displayName": "Caroline"},
+                    "Wizard": {"displayName": "Wizard"},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "profile-index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {
+                    "Caroline": {
+                        "npcId": "Caroline",
+                        "sourceMods": ["vanilla"],
+                    },
+                    "Rasmodia": {"npcId": "Rasmodia", "sourceMods": ["SVE"]},
+                },
+                "styleSamples": [
+                    {
+                        "sampleId": "caroline-1",
+                        "npcId": "Caroline",
+                        "sourceMod": "vanilla",
+                        "text": "花园今天很安静。",
+                    }
+                ],
+                "speechEvidence": [],
+                "voiceCards": {},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "persona_store", PersonaStore(persona_dir))
+    monkeypatch.setattr(app_module, "profile_index_store", ProfileIndexStore(index_path))
+
+    body = client.get("/api/npcs").json()
+    by_id = {item["npcId"]: item for item in body["npcs"]}
+
+    assert "Caroline" in by_id
+    assert by_id["Caroline"]["sourceMods"] == ["vanilla"]
+    assert by_id["Caroline"]["hasDialogueEvidence"] is True
+    assert "Wizard" in by_id
+    assert "Rasmodia" not in by_id
 
 
 def test_context_preview_returns_sanitized_identity_and_current_state(
@@ -126,6 +344,72 @@ def test_context_preview_returns_sanitized_identity_and_current_state(
     }
     assert "apiKey" not in body
     assert "secret-api-key" not in response.text
+
+
+def test_context_preview_exposes_background_facts_and_known_characters(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.prompts import ContextBuilder
+    from stardew_ai_bridge.profile_index import ProfileIndexStore
+
+    index_path = tmp_path / "profile-index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {"Caroline": {"npcId": "Caroline"}},
+                "styleSamples": [],
+                "speechEvidence": [],
+                "voiceCards": {},
+                "knowledgeFacts": [
+                    {
+                        "factId": "caroline-garden",
+                        "npcId": "Caroline",
+                        "sourceMod": "vanilla",
+                        "summary": "她照料花园。",
+                        "knowledgeScope": "canon_confirmed",
+                        "confidence": "high",
+                    }
+                ],
+                "knownCharacters": [
+                    {
+                        "relationId": "caroline-marnie",
+                        "npcId": "Caroline",
+                        "knownNpcId": "Marnie",
+                        "relation": "熟人",
+                        "summary": "她认识 Marnie。",
+                        "sourceMod": "vanilla",
+                        "knowledgeScope": "canon_confirmed",
+                        "confidence": "high",
+                    }
+                ],
+                "storyEvents": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    profile_index = ProfileIndexStore(index_path)
+    monkeypatch.setattr(app_module, "profile_index_store", profile_index)
+    monkeypatch.setattr(
+        app_module,
+        "context_builder",
+        ContextBuilder(app_module.persona_store, profile_index),
+    )
+
+    response = client.post(
+        "/api/context/preview",
+        json={"npcId": "Caroline", "sourceMods": ["vanilla"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["knowledgeFacts"][0]["factId"] == "caroline-garden"
+    assert body["knownCharacters"][0]["knownNpcId"] == "Marnie"
 
 
 def test_context_preview_redacts_sensitive_values_in_allowed_context(
@@ -180,6 +464,16 @@ def test_context_preview_redacts_nested_sensitive_game_state_values(
     body = response.json()
     assert body["gameState"]["location"]["token"] == "[已省略]"
     assert "NESTED-SECRET" not in response.text
+
+
+def test_profile_index_path_resolver_uses_project_root_for_relative_path() -> None:
+    import stardew_ai_bridge.app as app_module
+
+    configured = "data/generated/vanilla-sve-rasmodia-profile-index-zh-CN.json"
+
+    resolved = app_module.resolve_profile_index_path(configured)
+
+    assert resolved == app_module.project_root / configured
 
 
 def test_dialogue_uses_builtin_safe_reply_when_fallback_is_guarded(
@@ -270,3 +564,181 @@ def test_dialogue_caps_warnings_when_upstream_and_fallback_are_guarded(
     assert len(body["warnings"]) <= 20
     assert "response_guard: prompt_leakage" in body["warnings"]
     assert "fallback_guard: prompt_leakage" in body["warnings"]
+
+
+def test_dialogue_retries_once_when_upstream_reply_contains_format_noise(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class RetryRouter:
+        def __init__(self) -> None:
+            self.calls: list[list[dict[str, str]] | None] = []
+
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            del request
+            self.calls.append(messages)
+            if len(self.calls) == 1:
+                return ProviderResult(reply="请看看**葡萄**。", provider="local")
+            return ProviderResult(reply="我们可以一起看看葡萄。", provider="local")
+
+    router = RetryRouter()
+    monkeypatch.setattr(app_module, "provider_router", router)
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Sophia", "message": "要不要一起看看葡萄？"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reply"] == "我们可以一起看看葡萄。"
+    assert len(router.calls) == 2
+    assert router.calls[0]
+    assert router.calls[1]
+    assert router.calls[1][-1]["name"] == "format_retry"
+    assert "response_format_retry: markdown" in body["warnings"]
+
+
+def test_dialogue_usage_includes_bounded_format_retry_attempts(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.models import ProviderUsage
+
+    class RetryUsageRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            del request, messages
+            self.calls += 1
+            noisy = self.calls == 1
+            return ProviderResult(
+                reply="请看看**葡萄**。" if noisy else "我们可以一起看看葡萄。",
+                provider="cloud",
+                usage=ProviderUsage(
+                    inputTokens=100 if noisy else 120,
+                    outputTokens=10 if noisy else 12,
+                    totalTokens=110 if noisy else 132,
+                ),
+            )
+
+    router = RetryUsageRouter()
+    monkeypatch.setattr(app_module, "provider_router", router)
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Sophia", "message": "要不要一起看看葡萄？"},
+    )
+
+    assert response.status_code == 200
+    assert router.calls == 2
+    assert response.json()["usage"] == {
+        "inputTokens": 220,
+        "outputTokens": 22,
+        "totalTokens": 242,
+    }
+
+
+def test_dialogue_does_not_retry_clean_upstream_reply(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class StableRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            del request, messages
+            self.calls += 1
+            return ProviderResult(reply="今天还好，谢了。", provider="local")
+
+    router = StableRouter()
+    monkeypatch.setattr(app_module, "provider_router", router)
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Shane", "message": "今天怎么样？"},
+    )
+
+    assert response.status_code == 200
+    assert router.calls == 1
+    assert "response_format_retry" not in response.json()["warnings"]
+
+
+def test_dialogue_format_retry_is_bounded_and_then_uses_existing_fallback(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+
+    class AlwaysNoisyRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            del request, messages
+            self.calls += 1
+            return ProviderResult(reply="**仍然有格式问题**", provider="local")
+
+    class SafeFallback:
+        def generate(self, request: object) -> ProviderResult:
+            del request
+            return ProviderResult(
+                reply="Rasmodia：我们改天再聊。",
+                provider="fallback",
+                fallback=True,
+            )
+
+    router = AlwaysNoisyRouter()
+    monkeypatch.setattr(app_module, "provider_router", router)
+    monkeypatch.setattr(app_module, "fallback_provider", SafeFallback())
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Wizard", "message": "你好"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert router.calls == 3
+    assert body["reply"] == "Rasmodia：我们改天再聊。"
+    assert body["fallback"] is True
+    assert "response_guard: format_markdown" in body["warnings"]

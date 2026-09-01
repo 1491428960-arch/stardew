@@ -13,3 +13,5 @@ obj/
 secrets/
 logs/
 artifacts/
+data/generated/
+.superpowers/

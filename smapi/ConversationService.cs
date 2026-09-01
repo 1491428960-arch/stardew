@@ -40,7 +40,7 @@ public sealed class ConversationService : IDisposable
                     state,
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),
                     itemContext),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             var recorded = !response.Fallback;
             if (recorded)
             {
@@ -73,7 +73,7 @@ public sealed class ConversationService : IDisposable
                     state,
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),
                     null),
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
             return new ConversationTurnResult(response, Recorded: false);
         }
         finally

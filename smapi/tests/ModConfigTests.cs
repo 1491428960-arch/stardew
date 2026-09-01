@@ -16,6 +16,7 @@ public sealed class ModConfigTests
         Assert.True(config.DialogueKey.IsBound);
         Assert.Equal(SButton.F8, config.DialogueKey.Keybinds.Single().Buttons.Single());
         Assert.True(config.EnableDialogue);
+        Assert.False(config.EnablePerformanceDiagnostics);
         Assert.Equal("http://127.0.0.1:5678", config.BridgeEndpoint);
         Assert.Equal(15, config.BridgeTimeoutSeconds);
     }
@@ -81,5 +82,28 @@ public sealed class ModConfigTests
         Assert.Equal(60, config.BridgeTimeoutSeconds);
         Assert.True(reset.EnableDialogue);
         Assert.Equal(15, reset.BridgeTimeoutSeconds);
+        Assert.True(reset.EnableHouseAccess);
+        Assert.True(reset.AllowMixedBuildingAccess);
+    }
+
+    [Fact]
+    public void Normalize_preserves_explicit_house_access_options()
+    {
+        var normalized = new ModConfig
+        {
+            EnableHouseAccess = true,
+            AllowMixedBuildingAccess = true,
+        }.Normalize();
+
+        Assert.True(normalized.EnableHouseAccess);
+        Assert.True(normalized.AllowMixedBuildingAccess);
+    }
+
+    [Fact]
+    public void Normalize_preserves_performance_diagnostics_option()
+    {
+        var normalized = new ModConfig { EnablePerformanceDiagnostics = true }.Normalize();
+
+        Assert.True(normalized.EnablePerformanceDiagnostics);
     }
 }

@@ -1,19 +1,60 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import inspect
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from time import perf_counter
 from typing import Protocol, runtime_checkable
 
 import httpx
 
 from .config import BridgeSettings, ProviderSettings
-from .models import DialogueTestRequest, ProviderResult
+from .models import DialogueTestRequest, ProviderResult, ProviderUsage
 
 
 class ProviderError(RuntimeError):
     """Provider 调用失败，消息不包含请求凭据。"""
+
+
+def _non_negative_count(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
+def _usage_from_mapping(value: object) -> ProviderUsage | None:
+    if not isinstance(value, Mapping):
+        return None
+    input_tokens = next(
+        (
+            count
+            for key in ("input_tokens", "prompt_tokens", "prompt_eval_count")
+            if (count := _non_negative_count(value.get(key))) is not None
+        ),
+        None,
+    )
+    output_tokens = next(
+        (
+            count
+            for key in ("output_tokens", "completion_tokens", "eval_count")
+            if (count := _non_negative_count(value.get(key))) is not None
+        ),
+        None,
+    )
+    total_tokens = _non_negative_count(value.get("total_tokens"))
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+    if input_tokens is None and output_tokens is None and total_tokens is None:
+        return None
+    return ProviderUsage(
+        inputTokens=input_tokens,
+        outputTokens=output_tokens,
+        totalTokens=total_tokens,
+    )
 
 
 @runtime_checkable
@@ -313,6 +354,7 @@ class OpenAICompatibleProvider:
         try:
             body = response.json()
             reply = body["choices"][0]["message"]["content"]
+            usage = _usage_from_mapping(body.get("usage"))
             if not isinstance(reply, str) or not reply.strip():
                 raise ValueError("empty content")
         except (KeyError, IndexError, TypeError, ValueError) as exc:
@@ -324,6 +366,106 @@ class OpenAICompatibleProvider:
             fallback=False,
             latencyMs=int((perf_counter() - started_at) * 1000),
             warnings=[],
+            usage=usage,
+        )
+
+
+class OllamaNativeProvider:
+    """调用 Ollama 原生 /api/chat，显式关闭 thinking 和流式响应。"""
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self.settings = settings
+        self.transport = transport
+
+    @property
+    def name(self) -> str:
+        return self.settings.name
+
+    def generate(
+        self,
+        request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
+    ) -> ProviderResult:
+        started_at = perf_counter()
+        response = _run_async(self._generate_async(request, messages=messages))
+        return response.model_copy(
+            update={
+                "latency_ms": max(
+                    response.latency_ms,
+                    int((perf_counter() - started_at) * 1000),
+                )
+            }
+        )
+
+    async def _generate_async(
+        self,
+        request: DialogueTestRequest,
+        *,
+        messages: list[dict[str, str]] | None = None,
+    ) -> ProviderResult:
+        if not self.settings.enabled or not self.settings.url:
+            raise ProviderError(f"{self.name} provider is disabled")
+        if not self.settings.model:
+            raise ProviderError(f"{self.name} provider model is not configured")
+
+        headers = {"content-type": "application/json"}
+        payload = {
+            "model": self.settings.model,
+            "messages": messages or [
+                {
+                    "role": "system",
+                    "content": (
+                        f"你正在扮演 {request.display_name or request.npc_id}。"
+                        "请用简洁、自然的中文回复。"
+                    ),
+                },
+                {"role": "user", "content": request.message},
+            ],
+            "stream": False,
+            "think": False,
+            "options": {"num_predict": 160},
+        }
+        started_at = perf_counter()
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.settings.timeout,
+                transport=self.transport,
+            ) as client:
+                response = await client.post(
+                    self.settings.url,
+                    headers=headers,
+                    json=payload,
+                )
+        except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+            raise ProviderError(f"{self.name} request failed") from exc
+
+        if response.is_error:
+            raise ProviderError(f"{self.name} returned HTTP {response.status_code}")
+
+        try:
+            body = response.json()
+            reply = body["message"]["content"]
+            usage = _usage_from_mapping(body.get("usage"))
+            if usage is None:
+                usage = _usage_from_mapping(body)
+            if not isinstance(reply, str) or not reply.strip():
+                raise ValueError("empty content")
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ProviderError(f"{self.name} returned an invalid response") from exc
+
+        return ProviderResult(
+            reply=reply.strip(),
+            provider=self.name,
+            fallback=False,
+            latencyMs=int((perf_counter() - started_at) * 1000),
+            warnings=[],
+            usage=usage,
         )
 
 
@@ -349,6 +491,7 @@ class ProviderRouter:
         *,
         fake_provider: Provider | None = None,
         cloud_enabled: bool = False,
+        default_provider: str = "auto",
     ) -> None:
         if fallback_provider is None:
             from .fallback import FallbackProvider
@@ -359,6 +502,11 @@ class ProviderRouter:
         self.fallback_provider = fallback_provider
         self.fake_provider = fake_provider or FakeProvider()
         self.cloud_enabled = cloud_enabled
+        self.default_provider = (
+            default_provider
+            if default_provider in {"auto", "local", "cloud"}
+            else "auto"
+        )
 
     @classmethod
     def from_settings(
@@ -369,13 +517,21 @@ class ProviderRouter:
         fallback_provider: Provider | None = None,
     ) -> "ProviderRouter":
         local = (
-            OpenAICompatibleProvider(settings.local)
+            cls._provider_from_settings(settings.local)
             if settings.local.enabled and settings.local.url
             else None
         )
+        # `cloud_enabled` controls whether automatic routing may spend cloud
+        # credits. An explicitly requested cloud provider must still be
+        # constructible when a URL is configured, even if auto routing is off.
+        cloud_settings = (
+            replace(settings.cloud, enabled=True)
+            if settings.cloud.url
+            else settings.cloud
+        )
         cloud = (
-            OpenAICompatibleProvider(settings.cloud)
-            if settings.cloud.enabled and settings.cloud.url
+            cls._provider_from_settings(cloud_settings)
+            if cloud_settings.url
             else None
         )
         if fallback_provider is None:
@@ -388,7 +544,14 @@ class ProviderRouter:
             fallback_provider=fallback_provider,
             fake_provider=fake_provider,
             cloud_enabled=settings.cloud_enabled,
+            default_provider="cloud" if cloud is not None else "auto",
         )
+
+    @staticmethod
+    def _provider_from_settings(settings: ProviderSettings) -> Provider:
+        if settings.api_mode == "ollama":
+            return OllamaNativeProvider(settings)
+        return OpenAICompatibleProvider(settings)
 
     @classmethod
     def from_env(
@@ -405,7 +568,8 @@ class ProviderRouter:
 
     def has_configured_upstream(self) -> bool:
         return self.local_provider is not None or (
-            self.cloud_enabled and self.cloud_provider is not None
+            self.cloud_provider is not None
+            and (self.cloud_enabled or self.default_provider == "cloud")
         )
 
     def generate(
@@ -416,12 +580,13 @@ class ProviderRouter:
         messages: list[dict[str, str]] | None = None,
     ) -> ProviderResult:
         explicit_provider = provider or self._explicit_request_provider(request)
-        if explicit_provider == "fake":
+        selected_provider = explicit_provider or self.default_provider
+        if selected_provider == "fake":
             return self.fake_provider.generate(request)
 
         warnings: list[str] = []
         started_at = perf_counter()
-        for candidate in self._candidates():
+        for candidate in self._candidates(selected_provider):
             try:
                 result = self._generate_candidate(candidate, request, messages)
             except Exception as exc:  # noqa: BLE001 - 路由必须隔离单个上游故障
@@ -459,8 +624,14 @@ class ProviderRouter:
             return candidate.generate(request, messages=messages)
         return candidate.generate(request)
 
-    def _candidates(self) -> list[Provider]:
+    def _candidates(self, provider: str | None = None) -> list[Provider]:
         candidates: list[Provider] = []
+        if provider in {"local", "cloud"}:
+            if provider == "local" and self.local_provider is not None:
+                candidates.append(self.local_provider)
+            if provider == "cloud" and self.cloud_provider is not None:
+                candidates.append(self.cloud_provider)
+            return candidates
         if self.local_provider is not None:
             candidates.append(self.local_provider)
         if self.cloud_enabled and self.cloud_provider is not None:
