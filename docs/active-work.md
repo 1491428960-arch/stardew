@@ -8,6 +8,8 @@
 
 ## 已完成
 
+- 2026-09-01 修复快速测试启动器误拒绝当前 worktree 的路径问题：安全校验现在只对白名单形式的 `仓库名.worktrees -> 仓库名\\.worktrees` 父级 Junction 放行，目标目录、嵌套链接和不可信依赖 Junction 仍保持拒绝。先新增回归用例，修复前实际为 `39` 通过、`1` 失败，修复后快速 profile 回归为 `40` 通过、`0` 失败；SMAPI 全量测试为 `174` 通过、`0` 失败。当前构建 DLL 与隔离 `Mods-AI-FastTest` 部署 DLL SHA-256 均为 `1E4AEFECEC3A89120401E73F22B24DDE9E6BC0A0D2BB3CB33E7CA7742500C8D5`，SMAPI PID `38716` 的日志已确认从该隔离目录加载 `Stardew AI NPC`、Rasmodia、Content Patcher、CMCT 和 GMCM；尚未完成进入独立存档后的 F8、动态对白和聊天菜单帧率实测。路径修复已提交为 `e6793e5` 并推送到 GitHub `main`。
+
 - 2026-09-01 使用“高好感度与语气变化”新规则，通过百炼 Qwen 云端重跑固定质量评测：`23/23` 案例成功、`69/69` 轮成功、`0` 错误、`0` 失败轮，自动全轮通过 `11/23`；相比上一批 `7/23` 有提升。结果工件为 `artifacts/character-quality-eval/20260901-high-stage-voice-cloud`，共发起 `80` 次真实请求，输入 `298637`、输出 `1509`、合计 `300146` Token，当前未配置单价所以费用估算为 `null`。按角色为 Rasmodia `3/4`、Sophia `4/4`、Shane `3/4`、Sebastian `3/4`、Alex `4/4`，另含 Caroline、Marnie、Linus 各 1 例；关系阶段为 acquaintance `5`、friend `10`、close `7`、married `1`，婚后案例仍未自动通过。结果中的失败主要是 `missing_expected_evidence`（3 例），没有格式噪声标签；自动分数仍不能替代人工角色判断，需在浏览器查看完整多轮回复。`5678/api/quality/results` 已返回该新批次，`/health` 仍为 `provider=cloud`，本轮未启动游戏、未部署 DLL。
 
 - 2026-09-01 完成 Qoder 会员与项目接入评估：官方资料确认个人会员 Credits 用于 Qoder IDE/CLI/Agent/Quest 等产品，Qoder 内配置百炼自定义模型时费用仍由百炼账户直接结算；Qoder Cloud Agents 虽有独立 API，但采用 PAT/SAT + Agent/Environment/Session/Event 协议，不是当前 Bridge 的 Chat Completions 直连替代。当前实时 5678 `/health` 返回 `provider=cloud`，云端模型为 `qwen-plus-character`；建议会员用于代码审查、测试和离线评测辅助，暂不增加 Qoder Provider。详细来源与边界见 `docs/report-Qoder会员与Stardew-AI-NPC项目接入评估-2026-09-01.md`，未读取账户凭据、未发起 Qoder API 请求、未修改游戏或 Bridge 运行配置。
