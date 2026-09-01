@@ -53,6 +53,44 @@ function Test-PathInside {
     return $candidatePath.StartsWith($rootPath + '\', [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-AllowlistedWorktreeContainer {
+    param([Parameter(Mandatory)] [object]$Item)
+
+    if (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -or
+        $Item.LinkType -ne 'Junction' -or
+        [string]::IsNullOrWhiteSpace([string]$Item.Target)) {
+        return $false
+    }
+
+    $aliasName = [string]$Item.Name
+    $suffix = '.worktrees'
+    if (-not $aliasName.EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $targetItem = Get-Item -LiteralPath ([string]$Item.Target) -Force -ErrorAction SilentlyContinue
+    if (-not $targetItem -or
+        ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        -not [string]::Equals([string]$targetItem.Name, '.worktrees', [StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $targetRepository = Split-Path -Path (Get-NormalizedPath $targetItem.FullName) -Parent
+    if (-not $targetRepository) {
+        return $false
+    }
+    $targetRepositoryItem = Get-Item -LiteralPath $targetRepository -Force -ErrorAction SilentlyContinue
+    if (-not $targetRepositoryItem -or
+        ($targetRepositoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        -not [string]::Equals($aliasName, ([string]$targetRepositoryItem.Name + $suffix), [StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $aliasParent = Split-Path -Path $Item.FullName -Parent
+    $repositoryParent = Split-Path -Path $targetRepositoryItem.FullName -Parent
+    return $aliasParent -and $repositoryParent -and (Test-SamePath -Left $aliasParent -Right $repositoryParent)
+}
+
 function Assert-NoReparsePoints {
     param([Parameter(Mandatory)] [string]$Path)
 
@@ -60,7 +98,8 @@ function Assert-NoReparsePoints {
     while ($current) {
         if (Test-Path -LiteralPath $current) {
             $item = Get-Item -LiteralPath $current -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and
+                -not (Test-AllowlistedWorktreeContainer -Item $item)) {
                 throw "拒绝使用包含 Junction 或符号链接的路径：$current"
             }
             $parent = Split-Path -Path $item.FullName -Parent

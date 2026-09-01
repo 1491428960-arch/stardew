@@ -36,13 +36,14 @@ function Invoke-Launcher {
     param(
         [switch]$IncludeRasmodia,
         [switch]$NoLaunch,
-        [string]$TargetPath = $fastModsPath
+        [string]$TargetPath = $fastModsPath,
+        [string]$ProjectRootArgument = $projectRoot
     )
 
     $arguments = @(
         '-NoProfile',
         '-File', $scriptPath,
-        '-ProjectRoot', $projectRoot,
+        '-ProjectRoot', $ProjectRootArgument,
         '-GamePath', $gamePath,
         '-FastModsPath', $TargetPath,
         '-SourceModsPath', $sourceModsPath,
@@ -95,6 +96,14 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fastModsPath 'ContentPatcher\manifest.json'))) '基础模式不复制 Content Patcher'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fastModsPath 'CrossModCompatibilityTokens\manifest.json'))) '基础模式不复制 CMCT'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $fastModsPath 'ExtraMod\manifest.json'))) '基础模式不复制额外 Mod'
+
+    $actualProjectRoot = Split-Path -Parent $PSScriptRoot
+    $actualProjectParent = Split-Path -Parent $actualProjectRoot
+    $actualProjectParentItem = Get-Item -LiteralPath $actualProjectParent -Force
+    if (($actualProjectParentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        $worktreeParent = Invoke-Launcher -ProjectRootArgument $actualProjectRoot
+        Assert-True ($worktreeParent.ExitCode -eq 0) '合法 worktree Junction 下的项目路径可以完成同步'
+    }
 
     $explicitNoLaunch = Invoke-Launcher -NoLaunch
     Assert-True ($explicitNoLaunch.ExitCode -eq 0) '显式 NoLaunch 模式成功完成同步'
