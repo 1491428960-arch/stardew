@@ -9,6 +9,7 @@ from .evidence import has_dialogue_control_residue
 from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
 from .stage_policy import build_stage_policy
+from .story_state import build_story_state
 from .source_aliases import source_matches
 
 
@@ -21,6 +22,8 @@ _IDENTITY_FIELDS = (
     "voiceStyle",
     "stageProfile",
     "stagePolicy",
+    "genderPresentation",
+    "storyState",
     "knowledgeRules",
 )
 _STAGE_KEYS = ("stranger", "acquaintance", "friend", "close", "dating", "married", "parent")
@@ -40,6 +43,20 @@ _STATE_FIELDS = (
 )
 _INTERACTION_INTENTS = {"chat", "topic", "item"}
 _CONVERSATION_CHANNELS = {"remote", "face_to_face"}
+_QUALITY_FLIRT_INTENSITIES = {"none", "light", "direct", "explicit"}
+_QUALITY_INITIATIVE_EXPECTATIONS = {"none", "responsive", "proactive", "guarded"}
+_QUALITY_INITIATIVE_KINDS = {
+    "none",
+    "affection_signal",
+    "specific_plan",
+    "guarded_care",
+    "conversation_exit",
+    "companionship",
+    "creative_share",
+    "playful_tease",
+    "shared_evening",
+    "care_action",
+}
 _CHANNEL_INSTRUCTIONS = {
     "remote": (
         "这是手机或线上聊天；本轮只发生在远程消息中。"
@@ -453,6 +470,68 @@ def _build_interaction(values: Mapping[str, Any]) -> dict[str, Any]:
     return interaction
 
 
+def _build_quality_context(value: object) -> dict[str, Any]:
+    """保留仅供质量评测使用的关系边界，不把评测标签扩散到运行时请求。"""
+
+    if not isinstance(value, Mapping):
+        return {}
+    context: dict[str, Any] = {}
+    intensity = _text(value.get("flirtIntensity", value.get("flirt_intensity")), limit=20).casefold()
+    if intensity in _QUALITY_FLIRT_INTENSITIES:
+        context["flirtIntensity"] = intensity
+    for key in ("adultConsensual", "romanceEligible"):
+        raw = value.get(key, value.get(key[0].lower() + key[1:]))
+        if isinstance(raw, bool):
+            context[key] = raw
+    for key, allowed in (
+        ("initiativeExpectation", _QUALITY_INITIATIVE_EXPECTATIONS),
+        ("initiativeKind", _QUALITY_INITIATIVE_KINDS),
+    ):
+        raw = value.get(key, value.get(key[0].lower() + key[1:]))
+        initiative = _text(raw, limit=40).casefold()
+        if initiative in allowed:
+            context[key] = initiative
+    relationship_context = _text(
+        value.get("relationshipContext", value.get("relationship_context")),
+        limit=240,
+    )
+    if relationship_context:
+        context["relationshipContext"] = _remove_secret_labels(relationship_context)
+    gender_presentation = _text(
+        value.get("genderPresentation", value.get("gender_presentation")),
+        limit=40,
+    )
+    if gender_presentation:
+        context["genderPresentation"] = gender_presentation
+    topic_seed = _text(
+        value.get("topicSeed", value.get("topic_seed")),
+        limit=120,
+    )
+    if topic_seed:
+        context["topicSeed"] = _remove_secret_labels(topic_seed)
+    topic_keywords = _compact_text_list(
+        value.get("topicKeywords", value.get("topic_keywords")),
+        limit=8,
+        item_limit=40,
+    )
+    if topic_keywords:
+        context["topicKeywords"] = topic_keywords
+    continuation_mode = _text(
+        value.get("continuationMode", value.get("continuation_mode")),
+        limit=20,
+    ).casefold()
+    if continuation_mode in {"anchored", "pressure"}:
+        context["continuationMode"] = continuation_mode
+    return context
+
+
+def _is_topic_interaction(interaction: object) -> bool:
+    return (
+        isinstance(interaction, Mapping)
+        and _text(interaction.get("intent"), limit=20).casefold() == "topic"
+    )
+
+
 class ContextBuilder:
     """从游戏请求中提取有限且稳定的 NPC 对话上下文。"""
 
@@ -536,6 +615,20 @@ class ContextBuilder:
         identity["stagePolicy"] = _sanitize_value(
             build_stage_policy(str(npc_id), stage)
         )
+        current_mood = _first_value(values, "currentMood", "current_mood")
+        if current_mood is None:
+            current_mood = _first_value(state, "currentMood", "current_mood")
+        identity["storyState"] = _sanitize_value(
+            build_story_state(
+                str(npc_id),
+                stage,
+                game_state.get("completedEventIds", ()),
+                story_events=persona.get("storyEvents", ())
+                if isinstance(persona.get("storyEvents", ()), (list, tuple))
+                else (),
+                current_mood=current_mood or "",
+            )
+        )
 
         runtime_display_name = _first_value(values, "displayName", "display_name")
         if runtime_display_name is None:
@@ -571,6 +664,11 @@ class ContextBuilder:
             "recentFacts": recent_facts,
             "history": history,
         }
+        quality_context = _build_quality_context(
+            values.get("qualityContext", values.get("quality_context"))
+        )
+        if quality_context:
+            context["qualityContext"] = quality_context
         if (
             "intent" in values
             or "itemContext" in values
@@ -582,6 +680,8 @@ class ContextBuilder:
         if self.profile_index is not None:
             player_input = _text(_first_value(values, "message", "playerInput"), limit=2000)
             interaction = context.get("interaction", {})
+            if _is_topic_interaction(interaction):
+                player_input = ""
             channel = (
                 interaction.get("channel", "")
                 if isinstance(interaction, Mapping)
@@ -621,6 +721,32 @@ class ContextBuilder:
                 player_input=player_input,
                 limit=4,
             )
+            if _is_topic_interaction(interaction) and channel:
+                # NPC 主动找话题时，渠道只约束本轮能写成什么，不应把
+                # 同一关系阶段的已审核亲密表达示范全部过滤掉。当前渠道
+                # 样例优先，其余样例只提供情感动作和语气参考。
+                cross_channel_examples = self.profile_index.behavior_examples(
+                    str(npc_id),
+                    source_mod_list,
+                    relationship_stage=stage,
+                    channel="",
+                    player_input=player_input,
+                    limit=4,
+                )
+                seen_example_ids = {
+                    str(item.get("exampleId", ""))
+                    for item in behavior_examples
+                    if isinstance(item, Mapping)
+                }
+                for example in cross_channel_examples:
+                    example_id = str(example.get("exampleId", ""))
+                    if example_id and example_id in seen_example_ids:
+                        continue
+                    behavior_examples.append(example)
+                    if example_id:
+                        seen_example_ids.add(example_id)
+                    if len(behavior_examples) >= 4:
+                        break
             knowledge_facts = self.profile_index.knowledge_facts(
                 str(npc_id),
                 source_mod_list,
@@ -639,6 +765,15 @@ class ContextBuilder:
                     if isinstance(game_state.get("completedEventIds", ()), list)
                     else ()
                 ),
+            )
+            identity["storyState"] = _sanitize_value(
+                build_story_state(
+                    str(npc_id),
+                    stage,
+                    game_state.get("completedEventIds", ()),
+                    story_events=story_events,
+                    current_mood=current_mood or "",
+                )
             )
             known_characters = self.profile_index.known_characters(
                 str(npc_id),
@@ -725,6 +860,38 @@ def _safe_voice_card(
     if voice_anchors:
         result["voiceAnchors"] = voice_anchors
     return result
+
+
+def _safe_quality_context(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    safe: dict[str, Any] = {}
+    intensity = _text(value.get("flirtIntensity"), limit=20).casefold()
+    if intensity in _QUALITY_FLIRT_INTENSITIES:
+        safe["flirtIntensity"] = intensity
+    for key in ("adultConsensual", "romanceEligible"):
+        if isinstance(value.get(key), bool):
+            safe[key] = value[key]
+    relationship_context = _text(value.get("relationshipContext"), limit=240)
+    if relationship_context:
+        safe["relationshipContext"] = _remove_secret_labels(relationship_context)
+    gender_presentation = _text(value.get("genderPresentation"), limit=40)
+    if gender_presentation:
+        safe["genderPresentation"] = gender_presentation
+    topic_seed = _text(value.get("topicSeed"), limit=120)
+    if topic_seed:
+        safe["topicSeed"] = _remove_secret_labels(topic_seed)
+    topic_keywords = _compact_text_list(
+        value.get("topicKeywords"),
+        limit=8,
+        item_limit=40,
+    )
+    if topic_keywords:
+        safe["topicKeywords"] = topic_keywords
+    continuation_mode = _text(value.get("continuationMode"), limit=20).casefold()
+    if continuation_mode in {"anchored", "pressure"}:
+        safe["continuationMode"] = continuation_mode
+    return safe
 
 
 def _history_openings(history: object) -> list[str]:
@@ -817,6 +984,10 @@ def _compact_behavior_condition(example: Mapping[str, Any]) -> dict[str, Any]:
         "speechFunction": _text(example.get("speechFunction"), limit=80),
         "topic": _text(example.get("topic"), limit=80),
         "emotion": _text(example.get("emotion"), limit=80),
+        "initiativeExpectation": _text(
+            example.get("initiativeExpectation"), limit=40
+        ),
+        "initiativeKind": _text(example.get("initiativeKind"), limit=60),
     }
     topic_keywords = _compact_text_list(
         example.get("topicKeywords"),
@@ -1193,10 +1364,63 @@ def _compact_stage_profile(value: object) -> dict[str, Any]:
     return result
 
 
-def _compact_stage_policy(value: object) -> dict[str, str]:
+def _compact_affection_initiative(
+    value: object,
+    *,
+    include_response_order: bool = True,
+) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
-    return {
+    result: dict[str, Any] = {}
+    mode = _text(value.get("initiativeMode"), limit=20).casefold()
+    if mode in {"proactive", "guarded", "responsive", "none"}:
+        result["initiativeMode"] = mode
+    if include_response_order:
+        response_order = _compact_text_list(
+            value.get("responseOrder"),
+            limit=3,
+            item_limit=40,
+        )
+        if response_order:
+            result["responseOrder"] = response_order
+    for key in ("allowedIntensities", "allowedKinds"):
+        items = _compact_text_list(value.get(key), limit=5, item_limit=40)
+        if items:
+            result[key] = items
+    minimum_expression = _text(value.get("minimumExpression"), limit=240)
+    if not minimum_expression:
+        minimum_expression = "关系已成立时，每轮至少自然表达一处对玩家的爱意或亲近，不只礼貌答题。"
+    result["minimumExpression"] = minimum_expression
+    warmth_signals = _compact_text_list(
+        value.get("warmthSignals"),
+        limit=4,
+        item_limit=120,
+    )
+    if warmth_signals:
+        result["warmthSignals"] = warmth_signals
+    max_actions = value.get("maxActions")
+    if isinstance(max_actions, int) and not isinstance(max_actions, bool):
+        result["maxActions"] = max(0, min(max_actions, 1))
+    channel_rules = value.get("channelRules")
+    if isinstance(channel_rules, Mapping):
+        rules: dict[str, str] = {}
+        for channel in ("remote", "face_to_face"):
+            rule = _text(channel_rules.get(channel), limit=180)
+            if rule:
+                rules[channel] = _remove_secret_labels(rule)
+        if rules:
+            result["channelRules"] = rules
+    return result
+
+
+def _compact_stage_policy(
+    value: object,
+    *,
+    include_response_order: bool = True,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {
         key: _text(value.get(key), limit=180)
         for key in (
             "stage",
@@ -1208,6 +1432,50 @@ def _compact_stage_policy(value: object) -> dict[str, str]:
         )
         if _text(value.get(key), limit=180)
     }
+    affection = _compact_affection_initiative(
+        value.get("affectionInitiative"),
+        include_response_order=include_response_order,
+    )
+    if affection:
+        result["affectionInitiative"] = affection
+    return result
+
+
+def _compact_gender_presentation(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key in ("layer", "basePersonaPriority"):
+        text = _text(value.get(key), limit=60)
+        if text:
+            result[key] = text
+    for key in ("toneAdjustments", "affectionExpression", "avoid"):
+        items = _compact_text_list(value.get(key), limit=3, item_limit=120)
+        if items:
+            result[key] = items
+    return result
+
+
+def _compact_story_state(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for key in (
+        "npcId",
+        "relationshipStage",
+        "trustState",
+        "initiativeBias",
+        "temporaryBoundary",
+        "behaviorInstruction",
+    ):
+        text = _text(value.get(key), limit=180)
+        if text:
+            result[key] = text
+    for key in ("completedStoryStates", "allowedDisclosure"):
+        items = _compact_text_list(value.get(key), limit=4, item_limit=80)
+        if items:
+            result[key] = items
+    return result
 
 
 def _stage_execution_instruction(value: object) -> str:
@@ -1225,6 +1493,16 @@ def _stage_execution_instruction(value: object) -> str:
             "朋友阶段可以展开一层或提出一个相关下一步，"
             "但不得跳出当前话题。"
         ),
+        "dating": (
+            "恋爱阶段要让玩家尽早听见角色对玩家本人的偏爱、想念、靠近或相处愿望，"
+            "并直接回应当前话题；爱意应和具体话题自然融在一起，不套固定句序，"
+            "也不要让天气、地点、工作、物品或安排占满开场后才补一句爱意。"
+        ),
+        "married": (
+            "婚后阶段要让伴侣尽早听见角色对伴侣本人的想念、偏爱、舍不得或依恋，"
+            "并回应眼前事情；亲密感应和生活话题自然交织，不套固定句序，"
+            "不能先处理完事务，最后只用一句中性的陪伴收尾。"
+        ),
     }.get(
         stage,
         "严格执行当前阶段的五项策略，不使用更亲密阶段的开放程度。",
@@ -1238,12 +1516,124 @@ def _stage_execution_instruction(value: object) -> str:
         "优先于泛化的热情、礼貌或延长对话倾向；"
         "原版语气示例不得覆盖当前阶段策略；"
         f"{stage_instruction}"
-        "先按 responseShape 回答，只按 selfDisclosure 和 boundaryMode 暴露内容，"
+        "直接接住玩家的意思，不要先复述、改写或总结玩家原话；只按 responseShape、"
+        "selfDisclosure 和 boundaryMode 暴露内容，"
         "initiative 与 followUp 不得超过当前阶段。"
         "玩家明确表示先不问、先休息、有空再聊或先走时，"
         "不得主动抛出新问题、新对象或新话题；只用角色语气简短收口。"
         "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
     )
+
+
+def _build_affection_initiative_card(
+    stage_policy: object,
+    *,
+    quality_context: object = None,
+    interaction: object = None,
+    player_input: str = "",
+    compact: bool = False,
+) -> dict[str, Any]:
+    """把阶段策略投影成短的主动亲密行为卡，不生成或改写对白。"""
+
+    if not isinstance(stage_policy, Mapping):
+        return {}
+    affection = _compact_affection_initiative(
+        stage_policy.get("affectionInitiative"),
+        include_response_order=not compact,
+    )
+    if not affection:
+        return {}
+
+    quality = quality_context if isinstance(quality_context, Mapping) else {}
+    interaction_data = interaction if isinstance(interaction, Mapping) else {}
+    channel = _text(interaction_data.get("channel"), limit=30).casefold()
+    if channel not in _CONVERSATION_CHANNELS:
+        channel = ""
+    intensity = _text(quality.get("flirtIntensity"), limit=20).casefold()
+    mode = affection.get("initiativeMode", "none")
+    channel_rule = ""
+    rules = affection.get("channelRules")
+    if isinstance(rules, Mapping) and channel:
+        channel_rule = _text(rules.get(channel), limit=180)
+
+    instructions = [
+        "这是关系阶段的主动亲密行为卡，不是需要说出口的台词。",
+        "把玩家当前话题当作背景，直接接住其意思并推进；不要先复述、改写或总结玩家原话，"
+        "不要把回复拆成‘复述一句→回答一句’的模板。",
+        "不要把每轮回复写成固定顺序。直接接住玩家的真实意思，让爱意在自然位置尽早出现（通常在前一两句或同一句中），"
+        "再根据需要补充具体话题和最多一个可商量的小安排；可以把爱意融进事实、感受或玩笑，"
+        "不要每次都用同一套‘先说想你、再说话题、最后邀约’。",
+        "正常的高亲密回复不能只礼貌答题、重复事实或泛泛反问；除明确收口、拒绝、"
+        "状态需要停下或仅确认安排外，必须自然落下一处 minimumExpression 所要求的爱意或亲近信号。",
+        "不要让天气、地点、工作、物品或安排占据整个开场；如果先从具体话题开口，应在同一句或紧接的一句里让玩家听见角色对玩家本人的明确情绪或愿望，"
+        "不能只说‘和你待着’这种中性陪伴。",
+        "然后最多一个亲密动作；不要连续升级或把回复写成长篇告白。",
+        "proactive 模式不需要等待玩家先说情话，但主动行为必须来自当前话题和角色自己的表达方式。",
+        "只在 allowedKinds 与 allowedIntensities 范围内选择；explicit 不凭空主动露骨，必须由玩家先提出且有明确同意。",
+        "玩家拒绝、明确结束、说不打扰或先休息时不得调情，只按角色语气简短收口。",
+        "仅说共同安排不够；给出事务计划也不算充分爱意，必须让玩家感到被想念、被选择、被在乎或被期待。",
+        "功能性邀约不够；像‘来帮忙’‘有空来’‘一起安排’这样的计划，必须同时说清楚角色为什么想和玩家相处。",
+        "亲密落点必须明确指向玩家本人：让玩家听见角色对‘你’的感受、选择或期待；不能只写对话题、地点或安排的态度。",
+    ]
+    if mode == "guarded":
+        instructions.append(
+            "guarded 模式优先实际关心、需要空间或自然收口；状态差时可以拒绝，不把拒绝写成关系倒退。"
+        )
+    if channel == "remote":
+        instructions.append(
+            "当前是远程聊天：只写消息中的表达或待确认安排，不得写成已经见面、已经碰面或已经赴约。"
+        )
+    elif channel == "face_to_face":
+        instructions.append(
+            "当前是当面聊天：可以描述当前当面反应，但不要写成发消息或把已经发生的互动推迟到以后。"
+        )
+    minimum_expression = _text(affection.get("minimumExpression"), limit=240)
+    if minimum_expression:
+        instructions.append(f"最低表达要求：{minimum_expression}")
+    warmth_signals = _compact_text_list(
+        affection.get("warmthSignals"),
+        limit=4,
+        item_limit=120,
+    )
+    if warmth_signals:
+        instructions.append(
+            "优先从以下角色化 warmthSignals 中选择一处自然落地，不要逐字照抄："
+            + "；".join(warmth_signals)
+            + "。"
+        )
+    if channel_rule:
+        instructions.append(f"本渠道规则：{channel_rule}")
+    if intensity in {"none", "light", "direct", "explicit"}:
+        instructions.append(f"本轮评测强度是 {intensity}；它是边界提示，不要把强度名称说出口。")
+
+    return {
+        "affectionInitiative": affection,
+        "channel": channel or None,
+        "instruction": "".join(instructions),
+    }
+def _build_affection_priority_final_card(value: object) -> dict[str, str]:
+    """在最终用户触发消息前补一层简短的亲密表达默检。"""
+
+    if not isinstance(value, Mapping):
+        return {}
+    affection = value.get("affectionInitiative")
+    if not isinstance(affection, Mapping):
+        return {}
+    mode = _text(affection.get("initiativeMode"), limit=20).casefold()
+    if mode not in {"proactive", "guarded"}:
+        return {}
+    return {
+        "instruction": (
+            "这是输出前的最后一次默检，不是要说出口的台词。"
+            "除非玩家明确结束、拒绝、说不打扰或先休息，否则直接回答玩家，并让爱意在自然位置尽早出现（通常在前一两句或同一句中）；"
+            "不要套固定开场顺序，也不要每次都先说同一句想念；不要让天气、地点、工作、物品或安排占满开场。"
+            "让玩家感到被想念、被偏爱、被选择或被在乎，再自然接住当前具体话题；"
+            "不要先复述或总结玩家原话，也不要用‘你说……’‘你是说……’之类的镜像开场。"
+            "明确结束时只按角色语气简短收口，不调情、不新增问题或安排。"
+            "远程不得写成已经见面；explicit 只有玩家主动提出且明确同意时才可升级，默认不主动露骨。"
+            "最多一个自然的亲密动作，保持角色语气；自检不满足就重写后再输出，只输出对白文字。"
+        ),
+    }
 
 
 def _compact_knowledge_rules(value: object) -> dict[str, Any]:
@@ -1290,6 +1680,8 @@ def _compact_identity(
         ("voiceStyle", _compact_voice_style),
         ("stageProfile", _compact_stage_profile),
         ("stagePolicy", _compact_stage_policy),
+        ("genderPresentation", _compact_gender_presentation),
+        ("storyState", _compact_story_state),
         ("knowledgeRules", _compact_knowledge_rules),
     ):
         compact = (
@@ -1573,7 +1965,18 @@ def _compact_knowledge_fact(value: object) -> dict[str, Any]:
 class PromptBuilder:
     """将上下文组装成顺序固定、无凭据的 chat messages。"""
 
-    def build(self, context: Mapping[str, Any], player_input: str) -> list[dict[str, str]]:
+    def build(
+        self,
+        context: Mapping[str, Any],
+        player_input: str,
+        *,
+        compact: bool = False,
+    ) -> list[dict[str, str]]:
+        topic_request = _is_topic_interaction(context.get("interaction"))
+        if topic_request:
+            # topic 是 NPC 主动开口的系统意图，不存在本轮玩家输入。
+            # 即使调用方误传了旧版内部提示，也不能让它进入任何证据选择或消息。
+            player_input = ""
         speech_evidence = _filter_plain_dialogue_evidence(
             _compact_unique_dialogue_evidence(
                 context.get("speechEvidence", ())
@@ -1592,6 +1995,9 @@ class PromptBuilder:
         )
             if item["text"] not in speech_texts
         ]
+        if compact:
+            speech_evidence = speech_evidence[:1]
+            style_samples = style_samples[:1]
         safe_context_data: dict[str, Any] = {
             "npcIdentity": _compact_identity(
                 context.get("npcIdentity", {}),
@@ -1610,6 +2016,9 @@ class PromptBuilder:
                 for item in context.get("recentFacts", ())
                 if _text(item)
             ],
+            "qualityContext": _safe_quality_context(
+                context.get("qualityContext", context.get("quality_context"))
+            ),
             "history": [
                 {
                     "role": item.get("role"),
@@ -1617,7 +2026,9 @@ class PromptBuilder:
                         _text(item.get("content"), limit=140)
                     ),
                 }
-                for item in list(context.get("history", ()))[-_PROMPT_HISTORY_LIMIT:]
+                for item in list(context.get("history", ()))[
+                    -(4 if compact else _PROMPT_HISTORY_LIMIT) :
+                ]
                 if isinstance(item, Mapping)
                 and item.get("role") in {"user", "assistant"}
                 and _text(item.get("content"), limit=140)
@@ -1664,6 +2075,8 @@ class PromptBuilder:
                         "topicKeywords",
                         "emotion",
                         "sourceType",
+                        "initiativeExpectation",
+                        "initiativeKind",
                         "playerInput",
                         "npcReply",
                     )
@@ -1750,12 +2163,23 @@ class PromptBuilder:
                 if isinstance(context["interaction"], Mapping)
                 else {}
             )
+        if compact:
+            safe_context_data["behaviorExamples"] = safe_context_data[
+                "behaviorExamples"
+            ][:1]
+            safe_context_data["knowledgeFacts"] = safe_context_data[
+                "knowledgeFacts"
+            ][:1]
+            safe_context_data["knownCharacters"] = []
+            safe_context_data["storyEvents"] = []
         safe_context = _sanitize_value(safe_context_data)
         selected_behavior_examples = _select_behavior_examples(
             safe_context["behaviorExamples"],
             player_input,
         )
-        if _is_generic_small_talk_input(player_input):
+        if compact:
+            selected_behavior_examples = selected_behavior_examples[:1]
+        if not topic_request and _is_generic_small_talk_input(player_input):
             # 泛日常只需要一个“怎么说”的示范；带有研究、训练、葡萄园等
             # 具体主题的示范会把上下文里的主题误当成玩家当前在问的事。
             selected_behavior_examples = [
@@ -1782,6 +2206,8 @@ class PromptBuilder:
             "必须遵守当前角色的 voiceStyle；句长、停顿、回应规则、开场和收尾只是语气参考，不是固定台词。"
             "不要机械拼接 voiceStyle 中的开场、收尾或口头语，不要用书面化的总结句代替具体回答。"
             "不要在同一句中无必要重复同一名词。"
+            "不要用‘你是说……’‘听起来你……’‘所以你的意思是……’等模板复述玩家后再回答；"
+            "直接用 NPC 自己的态度、感受或行动接话。"
             "天气、时间和地点是当前场景的硬事实，不得与之矛盾；"
             "不要为了显得贴合而硬塞，除非玩家提及或确实影响回答。"
             "历史只用于承接当前对话，不是角色语气来源；若与角色资料冲突，以角色资料和原文样本为准。"
@@ -1795,6 +2221,16 @@ class PromptBuilder:
                 "不要复用跨角色的固定开场或收尾。地点、季节和语料中的主题仅作事实背景，"
                 "不是玩家问题；不要因为它们出现在上下文中就主动把它们提升为回答主题。"
             )
+        persona_fields = (
+            "npcId",
+            "displayName",
+            "coreTraits",
+            "voiceStyle",
+            "stageProfile",
+            "knowledgeRules",
+        )
+        if not compact:
+            persona_fields = (*persona_fields, "stagePolicy")
         messages = [
             {
                 "role": "system",
@@ -1811,24 +2247,51 @@ class PromptBuilder:
                     ),
                     "npcIdentity": {
                         key: identity[key]
-                        for key in (
-                            "npcId",
-                            "displayName",
-                            "coreTraits",
-                            "voiceStyle",
-                            "stageProfile",
-                            "stagePolicy",
-                            "knowledgeRules",
-                        )
+                        for key in persona_fields
                         if key in identity
                     }
                 }),
             },
-            {
-                "role": "system",
-                "name": "mod_overlay",
-                "content": _json(overlay),
-            },
+        ]
+        if identity.get("genderPresentation"):
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "gender_presentation",
+                    "content": _json({
+                        "genderPresentation": _compact_gender_presentation(
+                            identity.get("genderPresentation")
+                        ),
+                        "instruction": (
+                            "这是表达层，不是新的角色人格。原版基底人格、话题边界和已确认事实优先；"
+                            "只在关系和当前话题允许时调整情绪呈现与亲密表达，"
+                            "不要使用统一的女性化模板或重复语气词。"
+                        ),
+                    }),
+                }
+            )
+        if identity.get("storyState"):
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "story_state",
+                    "content": _json({
+                        "storyState": _compact_story_state(identity.get("storyState")),
+                        "instruction": (
+                            "这是已完成剧情和当前状态的约束卡，不是台词。"
+                            "只能使用已完成事件允许的披露范围；当前情绪可以降低主动性，"
+                            "但不能抹掉已经建立的信任，也不得复述这张卡。"
+                        ),
+                    }),
+                }
+            )
+        messages.extend(
+            [
+                {
+                    "role": "system",
+                    "name": "mod_overlay",
+                    "content": _json(overlay),
+                },
             {
                 "role": "system",
                 "name": "game_state",
@@ -1837,7 +2300,33 @@ class PromptBuilder:
                     "recentFacts": safe_context["recentFacts"],
                 }),
             },
-        ]
+            ]
+        )
+        if safe_context["qualityContext"]:
+            quality_context = safe_context["qualityContext"]
+            intensity = quality_context.get("flirtIntensity", "none")
+            intensity_instruction = {
+                "none": "本例不测试调情；保持当前关系阶段的自然日常或友情边界。",
+                "light": "关系已经成立时，可以自然主动接近一步；仍不要变成统一甜腻腔或连续升级。",
+                "direct": "可以直接回应玩家的亲密表达；关系和同意优先，Shane 等角色仍可拒绝或结束对话。",
+                "explicit": "只在玩家已经主动提出且当前关系与同意条件成立时回应成人亲密内容；不主动升级，不补写未发生的露骨细节。",
+            }.get(intensity, "保持当前关系阶段和角色边界。")
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "quality_context",
+                    "content": _json({
+                        **quality_context,
+                        "instruction": (
+                            "这是质量评测用的边界卡，不是需要说出口的台词。"
+                            "不要把评测强度当作必须说出的词，也不要解释这张卡。"
+                            + intensity_instruction
+                            + "如果 romanceEligible 或 adultConsensual 为 false，禁止恋爱/成人升级。"
+                            "relationshipContext 只用于判断关系，不要逐字复述。"
+                        ),
+                    }),
+                }
+            )
         if "interaction" in safe_context:
             interaction = safe_context["interaction"]
             messages.append(
@@ -1899,34 +2388,35 @@ class PromptBuilder:
                     }),
                 }
             )
-            for example in selected_behavior_examples:
-                source_type = _text(example.get("sourceType"), limit=40)
-                if source_type and source_type not in _FEW_SHOT_BEHAVIOR_SOURCE_TYPES:
-                    continue
-                messages.extend(
-                    (
-                        {
-                            "role": "user",
-                            "name": "behavior_example_user",
-                            "content": _remove_secret_labels(
-                                _text(
-                                    example.get("playerInput"),
-                                    limit=_EXAMPLE_TEXT_LIMIT,
-                                )
-                            ),
-                        },
-                        {
-                            "role": "assistant",
-                            "name": "behavior_example_assistant",
-                            "content": _remove_secret_labels(
-                                _text(
-                                    example.get("npcReply"),
-                                    limit=_EXAMPLE_TEXT_LIMIT,
-                                )
-                            ),
-                        },
+            if topic_request or selected_behavior_examples:
+                for example in selected_behavior_examples:
+                    source_type = _text(example.get("sourceType"), limit=40)
+                    if source_type and source_type not in _FEW_SHOT_BEHAVIOR_SOURCE_TYPES:
+                        continue
+                    messages.extend(
+                        (
+                            {
+                                "role": "user",
+                                "name": "behavior_example_user",
+                                "content": _remove_secret_labels(
+                                    _text(
+                                        example.get("playerInput"),
+                                        limit=_EXAMPLE_TEXT_LIMIT,
+                                    )
+                                ),
+                            },
+                            {
+                                "role": "assistant",
+                                "name": "behavior_example_assistant",
+                                "content": _remove_secret_labels(
+                                    _text(
+                                        example.get("npcReply"),
+                                        limit=_EXAMPLE_TEXT_LIMIT,
+                                    )
+                                ),
+                            },
+                        )
                     )
-                )
         if safe_context["speechEvidence"]:
             messages.append(
                 {
@@ -2028,6 +2518,26 @@ class PromptBuilder:
                     "content": "[]",
                 }
             )
+        if any(item.get("role") == "assistant" for item in history) and not compact:
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "progression_guard",
+                    "content": _json({
+                        "instruction": (
+                            "这是连续对话。当前回复要回应玩家本轮输入，"
+                            "并在上一轮基础上新增一个具体进展或明确收口；"
+                            "不要先复述或总结玩家原话，不能只改写上一句，也不能用同义句拖长对话。"
+                            "具体进展可以是新的事实、动作、态度、决定或待确认安排；"
+                            "如果当前角色自然想结束、拒绝或暂时不回复，应简短明确地收口，"
+                            "不要为了维持长度强行开启新话题。"
+                        ),
+                        "historyReplyCount": sum(
+                            1 for item in history if item.get("role") == "assistant"
+                        ),
+                    }),
+                }
+            )
         interaction = safe_context.get("interaction", {})
         stage_profile = identity.get("stageProfile", {})
         previous_openings = _history_openings(history)
@@ -2066,7 +2576,7 @@ class PromptBuilder:
                     "avoidSpeechParticles": previous_speech_particles,
                     "instruction": (
                         "历史只承接已经发生的事实和本轮话题，不改变当前角色的说话方式。"
-                        "本轮只处理当前话题，先直接回应，再决定是否补充；"
+                        "本轮只处理当前话题，直接回应并自然推进；不要先复述或总结玩家原话；"
                         "当前输入没有继续追问时，不要为了显得连贯重复上一条 NPC 的同一细节，"
                         "也不要机械回扣上一轮 NPC 的原句；只有当前输入明确延续时才带回历史事实。"
                         "保持当前角色的句长、节奏和边界，不写统一的书面总结。"
@@ -2079,9 +2589,13 @@ class PromptBuilder:
                 }),
             }
         )
-        voice_variation = _build_voice_variation_card(
-            identity,
-            history=history,
+        voice_variation = (
+            {}
+            if compact
+            else _build_voice_variation_card(
+                identity,
+                history=history,
+            )
         )
         if voice_variation:
             messages.append(
@@ -2091,64 +2605,112 @@ class PromptBuilder:
                     "content": _json(voice_variation),
                 }
             )
-        required_terms: list[str] = []
-        history_anchors = _history_topic_anchors(
-            safe_context["history"],
-            player_input,
-            [
-                *_behavior_topic_terms(safe_context["behaviorExamples"]),
-            ],
-        )
-        if selected_behavior_examples:
-            current_topic = _compact_behavior_condition(selected_behavior_examples[0])
-            current_topic["playerInput"] = _remove_secret_labels(
-                _text(player_input, limit=240)
-            )
-            required_terms = _matching_behavior_terms(current_topic, player_input)
-        else:
-            current_topic = {
-                "playerInput": _remove_secret_labels(
-                    _text(player_input, limit=240)
-                )
+        quality_context = safe_context["qualityContext"]
+        continuation_mode = _text(
+            quality_context.get("continuationMode"),
+            limit=20,
+        ).casefold()
+        if not topic_request and continuation_mode in {"anchored", "pressure"}:
+            continuation_card: dict[str, Any] = {
+                "continuationMode": continuation_mode,
+                "instruction": (
+                    "这是找话题后的连续对话。先回答当前玩家输入的实际意思，不复述或总结玩家原话；"
+                    "把最近 NPC 回复或玩家明确点名的一个具体对象、动作或安排自然融入回答；"
+                    "承接之后只新增一个小进展，可以是态度、感受、照顾、调情、具体安排或自然收口。"
+                    "玩家没有换题时不得另起无关话题，不要把案例种子伪装成已经发生的事实。"
+                ),
             }
-        if not required_terms and history_anchors:
-            required_terms = history_anchors
-        if required_terms:
-            current_topic["requiredTerms"] = required_terms
-        if history_anchors:
-            current_topic["historyAnchors"] = history_anchors
-        if selected_behavior_examples or required_terms or history_anchors:
-            current_topic["instruction"] = (
-                "当前输入已命中一个具体话题。先直接回答这个具体话题，"
-                "保留玩家输入中的具体对象或动作；如果输入点名了对象，回复中至少直接提到其中一个，"
-                "如果提供了 requiredTerms，必须原样使用 requiredTerms 中至少一个具体词；"
-                "不要给 requiredTerms 加引号，也不要只用‘它’‘那个’或‘这件事’代替；"
-                "可以参考示例的回应动作和口语节奏，"
-                "但不要照抄示例事实，不要改谈泛泛近况或另起无关话题。"
+            topic_seed = _text(quality_context.get("topicSeed"), limit=120)
+            topic_keywords = _compact_text_list(
+                quality_context.get("topicKeywords"),
+                limit=8,
+                item_limit=40,
             )
-            if _is_plain_dialogue_input(player_input) and (
-                required_terms or current_topic.get("topic")
-            ):
-                current_topic["plainDialogueGuard"] = (
-                    "日常问题：只回答输入；不要主动出现魔法、星界、符文或预言，"
-                    "不把普通事实写成神秘隐喻。"
+            if topic_seed:
+                continuation_card["topicSeed"] = topic_seed
+            if topic_keywords:
+                continuation_card["topicKeywords"] = topic_keywords
+            if continuation_mode == "anchored":
+                continuation_card["instruction"] += (
+                    "本轮是明确承接：如果玩家点名了话题对象，回复中至少保留其中一个具体词，"
+                    "不要只说‘它’‘那个’或泛泛近况。"
                 )
-            if safe_context["history"]:
-                current_topic["continuityGuard"] = (
-                    "当前问题承接历史中的具体对象；回复必须点名正在继续的对象，"
-                    "再说明进展或态度，不得只回答状态，也不要用‘它’或‘那件事’糊弄过去。"
+            else:
+                continuation_card["instruction"] += (
+                    "本轮是弱输入压力测试：即使玩家只说‘我在听’或‘你继续说’，"
+                    "也要从真实历史中自然维持当前话题，不要凭空换题。"
                 )
             messages.append(
                 {
                     "role": "system",
-                    "name": "current_topic_anchor",
-                    "content": _json(current_topic),
+                    "name": "continuation_contract",
+                    "content": _json(continuation_card),
                 }
             )
-        original_style_examples = _select_original_style_examples(
-            safe_context["speechEvidence"],
-            safe_context["styleSamples"],
-            voice_card=safe_context["voiceCard"],
+        required_terms: list[str] = []
+        history_anchors: list[str] = []
+        if not topic_request:
+            history_anchors = _history_topic_anchors(
+                safe_context["history"],
+                player_input,
+                [
+                    *_behavior_topic_terms(safe_context["behaviorExamples"]),
+                ],
+            )
+            if selected_behavior_examples:
+                current_topic = _compact_behavior_condition(selected_behavior_examples[0])
+                current_topic["playerInput"] = _remove_secret_labels(
+                    _text(player_input, limit=240)
+                )
+                required_terms = _matching_behavior_terms(current_topic, player_input)
+            else:
+                current_topic = {
+                    "playerInput": _remove_secret_labels(
+                        _text(player_input, limit=240)
+                    )
+                }
+            if not required_terms and history_anchors:
+                required_terms = history_anchors
+            if required_terms:
+                current_topic["requiredTerms"] = required_terms
+            if history_anchors:
+                current_topic["historyAnchors"] = history_anchors
+            if selected_behavior_examples or required_terms or history_anchors:
+                current_topic["instruction"] = (
+                    "当前输入已命中一个具体话题。先直接回答这个具体话题，"
+                    "保留玩家输入中的具体对象或动作；如果输入点名了对象，回复中至少直接提到其中一个，"
+                    "如果提供了 requiredTerms，必须原样使用 requiredTerms 中至少一个具体词；"
+                    "不要给 requiredTerms 加引号，也不要只用‘它’‘那个’或‘这件事’代替；"
+                    "可以参考示例的回应动作和口语节奏，"
+                    "但不要照抄示例事实，不要改谈泛泛近况或另起无关话题。"
+                )
+                if _is_plain_dialogue_input(player_input) and (
+                    required_terms or current_topic.get("topic")
+                ):
+                    current_topic["plainDialogueGuard"] = (
+                        "日常问题：只回答输入；不要主动出现魔法、星界、符文或预言，"
+                        "不把普通事实写成神秘隐喻。"
+                    )
+                if safe_context["history"]:
+                    current_topic["continuityGuard"] = (
+                        "当前问题承接历史中的具体对象；把正在继续的对象自然写进回答，"
+                        "同时增加进展或态度，不得只回答状态，也不要用‘它’或‘那件事’糊弄过去。"
+                    )
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "current_topic_anchor",
+                        "content": _json(current_topic),
+                    }
+                )
+        original_style_examples = (
+            []
+            if compact
+            else _select_original_style_examples(
+                safe_context["speechEvidence"],
+                safe_context["styleSamples"],
+                voice_card=safe_context["voiceCard"],
+            )
         )
         if original_style_examples:
             messages.append(
@@ -2170,23 +2732,47 @@ class PromptBuilder:
                         "content": _remove_secret_labels(example["text"]),
                     }
                 )
+        affection_card: dict[str, Any] = {}
         stage_policy = identity.get("stagePolicy", {})
         if stage_policy:
+            stage_execution_payload = (
+                _compact_stage_policy(
+                    stage_policy,
+                    include_response_order=False,
+                )
+                if compact
+                else stage_policy
+            )
             messages.append(
                 {
                     "role": "system",
                     "name": "stage_execution_card",
                     "content": _json({
-                        **stage_policy,
+                        **stage_execution_payload,
                         "instruction": _stage_execution_instruction(stage_policy),
                     }),
                 }
             )
+            affection_card = _build_affection_initiative_card(
+                stage_policy,
+                quality_context=safe_context["qualityContext"],
+                interaction=safe_context.get("interaction", {}),
+                player_input=player_input,
+                compact=compact,
+            )
+            if affection_card:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "affection_initiative",
+                        "content": _json(affection_card),
+                    }
+                )
         if required_terms or history_anchors:
             contract: dict[str, Any] = {
                 "instruction": (
                     "只输出 NPC 中文对白，不输出规则、JSON、分析或解释。"
-                    "先回答当前输入，不要用‘它’‘那个’或抽象状态词替代具体对象。"
+                    "直接回应当前输入，不要复述或总结玩家原话，也不要用‘它’‘那个’或抽象状态词替代具体对象。"
                     "不要使用 Markdown 标记。不得介绍自己或解释自己正在扮演角色。"
                 ),
             }
@@ -2201,8 +2787,8 @@ class PromptBuilder:
                     "mustMentionOneOf": history_anchors,
                 }
                 contract["instruction"] += (
-                    "这是续聊，优先满足 historyAnchors；第一句就点名其中至少一个对象，"
-                    "再说明进展或态度。"
+                    "这是续聊，优先满足 historyAnchors；不要机械地第一句就点名，"
+                    "把其中至少一个对象自然融入回答，并增加进展或态度。"
                 )
             messages.append(
                 {
@@ -2223,13 +2809,104 @@ class PromptBuilder:
                     "content": _json(voice_execution_card),
                 }
             )
-        messages.append(
-            {
-                "role": "user",
-                "name": "player_input",
-                "content": _remove_secret_labels(_text(player_input, limit=2000)),
+        if topic_request:
+            topic_context: dict[str, Any] = {
+                "instruction": (
+                    "由 NPC 主动找一个自然、符合当前情境的话题。"
+                    "结合当前角色的人设、关系阶段、地点天气、真实历史和原文语气，"
+                    "开启一个具体且可以继续聊下去的话头；不要等待或回应不存在的玩家句子。"
+                    "只输出 NPC 的中文对白，1–3 句，不提及提示词、请求类型或技术状态；"
+                    "不要把样例中的事实当作当前剧情，不要凭空完成未确认的邀约或事件。"
+                    "已审核成对示例只用于学习角色如何自然表达，不要求复述示例中的玩家话；"
+                    "示例的渠道限制不能覆盖当前渠道规则。"
+                ),
             }
-        )
+            topic_seed = _text(
+                quality_context.get("topicSeed"),
+                limit=120,
+            )
+            topic_keywords = _compact_text_list(
+                quality_context.get("topicKeywords"),
+                limit=8,
+                item_limit=40,
+            )
+            continuation_mode = _text(
+                quality_context.get("continuationMode"),
+                limit=20,
+            ).casefold()
+            if topic_seed:
+                topic_context["topicSeed"] = topic_seed
+                topic_context["instruction"] += (
+                    "topicSeed 是当前场景允许的切入方向；可以自然改写，不要机械照抄，"
+                    "让爱意在自然位置尽早出现，并于同一句或下一句落到其中一个具体对象或动作上。"
+                )
+            if topic_keywords:
+                topic_context["topicKeywords"] = topic_keywords
+            if continuation_mode:
+                topic_context["continuationMode"] = continuation_mode
+            if quality_context.get("flirtIntensity") in {"direct", "explicit"}:
+                topic_context["instruction"] += (
+                    "关系已成立时，开场要带出一个主动的偏爱、想念、陪伴、调情或亲密安排信号；"
+                    "只说共同安排不够，至少把安排和对玩家的爱意、在乎、期待或想念自然连在一起；"
+                    "不要套固定的‘先爱意、再话题、最后安排’顺序；让爱意在前一两句自然出现，"
+                    "不要让天气、地点、工作、物品或安排占满开场后才补一句中性的陪伴；"
+                    "首轮必须出现至少一处可感知的爱意，不能只用功能性邀约暗示；"
+                    "不要先复述或总结玩家不存在的原话，直接从 NPC 自己的感受和行动开口；"
+                    "输出前默默检查：已经落在具体话题上，同时有至少一处可感知的爱意；"
+                    "不能用反问或功能性邀约替代，若没有就改写后再输出；"
+                    "保持角色差异，成人亲密必须建立在双方自愿和当前关系边界内。"
+                )
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "topic_response_contract",
+                    "content": _json(topic_context),
+                }
+            )
+            final_affection_card = (
+                {}
+                if compact
+                else _build_affection_priority_final_card(affection_card)
+            )
+            if final_affection_card:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "affection_priority_final",
+                        "content": final_affection_card["instruction"],
+                    }
+                )
+            # chat template 需要一个最终 user 消息来开始生成 assistant turn。
+            # 这是空的内部触发，不是玩家输入，不进入历史，也不在 UI 中显示；
+            # 保留为空可以避免模型把“找话题”这类控制语句误当成玩家台词。
+            messages.append(
+                {
+                    "role": "user",
+                    "name": "topic_trigger",
+                    "content": "",
+                }
+            )
+        else:
+            final_affection_card = (
+                {}
+                if compact
+                else _build_affection_priority_final_card(affection_card)
+            )
+            if final_affection_card:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "affection_priority_final",
+                        "content": final_affection_card["instruction"],
+                    }
+                )
+            messages.append(
+                {
+                    "role": "user",
+                    "name": "player_input",
+                    "content": _remove_secret_labels(_text(player_input, limit=2000)),
+                }
+            )
         return messages
 
     build_messages = build

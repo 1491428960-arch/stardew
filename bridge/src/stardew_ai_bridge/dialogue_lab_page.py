@@ -112,7 +112,7 @@ DIALOGUE_LAB_HTML = """<!doctype html>
     function renderContext(context){const summary=$("context-summary");summary.replaceChildren();const identity=context.personaSummary||{};const evidenceSources=[...new Set((context.speechEvidence||[]).map((item)=>item?.sourceMod).filter(Boolean))];const rows=[["角色",identity.displayName||identity.npcId||"—"],["关系阶段",identity.stageProfile?.stage||"由当前场景推断"],["来源 Mod",(context.modSources||[]).join("、")||"—"],["原文证据来源",evidenceSources.join("、")||"未取到来源原文"],["事实",`${(context.recentFacts||[]).length} 条`],["风格证据",`${(context.speechEvidence||context.styleSamples||[]).length} 条`],["故事事件",`${(context.storyEvents||[]).length} 条`]];for(const [label,value] of rows){const row=document.createElement("div");const strong=document.createElement("strong");strong.textContent=label;row.append(strong,document.createTextNode(`：${value}`));summary.append(row);}}
     function errorText(data,fallback){if(Array.isArray(data?.detail))return data.detail.map((item)=>item.msg||"请求参数错误").join("；");return data?.detail||data?.message||fallback;}
     async function refreshContext(payload){try{const response=await fetch("/api/context/preview",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});if(response.ok)renderContext(await response.json());}catch(_){/* 摘要失败不覆盖已收到的回复 */}}
-    async function sendDialogue(intent="chat"){const text=messageInput.value.trim();if(!text&&intent==="chat"){setStatus("请先输入消息。","error");return;}const outgoing=text||"请结合当前场景主动找一个合适的话题。";const npc=selectedNpc();const payload=buildPayload(outgoing,intent);const initialHistory=state.initialHistory.slice();$("send").disabled=true;$("topic").disabled=true;setStatus("请求中……");try{const response=await fetch("/api/dialogue/test",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw new Error(errorText(data,"对话请求失败"));state.messages.push({role:"user",text:intent==="topic"?"（请主动找话题）":outgoing,npcId:npc.npcId,displayName:npc.displayName,createdAt:Date.now()});state.messages.push({role:"npc",text:data.reply,npcId:npc.npcId,displayName:npc.displayName,createdAt:Date.now()});state.initialHistory=[];state.history=normalizeHistory([...initialHistory,...historyForNpc(npc.npcId)]);if(intent==="chat")messageInput.value="";updateDiagnostics(data,payload);renderTranscript();const persisted=await saveSession();setStatus(persisted?"已收到回复。":"已收到回复，但本地记录保存失败。",persisted?"success":"error");await refreshContext(payload);}catch(error){setStatus(`请求失败，保留输入：${error.message}`,"error");}finally{$("send").disabled=false;$("topic").disabled=false;}}
+    async function sendDialogue(intent="chat"){const text=messageInput.value.trim();if(!text&&intent==="chat"){setStatus("请先输入消息。","error");return;}const outgoing=intent==="topic"?"":text;const npc=selectedNpc();const payload=buildPayload(outgoing,intent);const initialHistory=state.initialHistory.slice();$("send").disabled=true;$("topic").disabled=true;setStatus("请求中……");try{const response=await fetch("/api/dialogue/test",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw new Error(errorText(data,"对话请求失败"));if(intent==="chat"){state.messages.push({role:"user",text:outgoing,npcId:npc.npcId,displayName:npc.displayName,createdAt:Date.now()});}state.messages.push({role:"npc",text:data.reply,npcId:npc.npcId,displayName:npc.displayName,createdAt:Date.now()});state.initialHistory=[];state.history=normalizeHistory([...initialHistory,...historyForNpc(npc.npcId)]);if(intent==="chat")messageInput.value="";updateDiagnostics(data,payload);renderTranscript();const persisted=await saveSession();setStatus(persisted?"已收到回复。":"已收到回复，但本地记录保存失败。",persisted?"success":"error");await refreshContext(payload);}catch(error){setStatus(`请求失败，保留输入：${error.message}`,"error");}finally{$("send").disabled=false;$("topic").disabled=false;}}
     function resetScene(){$("relationship-stage").value="friend";$("season").value="春";$("date").value="春 1 日";$("weather").value="晴天";$("time").value="800";$("location").value="法师塔";$("friendship").value="128";$("recent-facts").value="";state.activeCaseId="";state.pendingCase=null;state.initialHistory=[];applyEvaluationProfile(state.activeEvaluationId||"Wizard");window.dispatchEvent(new CustomEvent("dialogue-lab:npc-selected",{detail:{...selectedNpc(),source:"chat"}}));}
     async function clearSession(){state.messages=[];state.history=[];state.lastPayload=null;state.lastDiagnostics=null;renderTranscript();renderDiagnostics();$("context-summary").innerHTML="<span>发送消息后生成。</span>";try{const response=await fetch("/api/dialogue/session",{method:"DELETE"});if(!response.ok)throw new Error("本地会话清理失败");setStatus("会话已清空。","success");}catch(error){setStatus(`页面已清空，但本地文件清理失败：${error.message}`,"error");}}
     function exportSession(){const exportData={exportedAt:new Date().toISOString(),npc:selectedNpc(),gameState:sceneState(),messages:state.messages,history:state.history,lastDiagnostics:state.lastDiagnostics};const link=document.createElement("a");link.href=URL.createObjectURL(new Blob([JSON.stringify(exportData,null,2)],{type:"application/json"}));link.download=`stardew-dialogue-${Date.now()}.json`;link.click();URL.revokeObjectURL(link.href);}
@@ -276,15 +276,15 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     <header class="workspace-topbar topbar"><div class="workspace-brand brand"><div class="workspace-mark mark">✦</div><div><div class="workspace-eyebrow eyebrow">Stardew AI NPC · Dialogue Lab</div><strong>角色对话评测工作台</strong></div></div><nav class="workspace-nav" aria-label="工作台导航"><a class="workspace-tab" href="/test" aria-current="page">测试例浏览</a><a class="workspace-tab" href="/test/chat">单次聊天</a><a class="workspace-tab" href="/raw">原始对白</a></nav><div class="top-meta"><span class="prototype">查看模式 · 不发送请求</span><span id="health" class="health">Bridge 检查中……</span></div></header>
     <div class="heading"><div><h1>测试例浏览器</h1><p>先看不同条件下我们到底测了什么，再判断模型回复是否贴合。</p></div><div class="heading-actions"><a class="btn" href="/test/chat">打开单次聊天</a><button class="btn gold" id="export-case" type="button">导出当前例</button></div></div>
     <div class="browser-layout">
-      <aside class="panel nav-panel"><div class="panel-header"><h2>测试例导航</h2><span class="kicker">Cases</span></div><div class="panel-body"><div class="batch-card"><small>当前质量批次</small><strong id="batch-title">固定角色场景</strong><span id="batch-summary">加载案例中……</span><span id="batch-run-status" class="batch-run-status"></span></div><div class="nav-section"><div class="section-head"><strong>按类型筛选</strong><span>查看定义与结果</span></div><div class="filter-list"><button class="filter-btn active" data-filter="all">全部测试例 <span id="filter-all-count">—</span></button><button class="filter-btn" data-filter="daily">日常状态 <span id="filter-daily-count">—</span></button><button class="filter-btn" data-filter="channel">远程 / 当面 <span id="filter-channel-count">—</span></button><button class="filter-btn" data-filter="continuity">上下文续聊 <span id="filter-continuity-count">—</span></button></div></div><div class="nav-section"><div class="section-head"><strong>场景列表</strong><span id="visible-case-count">—</span></div><div class="case-list" id="case-list"><div class="empty-state">正在加载测试例……</div></div></div><div class="nav-note">点击一个例子，中央会展开场景条件、预置历史和本轮真实模型回复；自动评分只作提示，最终仍看人物是否贴切。</div></div></aside>
+      <aside class="panel nav-panel"><div class="panel-header"><h2>测试例导航</h2><span class="kicker">Cases</span></div><div class="panel-body"><div class="batch-card"><small>当前质量批次</small><strong id="batch-title">固定角色场景</strong><span id="batch-summary">加载案例中……</span><span id="batch-pass-summary">单轮通过：— · 完整案例通过：—</span><span id="batch-run-status" class="batch-run-status"></span></div><div class="nav-section"><div class="section-head"><strong>按类型筛选</strong><span>查看定义与结果</span></div><div class="filter-list"><button class="filter-btn active" data-filter="all">全部测试例 <span id="filter-all-count">—</span></button><button class="filter-btn" data-filter="daily">日常状态 <span id="filter-daily-count">—</span></button><button class="filter-btn" data-filter="channel">远程 / 当面 <span id="filter-channel-count">—</span></button><button class="filter-btn" data-filter="continuity">上下文续聊 <span id="filter-continuity-count">—</span></button></div></div><div class="nav-section"><div class="section-head"><strong>场景列表</strong><span id="visible-case-count">—</span></div><div class="case-list" id="case-list"><div class="empty-state">正在加载测试例……</div></div></div><div class="nav-note">点击一个例子，中央会展开场景条件、预置历史和本轮真实模型回复；自动评分只作提示，最终仍看人物是否贴切。</div></div></aside>
       <section class="panel detail-panel"><div class="panel-header"><h2>当前测试例</h2><span class="kicker">Case detail</span></div><div class="panel-body" id="case-detail"><div class="empty-state">正在加载测试例……</div></div></section>
-      <aside class="panel coverage-panel" id="coverage-panel"><div class="panel-header"><h2>覆盖情况</h2><span class="kicker">Coverage</span></div><div class="panel-body"><div class="coverage-intro">这里同时展示固定场景覆盖和最新生成结果。当前查看 <b id="coverage-current">—</b>；自动评分不是人工角色判断。</div><div class="coverage-section"><h3>批次概览</h3><div class="metric-list"><div class="metric"><span>测试例总数</span><strong id="coverage-total">—</strong></div><div class="metric"><span>角色数</span><strong id="coverage-roles">—</strong></div><div class="metric"><span>预置上下文</span><strong id="coverage-history">—</strong></div><div class="metric"><span>聊天渠道</span><strong id="coverage-channels">—</strong></div><div class="metric"><span>场景字段</span><strong id="coverage-scenes">—</strong></div><div class="metric"><span>生成轮数</span><strong id="coverage-turns">—</strong></div><div class="metric"><span>Token 用量</span><strong id="coverage-tokens">—</strong></div><div class="metric"><span>估算费用</span><strong id="coverage-cost">—</strong></div></div></div><div class="coverage-section"><h3>关系阶段分布</h3><div id="stage-bars"></div></div><div class="coverage-section"><h3>渠道分布</h3><div id="channel-bars"></div></div><div class="coverage-section"><div class="gap-box"><strong>人工复核提示</strong><span>每个案例仍带季节、日期、天气、地点 / 时间 / 天气、好感度和剧情进度；结果中的通过/失败只反映证据词、禁用词和格式检查，请重点看回复是否像这个角色、是否自然、是否机械回扣。</span></div></div><div class="coverage-actions"><a class="btn" href="/test/chat">去单次聊天验证当前例</a><button class="btn" id="show-all" type="button">回到全部测试例</button></div></div></aside>
+      <aside class="panel coverage-panel" id="coverage-panel"><div class="panel-header"><h2>覆盖情况</h2><span class="kicker">Coverage</span></div><div class="panel-body"><div class="coverage-intro">这里同时展示固定场景覆盖和最新生成结果。当前查看 <b id="coverage-current">—</b>；自动评分不是人工角色判断。</div><div class="coverage-section"><h3>批次概览</h3><div class="metric-list"><div class="metric"><span>测试例总数</span><strong id="coverage-total">—</strong></div><div class="metric"><span>角色数</span><strong id="coverage-roles">—</strong></div><div class="metric"><span>预置上下文</span><strong id="coverage-history">—</strong></div><div class="metric"><span>聊天渠道</span><strong id="coverage-channels">—</strong></div><div class="metric"><span>场景字段</span><strong id="coverage-scenes">—</strong></div><div class="metric"><span>生成轮数</span><strong id="coverage-turns">—</strong></div><div class="metric"><span>NPC 单轮通过</span><strong id="coverage-passed-turns">—</strong></div><div class="metric"><span>完整案例通过</span><strong id="coverage-passed-cases">—</strong></div><div class="metric"><span>Token 用量</span><strong id="coverage-tokens">—</strong></div><div class="metric"><span>估算费用</span><strong id="coverage-cost">—</strong></div></div></div><div class="coverage-section"><h3>关系阶段分布</h3><div id="stage-bars"></div></div><div class="coverage-section"><h3>渠道分布</h3><div id="channel-bars"></div></div><div class="coverage-section"><div class="gap-box"><strong>人工复核提示</strong><span>每个案例仍带季节、日期、天气、地点 / 时间 / 天气、好感度和剧情进度；结果中的通过/失败只反映证据词、禁用词和格式检查，请重点看回复是否像这个角色、是否自然、是否机械回扣。</span></div></div><div class="coverage-actions"><a class="btn" href="/test/chat">去单次聊天验证当前例</a><button class="btn" id="show-all" type="button">回到全部测试例</button></div></div></aside>
     </div>
   </main>
   <div class="toast" id="toast" role="status"></div>
   <script>
     const $ = (id) => document.getElementById(id);
-    const state = { cases: [], selectedCaseId: "", filter: "all", results: {}, run: null };
+    const state = { cases: [], selectedCaseId: "", filter: "all", results: {}, run: null, caseSuite: "default", caseSource: "" };
     const stageLabels = { stranger:"初识", acquaintance:"熟悉", friend:"朋友", close:"亲近", dating:"恋爱", married:"婚后", parent:"育儿" };
     const channelLabels = { remote:"远程（手机/线上）", face_to_face:"当面聊天" };
     const roleNames = { Wizard:"Rasmodia / Wizard", Sophia:"Sophia", Shane:"Shane", Sebastian:"Sebastian", Alex:"Alex" };
@@ -294,21 +294,140 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     function selectCase(item, openChat = false) { if (!item) return; state.selectedCaseId = item.caseId; renderCaseList(); renderCaseDetail(); window.dispatchEvent(new CustomEvent("dialogue-lab:case-selected", { detail: item })); if (openChat) window.DialogueLab?.showView("chat"); }
     function showToast(message) { const el = $("toast"); el.textContent = message; el.classList.add("show"); clearTimeout(window.__caseToast); window.__caseToast = setTimeout(() => el.classList.remove("show"), 1700); }
     function renderFilterCounts() { const counts = {all:state.cases.length,daily:0,channel:0,continuity:0}; state.cases.forEach((item) => counts[categoryOf(item)] += 1); Object.entries(counts).forEach(([key,value]) => { const element = $(`filter-${key}-count`); if (element) element.textContent = value; }); }
-    function resultStatus(item) { const result = state.results[item.caseId]; if (!result) return "未生成"; if (result.error) return "生成失败"; if (result.score?.passed === true) return "自动通过"; return result.score?.tags?.includes("format_noise") ? "格式需复核" : "需人工复核"; }
-    function renderCaseList() { const list = $("case-list"); list.replaceChildren(); const items = visibleCases(); $("visible-case-count").textContent = `${items.length} 个`; if (!items.length) { const empty = document.createElement("div"); empty.className = "empty-state"; empty.textContent = "当前筛选没有测试例。"; list.append(empty); return; } items.forEach((item) => { const row = document.createElement("button"); row.type = "button"; row.className = `case-row${item.caseId === state.selectedCaseId ? " active" : ""}`; const gameState = item.gameState || {}; row.innerHTML = `<div class="case-top"><span class="case-id">${item.caseId}</span><span class="case-kind">${categoryLabel(item)}</span></div><div class="case-title">${roleNames[item.npcId] || item.displayName || item.npcId}</div><div class="case-meta"><span>${stageLabels[item.relationshipStage] || item.relationshipStage}</span><span>·</span><span>${item.channel === "remote" ? "远程" : "当面"}</span><span>·</span><span>${gameState.location || "地点未设"}</span><span>·</span><span>${resultStatus(item)}</span>${item.history?.length ? "<span>·</span><span>续聊</span>" : ""}</div>`; row.addEventListener("click", () => selectCase(item)); list.append(row); }); }
+    function resultStatus(item) { const result = state.results[item.caseId]; if (!result) return "未生成"; if (result.error) return "生成失败"; if (result.casePassed === true) return "完整案例通过"; if (result.casePassed === false) return "需人工复核"; if (result.score?.passed === true) return "自动通过"; return result.score?.tags?.includes("format_noise") ? "格式需复核" : "需人工复核"; }
+    function renderCaseList() { const list = $("case-list"); list.replaceChildren(); const items = visibleCases(); $("visible-case-count").textContent = `${items.length} 个`; if (!items.length) { const empty = document.createElement("div"); empty.className = "empty-state"; empty.textContent = "当前筛选没有测试例。"; list.append(empty); return; } items.forEach((item) => { const row = document.createElement("button"); row.type = "button"; row.className = `case-row${item.caseId === state.selectedCaseId ? " active" : ""}`; const gameState = item.gameState || {}; row.innerHTML = `<div class="case-top"><span class="case-id">${item.caseNumber ? "#" + item.caseNumber + " · " : ""}${item.caseId}</span><span class="case-kind">${categoryLabel(item)}</span></div><div class="case-title">${roleNames[item.npcId] || item.displayName || item.npcId}</div><div class="case-meta"><span>${stageLabels[item.relationshipStage] || item.relationshipStage}</span><span>·</span><span>${item.channel === "remote" ? "远程" : "当面"}</span><span>·</span><span>${gameState.location || "地点未设"}</span><span>·</span><span>${resultStatus(item)}</span>${item.history?.length ? "<span>·</span><span>续聊</span>" : ""}</div>`; row.addEventListener("click", () => selectCase(item)); list.append(row); }); }
     function renderTerms(container, terms, forbidden) { container.replaceChildren(); if (!terms.length) { const empty = document.createElement("span"); empty.className = "term empty"; empty.textContent = "未设置"; container.append(empty); return; } terms.forEach((term) => { const pill = document.createElement("span"); pill.className = `term${forbidden ? " forbidden" : ""}`; pill.textContent = term; container.append(pill); }); }
     function formatUsage(usage) { if (!usage || ![usage.inputTokens,usage.outputTokens,usage.totalTokens].some((value)=>Number.isInteger(value))) return "用量未返回"; const parts=[]; if (Number.isInteger(usage.inputTokens)) parts.push(`输入 ${usage.inputTokens}`); if (Number.isInteger(usage.outputTokens)) parts.push(`输出 ${usage.outputTokens}`); if (Number.isInteger(usage.totalTokens)) parts.push(`合计 ${usage.totalTokens}`); return `Token：${parts.join(" / ")}`; }
+    function progressionTagLabel(tag) { return {repeated_turn_content:"相邻回复重复"}[tag] || tag; }
+    function formatPassRate(value) { return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(1)}%` : "未检测"; }
     function formatCost(cost) { if (!cost || !Number.isFinite(Number(cost.amount))) return "费用未配置"; return `估算费用：¥${Number(cost.amount).toFixed(4)}`; }
     function plannedTurns(item) { const turns=Array.isArray(item.turns)&&item.turns.length?item.turns:[{turnId:"turn-1",playerInput:item.playerInput||""}]; return turns; }
     function caseUsage(result) { const turns=Array.isArray(result?.turns)?result.turns:[]; const usage={inputTokens:0,outputTokens:0,totalTokens:0}; let count=0; turns.forEach((turn)=>{ if(!turn?.usage)return; count+=1; ["inputTokens","outputTokens","totalTokens"].forEach((key)=>{if(Number.isInteger(turn.usage[key]))usage[key]+=turn.usage[key];}); }); return count?{...usage,count}:null; }
-    function renderCaseTranscript(container, item) { const result=state.results[item.caseId]||{}; const definitions=plannedTurns(item); const resultTurns=Array.isArray(result.turns)?result.turns:[]; const count=Math.max(definitions.length,resultTurns.length,1); const card=document.createElement("section"); card.className="transcript-card"; const header=document.createElement("div"); header.className="transcript-card-header"; const heading=document.createElement("strong"); heading.textContent="完整连续对话 · 实际生成回复"; const status=document.createElement("span"); status.className="result-status"; status.textContent=resultStatus(item); header.append(heading,status); card.append(header); const usage=caseUsage(result); const summary=document.createElement("div"); summary.className="transcript-summary"; summary.textContent=`${count} 轮 · ${resultTurns.length?`${resultTurns.length} 轮已返回`:`尚未生成`} · ${usage?formatUsage(usage):"用量未返回"}`; card.append(summary); if(Array.isArray(item.history)&&item.history.length){ const history=document.createElement("div"); history.className="transcript-history"; const historyTitle=document.createElement("div"); historyTitle.className="transcript-history-title"; historyTitle.textContent="预置上下文"; history.append(historyTitle); item.history.forEach((message)=>{ const line=document.createElement("div"); line.className="transcript-history-line"; const role=document.createElement("b"); role.textContent=message.role==="assistant"?"NPC":"玩家"; line.append(role,document.createTextNode(`　${message.content||""}`)); history.append(line); }); card.append(history); } for(let index=0;index<count;index+=1){ const definition=definitions[index]||{}; const turn=resultTurns[index]||{}; const turnCard=document.createElement("article"); turnCard.className="transcript-turn"; if(turn.error)turnCard.classList.add("error"); else if(turn.score?.passed===false)turnCard.classList.add("review"); const turnHead=document.createElement("div"); turnHead.className="transcript-turn-head"; const turnTitle=document.createElement("span"); turnTitle.textContent=`第 ${index+1} 轮 · ${turn.turnId||definition.turnId||`turn-${index+1}`}`; const turnState=document.createElement("span"); turnState.className="transcript-turn-state"; turnState.textContent=turn.reply?"已生成":turn.error?"失败":"待生成"; if(!turn.reply&&!turn.error)turnState.classList.add("ready"); turnHead.append(turnTitle,turnState); turnCard.append(turnHead); const playerLabel=document.createElement("div"); playerLabel.className="transcript-turn-label"; playerLabel.textContent="玩家"; const player=document.createElement("div"); player.className="transcript-turn-player"; player.textContent=turn.playerInput||definition.playerInput||"未设置"; turnCard.append(playerLabel,player); const npcLabel=document.createElement("div"); npcLabel.className="transcript-turn-label"; npcLabel.textContent="NPC"; const reply=document.createElement("div"); reply.className="transcript-turn-reply"; if(turn.reply)reply.textContent=turn.reply; else if(turn.error)reply.textContent=`生成失败：${turn.error}`; else {reply.classList.add("pending");reply.textContent="本轮尚未生成实际回复。";} turnCard.append(npcLabel,reply); const meta=document.createElement("div"); meta.className="transcript-turn-meta"; meta.textContent=[turn.provider?`Provider：${turn.provider}`:"Provider：未记录",turn.latencyMs!==undefined?`延迟：${turn.latencyMs} ms`:"延迟：—",formatUsage(turn.usage)].join(" · "); turnCard.append(meta); const score=turn.score||{}; const scoreParts=[]; if(score.expectedHits!==undefined)scoreParts.push(`话题证据 ${score.expectedHits}`); if(score.exactExpectedHits!==undefined)scoreParts.push(`精确命中 ${score.exactExpectedHits}`); if(score.forbiddenHits!==undefined)scoreParts.push(`禁用词 ${score.forbiddenHits}`); if(Array.isArray(score.tags)&&score.tags.length)scoreParts.push(`标签：${score.tags.join("、")}`); if(scoreParts.length){const scoreLine=document.createElement("div");scoreLine.className="transcript-turn-score";scoreLine.textContent=scoreParts.join(" · ");turnCard.append(scoreLine);} card.append(turnCard); } if(result?.error&&!resultTurns.length){ const empty=document.createElement("div"); empty.className="transcript-empty"; empty.textContent=`生成失败：${result.error}`; card.append(empty); } container.append(card); }
+    function renderCaseTranscript(container, item) { const result=state.results[item.caseId]||{}; const definitions=plannedTurns(item); const resultTurns=Array.isArray(result.turns)?result.turns:[]; const count=Math.max(definitions.length,resultTurns.length,1); const card=document.createElement("section"); card.className="transcript-card"; const header=document.createElement("div"); header.className="transcript-card-header"; const heading=document.createElement("strong"); heading.textContent=`#${item.caseNumber || "?"} · 完整连续对话 · 实际生成回复`; const status=document.createElement("span"); status.className="result-status"; status.textContent=resultStatus(item); header.append(heading,status); card.append(header); const usage=caseUsage(result); const summary=document.createElement("div"); summary.className="transcript-summary"; const passedTurnsText=Number.isInteger(result.passedTurnCount) ? `单轮通过 ${result.passedTurnCount}/${definitions.length}（${formatPassRate(result.turnPassRate)}）` : "单轮通过 未检测"; const passedCaseText=typeof result.casePassed === "boolean" ? `完整案例通过 ${result.casePassed ? "是" : "否"}` : "完整案例通过 未检测"; summary.textContent=`${count} 轮 · ${resultTurns.length?`${resultTurns.length} 轮已返回`:`尚未生成`} · ${passedTurnsText} · ${passedCaseText} · ${usage?formatUsage(usage):"用量未返回"}`; card.append(summary); if(Array.isArray(item.history)&&item.history.length){ const history=document.createElement("div"); history.className="transcript-history"; const historyTitle=document.createElement("div"); historyTitle.className="transcript-history-title"; historyTitle.textContent="预置上下文"; history.append(historyTitle); item.history.forEach((message)=>{ const line=document.createElement("div"); line.className="transcript-history-line"; const role=document.createElement("b"); role.textContent=message.role==="assistant"?"NPC":"玩家"; line.append(role,document.createTextNode(`　${message.content||""}`)); history.append(line); }); card.append(history); } for(let index=0;index<count;index+=1){ const definition=definitions[index]||{}; const turn=resultTurns[index]||{}; const turnCard=document.createElement("article"); turnCard.className="transcript-turn"; if(turn.error)turnCard.classList.add("error"); else if(turn.score?.passed===false)turnCard.classList.add("review"); const turnHead=document.createElement("div"); turnHead.className="transcript-turn-head"; const turnTitle=document.createElement("span"); turnTitle.textContent=`第 ${index+1} 轮 · ${turn.turnId||definition.turnId||`turn-${index+1}`}`; const turnState=document.createElement("span"); turnState.className="transcript-turn-state"; turnState.textContent=turn.reply?"已生成":turn.error?"失败":"待生成"; if(!turn.reply&&!turn.error)turnState.classList.add("ready"); turnHead.append(turnTitle,turnState); turnCard.append(turnHead); const playerLabel=document.createElement("div"); playerLabel.className="transcript-turn-label"; playerLabel.textContent="玩家"; const player=document.createElement("div"); player.className="transcript-turn-player"; player.textContent=turn.playerInput||definition.playerInput||"未设置"; turnCard.append(playerLabel,player); const npcLabel=document.createElement("div"); npcLabel.className="transcript-turn-label"; npcLabel.textContent="NPC"; const reply=document.createElement("div"); reply.className="transcript-turn-reply"; if(turn.reply)reply.textContent=turn.reply; else if(turn.error)reply.textContent=`生成失败：${turn.error}`; else {reply.classList.add("pending");reply.textContent="本轮尚未生成实际回复。";} turnCard.append(npcLabel,reply); const meta=document.createElement("div"); meta.className="transcript-turn-meta"; meta.textContent=[turn.provider?`Provider：${turn.provider}`:"Provider：未记录",turn.latencyMs!==undefined?`延迟：${turn.latencyMs} ms`:"延迟：—",formatUsage(turn.usage)].join(" · "); turnCard.append(meta); const score=turn.score||{}; const scoreParts=[]; if(score.expectedHits!==undefined)scoreParts.push(`话题证据 ${score.expectedHits}`); if(score.exactExpectedHits!==undefined)scoreParts.push(`精确命中 ${score.exactExpectedHits}`); if(score.forbiddenHits!==undefined)scoreParts.push(`禁用词 ${score.forbiddenHits}`); if(Array.isArray(score.tags)&&score.tags.length)scoreParts.push(`标签：${score.tags.map(progressionTagLabel).join("、")}`); const progression=turn.progression||{}; if(progression.repeated===true)scoreParts.push("推进：repeated_turn_content"); else if(Array.isArray(progression.tags)&&progression.tags.length)scoreParts.push(`推进：${progression.tags.map(progressionTagLabel).join("、")}`); if(scoreParts.length){const scoreLine=document.createElement("div");scoreLine.className="transcript-turn-score";scoreLine.textContent=scoreParts.join(" · ");turnCard.append(scoreLine);} card.append(turnCard); } if(result?.error&&!resultTurns.length){ const empty=document.createElement("div"); empty.className="transcript-empty"; empty.textContent=`生成失败：${result.error}`; card.append(empty); } container.append(card); }
     function renderCaseResult(container, item) { renderCaseTranscript(container, item); }
-    function renderCaseDetail() { const item = state.cases.find((candidate) => candidate.caseId === state.selectedCaseId) || state.cases[0]; const container = $("case-detail"); container.replaceChildren(); if (!item) { const empty = document.createElement("div"); empty.className = "empty-state"; empty.textContent = "暂无可显示的测试例。"; container.append(empty); return; } state.selectedCaseId = item.caseId; $("coverage-current").textContent = item.caseId; const gameState = item.gameState || {}; const title = document.createElement("div"); title.className = "detail-heading"; title.innerHTML = `<div><h2>${roleNames[item.npcId] || item.displayName || item.npcId}</h2><p>${item.caseId} · ${categoryLabel(item)} · 来源：${(item.sourceMods || []).join("、") || "未标注"}</p></div><span class="case-status">${resultStatus(item)}</span>`; container.append(title); const strip = document.createElement("div"); strip.className = "context-strip"; [["关系",stageLabels[item.relationshipStage] || item.relationshipStage],["渠道",channelLabels[item.channel] || item.channel],["预置历史",`${(item.history || []).length} 条`],["角色 ID",item.npcId]].forEach(([label,value]) => { const chip = document.createElement("span"); chip.className = "context-chip"; chip.innerHTML = `<b>${label}</b>${value}`; strip.append(chip); }); container.append(strip); const scene = document.createElement("div"); scene.className = "detail-block"; scene.innerHTML = '<h3>场景条件</h3><div class="scene-grid" id="scene-facts"></div><div class="story-progress" id="story-progress"><b>剧情进度</b></div>'; container.append(scene); const sceneLabels = {season:"季节",date:"日期",weather:"天气",time:"时间",location:"地点",friendshipHearts:"好感度"}; const sceneFacts = $("scene-facts"); Object.entries(sceneLabels).forEach(([key,label]) => { const fact = document.createElement("div"); fact.className = "scene-fact"; const value = gameState[key] ?? "未设置"; fact.innerHTML = `<span class="scene-label">${label}</span><span class="scene-value">${value}</span>`; sceneFacts.append(fact); }); $("story-progress").append(document.createTextNode(item.storyProgress || "未设置")); const prompt = document.createElement("div"); prompt.className = "prompt-card"; prompt.innerHTML = `<div><div class="prompt-label">玩家输入</div><div class="prompt-text">“${item.playerInput || ""}”</div></div><div class="goal"><strong>本例的用途</strong><p>检查角色在${stageLabels[item.relationshipStage] || item.relationshipStage}阶段，通过${channelLabels[item.channel] || item.channel}回答当前话题，并保持可追溯的上下文边界。</p></div>`; container.append(prompt); renderCaseResult(container, item); const expected = document.createElement("div"); expected.className = "detail-block"; expected.innerHTML = '<h3>期望出现的当前话题证据（用于自动评测提示）</h3><div class="term-row" id="expected-terms"></div>'; container.append(expected); renderTerms($("expected-terms"), item.expectedTerms || [], false); if ((item.forbiddenTerms || []).length) { const forbidden = document.createElement("div"); forbidden.className = "detail-block"; forbidden.innerHTML = '<h3>禁止提前引入或机械化的表达</h3><div class="term-row" id="forbidden-terms"></div>'; container.append(forbidden); renderTerms($("forbidden-terms"), item.forbiddenTerms || [], true); } const history = document.createElement("div"); history.className = "detail-block"; history.innerHTML = "<h3>预置上下文</h3>"; const historyBox = document.createElement("div"); historyBox.className = "history"; if (item.history?.length) item.history.forEach((message) => { const line = document.createElement("div"); line.innerHTML = `<b>${message.role === "assistant" ? "NPC" : "玩家"}</b>　${message.content}`; historyBox.append(line); }); else historyBox.textContent = "无预置历史：这是独立首轮测试。"; history.append(historyBox); container.append(history); const actions = document.createElement("div"); actions.className = "case-detail-actions"; actions.innerHTML = '<button class="btn gold" type="button" data-open-case-chat="true">带入聊天验证这一例</button>'; actions.querySelector("[data-open-case-chat]").addEventListener("click", () => { selectCase(item, true); }); container.append(actions); const provenance = document.createElement("div"); provenance.className = "provenance"; provenance.textContent = "来源：bridge/src/stardew_ai_bridge/character_quality_eval.py · DEFAULT_CASES；本轮结果来自脱敏质量评测工件。此页不展示完整 prompt，也不把案例字段自动发送给模型。"; container.append(provenance); }
+    function renderCaseDetail() {
+      const item = state.cases.find((candidate) => candidate.caseId === state.selectedCaseId) || state.cases[0];
+      const container = $("case-detail");
+      container.replaceChildren();
+      if (!item) {
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "暂无可显示的测试例。";
+        container.append(empty);
+        return;
+      }
+      state.selectedCaseId = item.caseId;
+      $("coverage-current").textContent = `${item.caseNumber ? "#" + item.caseNumber + " · " : ""}${item.caseId}`;
+      const gameState = item.gameState || {};
+      const title = document.createElement("div");
+      title.className = "detail-heading";
+      title.innerHTML = `<div><h2>${item.caseNumber ? "#" + item.caseNumber + " · " : ""}${roleNames[item.npcId] || item.displayName || item.npcId}</h2><p>${item.caseId} · ${categoryLabel(item)} · 来源：${(item.sourceMods || []).join("、") || "未标注"}</p></div><span class="case-status">${resultStatus(item)}</span>`;
+      container.append(title);
+      const strip = document.createElement("div");
+      strip.className = "context-strip";
+      [
+        ["关系", stageLabels[item.relationshipStage] || item.relationshipStage],
+        ["渠道", channelLabels[item.channel] || item.channel],
+        ["预置历史", `${(item.history || []).length} 条`],
+        ["角色 ID", item.npcId],
+      ].forEach(([label, value]) => {
+        const chip = document.createElement("span");
+        chip.className = "context-chip";
+        chip.innerHTML = `<b>${label}</b>${value}`;
+        strip.append(chip);
+      });
+      container.append(strip);
+
+      const relationshipLabels = { none: "无", light: "轻度", direct: "直白", explicit: "成人向" };
+      const quality = document.createElement("div");
+      quality.className = "detail-block quality-context-card";
+      quality.innerHTML = "<h3>关系与调情约束</h3>";
+      const qualityStrip = document.createElement("div");
+      qualityStrip.className = "context-strip";
+      [
+        ["调情强度", relationshipLabels[item.flirtIntensity] || item.flirtIntensity || "无"],
+        ["恋爱资格", item.romanceEligible ? "可恋爱" : "仅友情"],
+        ["双方同意", item.adultConsensual ? "已明确同意" : "不适用 / 未确认"],
+      ].forEach(([label, value]) => {
+        const chip = document.createElement("span");
+        chip.className = "context-chip";
+        chip.innerHTML = `<b>${label}</b>${value}`;
+        qualityStrip.append(chip);
+      });
+      quality.append(qualityStrip);
+      const relationshipContext = document.createElement("p");
+      relationshipContext.className = "story-progress";
+      relationshipContext.textContent = item.relationshipContext || "未设置关系变化说明。";
+      quality.append(relationshipContext);
+      container.append(quality);
+
+      const scene = document.createElement("div");
+      scene.className = "detail-block";
+      scene.innerHTML = '<h3>场景条件</h3><div class="scene-grid" id="scene-facts"></div><div class="story-progress" id="story-progress"><b>剧情进度</b></div>';
+      container.append(scene);
+      const sceneLabels = { season: "季节", date: "日期", weather: "天气", time: "时间", location: "地点", friendshipHearts: "好感度" };
+      const sceneFacts = $("scene-facts");
+      Object.entries(sceneLabels).forEach(([key, label]) => {
+        const fact = document.createElement("div");
+        fact.className = "scene-fact";
+        const value = gameState[key] ?? "未设置";
+        fact.innerHTML = `<span class="scene-label">${label}</span><span class="scene-value">${value}</span>`;
+        sceneFacts.append(fact);
+      });
+      $("story-progress").append(document.createTextNode(item.storyProgress || "未设置"));
+
+      const prompt = document.createElement("div");
+      prompt.className = "prompt-card";
+      prompt.innerHTML = `<div><div class="prompt-label">玩家输入</div><div class="prompt-text">“${item.playerInput || ""}”</div></div><div class="goal"><strong>本例的用途</strong><p>检查角色在${stageLabels[item.relationshipStage] || item.relationshipStage}阶段，通过${channelLabels[item.channel] || item.channel}回答当前话题，并保持可追溯的上下文边界。</p></div>`;
+      container.append(prompt);
+      renderCaseResult(container, item);
+
+      const expected = document.createElement("div");
+      expected.className = "detail-block";
+      expected.innerHTML = '<h3>期望出现的当前话题证据（用于自动评测提示）</h3><div class="term-row" id="expected-terms"></div>';
+      container.append(expected);
+      renderTerms($("expected-terms"), item.expectedTerms || [], false);
+      if ((item.forbiddenTerms || []).length) {
+        const forbidden = document.createElement("div");
+        forbidden.className = "detail-block";
+        forbidden.innerHTML = '<h3>禁止提前引入或机械化的表达</h3><div class="term-row" id="forbidden-terms"></div>';
+        container.append(forbidden);
+        renderTerms($("forbidden-terms"), item.forbiddenTerms || [], true);
+      }
+
+      const history = document.createElement("div");
+      history.className = "detail-block";
+      history.innerHTML = "<h3>预置上下文</h3>";
+      const historyBox = document.createElement("div");
+      historyBox.className = "history";
+      if (item.history?.length) {
+        item.history.forEach((message) => {
+          const line = document.createElement("div");
+          line.innerHTML = `<b>${message.role === "assistant" ? "NPC" : "玩家"}</b>　${message.content}`;
+          historyBox.append(line);
+        });
+      } else {
+        historyBox.textContent = "无预置历史：这是独立首轮测试。";
+      }
+      history.append(historyBox);
+      container.append(history);
+
+      const actions = document.createElement("div");
+      actions.className = "case-detail-actions";
+      actions.innerHTML = '<button class="btn gold" type="button" data-open-case-chat="true">带入聊天验证这一例</button>';
+      actions.querySelector("[data-open-case-chat]").addEventListener("click", () => { selectCase(item, true); });
+      container.append(actions);
+
+      const provenance = document.createElement("div");
+      provenance.className = "provenance";
+      provenance.textContent = `来源：${state.caseSource || "未记录"} · 套件：${state.caseSuite || "default"}；本轮结果来自脱敏质量评测工件。此页不展示完整 prompt，也不把案例字段自动发送给模型。`;
+      container.append(provenance);
+    }
     function renderBars(container, counts, labels) { container.replaceChildren(); const max = Math.max(...Object.values(counts), 1); Object.entries(counts).forEach(([key,value]) => { const row = document.createElement("div"); row.className = "bar-row"; row.innerHTML = `<span>${labels[key] || key}</span><span class="bar"><i style="width:${Math.round(value / max * 100)}%"></i></span><b>${value}</b>`; container.append(row); }); }
-    function renderCoverage() { const roles = new Set(state.cases.map((item) => item.npcId)); const history = state.cases.filter((item) => item.history?.length).length; const channels = new Set(state.cases.map((item) => item.channel)); const sceneKeys = ["season","date","weather","time","location","friendshipHearts"]; const completeScenes = state.cases.filter((item) => sceneKeys.every((key) => item.gameState && item.gameState[key] !== undefined)).length; $("coverage-total").textContent = state.cases.length; $("coverage-roles").textContent = roles.size; $("coverage-history").textContent = `${history} / ${state.cases.length}`; $("coverage-channels").textContent = [...channels].map((item) => channelLabels[item] || item).join("、"); $("coverage-scenes").textContent = `${completeScenes} / ${state.cases.length}`; const summary=state.run?.summary||{}; const plannedTurns=state.cases.reduce((total,item)=>total+(Array.isArray(item.turns)?item.turns.length:1),0); $("coverage-turns").textContent = summary.turnCount!==undefined?`${summary.turnCount} 轮（${summary.successfulTurns??0} 轮成功）`:`${plannedTurns} 轮待生成`; const usage=summary.usage; $("coverage-tokens").textContent = usage&&Number.isInteger(usage.totalTokens)?`${usage.totalTokens} tokens（${usage.usageReturnedTurns??0} 轮有返回，${usage.missingUsageTurns??0} 轮无用量）`:"用量未返回"; $("coverage-cost").textContent = formatCost(summary.estimatedCost); const stages = {}; const channelCounts = {}; state.cases.forEach((item) => { stages[item.relationshipStage] = (stages[item.relationshipStage] || 0) + 1; channelCounts[item.channel] = (channelCounts[item.channel] || 0) + 1; }); renderBars($("stage-bars"), stages, stageLabels); renderBars($("channel-bars"), channelCounts, {remote:"远程",face_to_face:"当面"}); }
+    function renderCoverage() { const roles = new Set(state.cases.map((item) => item.npcId)); const history = state.cases.filter((item) => item.history?.length).length; const channels = new Set(state.cases.map((item) => item.channel)); const sceneKeys = ["season","date","weather","time","location","friendshipHearts"]; const completeScenes = state.cases.filter((item) => sceneKeys.every((key) => item.gameState && item.gameState[key] !== undefined)).length; $("coverage-total").textContent = state.cases.length; $("coverage-roles").textContent = roles.size; $("coverage-history").textContent = `${history} / ${state.cases.length}`; $("coverage-channels").textContent = [...channels].map((item) => channelLabels[item] || item).join("、"); $("coverage-scenes").textContent = `${completeScenes} / ${state.cases.length}`; const summary=state.run?.summary||{}; const plannedTurns=state.cases.reduce((total,item)=>total+(Array.isArray(item.turns)?item.turns.length:1),0); $("coverage-turns").textContent = summary.turnCount!==undefined?`${summary.turnCount} 轮（${summary.successfulTurns??0} 轮成功）`:`${plannedTurns} 轮待生成`; $("coverage-passed-turns").textContent = Number.isInteger(summary.passedTurns)?`${summary.passedTurns} / ${summary.turnCount ?? plannedTurns}（${formatPassRate(summary.turnPassRate)}）`:"未检测"; $("coverage-passed-cases").textContent = Number.isInteger(summary.passedCases)?`${summary.passedCases} / ${summary.caseCount ?? state.cases.length}（${formatPassRate(summary.casePassRate)}）`:"未检测"; const usage=summary.usage; $("coverage-tokens").textContent = usage&&Number.isInteger(usage.totalTokens)?`${usage.totalTokens} tokens（${usage.usageReturnedTurns??0} 轮有返回，${usage.missingUsageTurns??0} 轮无用量）`:"用量未返回"; $("coverage-cost").textContent = formatCost(summary.estimatedCost); const stages = {}; const channelCounts = {}; state.cases.forEach((item) => { stages[item.relationshipStage] = (stages[item.relationshipStage] || 0) + 1; channelCounts[item.channel] = (channelCounts[item.channel] || 0) + 1; }); renderBars($("stage-bars"), stages, stageLabels); renderBars($("channel-bars"), channelCounts, {remote:"远程",face_to_face:"当面"}); }
     async function loadQualityResults() { try { const response = await fetch("/api/quality/results"); if (!response.ok) throw new Error("质量结果接口不可用"); const payload = await response.json(); const results = Array.isArray(payload.results) ? payload.results : []; const resultByCaseId = Object.fromEntries(results.filter((item) => item && item.caseId).map((item) => [item.caseId, item])); state.run = payload; state.results = resultByCaseId; } catch (_) { state.run = null; state.results = {}; } }
-    function batchProviderLabel(provider) { return {cloud:"云端（显式）",local:"本地 qwen3.5:9b",fake:"Fake 演示"}[provider] || provider || "未知 Provider"; } function renderBatchSummary() { const summary = state.run?.summary || {}; const results = Object.keys(state.results).length; if (state.run?.batchId) { $("batch-title").textContent = `本轮生成 · ${state.run.batchId}`; const usage=summary.usage; const tokenText=usage&&Number.isInteger(usage.totalTokens)?` · ${usage.totalTokens} tokens`:" · 用量未返回"; $("batch-summary").textContent = `${results} 条实际结果 · ${summary.successful ?? results} 个案例返回 · ${summary.turnCount ?? "—"} 轮${tokenText}`; const providers = [...new Set(Object.values(state.results).flatMap((item) => Array.isArray(item?.turns)?item.turns.map((turn)=>turn?.provider):[item?.provider]).filter(Boolean))]; $("batch-run-status").textContent = `${providers.length ? `来源：${providers.map(batchProviderLabel).join("、")}` : "来源：未记录 Provider"} · ${formatCost(summary.estimatedCost)}`; } else { $("batch-title").textContent = "固定角色场景"; $("batch-summary").textContent = `${state.cases.length} 个案例 · 尚未接入生成结果`; $("batch-run-status").textContent = ""; } }
-    async function loadQualityCases() { try { const response = await fetch("/api/quality/cases"); if (!response.ok) throw new Error("测试例接口不可用"); const payload = await response.json(); state.cases = Array.isArray(payload.cases) ? payload.cases : []; await loadQualityResults(); renderBatchSummary(); renderFilterCounts(); renderCoverage(); renderCaseList(); renderCaseDetail(); if (state.cases[0]) window.setTimeout(() => selectCase(state.cases[0]), 0); } catch (error) { $("case-list").innerHTML = `<div class="empty-state">${error.message}</div>`; $("case-detail").innerHTML = `<div class="empty-state">无法加载测试例目录。<br>请检查 Bridge 是否在线。</div>`; } }
+    function batchProviderLabel(provider) { return {cloud:"云端（显式）",local:"本地 qwen3.5:9b",fake:"Fake 演示"}[provider] || provider || "未知 Provider"; } function renderBatchSummary() { const summary = state.run?.summary || {}; const results = Object.keys(state.results).length; const inputTotal = Number.isInteger(summary.playerInputGenerationCount) ? summary.playerInputGenerationCount : summary.playerInputRequestCount; const inputValid = Number.isInteger(summary.playerInputValidCount) ? summary.playerInputValidCount : null; const inputInvalid = Number.isInteger(summary.playerInputInvalidCount) ? summary.playerInputInvalidCount : null; const inputTags = Array.isArray(summary.playerInputQualityTags) ? summary.playerInputQualityTags.filter((tag) => typeof tag === "string") : []; const playerInputText = Number.isInteger(inputTotal) && inputTotal > 0 && inputValid !== null ? `动态玩家输入质量：${inputValid}/${inputTotal} 通过${inputInvalid !== null ? `，${inputInvalid} 条需复核` : ""}${inputTags.length ? ` · 输入标签：${inputTags.join("、")}` : ""}` : "动态玩家输入质量：未检测"; if (state.run?.batchId) { $("batch-title").textContent = `本轮生成 · ${state.run.batchId}`; const usage=summary.usage; const tokenText=usage&&Number.isInteger(usage.totalTokens)?` · ${usage.totalTokens} tokens`:" · 用量未返回"; $("batch-summary").textContent = `${results} 条实际结果 · ${summary.successful ?? results} 个案例返回 · ${summary.turnCount ?? "—"} 轮${tokenText}`; const npcPassText = Number.isInteger(summary.passedTurns) ? `NPC 单轮通过：${summary.passedTurns}/${summary.turnCount ?? "—"}（${formatPassRate(summary.turnPassRate)}）` : "NPC 单轮通过：未检测"; const casePassText = Number.isInteger(summary.passedCases) ? `完整案例通过：${summary.passedCases}/${summary.caseCount ?? "—"}（${formatPassRate(summary.casePassRate)}）` : "完整案例通过：未检测"; $("batch-pass-summary").textContent = `${npcPassText} · ${casePassText} · ${playerInputText}`; const providers = [...new Set(Object.values(state.results).flatMap((item) => Array.isArray(item?.turns)?item.turns.map((turn)=>turn?.provider):[item?.provider]).filter(Boolean))]; $("batch-run-status").textContent = `${providers.length ? `来源：${providers.map(batchProviderLabel).join("、")}` : "来源：未记录 Provider"} · ${formatCost(summary.estimatedCost)}`; } else { $("batch-title").textContent = "固定角色场景"; $("batch-summary").textContent = `${state.cases.length} 个案例 · 尚未接入生成结果`; $("batch-pass-summary").textContent = "NPC 单轮通过：未检测 · 完整案例通过：未检测 · 动态玩家输入质量：未检测"; $("batch-run-status").textContent = ""; } }
+    async function loadQualityCases() { try { await loadQualityResults(); const requestedSuite = new URLSearchParams(window.location.search).get("suite")?.trim(); const summary = state.run?.summary || {}; const suite = requestedSuite || summary.suite || "default"; const response = await fetch(`/api/quality/cases?suite=${encodeURIComponent(suite)}`); if (!response.ok) throw new Error("测试例接口不可用"); const payload = await response.json(); state.caseSuite = payload.suite || suite; state.caseSource = payload.source || ""; state.cases = Array.isArray(payload.cases) ? payload.cases : []; renderBatchSummary(); renderFilterCounts(); renderCoverage(); renderCaseList(); renderCaseDetail(); if (state.cases[0]) window.setTimeout(() => selectCase(state.cases[0]), 0); } catch (error) { $("case-list").innerHTML = `<div class="empty-state">${error.message}</div>`; $("case-detail").innerHTML = `<div class="empty-state">无法加载测试例目录。<br>请检查 Bridge 是否在线。</div>`; } }
     function applyCaseFilter(filter) { state.filter = filter; $$(".filter-btn").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter)); renderCaseList(); if (!visibleCases().some((item) => item.caseId === state.selectedCaseId)) { state.selectedCaseId = visibleCases()[0]?.caseId || ""; renderCaseDetail(); } }
     function $$(selector) { return [...document.querySelectorAll(selector)]; }
     $$(".filter-btn").forEach((button) => button.addEventListener("click", () => applyCaseFilter(button.dataset.filter))); $("show-all").addEventListener("click", () => applyCaseFilter("all")); $("export-case").addEventListener("click", () => showToast(state.selectedCaseId ? `已模拟导出 ${state.selectedCaseId}` : "请先选择一个测试例"));
@@ -728,6 +847,12 @@ def _augment_case_browser_script(script: str) -> str:
         const heart = document.createElement("span");
         heart.textContent = `· ${item.gameState?.friendshipHearts ?? 0} 心`;
         meta.append(heart);
+        const initiative = affectionInitiativeData(item);
+        if (initiative.expectation !== "none" || initiative.kind !== "none") {
+          const label = document.createElement("span");
+          label.textContent = `· ${initiativeKindLabel(initiative.kind)}`;
+          meta.append(label);
+        }
         if (highAffinityStages.has(item.relationshipStage)) row.classList.add("high-affinity");
       });
     };
@@ -740,10 +865,177 @@ def _augment_case_browser_script(script: str) -> str:
     };
     function qualityTagLabel(tag) {
       return {
+        repeated_turn_content: "相邻回复重复",
         repeated_speech_particle: "重复语气词",
         repeated_opening: "重复开场",
         too_many_speech_particles: "语气词过密",
       }[tag] || tag;
+    }
+    function initiativeExpectationLabel(value) {
+      return {
+        none: "未设置",
+        responsive: "回应式",
+        proactive: "主动推进",
+        guarded: "克制推进",
+      }[value] || value || "未设置";
+    }
+    function initiativeKindLabel(value) {
+      return {
+        none: "无主动动作",
+        affection_signal: "主动回撩",
+        specific_plan: "具体邀约",
+        guarded_care: "克制接住",
+        conversation_exit: "允许收口",
+        companionship: "陪伴安排",
+        creative_share: "分享创作",
+        playful_tease: "轻松打趣",
+        shared_evening: "共同晚间",
+        care_action: "实际关心",
+      }[value] || value || "未设置";
+    }
+    function initiativeTagLabel(tag) {
+      return {
+        affection_signal: "主动回撩",
+        specific_plan: "具体邀约",
+        guarded_care: "克制接住",
+        conversation_exit: "允许收口",
+        guarded_exit_allowed: "允许收口",
+        missing_proactive_affection: "缺少主动亲密信号",
+        generic_romance: "泛化浪漫表达",
+        flirt_stage_mismatch: "阶段不匹配",
+        romance_boundary_violation: "亲密边界风险",
+        romance_channel_mismatch: "渠道边界风险",
+        wrong_channel: "渠道不匹配",
+      }[tag] || tag;
+    }
+    function affectionInitiativeData(item) {
+      const result = state.results[item.caseId] || {};
+      const turns = Array.isArray(result.turns) ? result.turns : [];
+      const turnTags = turns.flatMap((turn) => Array.isArray(turn?.initiativeTags) ? turn.initiativeTags : []);
+      const tags = [...new Set([...(Array.isArray(item.initiativeTags) ? item.initiativeTags : []), ...(Array.isArray(result.initiativeTags) ? result.initiativeTags : []), ...turnTags])];
+      const detected = typeof result.initiativeDetected === "boolean"
+        ? result.initiativeDetected
+        : turns.some((turn) => turn?.initiativeDetected === true);
+      return {
+        expectation: result.initiativeExpectation || item.initiativeExpectation || "none",
+        kind: result.initiativeKind || item.initiativeKind || "none",
+        detected,
+        tags,
+      };
+    }
+    function adaptiveInputSourceLabel(source, definition) {
+      const resolved = source || (definition?.playerInputMode === "generated_after_previous_reply" ? "generated" : "fixed");
+      return resolved === "generated" ? "根据上一条 NPC 回复动态生成" : "预置测试输入";
+    }
+    function adaptiveInputQualityText(quality) {
+      if (!quality || typeof quality !== "object") return "玩家输入质量：未检测";
+      const tags = Array.isArray(quality.tags) ? quality.tags : [];
+      const linked = quality.linkedToPreviousReply === true;
+      if (quality.valid === true) return `玩家输入质量：通过 · ${linked ? "已关联上一条 NPC 回复" : "已通过基础检查"}`;
+      if (quality.valid === false) return `玩家输入质量：需复核${tags.length ? ` · ${tags.join("、")}` : ""}`;
+      return "玩家输入质量：未检测";
+    }
+    const baseRenderCaseTranscript = renderCaseTranscript;
+    renderCaseTranscript = function (container, item) {
+      baseRenderCaseTranscript(container, item);
+      const result = state.results[item.caseId] || {};
+      const definitions = plannedTurns(item);
+      const resultTurns = Array.isArray(result.turns) ? result.turns : [];
+      const mechanicalRestatementCount = Number.isInteger(result.mechanicalRestatementCount)
+        ? result.mechanicalRestatementCount
+        : resultTurns.filter((turn) => turn?.mechanicalRestatement === true).length;
+      const transcriptSummary = container.querySelector(".transcript-summary");
+      if (transcriptSummary && mechanicalRestatementCount > 0) {
+        transcriptSummary.textContent += ` · 机械复述玩家：${mechanicalRestatementCount} 轮`;
+      }
+      container.querySelectorAll(".transcript-card .transcript-turn").forEach((turnCard, index) => {
+        const definition = definitions[index] || {};
+        const turn = resultTurns[index] || {};
+        const source = turn.playerInputSource || (definition.playerInputMode === "generated_after_previous_reply" ? "generated" : "fixed");
+        const player = turnCard.querySelector(".transcript-turn-player");
+        if (player && source === "generated" && !String(turn.playerInput || definition.playerInput || "").trim()) {
+          player.textContent = turn.error ? "动态玩家输入生成失败，未继续生成 NPC 回复。" : "等待上一轮 NPC 回复后生成。";
+        }
+        if (player) {
+          const sourceLine = document.createElement("div");
+          sourceLine.className = "transcript-turn-meta player-input-source";
+          sourceLine.textContent = `玩家输入来源：${adaptiveInputSourceLabel(source, definition)}`;
+          const qualityLine = document.createElement("div");
+          qualityLine.className = "transcript-turn-meta player-input-quality";
+          qualityLine.textContent = adaptiveInputQualityText(turn.playerInputQuality);
+          player.after(sourceLine, qualityLine);
+        }
+        const scoreLine = turnCard.querySelector(".transcript-turn-score");
+        if (scoreLine && !scoreLine.textContent.startsWith("NPC 回复评分：")) {
+          scoreLine.textContent = `NPC 回复评分：${scoreLine.textContent}`;
+        }
+        if (turn.mechanicalRestatement === true) {
+          const diagnosticLine = document.createElement("div");
+          diagnosticLine.className = "transcript-turn-meta mechanical-restatement";
+          diagnosticLine.textContent = "机械复述玩家：NPC 回复大段重复了本轮玩家措辞";
+          turnCard.append(diagnosticLine);
+        }
+      });
+    };
+    function renderAdaptiveInputSummary(container, item) {
+      if (item.followUpMode !== "adaptive") return;
+      const block = document.createElement("div");
+      block.className = "detail-block adaptive-input-block";
+      block.innerHTML = "<h3>测试输入生成方式</h3>";
+      const strip = document.createElement("div");
+      strip.className = "context-strip";
+      [
+        ["首轮", "空 topic 入口"],
+        ["后续玩家输入", "根据上一条 NPC 回复动态生成"],
+        ["模拟风格", item.playerSimulationStyle || "未记录"],
+      ].forEach(([label, value]) => {
+        const chip = document.createElement("span");
+        chip.className = "context-chip";
+        const strong = document.createElement("b");
+        strong.textContent = label;
+        chip.append(strong, document.createTextNode(value));
+        strip.append(chip);
+      });
+      block.append(strip);
+      const note = document.createElement("p");
+      note.className = "story-progress";
+      note.textContent = "后续玩家台词不预置；它只在上一轮 NPC 回复返回后生成。玩家输入质量单独显示，不能把输入问题误算成 NPC 回复问题。";
+      block.append(note);
+      container.append(block);
+    }
+    function renderAffectionInitiativeSummary(container, item) {
+      const data = affectionInitiativeData(item);
+      const block = document.createElement("div");
+      block.className = "detail-block affection-initiative-block";
+      block.innerHTML = "<h3>主动亲密行为卡与诊断</h3>";
+      const strip = document.createElement("div");
+      strip.className = "context-strip";
+      [["期待", initiativeExpectationLabel(data.expectation)], ["动作类型", initiativeKindLabel(data.kind)], ["检测到主动信号", data.detected ? "是" : "否"]].forEach(([label, value]) => {
+        const chip = document.createElement("span");
+        chip.className = "context-chip";
+        const strong = document.createElement("b");
+        strong.textContent = label;
+        chip.append(strong, document.createTextNode(value));
+        strip.append(chip);
+      });
+      block.append(strip);
+      const tagRow = document.createElement("div");
+      tagRow.className = "term-row";
+      if (!data.tags.length) {
+        const empty = document.createElement("span");
+        empty.className = "term empty";
+        empty.textContent = "未检测到主动性标签";
+        tagRow.append(empty);
+      } else {
+        data.tags.forEach((tag) => {
+          const pill = document.createElement("span");
+          pill.className = `term${tag.startsWith("missing_") || tag.includes("mismatch") || tag.includes("violation") ? " forbidden" : ""}`;
+          pill.textContent = initiativeTagLabel(tag);
+          tagRow.append(pill);
+        });
+      }
+      block.append(tagRow);
+      container.append(block);
     }
     function renderStyleQualitySummary(container, item) {
       const block = document.createElement("div");
@@ -791,7 +1083,7 @@ def _augment_case_browser_script(script: str) -> str:
       const items = visibleCases();
       const index = items.findIndex((candidate) => candidate.caseId === item.caseId);
       const reviewCount = state.cases.filter((candidate) => statusMatches(candidate, "needs_review")).length;
-      toolbar.innerHTML = `<span class="case-position">${index >= 0 ? `${index + 1} / ${items.length}` : "当前案例"}</span><div class="case-nav-actions"><button class="case-nav-btn" type="button" data-case-nav="previous" aria-label="上一个测试例">‹ 上一个</button><button class="case-nav-btn" type="button" data-case-nav="next" aria-label="下一个测试例">下一个 ›</button><button class="case-nav-btn review" type="button" data-case-nav="review">下一条待复核 · ${reviewCount}</button></div>`;
+      toolbar.innerHTML = `<span class="case-position">#${item.caseNumber ?? "?"} · ${index >= 0 ? `${index + 1} / ${items.length}` : "当前案例"}</span><div class="case-nav-actions"><button class="case-nav-btn" type="button" data-case-nav="previous" aria-label="上一个测试例">‹ 上一个</button><button class="case-nav-btn" type="button" data-case-nav="next" aria-label="下一个测试例">下一个 ›</button><button class="case-nav-btn review" type="button" data-case-nav="review">下一条待复核 · ${reviewCount}</button></div>`;
       const previous = toolbar.querySelector('[data-case-nav="previous"]');
       const next = toolbar.querySelector('[data-case-nav="next"]');
       if (previous) { previous.disabled = index <= 0; previous.addEventListener("click", () => moveSelectedCase(-1)); }
@@ -830,13 +1122,15 @@ def _augment_case_browser_script(script: str) -> str:
       const container = $("case-detail");
       renderCaseNavigation(container, item);
       const strip = container.querySelector(".context-strip");
-      if (strip) {
+       if (strip) {
         const stage = document.createElement("span");
         stage.className = `context-chip${highAffinityStages.has(item.relationshipStage) ? " high-affinity" : ""}`;
         stage.innerHTML = `<b>好感</b>${item.gameState?.friendshipHearts ?? 0} 心`;
         strip.append(stage);
-      }
-      renderStyleQualitySummary(container, item);
+       }
+       renderAdaptiveInputSummary(container, item);
+       renderStyleQualitySummary(container, item);
+      renderAffectionInitiativeSummary(container, item);
       makeDetailSectionsCollapsible(container);
     };
     const baseSelectCase = selectCase;

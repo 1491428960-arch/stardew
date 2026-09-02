@@ -31,7 +31,7 @@ DEFAULT_SCENARIOS = ROOT / "data" / "personas" / "behavior-quality-scenarios.jso
 DEFAULT_OUTPUT_DIR = ROOT / "artifacts" / "character-quality"
 DEFAULT_ENDPOINT = "http://127.0.0.1:11435/api/chat"
 DEFAULT_MODEL = "qwen3.5:9b"
-MAX_SCENARIOS = 10
+MAX_SCENARIOS = 32
 
 
 class MessageGenerator(Protocol):

@@ -215,11 +215,22 @@ def list_npcs() -> dict[str, list[dict[str, object]]]:
 
 
 @app.get("/api/quality/cases")
-def list_quality_cases() -> dict[str, object]:
+def list_quality_cases(suite: str = "default") -> dict[str, object]:
+    normalized_suite = suite.strip().casefold()
+    try:
+        cases = quality_case_catalog(normalized_suite)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    source_by_suite = {
+        "default": "character_quality_eval.DEFAULT_CASES",
+        "topic-start-intimacy": "topic_start_intimacy_cases.TOPIC_START_INTIMACY_CASES",
+        "topic-start-adaptive": "topic_start_adaptive_cases.TOPIC_START_ADAPTIVE_CASES",
+    }
     return {
         "schemaVersion": 1,
-        "source": "character_quality_eval.DEFAULT_CASES",
-        "cases": quality_case_catalog(),
+        "suite": normalized_suite,
+        "source": source_by_suite[normalized_suite],
+        "cases": cases,
     }
 
 
@@ -261,8 +272,19 @@ def get_raw_dialogue(npcId: str = "") -> dict[str, object]:
 def _build_context(payload: Mapping[str, object]) -> tuple[
     dict[str, object], list[dict[str, str]]
 ]:
-    context = context_builder.build(payload)
+    context_payload = dict(payload)
+    is_topic_request = (
+        isinstance(payload.get("intent"), str)
+        and payload["intent"].strip().casefold() == "topic"
+    )
+    if is_topic_request:
+        # topic 是 NPC 主动开口；清掉旧客户端可能传来的内部提示，
+        # 防止它进入资料检索、上下文摘要或最终 Prompt。
+        context_payload["message"] = ""
+    context = context_builder.build(context_payload)
     player_input = payload.get("message", "")
+    if is_topic_request:
+        player_input = ""
     prompt = prompt_builder.build(
         context,
         player_input if isinstance(player_input, str) else "",
@@ -332,7 +354,12 @@ def _validate_dialogue_request(payload: Mapping[str, object]) -> DialogueTestReq
         if key in payload
     }
     try:
-        return DialogueTestRequest.model_validate(filtered)
+        request = DialogueTestRequest.model_validate(filtered)
+        if request.intent == "topic":
+            # API 入口也做一次归一化，避免 Provider 的无 Prompt 默认路径
+            # 重新看到旧版客户端携带的“请主动找话题”文本。
+            return request.model_copy(update={"message": ""})
+        return request
     except ValidationError as exc:
         detail = [
             {

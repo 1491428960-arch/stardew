@@ -519,6 +519,10 @@ class ProfileIndexBuilder:
                 value = normalized.get(field)
                 if isinstance(value, str) and value:
                     record[field] = value
+            for field in ("initiativeExpectation", "initiativeKind"):
+                value = normalized.get(field)
+                if isinstance(value, str) and value:
+                    record[field] = value
             examples.append(record)
 
     @staticmethod
@@ -1781,6 +1785,8 @@ class ProfileIndexStore:
         "npcReply",
         "sourceType",
         "sourceRefs",
+        "initiativeExpectation",
+        "initiativeKind",
     )
 
     def __init__(self, index_path: str | Path) -> None:
