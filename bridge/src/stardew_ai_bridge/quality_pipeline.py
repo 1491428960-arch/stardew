@@ -55,6 +55,8 @@ def _scenario_defaults(scenario: Mapping[str, object]) -> dict[str, object]:
         "topicKeywords",
         "emotion",
         "playerInput",
+        "initiativeExpectation",
+        "initiativeKind",
     ):
         if field in scenario:
             defaults[field] = scenario[field]

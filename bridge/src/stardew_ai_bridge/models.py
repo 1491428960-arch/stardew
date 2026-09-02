@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ApiModel(BaseModel):
@@ -19,6 +19,12 @@ def _strip_text(value: object) -> object:
             raise ValueError("文本不能为空")
         return stripped
     return value
+
+
+def _strip_dialogue_message(value: object) -> object:
+    """消息允许在 topic 意图下为空，普通消息由模型级校验拒绝空值。"""
+
+    return value.strip() if isinstance(value, str) else value
 
 
 class NpcContext(ApiModel):
@@ -124,7 +130,7 @@ class ProviderUsage(ApiModel):
 
 class DialogueTestRequest(ApiModel):
     npc_id: str = Field(alias="npcId", min_length=1, max_length=100)
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(default="", max_length=2000)
     provider: Literal["fake", "auto", "local", "cloud"] = "fake"
     display_name: str | None = Field(
         default=None,
@@ -152,10 +158,16 @@ class DialogueTestRequest(ApiModel):
     )
 
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
-    _strip_message = field_validator("message", mode="before")(_strip_text)
+    _strip_message = field_validator("message", mode="before")(_strip_dialogue_message)
     _strip_display_name = field_validator("display_name", mode="before")(
         _strip_text
     )
+
+    @model_validator(mode="after")
+    def _validate_message_for_intent(self) -> "DialogueTestRequest":
+        if self.intent != "topic" and not self.message:
+            raise ValueError("消息不能为空")
+        return self
 
     def context(self) -> NpcContext:
         return NpcContext(

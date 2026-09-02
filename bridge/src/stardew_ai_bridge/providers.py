@@ -57,6 +57,29 @@ def _usage_from_mapping(value: object) -> ProviderUsage | None:
     )
 
 
+def _default_provider_messages(request: DialogueTestRequest) -> list[dict[str, str]]:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                f"你正在扮演 {request.display_name or request.npc_id}。"
+                "请用简洁、自然的中文回复。"
+            ),
+        },
+    ]
+    if request.intent == "topic":
+        messages.append(
+            {
+                "role": "user",
+                "name": "topic_trigger",
+                "content": "",
+            }
+        )
+    else:
+        messages.append({"role": "user", "content": request.message})
+    return messages
+
+
 @runtime_checkable
 class Provider(Protocol):
     @property
@@ -323,16 +346,9 @@ class OpenAICompatibleProvider:
             headers["authorization"] = f"Bearer {self.settings.api_key}"
         payload = {
             "model": self.settings.model,
-            "messages": messages or [
-                {
-                    "role": "system",
-                    "content": (
-                        f"你正在扮演 {request.display_name or request.npc_id}。"
-                        "请用简洁、自然的中文回复。"
-                    ),
-                },
-                {"role": "user", "content": request.message},
-            ],
+            "messages": (
+                messages if messages is not None else _default_provider_messages(request)
+            ),
         }
         started_at = perf_counter()
         try:
@@ -417,16 +433,9 @@ class OllamaNativeProvider:
         headers = {"content-type": "application/json"}
         payload = {
             "model": self.settings.model,
-            "messages": messages or [
-                {
-                    "role": "system",
-                    "content": (
-                        f"你正在扮演 {request.display_name or request.npc_id}。"
-                        "请用简洁、自然的中文回复。"
-                    ),
-                },
-                {"role": "user", "content": request.message},
-            ],
+            "messages": (
+                messages if messages is not None else _default_provider_messages(request)
+            ),
             "stream": False,
             "think": False,
             "options": {"num_predict": 160},
