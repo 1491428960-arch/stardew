@@ -2,7 +2,6 @@ namespace StardewAI.NPC;
 
 public sealed class ConversationService : IDisposable
 {
-    private const string TopicPrompt = "请主动找一个自然的话题。";
     private readonly IConversationTransport transport;
     private readonly StoryStateStore storyStateStore;
     private int sending;
@@ -68,7 +67,7 @@ public sealed class ConversationService : IDisposable
             var response = await transport.SendAsync(
                 new ConversationRequest(
                     state.NpcId ?? string.Empty,
-                    TopicPrompt,
+                    string.Empty,
                     ConversationIntent.Topic,
                     state,
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),

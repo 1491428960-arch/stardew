@@ -249,6 +249,90 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task SendAsync_topic_request_does_not_store_internal_user_prompt_in_history()
+    {
+        var handler = new RecordingHandler(requestIndex => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                requestIndex == 0
+                    ? "{\"reply\":\"来聊聊今天的天气吧。\",\"provider\":\"fake\",\"fallback\":false}"
+                    : "{\"reply\":\"镇上的风有点大。\",\"provider\":\"fake\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        await client.SendAsync(
+            "Wizard",
+            string.Empty,
+            intent: ConversationIntent.Topic);
+        await client.SendAsync(
+            "Wizard",
+            string.Empty,
+            intent: ConversationIntent.Topic);
+
+        using var secondRequest = JsonDocument.Parse(handler.RequestBodies[1]);
+        var history = secondRequest.RootElement.GetProperty("history").EnumerateArray().ToArray();
+        Assert.Single(history);
+        Assert.Equal("assistant", history[0].GetProperty("role").GetString());
+        Assert.Equal("来聊聊今天的天气吧。", history[0].GetProperty("content").GetString());
+        Assert.DoesNotContain(
+            history,
+            item => item.GetProperty("content").GetString()!.Contains("请主动"));
+        Assert.Empty(secondRequest.RootElement.GetProperty("message").GetString() ?? string.Empty);
+        Assert.Equal("topic", secondRequest.RootElement.GetProperty("intent").GetString());
+    }
+
+    [Fact]
+    public async Task SendAsync_topic_request_rejects_internal_prompt_echo_from_bridge()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"请主动找一个自然的话题啊，这附近的花草长得还不错。\",\"provider\":\"cloud\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        var result = await client.SendAsync(
+            "Wizard",
+            string.Empty,
+            intent: ConversationIntent.Topic);
+
+        Assert.True(result.Fallback);
+        Assert.Equal("offline", result.Provider);
+        Assert.DoesNotContain("主动找一个自然的话题", result.Reply);
+        Assert.Contains("topic prompt echo", result.Warnings.Single());
+    }
+
+    [Fact]
+    public async Task SendAsync_topic_request_rejects_alternate_internal_prompt_echo_from_bridge()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"请找一个自然的话题啊，今天的天气不错。\",\"provider\":\"cloud\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        var result = await client.SendAsync(
+            "Wizard",
+            string.Empty,
+            intent: ConversationIntent.Topic);
+
+        Assert.True(result.Fallback);
+        Assert.Equal("offline", result.Provider);
+        Assert.DoesNotContain("请找一个自然的话题", result.Reply);
+        Assert.Contains("topic prompt echo", result.Warnings.Single());
+    }
+
+    [Fact]
     public async Task SendAsync_does_not_remember_failed_fallback_before_next_success()
     {
         var handler = new RecordingHandler(requestIndex => requestIndex == 0

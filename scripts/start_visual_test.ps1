@@ -14,6 +14,7 @@ param(
     [string]$SaveName = 'test_447101921',
     [string]$OutputPath = 'artifacts\visual-tests\chat-empty',
     [string]$ScenarioId = 'chat-empty',
+    [string]$ActionId = 'capture',
     [int]$TimeoutSeconds = 120,
     [int]$BackBufferWidth = 0,
     [int]$BackBufferHeight = 0,
@@ -118,6 +119,7 @@ if (-not $OutputPath) { throw 'OutputPath 不能为空。' }
 
 Assert-FileName -Value $SaveName -Name 'SaveName'
 Assert-FileName -Value $ScenarioId -Name 'ScenarioId'
+if ($ActionId -notin @('capture', 'topic')) { throw 'ActionId 只支持 capture 或 topic。' }
 if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 3600) { throw 'TimeoutSeconds 必须在 1 到 3600 秒之间。' }
 if (($BackBufferWidth -eq 0) -xor ($BackBufferHeight -eq 0)) {
     throw 'BackBufferWidth 和 BackBufferHeight 必须同时设置。'
@@ -163,6 +165,7 @@ $environmentNames = @(
     'STARDEW_AI_NPC_VISUAL_SAVE_NAME',
     'STARDEW_AI_NPC_VISUAL_OUTPUT',
     'STARDEW_AI_NPC_VISUAL_SCENARIO',
+    'STARDEW_AI_NPC_VISUAL_ACTION',
     'STARDEW_AI_NPC_VISUAL_BACKBUFFER_WIDTH',
     'STARDEW_AI_NPC_VISUAL_BACKBUFFER_HEIGHT')
 $savedEnvironment = @{}
@@ -182,6 +185,7 @@ try {
     [Environment]::SetEnvironmentVariable('STARDEW_AI_NPC_VISUAL_SAVE_NAME', $SaveName, 'Process')
     [Environment]::SetEnvironmentVariable('STARDEW_AI_NPC_VISUAL_OUTPUT', (Get-NormalizedPath $OutputPath), 'Process')
     [Environment]::SetEnvironmentVariable('STARDEW_AI_NPC_VISUAL_SCENARIO', $ScenarioId, 'Process')
+    [Environment]::SetEnvironmentVariable('STARDEW_AI_NPC_VISUAL_ACTION', $ActionId, 'Process')
     if ($BackBufferWidth -ne 0) {
         [Environment]::SetEnvironmentVariable('STARDEW_AI_NPC_VISUAL_BACKBUFFER_WIDTH', $BackBufferWidth.ToString(), 'Process')
         [Environment]::SetEnvironmentVariable('STARDEW_AI_NPC_VISUAL_BACKBUFFER_HEIGHT', $BackBufferHeight.ToString(), 'Process')

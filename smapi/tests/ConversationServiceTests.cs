@@ -15,6 +15,7 @@ public sealed class ConversationServiceTests
         var topic = await service.RequestTopicAsync(TestNpcState(), CancellationToken.None);
 
         Assert.Equal(ConversationIntent.Topic, transport.LastRequest!.Intent);
+        Assert.Empty(transport.LastRequest.Message);
         Assert.Empty(store.State.Memories);
         Assert.Equal("收到。", topic.Reply);
     }

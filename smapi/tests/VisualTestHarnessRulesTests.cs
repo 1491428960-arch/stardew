@@ -26,8 +26,65 @@ public sealed class VisualTestHarnessRulesTests
         Assert.True(options.Enabled);
         Assert.Equal("test_447101921", options.SaveName);
         Assert.Equal("chat-empty", options.ScenarioId);
+        Assert.Equal("capture", options.ActionId);
         Assert.Null(options.BackBufferWidth);
         Assert.Null(options.BackBufferHeight);
+    }
+
+    [Fact]
+    public void EnabledEnvironmentAcceptsExplicitTopicAction()
+    {
+        var options = VisualTestHarnessRules.Parse(
+            new Dictionary<string, string?>
+            {
+                ["STARDEW_AI_NPC_VISUAL_TEST"] = "1",
+                ["STARDEW_AI_NPC_VISUAL_OUTPUT"] = "artifacts/visual-tests/run",
+                ["STARDEW_AI_NPC_VISUAL_ACTION"] = "topic",
+            });
+
+        Assert.Equal("topic", options.ActionId);
+    }
+
+    [Fact]
+    public void UnknownVisualActionFailsClosed()
+    {
+        Assert.Throws<ArgumentException>(() => VisualTestHarnessRules.Parse(
+            new Dictionary<string, string?>
+            {
+                ["STARDEW_AI_NPC_VISUAL_TEST"] = "1",
+                ["STARDEW_AI_NPC_VISUAL_OUTPUT"] = "artifacts/visual-tests/run",
+                ["STARDEW_AI_NPC_VISUAL_ACTION"] = "click-everything",
+            }));
+    }
+
+    [Fact]
+    public void TopicActionWaitsForRenderedMenuBeforeTriggering()
+    {
+        Assert.False(VisualTestHarnessRules.CanTriggerTopicAction(
+            actionId: "topic",
+            menuReady: false,
+            actionTriggered: false,
+            activeMenuFrames: 6));
+        Assert.False(VisualTestHarnessRules.CanTriggerTopicAction(
+            actionId: "topic",
+            menuReady: true,
+            actionTriggered: false,
+            activeMenuFrames: 2));
+        Assert.True(VisualTestHarnessRules.CanTriggerTopicAction(
+            actionId: "topic",
+            menuReady: true,
+            actionTriggered: false,
+            activeMenuFrames: 3));
+        Assert.False(VisualTestHarnessRules.CanTriggerTopicAction(
+            actionId: "topic",
+            menuReady: true,
+            actionTriggered: true,
+            activeMenuFrames: 3));
+        Assert.False(VisualTestHarnessRules.CanTriggerTopicAction(
+            actionId: "capture",
+            menuReady: true,
+            actionTriggered: false,
+            activeMenuFrames: 3));
     }
 
     [Fact]

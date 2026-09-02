@@ -17,7 +17,8 @@ public sealed record VisualTestOptions(
     string OutputDirectory,
     string ScenarioId,
     int? BackBufferWidth = null,
-    int? BackBufferHeight = null);
+    int? BackBufferHeight = null,
+    string ActionId = "capture");
 
 public sealed record VisualTestScenarioContent(
     IReadOnlyList<ChatDisplayMessage> InitialMessages,
@@ -29,10 +30,13 @@ public static class VisualTestHarnessRules
     public const string SaveNameVariable = "STARDEW_AI_NPC_VISUAL_SAVE_NAME";
     public const string OutputVariable = "STARDEW_AI_NPC_VISUAL_OUTPUT";
     public const string ScenarioVariable = "STARDEW_AI_NPC_VISUAL_SCENARIO";
+    public const string ActionVariable = "STARDEW_AI_NPC_VISUAL_ACTION";
     public const string BackBufferWidthVariable = "STARDEW_AI_NPC_VISUAL_BACKBUFFER_WIDTH";
     public const string BackBufferHeightVariable = "STARDEW_AI_NPC_VISUAL_BACKBUFFER_HEIGHT";
     public const string DefaultSaveName = "test_447101921";
     public const string DefaultScenarioId = "chat-empty";
+    public const string DefaultActionId = "capture";
+    public const string TopicActionId = "topic";
     public const string WideContentScenarioId = "chat-profile-strip-wide-content";
 
     private static readonly VisualTestScenarioContent EmptyScenarioContent =
@@ -127,6 +131,14 @@ public static class VisualTestHarnessRules
 
         var scenarioId = GetValue(environment, ScenarioVariable, DefaultScenarioId);
         VisualTestManifest.ValidateFileName(scenarioId);
+        var actionId = GetValue(environment, ActionVariable, DefaultActionId)
+            .ToLowerInvariant();
+        if (actionId is not DefaultActionId and not TopicActionId)
+        {
+            throw new ArgumentException(
+                $"{ActionVariable} 只支持 {DefaultActionId} 或 {TopicActionId}。",
+                nameof(environment));
+        }
         var backBufferWidth = ParseDimension(environment, BackBufferWidthVariable);
         var backBufferHeight = ParseDimension(environment, BackBufferHeightVariable);
         if (backBufferWidth.HasValue != backBufferHeight.HasValue)
@@ -142,7 +154,20 @@ public static class VisualTestHarnessRules
             outputDirectory,
             scenarioId,
             backBufferWidth,
-            backBufferHeight);
+            backBufferHeight,
+            actionId);
+    }
+
+    public static bool CanTriggerTopicAction(
+        string actionId,
+        bool menuReady,
+        bool actionTriggered,
+        int activeMenuFrames)
+    {
+        return string.Equals(actionId, TopicActionId, StringComparison.Ordinal) &&
+            menuReady &&
+            !actionTriggered &&
+            activeMenuFrames >= 3;
     }
 
     private static int? ParseDimension(
@@ -210,6 +235,10 @@ public sealed class VisualTestHarness
     private bool fallbackGateLogged;
     private bool renderLogged;
     private bool backBufferApplied;
+    private bool actionTriggered;
+    private bool actionEvidenceLogged;
+    private int initialMessageCount;
+    private int topicActionWaitFrames;
     private int lastStatusTick = -60;
 
     public VisualTestHarness(
@@ -431,6 +460,7 @@ public sealed class VisualTestHarness
             () => monitor.Log("视觉测试聊天菜单已关闭。", LogLevel.Trace),
             scenario.InitialMessages,
             scenario.FriendshipHearts);
+        initialMessageCount = menu.Messages.Count;
         Game1.activeClickableMenu = menu;
         menuOpened = true;
         monitor.Log(
@@ -457,6 +487,83 @@ public sealed class VisualTestHarness
         // 该事件用于确认活动菜单 pass 已经执行；实际截图在 Rendered
         // 事件中读取，此时 SpriteBatch 已经结束并把命令刷新到目标纹理。
         activeMenuFrames++;
+
+        if (VisualTestHarnessRules.CanTriggerTopicAction(
+                options.ActionId,
+                menuReady: true,
+                actionTriggered,
+                activeMenuFrames))
+        {
+            TriggerTopicAction();
+        }
+
+        if (options.ActionId == VisualTestHarnessRules.TopicActionId &&
+            actionTriggered &&
+            !HasTopicResponse())
+        {
+            topicActionWaitFrames++;
+            if (topicActionWaitFrames > 1800)
+            {
+                Fail("视觉测试自动点击找话题后，30 秒内没有收到 NPC 回复。" );
+            }
+        }
+    }
+
+    private void TriggerTopicAction()
+    {
+        var topicButton = ChatLayoutRules.Calculate(
+            Game1.viewport.Width,
+            Game1.viewport.Height).TopicButton;
+        actionTriggered = true;
+        monitor.Log(
+            $"视觉测试自动点击找话题：x={topicButton.Center.X}；y={topicButton.Center.Y}；" +
+            $"activeMenuFrames={activeMenuFrames}",
+            LogLevel.Info);
+        try
+        {
+            menu!.receiveLeftClick(
+                topicButton.Center.X,
+                topicButton.Center.Y,
+                playSound: false);
+            monitor.Log("视觉测试找话题动作已发送，等待真实 Bridge 回复。", LogLevel.Trace);
+        }
+        catch (Exception exception)
+        {
+            Fail($"视觉测试自动点击找话题失败：{exception.Message}");
+        }
+    }
+
+    private bool HasTopicResponse()
+    {
+        return menu is not null &&
+            !menu.IsSending &&
+            menu.Messages.Count > initialMessageCount;
+    }
+
+    private void LogTopicActionEvidence()
+    {
+        if (actionEvidenceLogged || menu is null || !HasTopicResponse())
+        {
+            return;
+        }
+
+        var replies = menu.Messages
+            .Skip(initialMessageCount)
+            .Where(message => string.Equals(message.Role, "npc", StringComparison.Ordinal))
+            .Select(message => message.Content.Trim())
+            .Where(content => content.Length > 0)
+            .ToArray();
+        if (replies.Length == 0)
+        {
+            Fail("视觉测试找话题动作完成，但没有可记录的 NPC 回复。");
+            return;
+        }
+
+        actionEvidenceLogged = true;
+        var replyText = string.Join(" | ", replies);
+        monitor.Log(
+            $"视觉测试找话题动作完成：新增 NPC 回复={replyText}",
+            LogLevel.Info);
     }
 
     private void OnRendered(object? sender, RenderedEventArgs e)
@@ -474,6 +581,13 @@ public sealed class VisualTestHarness
         }
 
         renderedFrames++;
+        if (options.ActionId == VisualTestHarnessRules.TopicActionId &&
+            !HasTopicResponse())
+        {
+            renderedFrames = 0;
+            return;
+        }
+
         // 让游戏再完整刷新几帧，避免在菜单第一次提交到目标纹理前截到半帧。
         if (renderedFrames < 6)
         {
@@ -482,6 +596,12 @@ public sealed class VisualTestHarness
 
         try
         {
+            LogTopicActionEvidence();
+            if (options.ActionId == VisualTestHarnessRules.TopicActionId &&
+                !actionEvidenceLogged)
+            {
+                return;
+            }
             LogRenderTargets();
             CaptureMenuRenderTarget();
         }

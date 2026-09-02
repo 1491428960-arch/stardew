@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace StardewAI.NPC;
 
@@ -83,6 +84,10 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     private const int MaxMessageLength = 2000;
     private const int MaxRecentFactLength = 240;
     private const int MaxRecentFactItems = 20;
+    private static readonly Regex TopicPromptEcho = new(
+        @"(?:请\s*主动\s*找|主动\s*找|请\s*找)"
+            + @"(?:一个|个)?(?:自然(?:、符合当前情境)?的?)?话题",
+        RegexOptions.Compiled);
 
     private readonly HttpClient httpClient;
     private readonly bool ownsHttpClient;
@@ -122,15 +127,20 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             throw new ArgumentException("NPC ID 不能为空。", nameof(npcId));
         }
 
-        if (string.IsNullOrWhiteSpace(message))
+        var normalizedIntent = string.IsNullOrWhiteSpace(intent)
+            ? ConversationIntent.Chat
+            : intent;
+        if (string.IsNullOrWhiteSpace(message) && normalizedIntent != ConversationIntent.Topic)
         {
             throw new ArgumentException("消息不能为空。", nameof(message));
         }
 
+        var boundedMessage = normalizedIntent == ConversationIntent.Topic
+            ? string.Empty
+            : Truncate(message, MaxMessageLength);
         try
         {
             var npcGameState = gameState as NpcGameState;
-            var boundedMessage = Truncate(message, MaxMessageLength);
             BridgeDialogueRequest request;
             lock (memoryLock)
             {
@@ -138,7 +148,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 {
                     NpcId = npcId,
                     Message = boundedMessage,
-                    Intent = string.IsNullOrWhiteSpace(intent) ? ConversationIntent.Chat : intent,
+                    Intent = normalizedIntent,
                     ItemContext = itemContext,
                     DisplayName = npcGameState?.DisplayName,
                     SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
@@ -174,25 +184,31 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                     : parsed;
             }
 
-            RememberResult(npcId, boundedMessage, result, npcGameState);
+            if (normalizedIntent == ConversationIntent.Topic && TopicPromptEcho.IsMatch(result.Reply))
+            {
+                // Bridge 已经有同样的保护；这里再拦一层，避免旧 Bridge 或错误路由把内部任务说明画进游戏。
+                result = BridgeDialogueResponse.Offline("bridge: topic prompt echo");
+            }
+
+            RememberResult(npcId, boundedMessage, normalizedIntent, result, npcGameState);
             return result;
         }
         catch (TaskCanceledException)
         {
             var result = BridgeDialogueResponse.Offline("bridge: timeout");
-            RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
+            RememberResult(npcId, boundedMessage, normalizedIntent, result, gameState as NpcGameState);
             return result;
         }
         catch (HttpRequestException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: offline ({exception.Message})");
-            RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
+            RememberResult(npcId, boundedMessage, normalizedIntent, result, gameState as NpcGameState);
             return result;
         }
         catch (JsonException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: invalid JSON ({exception.Message})");
-            RememberResult(npcId, Truncate(message, MaxMessageLength), result, gameState as NpcGameState);
+            RememberResult(npcId, boundedMessage, normalizedIntent, result, gameState as NpcGameState);
             return result;
         }
     }
@@ -231,6 +247,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     private void RememberResult(
         string npcId,
         string message,
+        string intent,
         BridgeDialogueResponse result,
         NpcGameState? currentState)
     {
@@ -247,11 +264,14 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 historyByNpc[npcId] = history;
             }
 
-            history.Add(new BridgeDialogueHistoryItem
+            if (intent != ConversationIntent.Topic)
             {
-                Role = "user",
-                Content = Truncate(message, MaxHistoryContentLength),
-            });
+                history.Add(new BridgeDialogueHistoryItem
+                {
+                    Role = "user",
+                    Content = Truncate(message, MaxHistoryContentLength),
+                });
+            }
             history.Add(new BridgeDialogueHistoryItem
             {
                 Role = "assistant",

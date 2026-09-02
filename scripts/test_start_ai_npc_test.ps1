@@ -65,7 +65,7 @@ if ((Test-Path -LiteralPath $cmdPath -PathType Leaf) -and
     Assert-True ($bridgeLauncherText -match 'BRIDGE_LOCAL_TIMEOUT') 'Bridge 启动脚本配置本机模型超时'
     Assert-True ($bridgeLauncherText -match 'BRIDGE_LOCAL_TIMEOUT\s*=\s*["'']45["'']') 'Bridge 本机模型默认允许完整角色上下文生成'
     Assert-True ($bridgeLauncherText -match 'BRIDGE_PROFILE_INDEX') 'Bridge 启动脚本配置资料索引路径'
-    Assert-True ($bridgeLauncherText -match 'vanilla-sve-rasmodia-profile-index-zh-CN\.json') 'Bridge 默认使用已解析的中文联合索引'
+    Assert-True ($bridgeLauncherText -match 'vanilla-sve-rasmodia-profile-index-zh-CN\.next-proactive-affection\.json') 'Bridge 默认使用主动亲密中文联合索引'
     Assert-True ($bridgeLauncherText -match 'codex-runtimes.*python\.exe') 'Bridge 启动脚本支持工作区 Python 运行时'
     Assert-True ($bridgeLauncherText -match 'function Test-BridgePython') 'Bridge 启动脚本验证 Python 运行依赖'
     Assert-True ($bridgeLauncherText -match 'import fastapi.*import httpx.*import pydantic.*import uvicorn') 'Bridge 启动脚本探测完整运行依赖'
@@ -81,7 +81,7 @@ if ((Test-Path -LiteralPath $cmdPath -PathType Leaf) -and
     Assert-True ($launcherText -match '127\.0\.0\.1:11435/api/chat') '快速测试启动器沿用真实本机 Provider'
     Assert-True ($launcherText -match 'BRIDGE_LOCAL_TIMEOUT') '快速测试启动器沿用本机模型超时'
     Assert-True ($launcherText -match 'BRIDGE_PROFILE_INDEX') '快速测试启动器沿用资料索引路径'
-    Assert-True ($launcherText -match 'vanilla-sve-rasmodia-profile-index-zh-CN\.json') '快速测试启动器默认使用已解析的中文联合索引'
+    Assert-True ($launcherText -match 'vanilla-sve-rasmodia-profile-index-zh-CN\.next-proactive-affection\.json') '快速测试启动器默认使用主动亲密中文联合索引'
 
     try {
         [scriptblock]::Create($launcherText) | Out-Null
