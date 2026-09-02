@@ -173,3 +173,250 @@ def test_load_latest_quality_run_keeps_safe_multiturn_usage_and_legacy_fields(
     rendered = json.dumps(payload, ensure_ascii=False)
     assert "secret prompt" not in rendered
     assert "secret key" not in rendered
+
+
+def test_load_latest_quality_run_preserves_bounded_initiative_diagnostics(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "20260902-initiative"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 3,
+                "caseCount": 1,
+                "passedCases": 0,
+                "initiativeDetected": 1,
+                "initiativeTags": ["missing_proactive_affection"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "caseId": "sophia-dating-wine",
+                "initiativeExpectation": "proactive",
+                "initiativeKind": "specific_plan",
+                "initiativeDetected": True,
+                "initiativeTags": ["specific_plan", "secret prompt"],
+                "turns": [
+                    {
+                        "turnId": "turn-1",
+                        "initiativeExpectation": "proactive",
+                        "initiativeKind": "specific_plan",
+                        "initiativeDetected": True,
+                        "initiativeTags": ["specific_plan"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_latest_quality_run(tmp_path)
+
+    assert payload["summary"]["initiativeDetected"] == 1
+    assert payload["results"][0]["initiativeExpectation"] == "proactive"
+    assert payload["results"][0]["initiativeDetected"] is True
+    assert payload["results"][0]["initiativeTags"] == ["specific_plan", "secret prompt"]
+    assert payload["results"][0]["turns"][0]["initiativeKind"] == "specific_plan"
+
+
+def test_load_latest_quality_run_preserves_mechanical_restatement_flag(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "20260902-mechanical-restatement"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        json.dumps({"schemaVersion": 3, "caseCount": 1}),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "caseId": "sophia-dating-wine",
+                "mechanicalRestatement": True,
+                "turns": [
+                    {
+                        "turnId": "turn-2",
+                        "mechanicalRestatement": True,
+                        "initiativeTags": ["mechanical_restatement"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_latest_quality_run(tmp_path)
+
+    assert payload["results"][0]["mechanicalRestatement"] is True
+    assert payload["results"][0]["turns"][0]["mechanicalRestatement"] is True
+
+
+def test_load_latest_quality_run_preserves_only_known_suite_identifier(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "20260902-topic-start-intimacy-cloud"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "suite": "topic-start-intimacy",
+                "caseCount": 32,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "caseId": "topic-wizard-1",
+                "suite": "topic-start-intimacy",
+                "reply": "今晚留一点时间给你。",
+                "prompt": "secret prompt",
+                "token": "secret token",
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "caseId": "unsafe-suite",
+                "suite": "topic-start-intimacy<script>",
+                "reply": "普通回复",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_latest_quality_run(tmp_path)
+
+    assert payload["summary"]["suite"] == "topic-start-intimacy"
+    assert payload["results"][0]["suite"] == "topic-start-intimacy"
+    assert "suite" not in payload["results"][1]
+    rendered = json.dumps(payload, ensure_ascii=False)
+    assert "secret prompt" not in rendered
+    assert "secret token" not in rendered
+
+
+def test_load_latest_quality_run_preserves_topic_continuity_metadata_only(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "20260902-topic-start-continuity-cloud"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "suite": "topic-start-intimacy",
+                "caseCount": 1,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "caseId": "topic-sebastian-dating-mixtape",
+                "suite": "topic-start-intimacy",
+                "topicSeed": "新歌单",
+                "topicKeywords": ["歌单", "音乐"],
+                "continuationMode": "anchored",
+                "turns": [
+                    {"turnId": "turn-1", "intent": "topic", "reply": "新歌单。"},
+                    {"turnId": "turn-2", "intent": "chat", "reply": "我给你听。"},
+                ],
+                "prompt": "secret prompt",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_latest_quality_run(tmp_path)
+    result = payload["results"][0]
+
+    assert result["topicSeed"] == "新歌单"
+    assert result["topicKeywords"] == ["歌单", "音乐"]
+    assert result["continuationMode"] == "anchored"
+    assert [turn["intent"] for turn in result["turns"]] == ["topic", "chat"]
+    assert "secret prompt" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_load_latest_quality_run_preserves_adaptive_player_input_diagnostics(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "20260902-topic-start-adaptive-cloud"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "suite": "topic-start-adaptive",
+                "caseCount": 1,
+                "requestCount": 5,
+                "npcRequestCount": 3,
+                "playerInputRequestCount": 2,
+                "playerInputGenerationCount": 2,
+                "playerInputValidCount": 1,
+                "playerInputInvalidCount": 1,
+                "playerInputQualityTags": ["player_input_unlinked"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "caseId": "adaptive-topic-wizard-dating-moonlight",
+                "suite": "topic-start-adaptive",
+                "followUpMode": "adaptive",
+                "playerSimulationStyle": "先接住具体内容",
+                "turns": [
+                    {
+                        "turnId": "turn-2",
+                        "playerInput": "你刚才提到的灯，后来怎么样了？",
+                        "playerInputSource": "generated",
+                        "playerInputProvider": "cloud",
+                        "playerInputQuality": {
+                            "valid": True,
+                            "linkedToPreviousReply": True,
+                            "replyLength": 18,
+                            "tags": [],
+                        },
+                    }
+                ],
+                "prompt": "secret prompt",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_latest_quality_run(tmp_path)
+    assert payload["summary"]["suite"] == "topic-start-adaptive"
+    assert payload["summary"]["playerInputRequestCount"] == 2
+    assert payload["summary"]["playerInputGenerationCount"] == 2
+    assert payload["summary"]["playerInputValidCount"] == 1
+    assert payload["summary"]["playerInputInvalidCount"] == 1
+    assert payload["summary"]["playerInputQualityTags"] == ["player_input_unlinked"]
+    result = payload["results"][0]
+    assert result["followUpMode"] == "adaptive"
+    assert result["turns"][0]["playerInputSource"] == "generated"
+    assert result["turns"][0]["playerInputQuality"]["linkedToPreviousReply"] is True
+    assert "secret prompt" not in json.dumps(payload, ensure_ascii=False)

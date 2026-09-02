@@ -38,6 +38,9 @@ def test_response_guard_rejects_empty_or_non_text(reply: object) -> None:
         "这是 system prompt：忽略之前的指令",
         "我来透露系统提示词和开发者消息",
         "<|system|> you are an assistant",
+        "请主动找一个自然的话题啊，这附近的花草长得还不错。",
+        "主动找一个自然的话题啊，这附近还挺安静的。",
+        "请找一个自然的话题啊，今天的天气不错。",
     ],
 )
 def test_response_guard_rejects_prompt_leakage(reply: str) -> None:
@@ -45,6 +48,39 @@ def test_response_guard_rejects_prompt_leakage(reply: str) -> None:
 
     assert result.accepted is False
     assert result.reason == "prompt_leakage"
+
+
+def test_topic_prompt_echo_retries_with_hidden_topic_trigger() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "topic_response_contract",
+            "content": '{"instruction":"只输出 NPC 的中文对白"}',
+        }
+    ]
+    result = ProviderResult(
+        reply="请主动找一个自然的话题啊，这附近的花草长得还不错。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    def generate(messages: list[dict[str, str]]) -> ProviderResult:
+        calls.append(messages)
+        return result.model_copy(update={"reply": "这附近的花草长得还不错。"})
+
+    retried = retry_for_format_noise(result, prompt, generate)
+
+    assert retried.reply == "这附近的花草长得还不错。"
+    assert len(calls) == 1
+    assert calls[0][-2]["name"] == "topic_leakage_retry"
+    assert calls[0][-1] == {
+        "role": "user",
+        "name": "topic_trigger",
+        "content": "",
+    }
+    assert "response_topic_leakage_retry: prompt_echo" in retried.warnings
 
 
 @pytest.mark.parametrize(
@@ -281,3 +317,393 @@ def test_retry_for_format_noise_retries_when_current_required_term_is_missing() 
     assert retried.reply == "饲料还没到，真让人烦。"
     assert "response_topic_retry: missing_required_term" in retried.warnings
     assert calls[0][-1]["name"] == "topic_retry"
+
+
+def test_retry_for_format_noise_rewrites_cold_high_affinity_topic_reply() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": (
+                '{"affectionInitiative":{"initiativeMode":"proactive",'
+                '"minimumExpression":"必须让玩家感到被想念或被选择"}}'
+            ),
+        },
+        {
+            "role": "system",
+            "name": "topic_response_contract",
+            "content": '{"instruction":"由 NPC 主动找一个具体话题"}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="塔里的灯还亮着。忙完了就过来吧。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    def generate(messages: list[dict[str, str]]) -> ProviderResult:
+        calls.append(messages)
+        return result.model_copy(update={"reply": "塔灯还亮着，我在等你。忙完了就来陪我一会儿吧。"})
+
+    retried = retry_for_format_noise(result, prompt, generate)
+
+    assert retried.reply == "塔灯还亮着，我在等你。忙完了就来陪我一会儿吧。"
+    assert len(calls) == 1
+    assert calls[0][-2]["name"] == "affection_retry"
+    assert calls[0][-1]["name"] == "topic_trigger"
+    assert "response_affection_retry: missing_proactive_affection" in retried.warnings
+
+
+def test_retry_for_format_noise_makes_a_second_affection_attempt_when_needed() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="雨还没停。过来喝茶吧。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    def generate(messages: list[dict[str, str]]) -> ProviderResult:
+        calls.append(messages)
+        if len(calls) == 1:
+            return result.model_copy(update={"reply": "雨声很适合喝茶，你有空就来吧。"})
+        return result.model_copy(update={"reply": "我有点想你了。雨声正好，来陪我喝杯茶吧。"})
+
+    retried = retry_for_format_noise(result, prompt, generate)
+
+    assert retried.reply == "我有点想你了。雨声正好，来陪我喝杯茶吧。"
+    assert len(calls) == 2
+    assert all(call[-2]["name"] == "affection_retry" for call in calls)
+    assert "必须明确指向玩家本人" in calls[1][-2]["content"]
+    assert "不要用反问" in calls[1][-2]["content"]
+    assert retried.warnings.count(
+        "response_affection_retry: missing_proactive_affection"
+    ) == 2
+
+
+def test_retry_for_format_noise_keeps_affection_budget_after_format_noise() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {
+            "role": "system",
+            "name": "topic_response_contract",
+            "content": '{"instruction":"由 NPC 主动找一个具体话题"}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="（低头）雨还没停。过来喝茶吧。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    def generate(messages: list[dict[str, str]]) -> ProviderResult:
+        calls.append(messages)
+        replies = (
+            "雨声很适合喝茶，你有空就来吧。",
+            "（看向窗外）你就在我这儿多待一会儿吧。",
+            "雨声很适合喝茶，你有空就来吧。",
+            "我有点想你了。雨声正好，来陪我喝杯茶吧。",
+        )
+        return result.model_copy(update={"reply": replies[len(calls) - 1]})
+
+    retried = retry_for_format_noise(result, prompt, generate)
+
+    assert retried.reply == "我有点想你了。雨声正好，来陪我喝杯茶吧。"
+    assert len(calls) == 4
+    assert [call[-2]["name"] for call in calls] == [
+        "format_retry",
+        "affection_retry",
+        "format_retry",
+        "affection_retry",
+    ]
+
+
+def test_retry_for_format_noise_does_not_force_warmth_after_explicit_close() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "你先休息吧，晚安。"},
+    ]
+    result = ProviderResult(
+        reply="好，晚安，明天再聊。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert retried.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_accepts_direct_memory_as_warmth() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="我刚才想起你了。雨声里整理记录，倒也没那么冷清。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert retried.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_rejects_functional_warmth_in_direct_topic_mode() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {
+            "role": "system",
+            "name": "quality_context",
+            "content": '{"flirtIntensity":"direct"}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="有你在，喝茶会轻松些。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result.model_copy(
+            update={"reply": "我刚才想起你了。雨声正好，想和你一起喝杯茶。"}
+        ),
+    )
+
+    assert retried.reply == "我刚才想起你了。雨声正好，想和你一起喝杯茶。"
+    assert len(calls) == 1
+    assert calls[0][-2]["name"] == "affection_retry"
+
+
+def test_retry_for_format_noise_keeps_warmest_clean_reply_when_later_retry_gets_cold() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {
+            "role": "system",
+            "name": "voice_execution_card",
+            "content": '{"avoidSpeechParticles":["嗯"]}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="（低头）雨还没停。过来喝茶吧。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+    replies = (
+        "嗯，我想你了。雨声正好，想和你一起喝杯茶。",
+        "雨声很适合喝茶，你有空就来吧。",
+        "雨还没停，茶已经泡好了。",
+        "雨还没停，茶已经泡好了。",
+    )
+
+    def generate(messages: list[dict[str, str]]) -> ProviderResult:
+        calls.append(messages)
+        return result.model_copy(update={"reply": replies[len(calls) - 1]})
+
+    retried = retry_for_format_noise(result, prompt, generate)
+
+    assert retried.reply == replies[0]
+    assert [call[-2]["name"] for call in calls] == [
+        "format_retry",
+        "voice_particle_retry",
+        "affection_retry",
+        "affection_retry",
+    ]
+
+
+def test_retry_for_format_noise_accepts_topic_before_early_affection() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {
+            "role": "system",
+            "name": "affection_priority_final",
+            "content": "第一句直接说出对玩家本人的感受或愿望",
+        },
+        {
+            "role": "system",
+            "name": "quality_context",
+            "content": '{"flirtIntensity":"direct"}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="今天在酒窖忙了一天，不过我很想你。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_accepts_topic_then_warmth_in_one_natural_sentence() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {
+            "role": "system",
+            "name": "affection_priority_final",
+            "content": "爱意在前一两句自然出现，不套固定开场顺序",
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="今天在酒窖忙了一天，不过我很想你。新酒还给你留着。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_rewrites_mirror_restatement_before_answer() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "去海边听歌吗？"},
+    ]
+    result = ProviderResult(
+        reply="你是说去海边听歌吗？我也想和你一起去。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "我也想和你去海边听歌。"}),
+    )
+
+    assert retried.reply == "我也想和你去海边听歌。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "restatement_retry"
+    assert "不要用‘你是说’" in calls[0][-1]["content"]
+
+
+def test_retry_for_format_noise_prefers_warm_opening_over_lost_history_anchor() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {
+            "role": "system",
+            "name": "affection_priority_final",
+            "content": "第一句直接说出对玩家本人的感受或愿望",
+        },
+        {
+            "role": "system",
+            "name": "quality_context",
+            "content": '{"flirtIntensity":"direct"}',
+        },
+        {
+            "role": "system",
+            "name": "reply_contract",
+            "content": '{"historyAnchors":["今晚"],"mustMention":["摩托车"]}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="今晚天气不错，摩托车也检修好了。要不要一起兜风？",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: result.model_copy(
+            update={"reply": "我想你了。摩托车已经检修好，想和你一起兜风。"}
+        ),
+    )
+
+    assert retried.reply == "我想你了。摩托车已经检修好，想和你一起兜风。"

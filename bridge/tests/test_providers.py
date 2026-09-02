@@ -19,6 +19,7 @@ from stardew_ai_bridge.providers import (
     OpenAICompatibleProvider,
     Provider,
     ProviderRouter,
+    _default_provider_messages,
 )
 
 
@@ -179,6 +180,18 @@ def test_fake_provider_marks_topic_requests_as_proactive_demo_topics() -> None:
     assert "主动找话题" in result.reply
     assert "冬天" in result.reply
     assert "晚上" in result.reply
+
+
+def test_default_provider_messages_use_hidden_topic_trigger() -> None:
+    messages = _default_provider_messages(
+        DialogueTestRequest(npcId="Wizard", intent="topic")
+    )
+
+    assert messages[-1] == {
+        "role": "user",
+        "name": "topic_trigger",
+        "content": "",
+    }
 
 
 def test_models_serialize_api_field_aliases() -> None:

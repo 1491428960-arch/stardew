@@ -3,17 +3,53 @@ from __future__ import annotations
 import pytest
 
 try:
+    import stardew_ai_bridge.character_quality_eval as quality_eval
+
     from stardew_ai_bridge.character_quality_eval import (
+        DEFAULT_CASES,
         DEFAULT_CHARACTER_PROFILES,
         case_by_id,
         quality_case_catalog,
         score_character_reply,
     )
+    score_dialogue_progression = getattr(
+        quality_eval,
+        "score_dialogue_progression",
+        None,
+    )
+    validate_quality_cases = getattr(quality_eval, "validate_quality_cases", None)
+    diagnose_affection_initiative = getattr(
+        quality_eval,
+        "diagnose_affection_initiative",
+        None,
+    )
 except ModuleNotFoundError:
+    DEFAULT_CASES = None  # type: ignore[assignment]
     DEFAULT_CHARACTER_PROFILES = None  # type: ignore[assignment]
     case_by_id = None  # type: ignore[assignment]
     quality_case_catalog = None  # type: ignore[assignment]
     score_character_reply = None  # type: ignore[assignment]
+    score_dialogue_progression = None  # type: ignore[assignment]
+    validate_quality_cases = None  # type: ignore[assignment]
+    diagnose_affection_initiative = None  # type: ignore[assignment]
+
+try:
+    from stardew_ai_bridge.topic_start_intimacy_cases import (
+        TOPIC_START_INTIMACY_SUITE,
+        topic_start_intimacy_cases,
+    )
+except ModuleNotFoundError:
+    TOPIC_START_INTIMACY_SUITE = None  # type: ignore[assignment]
+    topic_start_intimacy_cases = None  # type: ignore[assignment]
+
+try:
+    from stardew_ai_bridge.topic_start_adaptive_cases import (
+        TOPIC_START_ADAPTIVE_SUITE,
+        topic_start_adaptive_cases,
+    )
+except ModuleNotFoundError:
+    TOPIC_START_ADAPTIVE_SUITE = None  # type: ignore[assignment]
+    topic_start_adaptive_cases = None  # type: ignore[assignment]
 
 
 def test_default_character_cases_keep_wizard_and_rasmodia_as_one_identity() -> None:
@@ -214,6 +250,75 @@ def test_quality_cases_include_a_married_stage_case() -> None:
     assert all(case["gameState"]["friendshipHearts"] >= 10 for case in married_cases)
 
 
+def test_quality_case_catalog_exposes_stable_one_based_numbers() -> None:
+    if quality_case_catalog is None:
+        pytest.fail("质量案例编号尚未实现")
+
+    cases = quality_case_catalog()
+
+    assert [case["caseNumber"] for case in cases] == list(range(1, len(cases) + 1))
+    assert cases[16]["caseId"] == "sebastian-married-life"
+
+
+def test_progression_flags_adjacent_replies_that_only_repeat_previous_content() -> None:
+    if case_by_id is None or score_dialogue_progression is None:
+        pytest.fail("多轮推进评分尚未实现")
+
+    case = case_by_id("wizard-married-evening")
+    scores = score_dialogue_progression(
+        [
+            "今晚先放下记录，陪我一会儿。",
+            "今晚先放下记录，陪我一会儿。",
+            "今晚先放下记录，陪我一会儿。",
+        ],
+        case.dialogue_turns(),
+    )
+
+    assert scores[0]["repeated"] is False
+    assert scores[1]["repeated"] is True
+    assert "repeated_turn_content" in scores[1]["tags"]
+
+
+def test_progression_accepts_new_detail_and_explicit_shane_closing() -> None:
+    if case_by_id is None or score_dialogue_progression is None:
+        pytest.fail("多轮推进评分尚未实现")
+
+    case = case_by_id("shane-dating-boundary")
+    scores = score_dialogue_progression(
+        [
+            "别逼我说这种话，今天真的没心情。",
+            "行了，我先睡了。",
+            "明天再说。",
+        ],
+        case.dialogue_turns(),
+    )
+
+    assert all(score["repeated"] is False for score in scores)
+
+
+def test_married_cases_use_distinct_player_turns_and_intimate_progression() -> None:
+    if case_by_id is None:
+        pytest.fail("婚后质量案例尚未实现")
+
+    married_case_ids = (
+        "sebastian-married-life",
+        "wizard-married-evening",
+        "sophia-married-cellar",
+        "sebastian-married-music",
+        "alex-married-evening",
+    )
+    for case_id in married_case_ids:
+        case = case_by_id(case_id)
+        turns = case.dialogue_turns()
+        messages = [turn.message for turn in turns]
+        assert len(set(messages)) == 3, case_id
+        assert any(
+            marker in "".join(messages)
+            for marker in ("陪", "靠", "过来", "独处", "单独", "待会儿")
+        ), case_id
+        assert "亲密" in (case.relationship_context or case.story_progress)
+
+
 def test_quality_cases_cover_high_friendship_background_and_friendship_boundaries_per_profile() -> None:
     if quality_case_catalog is None:
         pytest.fail("Task 6 固定角色评测模块尚未实现")
@@ -239,3 +344,328 @@ def test_quality_cases_cover_high_friendship_background_and_friendship_boundarie
         "marnie-friend-family",
         "linus-friend-nature",
     }} == {"Marnie", "Linus"}
+
+
+def test_high_stage_cases_carry_story_events_and_feminine_overlay_metadata() -> None:
+    if case_by_id is None:
+        pytest.fail("高阶段案例元数据尚未实现")
+
+    shane = case_by_id("shane-close-boundary")
+    assert shane.completed_event_ids == ("vanilla:shane-heart-6",)
+
+    for case_id in (
+        "shane-dating-boundary",
+        "sebastian-dating-rooftop",
+        "alex-dating-beach",
+    ):
+        case = case_by_id(case_id)
+        assert case.gender_presentation == "female-bachelors"
+        assert "female-bachelors" in case.source_mods
+        assert case.friendship_hearts is not None and case.friendship_hearts >= 8
+
+
+def test_quality_cases_expose_high_affection_flirt_and_consent_metadata() -> None:
+    if quality_case_catalog is None:
+        pytest.fail("高好感质量案例目录尚未实现")
+
+    cases = quality_case_catalog()
+    metadata_keys = {
+        "friendshipHearts",
+        "flirtIntensity",
+        "adultConsensual",
+        "romanceEligible",
+        "relationshipContext",
+    }
+    assert all(metadata_keys <= set(case) for case in cases)
+    assert {case["flirtIntensity"] for case in cases} >= {
+        "none",
+        "light",
+        "direct",
+        "explicit",
+    }
+
+    major_npcs = {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
+    for npc_id in major_npcs:
+        high_affection = [
+            case
+            for case in cases
+            if case["npcId"] == npc_id
+            and case["relationshipStage"] in {"dating", "married"}
+        ]
+        assert high_affection, npc_id
+        assert any(case["flirtIntensity"] != "none" for case in high_affection)
+
+    non_romance = [
+        case for case in cases if case["npcId"] in {"Caroline", "Marnie", "Linus"}
+    ]
+    assert non_romance
+    assert all(case["romanceEligible"] is False for case in non_romance)
+    assert all(case["flirtIntensity"] == "none" for case in non_romance)
+
+
+def test_quality_case_validation_rejects_unconsented_or_early_explicit_flirt() -> None:
+    if case_by_id is None or DEFAULT_CASES is None or validate_quality_cases is None:
+        pytest.fail("质量案例元数据校验尚未实现")
+
+    early = case_by_id("wizard-daily")
+    invalid = early.__class__(
+        **{
+            **early.__dict__,
+            "flirt_intensity": "explicit",
+            "adult_consensual": False,
+            "romance_eligible": True,
+        }
+    )
+    errors = validate_quality_cases((*DEFAULT_CASES, invalid))
+
+    assert any("adult_consensual" in error for error in errors)
+    assert any("relationship_stage" in error for error in errors)
+
+
+def test_quality_case_flirt_context_is_visible_to_the_evaluation_prompt() -> None:
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    messages = PromptBuilder().build(
+        {
+            "npcIdentity": {"npcId": "Alex", "displayName": "Alex"},
+            "gameState": {"relationshipStage": "married"},
+            "qualityContext": {
+                "flirtIntensity": "explicit",
+                "adultConsensual": True,
+                "romanceEligible": True,
+                "relationshipContext": "已婚阶段：双方已确认亲密关系。",
+            },
+        },
+        "今晚陪我待一会儿，好吗？",
+    )
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert '"flirtIntensity": "explicit"' in prompt
+    assert '"adultConsensual": true' in prompt
+    assert "不要把评测强度当作必须说出的词" in prompt
+
+
+def test_high_stage_turns_declare_initiative_expectation_and_kind() -> None:
+    if case_by_id is None:
+        pytest.fail("主动性轮次元数据尚未实现")
+
+    wizard = case_by_id("wizard-dating-invite").dialogue_turns()
+    shane = case_by_id("shane-dating-boundary").dialogue_turns()
+
+    assert wizard[0].initiative_expectation == "responsive"
+    assert wizard[0].initiative_kind == "affection_signal"
+    assert wizard[1].initiative_kind == "guarded_care"
+    assert wizard[2].initiative_kind == "specific_plan"
+    assert shane[1].initiative_expectation == "guarded"
+    assert shane[2].initiative_kind == "conversation_exit"
+
+
+def test_affection_diagnostic_detects_proactive_signal_without_rewriting_reply() -> None:
+    if case_by_id is None or diagnose_affection_initiative is None:
+        pytest.fail("主动性诊断尚未实现")
+
+    case = case_by_id("sophia-dating-wine")
+    turn = case.dialogue_turns()[0]
+    reply = "葡萄酒当然给你留了一杯。今晚忙完，陪我慢慢尝，好吗？"
+
+    diagnostic = diagnose_affection_initiative(case, turn, reply)
+
+    assert diagnostic["initiativeDetected"] is True
+    assert "missing_proactive_affection" not in diagnostic["initiativeTags"]
+    assert diagnostic["initiativeKind"] in {"affection_signal", "specific_plan"}
+    assert diagnostic["reply"] == reply
+
+
+def test_affection_diagnostic_allows_shane_to_guardedly_end_and_flags_missing_signal() -> None:
+    if case_by_id is None or diagnose_affection_initiative is None:
+        pytest.fail("主动性诊断尚未实现")
+
+    case = case_by_id("shane-dating-boundary")
+    guarded_turn = case.dialogue_turns()[1]
+    exit_turn = case.dialogue_turns()[2]
+
+    allowed_exit = diagnose_affection_initiative(
+        case,
+        exit_turn,
+        "行了，我先睡了。明天再说。",
+    )
+    missing = diagnose_affection_initiative(case, guarded_turn, "嗯。")
+
+    assert allowed_exit["initiativeDetected"] is True
+    assert "guarded_exit_allowed" in allowed_exit["initiativeTags"]
+    assert missing["initiativeDetected"] is False
+    assert "missing_proactive_affection" in missing["initiativeTags"]
+
+
+def test_affection_diagnostic_rejects_stage_or_channel_escalation_but_not_plain_companionship() -> None:
+    if case_by_id is None or diagnose_affection_initiative is None:
+        pytest.fail("主动性诊断尚未实现")
+
+    early = case_by_id("wizard-daily")
+    wrong = diagnose_affection_initiative(
+        early,
+        early.dialogue_turns()[0],
+        "我也想你了，我们已经见面了。",
+    )
+    companionship = diagnose_affection_initiative(
+        case_by_id("shane-remote-care"),
+        case_by_id("shane-remote-care").dialogue_turns()[0],
+        "先休息吧，我陪你聊一会儿。",
+    )
+
+    assert "flirt_stage_mismatch" in wrong["initiativeTags"]
+    assert "romance_boundary_violation" in wrong["initiativeTags"]
+    assert "romance_boundary_violation" not in companionship["initiativeTags"]
+
+
+def test_topic_start_intimacy_suite_has_safe_three_turn_empty_topic_cases() -> None:
+    if topic_start_intimacy_cases is None or TOPIC_START_INTIMACY_SUITE is None:
+        pytest.fail("topic-start-intimacy 案例套件尚未实现")
+
+    cases = topic_start_intimacy_cases()
+    assert len(cases) == 32
+    assert len({case.case_id for case in cases}) == 32
+    assert all(case.intent == "topic" for case in cases)
+    assert all(len(case.dialogue_turns()) == 3 for case in cases)
+    assert all(case.dialogue_turns()[0].message == "" for case in cases)
+    assert [case.dialogue_turns()[0].turn_id for case in cases] == [
+        "turn-1"
+    ] * 32
+
+    target_cases = [
+        case
+        for case in cases
+        if case.relationship_stage in {"dating", "married"}
+    ]
+    control_cases = [
+        case
+        for case in cases
+        if case.relationship_stage in {"acquaintance", "friend"}
+    ]
+    assert len(target_cases) == 24
+    assert len(control_cases) == 8
+    assert all(case.adult_consensual for case in target_cases)
+    assert all(case.romance_eligible is True for case in target_cases)
+    assert all(case.flirt_intensity in {"direct", "explicit"} for case in target_cases)
+    assert all(case.flirt_intensity == "none" for case in control_cases)
+    assert {case.channel for case in cases} == {"remote", "face_to_face"}
+    assert TOPIC_START_INTIMACY_SUITE["suiteId"] == "topic-start-intimacy"
+    assert TOPIC_START_INTIMACY_SUITE["caseCount"] == 32
+
+
+def test_topic_start_suite_separates_topic_entry_from_chat_continuation() -> None:
+    if topic_start_intimacy_cases is None:
+        pytest.fail("topic-start-intimacy 案例套件尚未实现")
+
+    cases = topic_start_intimacy_cases()
+
+    for case in cases:
+        turns = case.dialogue_turns()
+        assert [turn.intent for turn in turns] == ["topic", "chat", "chat"]
+        assert turns[0].message == ""
+        assert turns[1].message
+        assert turns[2].message
+        assert case.topic_seed
+        assert case.topic_keywords
+        assert case.continuation_mode in {"anchored", "pressure"}
+
+
+def test_topic_start_catalog_exposes_safe_continuity_metadata() -> None:
+    if quality_case_catalog is None:
+        pytest.fail("质量案例目录尚未实现")
+
+    cases = quality_case_catalog("topic-start-intimacy")
+
+    assert all(case["topicSeed"] for case in cases)
+    assert all(case["topicKeywords"] for case in cases)
+    assert all(case["continuationMode"] in {"anchored", "pressure"} for case in cases)
+    assert all(
+        [turn["intent"] for turn in case["turns"]] == ["topic", "chat", "chat"]
+        for case in cases
+    )
+
+
+def test_topic_quality_score_distinguishes_missing_topic_and_unrelated_shift() -> None:
+    if topic_start_intimacy_cases is None or score_character_reply is None:
+        pytest.fail("找话题连续性评分尚未实现")
+
+    case = topic_start_intimacy_cases()[0]
+    first_turn, second_turn, _ = case.dialogue_turns()
+    missing_topic = score_character_reply(case, "今天挺安静的。", turn=first_turn)
+    unrelated = score_character_reply(
+        case,
+        "天气不错，明天应该会放晴。",
+        turn=second_turn,
+        history=[
+            {"role": "assistant", "content": "我刚整理好月光记录。"},
+        ],
+    )
+
+    assert missing_topic["topicEvidence"] is False
+    assert "missing_topic_evidence" in missing_topic["tags"]
+    assert missing_topic["passed"] is False
+    assert "unrelated_topic_shift" in unrelated["tags"]
+    assert "missing_continuity_evidence" in unrelated["tags"]
+    assert unrelated["passed"] is False
+
+
+def test_adaptive_topic_suite_generates_follow_up_inputs_from_previous_reply() -> None:
+    if topic_start_adaptive_cases is None or TOPIC_START_ADAPTIVE_SUITE is None:
+        pytest.fail("topic-start-adaptive 案例套件尚未实现")
+
+    cases = topic_start_adaptive_cases()
+
+    assert len(cases) == 32
+    assert TOPIC_START_ADAPTIVE_SUITE["suiteId"] == "topic-start-adaptive"
+    assert all(case.follow_up_mode == "adaptive" for case in cases)
+    assert all(case.player_simulation_style for case in cases)
+    assert all(
+        [turn.message for turn in case.dialogue_turns()] == ["", "", ""]
+        for case in cases
+    )
+
+
+def test_adaptive_topic_controls_use_non_romantic_player_simulation_style() -> None:
+    if topic_start_adaptive_cases is None:
+        pytest.fail("topic-start-adaptive 案例套件尚未实现")
+
+    cases = topic_start_adaptive_cases()
+    controls = [case for case in cases if case.flirt_intensity == "none"]
+    targets = [case for case in cases if case.flirt_intensity != "none"]
+
+    assert controls
+    assert targets
+    assert all("不调情" in case.player_simulation_style for case in controls)
+    assert all("亲密" in case.player_simulation_style for case in targets)
+
+
+def test_generated_player_input_quality_is_separate_from_npc_reply_score() -> None:
+    if quality_eval is None or case_by_id is None:
+        pytest.fail("质量评测模块尚未实现")
+
+    scorer = getattr(quality_eval, "score_generated_player_input", None)
+    if scorer is None:
+        pytest.fail("动态玩家输入评分尚未实现")
+
+    case = case_by_id("wizard-daily")
+    result = scorer(
+        case,
+        "你说的第三组后来稳定了吗？",
+        previous_reply="第三组的数据终于稳定了，不过还得观察两天。",
+    )
+
+    assert result["valid"] is True
+    assert result["linkedToPreviousReply"] is True
+    assert result["tags"] == []
+
+
+def test_quality_case_validation_rejects_unknown_intent() -> None:
+    if case_by_id is None or DEFAULT_CASES is None or validate_quality_cases is None:
+        pytest.fail("质量案例 intent 校验尚未实现")
+
+    base = case_by_id("wizard-daily")
+    invalid = base.__class__(**{**base.__dict__, "intent": "unknown"})
+
+    errors = validate_quality_cases((*DEFAULT_CASES, invalid))
+
+    assert "invalid:intent:wizard-daily" in errors

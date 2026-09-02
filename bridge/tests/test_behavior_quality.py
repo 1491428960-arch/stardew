@@ -6,10 +6,11 @@ try:
     from stardew_ai_bridge.behavior_quality import (
         REVIEW_DIMENSIONS,
         review_passes,
+        diagnose_affection_initiative,
         sanitize_quality_artifact,
         validate_behavior_example,
     )
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     def _missing(*args: object, **kwargs: object) -> object:
         del args, kwargs
         pytest.fail("Task 1 行为样本质量契约尚未实现")
@@ -25,6 +26,7 @@ except ModuleNotFoundError:
         "boundarySafety",
     )
     review_passes = _missing
+    diagnose_affection_initiative = _missing
     sanitize_quality_artifact = _missing
     validate_behavior_example = _missing
 
@@ -125,3 +127,146 @@ def test_legacy_handcrafted_example_can_skip_review_for_compatibility() -> None:
 
     assert errors == []
     assert normalized is not None
+
+
+def test_human_approved_initiative_example_keeps_behavior_metadata() -> None:
+    normalized, errors = validate_behavior_example(
+        _example(
+            sourceType="human_approved",
+            initiativeKind="specific_plan",
+            initiativeExpectation="proactive",
+        ),
+        require_review=False,
+    )
+
+    assert errors == []
+    assert normalized is not None
+    assert normalized["sourceType"] == "human_approved"
+    assert normalized["initiativeKind"] == "specific_plan"
+
+
+def test_affection_diagnostic_does_not_treat_companionship_as_adult_escalation() -> None:
+    assert callable(diagnose_affection_initiative)
+
+
+def test_affection_diagnostic_flags_mechanical_restatement_against_actual_player_input() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            "relationship_stage": "dating",
+            "channel": "remote",
+            "flirt_intensity": "direct",
+            "adult_consensual": True,
+            "romance_eligible": True,
+        },
+        {
+            "initiative_expectation": "proactive",
+            "initiative_kind": "affection_signal",
+        },
+        "你刚才提到的月光与研究记录，我也可以继续说。",
+        player_input="你刚才提到的月光与研究记录，我想听下去。",
+    )
+
+    assert diagnostic["mechanicalRestatement"] is True
+    assert "mechanical_restatement" in diagnostic["initiativeTags"]
+
+
+def test_affection_diagnostic_flags_short_mirror_restatement() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            "relationship_stage": "dating",
+            "channel": "remote",
+            "flirt_intensity": "direct",
+            "adult_consensual": True,
+            "romance_eligible": True,
+        },
+        {
+            "initiative_expectation": "proactive",
+            "initiative_kind": "affection_signal",
+        },
+        "听起来你是说去海边吗？我也想和你去。",
+        player_input="去海边吗？",
+    )
+
+    assert diagnostic["mechanicalRestatement"] is True
+    assert "mechanical_restatement" in diagnostic["initiativeTags"]
+
+
+def test_proactive_affection_requires_more_than_a_plain_plan() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            "relationship_stage": "dating",
+            "channel": "remote",
+            "flirt_intensity": "direct",
+            "adult_consensual": True,
+            "romance_eligible": True,
+        },
+        {
+            "initiative_expectation": "proactive",
+            "initiative_kind": "specific_plan",
+        },
+        "今晚一起吃饭吧。",
+    )
+
+    assert diagnostic["initiativeDetected"] is False
+    assert "missing_proactive_affection" in diagnostic["initiativeTags"]
+
+
+def test_proactive_affection_accepts_natural_longing_variants() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            "relationship_stage": "dating",
+            "channel": "remote",
+            "flirt_intensity": "direct",
+            "adult_consensual": True,
+            "romance_eligible": True,
+        },
+        {
+            "initiative_expectation": "proactive",
+            "initiative_kind": "affection_signal",
+        },
+        "我在塔里想着你，见到你时总会觉得心里安静下来。",
+    )
+
+    assert diagnostic["initiativeDetected"] is True
+    assert "missing_proactive_affection" not in diagnostic["initiativeTags"]
+
+
+def test_proactive_affection_accepts_natural_player_directed_warmth() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            "relationship_stage": "dating",
+            "channel": "remote",
+            "flirt_intensity": "direct",
+            "adult_consensual": True,
+            "romance_eligible": True,
+        },
+        {
+            "initiative_expectation": "proactive",
+            "initiative_kind": "affection_signal",
+        },
+        "今晚的月光很适合记录，可惜你不在。我希望你就在旁边。",
+    )
+
+    assert diagnostic["initiativeDetected"] is True
+    assert "missing_proactive_affection" not in diagnostic["initiativeTags"]
+
+
+def test_proactive_affection_accepts_longing_expressed_as_looking_forward_to_player() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            "relationship_stage": "married",
+            "channel": "remote",
+            "flirt_intensity": "direct",
+            "adult_consensual": True,
+            "romance_eligible": True,
+        },
+        {
+            "initiative_expectation": "proactive",
+            "initiative_kind": "affection_signal",
+        },
+        "其实我一直盼着你来，甜点已经准备好了。",
+    )
+
+    assert diagnostic["initiativeDetected"] is True
+    assert "affection_signal" in diagnostic["initiativeTags"]
+    assert "missing_proactive_affection" not in diagnostic["initiativeTags"]

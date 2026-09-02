@@ -180,3 +180,121 @@ def test_scenario_catalog_uses_five_profiles_and_one_wizard_identity() -> None:
         if scenario["profileKey"] == "wizard_rasmodia"
     }
     assert wizard_ids == {"Wizard"}
+
+
+def test_repository_behavior_examples_cover_high_affection_for_all_five_roles() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    major_npcs = {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
+
+    for npc_id in major_npcs:
+        high_stage = [
+            example
+            for example in examples
+            if example.get("npcId") == npc_id
+            and set(example.get("relationshipStages", []))
+            & {"dating", "married"}
+        ]
+        assert {stage for example in high_stage for stage in example["relationshipStages"]} >= {
+            "dating",
+            "married",
+        }, npc_id
+
+    for npc_id in {"Shane", "Sebastian", "Alex"}:
+        overlay_examples = [
+            example
+            for example in examples
+            if example.get("npcId") == npc_id
+            and set(example.get("relationshipStages", []))
+            & {"dating", "married"}
+        ]
+        assert overlay_examples
+        assert all(
+            "female-bachelors" in example.get("sourceMods", [])
+            for example in overlay_examples
+        ), npc_id
+
+
+def test_high_stage_behavior_examples_make_affection_explicit_without_recap_template() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    high_stage = [
+        example
+        for example in payload["examples"]
+        if set(example.get("relationshipStages", [])) & {"dating", "married"}
+    ]
+    warmth_markers = (
+        "想你",
+        "想和你",
+        "想让你",
+        "陪你",
+        "陪我",
+        "给你留",
+        "留给你",
+        "留给我",
+        "靠近一点",
+        "高兴",
+        "在意",
+        "喜欢",
+        "期待",
+        "最想听你的",
+    )
+    recap_markers = ("你说得", "你说的", "听起来你", "所以你的意思")
+
+    assert high_stage
+    assert all(
+        any(marker in example["npcReply"] for marker in warmth_markers)
+        for example in high_stage
+    )
+    assert all(
+        not any(marker in example["npcReply"] for marker in recap_markers)
+        for example in high_stage
+    )
+
+
+def test_quality_scenarios_cover_high_stage_multiturn_story_metadata() -> None:
+    payload = json.loads(SCENARIOS.read_text(encoding="utf-8"))
+    scenarios = payload["scenarios"]
+    major_npcs = {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
+    high_stage = [
+        scenario
+        for scenario in scenarios
+        if scenario.get("npcId") in major_npcs
+        and scenario.get("relationshipStage") in {"dating", "married"}
+    ]
+
+    assert {scenario["npcId"] for scenario in high_stage} == major_npcs
+    assert all(scenario.get("friendshipHearts", 0) >= 8 for scenario in high_stage)
+    assert all(len(scenario.get("turns", [])) == 3 for scenario in high_stage)
+    assert all(scenario.get("relationshipContext") for scenario in high_stage)
+    assert any(scenario.get("completedEventIds") for scenario in high_stage)
+    assert all(
+        scenario.get("genderPresentation") == "female-bachelors"
+        for scenario in high_stage
+        if scenario["npcId"] in {"Shane", "Sebastian", "Alex"}
+    )
+    assert all(
+        scenario.get("initiativeExpectation") in {"proactive", "guarded"}
+        and scenario.get("initiativeKind")
+        for scenario in high_stage
+    )
+
+
+def test_quality_scenarios_include_shane_guarded_conversation_exit() -> None:
+    payload = json.loads(SCENARIOS.read_text(encoding="utf-8"))
+    scenario = next(
+        item
+        for item in payload["scenarios"]
+        if item.get("scenarioId") == "shane-dating-remote-exit"
+    )
+
+    assert scenario["initiativeExpectation"] == "guarded"
+    assert scenario["initiativeKind"] == "conversation_exit"
+    assert scenario["channel"] == "remote"

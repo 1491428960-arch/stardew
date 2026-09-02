@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from stardew_ai_bridge.personas import PersonaStore
-from stardew_ai_bridge.profile_index import ProfileIndexStore
+from stardew_ai_bridge.profile_index import ProfileIndexBuilder, ProfileIndexStore
 from stardew_ai_bridge.prompts import ContextBuilder, PromptBuilder
 
 
@@ -431,6 +431,52 @@ def test_context_stage_policy_is_not_the_descriptive_stage_profile() -> None:
     assert identity["stagePolicy"]["stage"] == "stranger"
     assert identity["stagePolicy"]["initiative"]
     assert identity["stagePolicy"]["boundaryMode"]
+
+
+def test_topic_context_keeps_same_stage_affection_reference_across_channels(
+    tmp_path: Path,
+) -> None:
+    """topic 的渠道仍约束实际对白，但不应丢掉同阶段的亲密表达示范。"""
+
+    persona_dir = Path(__file__).resolve().parents[2] / "data" / "personas"
+    index_path = tmp_path / "profile-index.json"
+    ProfileIndexBuilder.write(ProfileIndexBuilder(persona_dir).build(), index_path)
+
+    context = ContextBuilder(
+        PersonaStore(persona_dir),
+        ProfileIndexStore(index_path),
+    ).build(
+        "Wizard",
+        source_mods=["Romanceable Rasmodius"],
+        marriageStatus="married",
+        intent="topic",
+        channel="remote",
+        message="",
+    )
+
+    examples = context["behaviorExamples"]
+    assert any(
+        item.get("exampleId") == "wizard:married:evening:02"
+        and item.get("sourceType") == "human_approved"
+        for item in examples
+    )
+
+
+def test_context_exposes_story_state_and_gender_presentation() -> None:
+    context = ContextBuilder(
+        PersonaStore(Path(__file__).parents[2] / "data" / "personas")
+    ).build(
+        "Shane",
+        source_mods=["female-bachelors"],
+        friendshipHearts=10,
+        marriageStatus="married",
+        completedEventIds=["vanilla:shane-heart-6"],
+    )
+
+    identity = context["npcIdentity"]
+    assert identity["storyState"]["trustState"] == "established"
+    assert "recovery" in identity["storyState"]["completedStoryStates"]
+    assert identity["genderPresentation"]["layer"] == "expression_only"
 
 
 def test_context_marks_index_event_completed_when_runtime_flag_matches(

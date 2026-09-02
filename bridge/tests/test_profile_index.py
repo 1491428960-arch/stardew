@@ -64,6 +64,80 @@ def test_persona_layers_preserve_sources_and_overlay_boundaries(
     assert profiles["Wizard"]["displayName"] == "Wizard"
 
 
+def test_feminine_overlay_stays_profile_metadata_and_never_becomes_dialogue_source(
+    tmp_path: Path,
+) -> None:
+    persona_dir = tmp_path / "personas"
+    _write_json(
+        persona_dir / "vanilla.json",
+        {
+            "mod": "vanilla",
+            "personas": {
+                "Shane": {
+                    "npcId": "Shane",
+                    "displayName": "Shane",
+                    "coreTraits": ["直白", "疲惫"],
+                }
+            },
+        },
+    )
+    _write_json(
+        persona_dir / "female-bachelors.json",
+        {
+            "mod": "female-bachelors",
+            "personas": {
+                "Shane": {
+                    "genderPresentation": {
+                        "layer": "expression_only",
+                        "basePersonaPriority": "higher",
+                        "toneAdjustments": ["亲密时更容易露出尴尬"],
+                    }
+                }
+            },
+        },
+    )
+    corpus_path = tmp_path / "resolved.json"
+    _write_json(
+        corpus_path,
+        {
+            "schemaVersion": 1,
+            "records": [
+                {
+                    "sampleId": "vanilla:Shane:Rain",
+                    "npcId": "Shane",
+                    "sourceMod": "vanilla",
+                    "sourcePath": "Characters/Dialogue/Shane",
+                    "sourceKey": "Rain",
+                    "text": "下雨天，鸡舍里也得有人照看。",
+                    "evidenceKind": "dialogue",
+                }
+            ],
+        },
+    )
+
+    index = ProfileIndexBuilder(persona_dir).build(corpus_paths=[corpus_path])
+
+    profiles = index["profiles"]
+    assert isinstance(profiles, dict)
+    overlay = profiles["Shane"]["overlays"]["female-bachelors"]
+    assert overlay["genderPresentation"]["layer"] == "expression_only"
+    assert overlay["genderPresentation"]["basePersonaPriority"] == "higher"
+
+    samples = index["styleSamples"]
+    assert samples == [
+        {
+            "sampleId": "vanilla:Shane:Rain",
+            "npcId": "Shane",
+            "sourceMod": "vanilla",
+            "sourcePath": "Characters/Dialogue/Shane",
+            "sourceKey": "Rain",
+            "text": "下雨天，鸡舍里也得有人照看。",
+            "evidenceKind": "dialogue",
+        }
+    ]
+    assert all("genderPresentation" not in sample for sample in samples)
+
+
 def test_content_patcher_dialogue_keeps_i18n_reference_and_source_key(
     tmp_path: Path,
 ) -> None:
@@ -1780,7 +1854,7 @@ def test_bundled_behavior_examples_cover_five_evaluation_characters() -> None:
         for items in grouped.values()
     )
     assert all(
-        item.get("sourceType") == "handcrafted_example"
+        item.get("sourceType") in {"handcrafted_example", "human_approved"}
         and item.get("playerInput")
         and item.get("npcReply")
         and item.get("topicKeywords")
@@ -1795,6 +1869,130 @@ def test_bundled_behavior_examples_cover_five_evaluation_characters() -> None:
     assert "cookie" not in rendered
     assert "prompt" not in rendered
     assert not any(item.get("npcId") == "Rasmodia" for item in examples)
+
+
+@pytest.mark.parametrize(
+    ("npc_id", "source_mods", "stage", "channel", "player_input", "example_id", "kind"),
+    [
+        (
+            "Wizard",
+            ["Romanceable Rasmodius"],
+            "dating",
+            "remote",
+            "今天没什么要核对的，我只是想你了。你现在方便跟我聊一会儿吗？",
+            "wizard:dating:remote-invite:01",
+            "specific_plan",
+        ),
+        (
+            "Wizard",
+            ["Romanceable Rasmodius"],
+            "married",
+            "face_to_face",
+            "今晚别把时间都给那些记录，留一点给我，好吗？",
+            "wizard:married:evening:02",
+            "shared_evening",
+        ),
+        (
+            "Sophia",
+            ["Stardew Valley Expanded"],
+            "dating",
+            "face_to_face",
+            "你真的给我留了一杯？还是只想让我陪你尝一口呀？",
+            "sophia:dating:wine:01",
+            "playful_tease",
+        ),
+        (
+            "Sophia",
+            ["Stardew Valley Expanded"],
+            "married",
+            "face_to_face",
+            "今天那幅画画完了吗？晚饭后要不要给我看看？",
+            "sophia:married:painting:02",
+            "creative_share",
+        ),
+        (
+            "Shane",
+            ["female-bachelors"],
+            "dating",
+            "remote",
+            "你今天还好吗？要不要我过来陪你吃点东西？",
+            "shane:dating:care:01",
+            "guarded_care",
+        ),
+        (
+            "Shane",
+            ["female-bachelors"],
+            "married",
+            "face_to_face",
+            "今天谁去照看鸡舍？",
+            "shane:married:coop:02",
+            "guarded_care",
+        ),
+        (
+            "Sebastian",
+            ["female-bachelors"],
+            "dating",
+            "face_to_face",
+            "今晚一起听歌吗？",
+            "sebastian:dating:music:01",
+            "shared_evening",
+        ),
+        (
+            "Sebastian",
+            ["female-bachelors"],
+            "married",
+            "face_to_face",
+            "音乐停了，过来靠我近点？",
+            "sebastian:married:closeness:02",
+            "affection_signal",
+        ),
+        (
+            "Alex",
+            ["female-bachelors"],
+            "dating",
+            "face_to_face",
+            "我今天看起来怎么样？",
+            "alex:dating:compliment:01",
+            "playful_tease",
+        ),
+        (
+            "Alex",
+            ["female-bachelors"],
+            "married",
+            "face_to_face",
+            "比赛和晚饭都结束了，陪我出去走走？",
+            "alex:married:beach:02",
+            "specific_plan",
+        ),
+    ],
+)
+def test_bundled_approved_high_stage_examples_preserve_initiative_metadata(
+    tmp_path: Path,
+    npc_id: str,
+    source_mods: list[str],
+    stage: str,
+    channel: str,
+    player_input: str,
+    example_id: str,
+    kind: str,
+) -> None:
+    persona_dir = Path(__file__).resolve().parents[2] / "data" / "personas"
+    output = tmp_path / "profile-index.json"
+    ProfileIndexBuilder.write(ProfileIndexBuilder(persona_dir).build(), output)
+
+    selected = ProfileIndexStore(output).behavior_examples(
+        npc_id,
+        source_mods,
+        relationship_stage=stage,
+        channel=channel,
+        player_input=player_input,
+        limit=4,
+    )
+
+    matching = next(item for item in selected if item["exampleId"] == example_id)
+    assert matching["sourceType"] == "human_approved"
+    assert matching["initiativeExpectation"] == ("guarded" if npc_id == "Shane" else "proactive")
+    assert matching["initiativeKind"] == kind
 
 
 @pytest.mark.parametrize(

@@ -640,6 +640,22 @@ def test_prompt_builder_renders_selected_profile_layers() -> None:
     assert identity["knowledgeRules"]["cannotAssume"]
 
 
+def test_prompt_places_base_persona_before_gender_and_story_layers() -> None:
+    context = ContextBuilder(PersonaStore(PERSONAS_DIR)).build(
+        "Shane",
+        source_mods=["female-bachelors"],
+        friendshipHearts=10,
+        marriageStatus="married",
+        completedEventIds=["vanilla:shane-heart-6"],
+    )
+
+    messages = PromptBuilder().build(context, "今天还好吗？")
+    names = [item.get("name") for item in messages]
+
+    assert names.index("persona_core") < names.index("gender_presentation")
+    assert names.index("gender_presentation") < names.index("story_state")
+
+
 def test_prompt_builder_renders_voice_card_as_separate_safe_message() -> None:
     context = {
         "npcIdentity": {"npcId": "Rasmodia", "displayName": "Rasmodia"},
@@ -2278,7 +2294,9 @@ def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
         "system",
         "system",
         "system",
+        "system",
         "assistant",
+        "system",
         "system",
         "system",
         "system",
@@ -2288,9 +2306,11 @@ def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
     assert [message["name"] for message in messages] == [
         "safety_rules",
         "persona_core",
+        "story_state",
         "mod_overlay",
         "game_state",
         "conversation_history",
+        "progression_guard",
         "post_history_voice_guard",
         "voice_variation",
         "stage_execution_card",
@@ -2301,6 +2321,105 @@ def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
     assert "secret-api-key" not in rendered
     assert "api_key" not in rendered
     assert messages[-1]["content"] == "你好"
+
+
+def test_compact_prompt_limits_repeated_evidence_history_and_order_metadata() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Wizard",
+            "displayName": "Rasmodia",
+            "coreTraits": ["克制", "直接"],
+            "voiceStyle": {
+                "tone": "克制、干燥、偶尔温柔",
+                "sentencePattern": ["短句", "停顿"],
+                "responseRules": ["直接回答", "少用反问"],
+                "speechParticleHints": ["嗯", "好吧"],
+            },
+            "stageProfile": {
+                "stage": "dating",
+                "topicPool": ["研究", "夜晚"],
+                "boundaries": ["尊重同意"],
+            },
+            "stagePolicy": {
+                "stage": "dating",
+                "responseShape": "1-3句",
+                "initiative": "主动表达",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "responseOrder": ["先回答", "再亲近", "最后安排"],
+                    "allowedKinds": ["affection_signal", "specific_plan"],
+                    "minimumExpression": "自然表达对玩家的偏爱",
+                },
+            },
+            "storyState": {
+                "relationshipStage": "dating",
+                "behaviorInstruction": "保持角色语气",
+            },
+        },
+        "modSources": ["Romanceable Rasmodius"],
+        "gameState": {"season": "秋", "location": "法师塔"},
+        "recentFacts": ["第三组正在复测"],
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "adultConsensual": True,
+            "romanceEligible": True,
+            "relationshipContext": "双方已经确认恋爱关系",
+            "initiativeExpectation": "proactive",
+            "initiativeKind": "affection_signal",
+        },
+        "interaction": {"intent": "chat", "channel": "face_to_face"},
+        "history": [
+            {"role": "user", "content": f"历史玩家消息{i}"}
+            for i in range(1, 8)
+        ]
+        + [
+            {"role": "assistant", "content": f"历史 NPC 回复{i}"}
+            for i in range(1, 8)
+        ],
+        "voiceCard": {
+            "voiceAnchors": [
+                {"text": "样本一"},
+                {"text": "样本二"},
+                {"text": "样本三"},
+            ]
+        },
+        "styleSamples": [{"text": f"语气样本{i}"} for i in range(1, 4)],
+        "speechEvidence": [{"text": f"原文样本{i}"} for i in range(1, 4)],
+        "behaviorExamples": [
+            {
+                "exampleId": f"example-{i}",
+                "npcId": "Wizard",
+                "sourceType": "human_approved",
+                "playerInput": f"玩家示范{i}",
+                "npcReply": f"NPC示范{i}",
+                "topic": "日常",
+            }
+            for i in range(1, 4)
+        ],
+        "knowledgeFacts": [{"summary": f"事实{i}", "knowledgeScope": "canon_confirmed"} for i in range(1, 4)],
+        "knownCharacters": [
+            {"knownNpcId": "Abigail", "summary": "关系摘要"}
+        ],
+        "storyEvents": [
+            {"eventId": "event-1", "summary": "已完成事件"}
+        ],
+    }
+
+    messages = PromptBuilder().build(context, "最近怎么样？", compact=True)
+    rendered = json.dumps(messages, ensure_ascii=False)
+    names = [message.get("name") for message in messages]
+
+    assert len(rendered) < len(json.dumps(PromptBuilder().build(context, "最近怎么样？"), ensure_ascii=False))
+    assert len(json.loads(next(message["content"] for message in messages if message.get("name") == "speech_evidence"))["speechEvidence"]) <= 1
+    assert len(json.loads(next(message["content"] for message in messages if message.get("name") == "style_evidence"))["styleSamples"]) <= 1
+    behavior_cards = [
+        message for message in messages if message.get("name") == "behavior_examples"
+    ]
+    if behavior_cards:
+        assert len(json.loads(behavior_cards[0]["content"])["examples"]) <= 1
+    assert len([name for name in names if name == "conversation_history"]) <= 4
+    assert "responseOrder" not in rendered
+    assert "player_input" in names
 
 
 def test_context_and_prompt_redact_sensitive_values_in_allowed_strings() -> None:
@@ -2655,6 +2774,74 @@ def test_plain_dialogue_does_not_use_topic_bearing_behavior_few_shot() -> None:
     assert "整理一批符文数据" not in rendered
     assert "daily_status" in rendered
     assert "今天比昨天安静一点" in rendered
+
+
+def test_topic_prompt_uses_hidden_empty_trigger_without_a_player_message() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Wizard",
+            "displayName": "Rasmodia",
+            "stageProfile": {"stage": "friend"},
+        },
+        "interaction": {"intent": "topic"},
+        "gameState": {"season": "春", "time": 800},
+        "history": [
+            {"role": "assistant", "content": "最近塔里的蜡烛烧得很快。"},
+        ],
+    }
+
+    messages = PromptBuilder().build(context, "")
+    names = [message["name"] for message in messages]
+    rendered = json.dumps(messages, ensure_ascii=False)
+
+    assert "player_input" not in names
+    assert names[-1] == "topic_trigger"
+    assert messages[-1]["role"] == "user"
+    assert messages[-1]["content"] == ""
+    assert "topic_response_contract" in names
+    assert "主动找一个自然、符合当前情境的话题" in rendered
+    assert "请主动找一个自然的话题。" not in rendered
+
+
+def test_topic_prompt_projects_seed_and_chat_prompt_uses_continuation_contract() -> None:
+    topic_context = {
+        "npcIdentity": {
+            "npcId": "Sebastian",
+            "displayName": "Sebastian",
+            "stageProfile": {"stage": "dating"},
+        },
+        "interaction": {"intent": "topic", "channel": "remote"},
+        "qualityContext": {
+            "topicSeed": "新歌单",
+            "topicKeywords": ["歌单", "音乐"],
+            "continuationMode": "anchored",
+            "flirtIntensity": "direct",
+        },
+        "history": [],
+    }
+    topic_messages = PromptBuilder().build(topic_context, "")
+    topic_rendered = json.dumps(topic_messages, ensure_ascii=False)
+
+    assert any('"topicSeed": "新歌单"' in message["content"] for message in topic_messages)
+    assert any('"topicKeywords": ["歌单", "音乐"]' in message["content"] for message in topic_messages)
+    assert any('"continuationMode": "anchored"' in message["content"] for message in topic_messages)
+    assert "具体且可以继续聊下去" in topic_rendered
+
+    chat_context = {
+        **topic_context,
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "history": [
+            {"role": "assistant", "content": "我刚整理好一张新歌单。"},
+        ],
+    }
+    chat_messages = PromptBuilder().build(chat_context, "你说的是哪种音乐？")
+    chat_names = [message["name"] for message in chat_messages]
+    chat_rendered = json.dumps(chat_messages, ensure_ascii=False)
+
+    assert "continuation_contract" in chat_names
+    assert any("先回答当前玩家输入" in message["content"] for message in chat_messages)
+    assert "topic_response_contract" not in chat_names
+    assert chat_names[-1] == "player_input"
 
 
 def test_plain_generic_small_talk_uses_only_the_daily_behavior_few_shot() -> None:
@@ -3044,3 +3231,332 @@ def test_prompt_adds_voice_variation_card_after_history_before_player_input() ->
     assert "不必使用" in variation["content"]
     assert "同一语气词不能连续重复" in variation["content"]
     assert "嗯" in variation["content"]
+
+
+def test_prompt_adds_progression_guard_after_history_before_player_input() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sebastian",
+            "displayName": "Sebastian",
+            "stageProfile": {"stage": "married"},
+        },
+        "modSources": ["vanilla", "female-bachelors"],
+        "gameState": {"relationshipStage": "married"},
+        "history": [
+            {"role": "user", "content": "厨房我来收尾，你去把电脑关了。"},
+            {"role": "assistant", "content": "好，厨房交给我。"},
+        ],
+    }
+
+    messages = PromptBuilder().build(context, "那现在过来陪我坐一会儿？")
+    names = [message["name"] for message in messages]
+    guard_index = names.index("progression_guard")
+    history_indices = [
+        index for index, name in enumerate(names) if name == "conversation_history"
+    ]
+
+    assert history_indices[-1] < guard_index < names.index("player_input")
+    guard = next(message for message in messages if message["name"] == "progression_guard")
+    assert "新增一个具体进展" in guard["content"]
+    assert "明确收口" in guard["content"]
+    assert "不能只改写上一句" in guard["content"]
+
+
+def test_prompt_adds_affection_initiative_card_for_dating_without_waiting_for_love_words() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sophia",
+            "displayName": "Sophia",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "responseShape": "通常 2–3 句",
+                "selfDisclosure": "可以分享当天的小事",
+                "initiative": "可以主动安排约会",
+                "followUp": "确认对方意愿",
+                "boundaryMode": "尊重同意",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["affection_signal", "specific_plan"],
+                    "maxActions": 1,
+                    "channelRules": {
+                        "remote": "只能提出待确认安排",
+                        "face_to_face": "可以描述当面反应",
+                    },
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "light",
+            "adultConsensual": True,
+            "romanceEligible": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "今天葡萄园忙不忙？")
+    names = [message["name"] for message in messages]
+    card = json.loads(
+        next(message for message in messages if message["name"] == "affection_initiative")[
+            "content"
+        ]
+    )
+
+    assert names.index("quality_context") < names.index("affection_initiative")
+    assert names.index("affection_initiative") < names.index("player_input")
+    assert card["affectionInitiative"]["initiativeMode"] == "proactive"
+    assert "不需要等待玩家先说情话" in card["instruction"]
+    assert "最多一个亲密动作" in card["instruction"]
+    assert "远程" in card["instruction"]
+    assert card["affectionInitiative"]["minimumExpression"]
+    assert "不要先复述、改写或总结玩家原话" in card["instruction"]
+    assert "不只礼貌答题" in card["instruction"]
+    assert "功能性邀约不够" in card["instruction"]
+    assert "为什么想和玩家相处" in card["instruction"]
+    assert "明确指向玩家本人" in card["instruction"]
+    assert "让爱意在自然位置尽早出现" in card["instruction"]
+    assert "不要把每轮回复写成固定顺序" in card["instruction"]
+
+
+def test_prompt_places_a_final_affection_priority_check_before_the_player_turn() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sebastian",
+            "displayName": "Sebastian",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["companionship", "specific_plan"],
+                    "maxActions": 1,
+                    "channelRules": {"remote": "只提出待确认安排"},
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "romanceEligible": True,
+            "adultConsensual": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "你最近在听什么歌？")
+    names = [message["name"] for message in messages]
+    final_check = next(
+        message for message in messages if message["name"] == "affection_priority_final"
+    )
+
+    assert names.index("affection_priority_final") < names.index("player_input")
+    assert names.index("affection_initiative") < names.index("affection_priority_final")
+    assert "爱意在自然位置尽早出现" in final_check["content"]
+    assert "不要让天气、地点、工作、物品或安排占满开场" in final_check["content"]
+    assert "不要先复述或总结玩家原话" in final_check["content"]
+
+
+def test_prompt_affection_card_keeps_explicit_consent_and_end_boundaries() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Shane",
+            "displayName": "Shane",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "affectionInitiative": {
+                    "initiativeMode": "guarded",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["guarded_care", "conversation_exit"],
+                    "maxActions": 1,
+                    "channelRules": {"remote": "不写成见面"},
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "explicit",
+            "adultConsensual": False,
+            "romanceEligible": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "算了，你先休息，我不打扰了。")
+    card = next(
+        message for message in messages if message["name"] == "affection_initiative"
+    )
+    rendered = card["content"]
+
+    assert "explicit" in rendered
+    assert "同意" in rendered
+    assert "明确结束" in rendered
+
+
+def test_prompt_direct_reply_does_not_force_a_restatement_before_the_answer() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sophia",
+            "displayName": "Sophia",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "responseShape": "通常 2–3 句",
+                "selfDisclosure": "可以分享当天的小事",
+                "initiative": "可以主动安排约会",
+                "followUp": "确认对方意愿",
+                "boundaryMode": "尊重同意",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["affection_signal", "specific_plan"],
+                    "minimumExpression": "每轮至少自然表达一处爱意",
+                    "maxActions": 1,
+                    "channelRules": {"remote": "只提出待确认安排"},
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {"flirtIntensity": "direct"},
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "今天葡萄园忙不忙？")
+    rendered = json.dumps(messages, ensure_ascii=False)
+
+    assert "不要先复述、改写或总结玩家原话" in rendered
+    assert "直接接住其意思并推进" in rendered
+    assert "不得调情" in rendered
+    assert "已经见面" in rendered
+
+
+def test_topic_prompt_uses_approved_affection_pair_and_concrete_warmth_signal() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Wizard",
+            "displayName": "Rasmodia",
+            "stageProfile": {"stage": "married"},
+            "stagePolicy": {
+                "stage": "married",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["affection_signal", "shared_evening"],
+                    "warmthSignals": [
+                        "让玩家明确感到自己被想念或被单独选择",
+                        "把陪伴说成因为在乎玩家，而不是事务安排",
+                    ],
+                    "maxActions": 1,
+                    "channelRules": {"remote": "只提出待确认安排"},
+                },
+            },
+        },
+        "interaction": {"intent": "topic", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "romanceEligible": True,
+            "adultConsensual": True,
+        },
+        "behaviorExamples": [
+            {
+                "exampleId": "wizard:married:evening:02",
+                "sourceType": "human_approved",
+                "relationshipStages": ["married"],
+                "channels": ["face_to_face"],
+                "topic": "shared_evening",
+                "playerInput": "今晚别把时间都给那些记录，留一点给我，好吗？",
+                "npcReply": "可以。把记录先放一边，过来坐一会儿。",
+            },
+            {
+                "exampleId": "draft-do-not-teach",
+                "sourceType": "model_draft",
+                "relationshipStages": ["married"],
+                "channels": ["remote"],
+                "playerInput": "你在做什么？",
+                "npcReply": "这条草稿不应进入示范。",
+            },
+        ],
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "")
+    names = [message["name"] for message in messages]
+    rendered = json.dumps(messages, ensure_ascii=False)
+
+    assert "behavior_example_user" in names
+    assert "behavior_example_assistant" in names
+    assert "这条草稿不应进入示范" not in rendered
+    affection = json.loads(
+        next(message for message in messages if message["name"] == "affection_initiative")[
+            "content"
+        ]
+    )
+    assert affection["affectionInitiative"]["warmthSignals"]
+    assert "被想念" in affection["instruction"]
+    assert "仅说共同安排不够" in affection["instruction"]
+    assert "功能性邀约不够" in affection["instruction"]
+    assert "明确指向玩家本人" in affection["instruction"]
+    topic = json.loads(
+        next(message for message in messages if message["name"] == "topic_response_contract")[
+            "content"
+        ]
+    )
+    assert "爱意" in topic["instruction"]
+    assert "至少一处可感知的爱意" in topic["instruction"]
+    assert "不要先复述或总结玩家不存在的原话" in topic["instruction"]
+    assert "输出前默默检查" in topic["instruction"]
+    assert "不能用反问或功能性邀约替代" in topic["instruction"]
+    assert "让爱意在前一两句自然出现" in topic["instruction"]
+    assert "不能只用功能性邀约暗示" in topic["instruction"]
+    assert names[-1] == "topic_trigger"
+
+
+def test_affection_prompt_allows_natural_early_warmth_without_fixed_three_part_order() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sophia",
+            "displayName": "Sophia",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["affection_signal", "specific_plan"],
+                    "maxActions": 1,
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {"flirtIntensity": "direct"},
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "今天在酒窖忙了一天，不过我很想你。")
+    affection = json.loads(
+        next(message for message in messages if message["name"] == "affection_initiative")[
+            "content"
+        ]
+    )
+    final_check = next(
+        message for message in messages if message["name"] == "affection_priority_final"
+    )
+
+    instruction = affection["instruction"]
+    assert "不要把每轮回复写成固定顺序" in instruction
+    assert "前一两句" in instruction
+    assert "不要每次都用同一套" in instruction
+    assert "回复顺序固定为" not in instruction
+    assert "第一句先让玩家听见" not in instruction
+    assert "不要套固定开场顺序" in final_check["content"]
+    assert "前一两句" in final_check["content"]
+    assert "第一句直接说出对玩家本人的感受或愿望" not in final_check["content"]

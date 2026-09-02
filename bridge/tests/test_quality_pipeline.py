@@ -163,6 +163,25 @@ def test_pipeline_draft_instruction_requires_npc_reply_field() -> None:
     assert "npcReply" in generator.calls[0][0]["content"]
 
 
+def test_pipeline_copies_affection_metadata_into_candidate_defaults() -> None:
+    generator = ScriptedGenerator(
+        [draft_json("可以。你挑个时间。", "draft-initiative"), review_json()]
+    )
+    scenario = {
+        **SCENARIO,
+        "initiativeExpectation": "proactive",
+        "initiativeKind": "specific_plan",
+    }
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=scenario,
+        candidate_count=1,
+    )
+
+    assert run.candidates[0]["initiativeExpectation"] == "proactive"
+    assert run.candidates[0]["initiativeKind"] == "specific_plan"
+
+
 def test_pipeline_review_instruction_lists_fixed_dimensions_and_score_range() -> None:
     generator = ScriptedGenerator(
         [draft_json("候选回复", "draft-1"), review_json()]

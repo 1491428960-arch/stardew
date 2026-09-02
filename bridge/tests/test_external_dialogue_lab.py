@@ -59,8 +59,26 @@ def test_case_browser_exposes_affinity_stage_filters_and_style_quality_labels() 
         'id="coverage-high-affinity"',
         "relationshipStageLabel",
         "friendshipHearts",
+        "flirtIntensity",
+        "adultConsensual",
+        "relationshipContext",
+        "调情强度",
         "repeated_speech_particle",
         "styleQuality",
+    ):
+        assert marker in html
+
+
+def test_case_browser_separates_generated_player_input_quality_from_npc_score() -> None:
+    html = TestClient(app).get("/test").text
+
+    for marker in (
+        "playerInputMode",
+        "generated_after_previous_reply",
+        "玩家输入来源",
+        "玩家输入质量",
+        "NPC 回复评分",
+        "linkedToPreviousReply",
     ):
         assert marker in html
 
@@ -104,6 +122,15 @@ def test_existing_chat_lab_remains_available_under_chat_route() -> None:
     assert response.status_code == 200
     assert 'id="message-input"' in response.text
     assert 'id="send"' in response.text
+
+
+def test_chat_lab_topic_button_does_not_render_internal_topic_prompt_as_player_bubble() -> None:
+    html = _chat_html()
+
+    send_body = _function_body(html, "sendDialogue")
+    assert 'intent==="topic"' in send_body
+    assert "请主动找话题" not in send_body
+    assert "请结合当前场景主动找一个合适的话题" not in send_body
 
 
 def test_shared_ui_dialogue_lab_pages_share_the_same_workspace_shell() -> None:
@@ -267,8 +294,25 @@ def test_quality_case_browser_exposes_case_navigation_and_detail_rendering() -> 
         "forbiddenTerms",
         "history",
         "playerInput",
+        "initiativeExpectation",
+        "initiativeKind",
+        "主动回撩",
+        "具体邀约",
+        "克制接住",
+        "允许收口",
     ):
         assert marker in html
+
+
+def test_quality_case_browser_follows_latest_suite_with_url_override() -> None:
+    html = TestClient(app).get("/test").text
+    load_cases_body = _function_body(html, "loadQualityCases")
+
+    assert "await loadQualityResults()" in load_cases_body
+    assert "summary.suite" in load_cases_body
+    assert "URLSearchParams(window.location.search)" in load_cases_body
+    assert "encodeURIComponent" in load_cases_body
+    assert "/api/quality/cases?suite=" in load_cases_body
 
 
 def test_quality_case_browser_embedded_javascript_is_syntactically_valid() -> None:
@@ -305,6 +349,67 @@ def test_quality_cases_endpoint_exposes_sanitized_existing_cases() -> None:
     assert case["history"]
     assert "expectedTerms" in case
     assert "forbiddenTerms" in case
+    high_case = next(
+        item for item in payload["cases"] if item["caseId"] == "alex-married-evening"
+    )
+    assert high_case["friendshipHearts"] == 10
+    assert high_case["flirtIntensity"] == "explicit"
+    assert high_case["adultConsensual"] is True
+    assert high_case["relationshipContext"]
+    assert [item["caseNumber"] for item in payload["cases"]] == list(
+        range(1, len(payload["cases"]) + 1)
+    )
+
+
+def test_quality_cases_endpoint_can_select_topic_start_intimacy_suite() -> None:
+    response = TestClient(app).get(
+        "/api/quality/cases?suite=topic-start-intimacy"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schemaVersion"] == 1
+    assert payload["suite"] == "topic-start-intimacy"
+    assert len(payload["cases"]) == 32
+    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 33))
+    assert all(item["intent"] == "topic" for item in payload["cases"])
+    assert all(item["playerInput"] == "" for item in payload["cases"])
+    assert all(item["topicSeed"] for item in payload["cases"])
+    assert all(item["topicKeywords"] for item in payload["cases"])
+    assert all(
+        [turn["intent"] for turn in item["turns"]] == ["topic", "chat", "chat"]
+        for item in payload["cases"]
+    )
+
+
+def test_quality_cases_endpoint_can_select_reply_driven_adaptive_suite() -> None:
+    response = TestClient(app).get(
+        "/api/quality/cases?suite=topic-start-adaptive"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["suite"] == "topic-start-adaptive"
+    assert payload["source"] == (
+        "topic_start_adaptive_cases.TOPIC_START_ADAPTIVE_CASES"
+    )
+    assert len(payload["cases"]) == 32
+    assert all(item["followUpMode"] == "adaptive" for item in payload["cases"])
+    assert all(
+        [turn["playerInputMode"] for turn in item["turns"]]
+        == ["fixed", "generated_after_previous_reply", "generated_after_previous_reply"]
+        for item in payload["cases"]
+    )
+    assert all(
+        [turn["playerInput"] for turn in item["turns"]] == ["", "", ""]
+        for item in payload["cases"]
+    )
+
+
+def test_quality_cases_endpoint_rejects_unknown_suite() -> None:
+    response = TestClient(app).get("/api/quality/cases?suite=not-a-suite")
+
+    assert response.status_code == 400
 
 
 def test_quality_results_endpoint_exposes_latest_sanitized_generated_batch(
@@ -367,6 +472,49 @@ def test_quality_results_preserve_safe_style_quality_labels_only(
     assert "secret prompt" not in response.text
 
 
+def test_quality_results_preserve_safe_progression_statistics_only(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "20260901-progression"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        '{"schemaVersion":2,"caseCount":1,"successful":1,"errors":0,'
+        '"passed":0,"passedCases":0,"passedTurns":1,'
+        '"turnPassRate":0.3333,"casePassRate":0.0}',
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        '{"caseId":"wizard-married-evening","caseNumber":25,'
+        '"casePassed":false,"passedTurnCount":1,"failedTurnCount":2,'
+        '"progression":{"passed":false,"tags":["repeated_turn_content"],'
+        '"overlap":0.91,"novelExpectedTerms":[]},'
+        '"prompt":"secret prompt","apiKey":"secret"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "quality_artifact_root", tmp_path, raising=False)
+
+    response = TestClient(app).get("/api/quality/results")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["passedTurns"] == 1
+    assert payload["summary"]["passedCases"] == 0
+    assert payload["summary"]["turnPassRate"] == 0.3333
+    result = payload["results"][0]
+    assert result["caseNumber"] == 25
+    assert result["casePassed"] is False
+    assert result["passedTurnCount"] == 1
+    assert result["progression"] == {
+        "passed": False,
+        "tags": ["repeated_turn_content"],
+        "overlap": 0.91,
+        "novelExpectedTerms": [],
+    }
+    assert "secret prompt" not in response.text
+    assert "apiKey" not in response.text
+
+
 def test_case_browser_loads_and_renders_real_quality_results() -> None:
     html = TestClient(app).get("/test").text
 
@@ -379,6 +527,21 @@ def test_case_browser_loads_and_renders_real_quality_results() -> None:
         "renderCaseResult",
     ):
         assert marker in html
+
+
+def test_case_browser_separates_npc_pass_rate_from_adaptive_player_input_quality() -> None:
+    html = TestClient(app).get("/test").text
+    render_batch_body = _function_body(html, "renderBatchSummary")
+
+    for marker in (
+        "NPC 单轮通过",
+        "动态玩家输入质量",
+        "playerInputValidCount",
+        "playerInputGenerationCount",
+        "playerInputInvalidCount",
+        "playerInputQualityTags",
+    ):
+        assert marker in render_batch_body
 
 
 def test_case_browser_renders_multiturn_transcript_and_usage_summary() -> None:
@@ -395,6 +558,32 @@ def test_case_browser_renders_multiturn_transcript_and_usage_summary() -> None:
         "missingUsageTurns",
         "estimatedCost",
         "用量未返回",
+    ):
+        assert marker in html
+
+
+def test_case_browser_exposes_case_numbers_progression_and_pass_rates() -> None:
+    html = TestClient(app).get("/test").text
+
+    for marker in (
+        "caseNumber",
+        "case-position",
+        "repeated_turn_content",
+        "passedTurns",
+        "passedCases",
+        "单轮通过",
+        "完整案例通过",
+    ):
+        assert marker in html
+
+
+def test_case_browser_exposes_mechanical_restatement_diagnostic() -> None:
+    html = TestClient(app).get("/test").text
+
+    for marker in (
+        "mechanicalRestatement",
+        "mechanicalRestatementCount",
+        "机械复述玩家",
     ):
         assert marker in html
 

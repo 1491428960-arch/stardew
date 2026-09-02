@@ -163,6 +163,39 @@ def test_dialogue_passes_app_built_messages_to_provider_router(
     assert "上次见面时我问过天气。" in rendered
 
 
+def test_topic_dialogue_does_not_pass_internal_topic_prompt_as_player_input(
+    monkeypatch: Any,
+) -> None:
+    app_module = importlib.import_module("stardew_ai_bridge.app")
+    router = RecordingRouter()
+    monkeypatch.setattr(app_module, "provider_router", router)
+
+    response = TestClient(app_module.app).post(
+        "/api/dialogue/test",
+        json={
+            "npcId": "Wizard",
+            "intent": "topic",
+            "message": "请主动找一个自然的话题。",
+            "provider": "cloud",
+        },
+    )
+
+    assert response.status_code == 200
+    assert router.messages is not None
+    topic_triggers = [
+        message
+        for message in router.messages
+        if message["name"] == "topic_trigger"
+    ]
+    assert topic_triggers == [
+        {"role": "user", "name": "topic_trigger", "content": ""}
+    ]
+    assert all(
+        "请主动找一个自然的话题。" not in message["content"]
+        for message in router.messages
+    )
+
+
 def test_provider_router_forwards_complete_messages_to_provider() -> None:
     from stardew_ai_bridge.providers import ProviderRouter
 
