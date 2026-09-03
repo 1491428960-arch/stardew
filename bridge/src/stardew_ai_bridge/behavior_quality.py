@@ -390,6 +390,53 @@ _ROMANTIC_MARKERS = (
     "吻",
     "亲密",
 )
+_PERSONAL_AFFECTION_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
+    "player_directed_preference": (
+        re.compile(r"(?:想你|想念你|想着你|想起你|想到你|惦记你|在意你|喜欢你|偏爱你|舍不得你)"),
+        re.compile(r"(?:有|跟|和)你.{0,12}(?:安心|安静|高兴|自在)"),
+        re.compile(r"(?:一直|总|还).{0,4}等你(?:.{0,8}(?:说|来|有空))?"),
+        re.compile(r"(?:最想|只想).{0,8}(?:和|跟)你"),
+        re.compile(r"可惜你不在"),
+        re.compile(r"希望你.{0,8}(?:旁边|身边|在)"),
+        re.compile(r"盼(?:着)?你来"),
+    ),
+    "exclusive_share": (
+        re.compile(r"(?:只想|只|先).{0,8}给你(?:看|听)"),
+        re.compile(r"(?:只|特地).{0,8}留给你"),
+        re.compile(r"给你留(?:了)?(?:一|这|那)?(?:杯|份|瓶)"),
+        re.compile(r"(?:别人|其他人).{0,8}(?:没有|不必|不用).{0,8}(?:给|看|听)"),
+    ),
+    "player_caused_anticipation": (
+        re.compile(r"因为你.{0,8}(?:会来|要来|会听|会看|喜欢|想要)"),
+        re.compile(r"你一(?:说|提|来).{0,10}(?:期待|开始|挑|留|准备)"),
+        re.compile(r"(?:等|想等)你来.{0,8}(?:决定|一起|再)"),
+    ),
+    "personalized_care": (
+        re.compile(r"知道你.{0,12}(?:所以|才|就)"),
+        re.compile(r"按你(?:的)?.{0,8}(?:留|做|准备)"),
+        re.compile(r"不想让你.{0,12}(?:一个人|太累|硬扛|受凉)"),
+        re.compile(r"你上次.{0,12}(?:胃不舒服|不舒服|难受|着凉).{0,20}(?:熬|煮|做).{0,8}(?:粥|汤|药).{0,8}给你"),
+    ),
+    "vulnerable_disclosure": (
+        re.compile(r"(?:通常|一般).{0,8}不(?:跟|和).{0,8}(?:别人|人)说"),
+        re.compile(r"(?:这件事|这话|这些).{0,8}(?:没|没有).{0,8}(?:跟|和).{0,4}(?:别人|其他人).{0,8}说过"),
+        re.compile(r"(?:只想|只愿意).{0,8}(?:告诉|跟).{0,8}你"),
+        re.compile(r"在你面前.{0,10}(?:承认|可以说|不用装)"),
+    ),
+    "character_consistent_tease": (
+        re.compile(r"(?:就你|只有你).{0,10}(?:能|值得|配).{0,10}(?:看|听|陪|赢)"),
+        re.compile(r"(?:别得意|自恋).{0,12}(?:但|，).{0,12}你"),
+    ),
+}
+_COMPANIONSHIP_SUPPORT_PATTERNS = (
+    re.compile(r"(?:陪你|陪我|一起待|一块待|等你|给你(?:看|听))"),
+)
+_SPECIFIC_PLAN_PATTERNS = (
+    re.compile(r"(?:一起|约).{0,8}(?:吃饭|骑车|散步|听歌|喝茶|出门|看画)"),
+    re.compile(r"(?:一起|搭把手|帮(?:个)?忙).{0,12}(?:收拾|整理|修(?:好|理)?|搬|清理|准备)"),
+    re.compile(r"(?:今晚|明天|改天).{0,12}(?:七点|几点|在.{0,8}见|安排|约)"),
+    re.compile(r"(?:七点|几点).{0,12}(?:见|出发|过来)"),
+)
 _GENERIC_ROMANCE_MARKERS = (
     "命中注定",
     "永远爱你",
@@ -452,6 +499,50 @@ def _field_from_object(value: object, name: str, default: object = None) -> obje
     return getattr(value, name, default)
 
 
+def _matches_personal_affection(text: str) -> list[str]:
+    """返回可解释的个人亲近类别，不把陪伴或安排单独当作爱意。"""
+
+    return [
+        shape
+        for shape, patterns in _PERSONAL_AFFECTION_PATTERNS.items()
+        if any(pattern.search(text) for pattern in patterns)
+    ]
+
+
+def _has_pattern(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    return any(pattern.search(text) for pattern in patterns)
+
+
+def diagnose_personal_affection(text: object) -> dict[str, object]:
+    """提取不依赖旧词表的个人亲近信号，供质量诊断和 Guard 共用。"""
+
+    normalized = text.strip() if isinstance(text, str) else ""
+    affection_evidence = _matches_personal_affection(normalized)
+    companionship_detected = _has_pattern(
+        normalized,
+        _COMPANIONSHIP_SUPPORT_PATTERNS,
+    )
+    specific_plan_detected = _has_pattern(
+        normalized,
+        _SPECIFIC_PLAN_PATTERNS,
+    )
+    return {
+        "personalAffectionDetected": bool(affection_evidence),
+        "companionshipDetected": companionship_detected,
+        "specificPlanDetected": specific_plan_detected,
+        "affectionEvidence": affection_evidence,
+        "affectionShape": (
+            affection_evidence[0]
+            if affection_evidence
+            else "companionship"
+            if companionship_detected
+            else "specific_plan"
+            if specific_plan_detected
+            else ""
+        ),
+    }
+
+
 def diagnose_affection_initiative(
     case: object,
     turn: object,
@@ -487,6 +578,11 @@ def diagnose_affection_initiative(
     romance_eligible = _field_from_object(case, "romance_eligible", None)
     if romance_eligible is None:
         romance_eligible = True
+    personal_affection = diagnose_personal_affection(text)
+    affection_evidence = personal_affection["affectionEvidence"]
+    personal_affection_detected = personal_affection["personalAffectionDetected"]
+    companionship_detected = personal_affection["companionshipDetected"]
+    specific_plan_detected = personal_affection["specificPlanDetected"]
     romantic_signal = any(marker.casefold() in lowered for marker in _ROMANTIC_MARKERS)
     mechanical_restatement = _mechanical_restatement(text, player_input)
     if mechanical_restatement:
@@ -514,26 +610,27 @@ def diagnose_affection_initiative(
     elif expected_kind == "conversation_exit":
         detected = "conversation_exit" in detected_kinds
     elif expectation == "proactive":
-        # 单独的“今晚一起吃饭”只是安排，不足以证明关系阶段的主动亲密；
-        # 需要爱意、陪伴、分享、打趣或照顾中的至少一种额外信号。
-        detected = bool(
-            detected_kinds
-            - {"conversation_exit", "specific_plan"}
-        )
+        detected = personal_affection_detected
     elif expectation == "guarded":
-        detected = bool(detected_kinds - {"conversation_exit"})
+        detected = personal_affection_detected
     else:
         detected = bool(detected_kinds)
 
-    if expectation == "proactive" and not detected:
-        tags.add("missing_proactive_affection")
-    elif expectation == "guarded" and expected_kind != "conversation_exit" and not detected:
-        tags.add("missing_proactive_affection")
-    if (
+    exit_allowed = (
         expected_kind == "conversation_exit"
         and detected
         and expectation == "guarded"
-    ):
+    )
+    if not personal_affection_detected and not exit_allowed:
+        if companionship_detected:
+            tags.add("companionship_only")
+        elif specific_plan_detected:
+            tags.add("specific_plan_only")
+    if expectation == "proactive" and not detected:
+        tags.update({"missing_proactive_affection", "missing_personal_affection"})
+    elif expectation == "guarded" and expected_kind != "conversation_exit" and not detected:
+        tags.update({"missing_proactive_affection", "missing_personal_affection"})
+    if exit_allowed:
         tags.add("guarded_exit_allowed")
 
     if romantic_signal and stage not in {"dating", "married"}:
@@ -557,5 +654,12 @@ def diagnose_affection_initiative(
         "initiativeDetected": detected,
         "initiativeTags": sorted(tags),
         "mechanicalRestatement": mechanical_restatement,
+        **personal_affection,
+        "affectionShape": (
+            personal_affection["affectionShape"]
+            or "conversation_exit"
+            if "conversation_exit" in detected_kinds
+            else personal_affection["affectionShape"]
+        ),
         "reply": reply,
     }

@@ -240,6 +240,25 @@ _DEFAULT_AFFECTION_INITIATIVE: dict[str, Any] = {
         "把想靠近或想陪伴说成角色自己的真实愿望",
         "用一个具体而克制的亲密细节表达偏爱",
     ],
+    "personalSignals": [
+        "player_directed_preference",
+        "exclusive_share",
+        "player_caused_anticipation",
+        "personalized_care",
+        "vulnerable_disclosure",
+        "character_consistent_tease",
+    ],
+    "supportSignals": [
+        "companionship",
+        "specific_plan",
+        "guarded_care",
+        "creative_share",
+        "care_action",
+    ],
+    "variationRule": (
+        "连续轮次避免重复同一 personal signal、initiativeKind 和开场形状；"
+        "保留角色自己的表达方式。"
+    ),
     "maxActions": 1,
     "channelRules": {
         "remote": "只表达当前想法或提出待确认安排，不写成已经见面",
@@ -437,7 +456,18 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
     result: dict[str, Any] = {"stage": stage_key, **policy}
     if stage_key in {"dating", "married"}:
         role_policies = _AFFECTION_INITIATIVE_BY_ROLE.get(role_key, {})
-        result["affectionInitiative"] = deepcopy(
+        affection = deepcopy(
             role_policies.get(stage_key, _DEFAULT_AFFECTION_INITIATIVE)
         )
+        # Shane 的 guarded 策略不继承默认 dict；统一在最终投影补齐诊断契约，
+        # 同时保留角色自己的 allowedKinds、强度和收口边界。
+        for key in ("personalSignals", "supportSignals", "variationRule"):
+            affection.setdefault(key, deepcopy(_DEFAULT_AFFECTION_INITIATIVE[key]))
+        minimum = str(affection.get("minimumExpression", "")).strip()
+        support_rule = "陪伴和安排不能单独充当充分爱意。"
+        if support_rule not in minimum:
+            affection["minimumExpression"] = (
+                f"{minimum}{support_rule}" if minimum else support_rule
+            )
+        result["affectionInitiative"] = affection
     return result

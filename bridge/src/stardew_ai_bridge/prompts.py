@@ -1398,6 +1398,13 @@ def _compact_affection_initiative(
     )
     if warmth_signals:
         result["warmthSignals"] = warmth_signals
+    for key in ("personalSignals", "supportSignals"):
+        items = _compact_text_list(value.get(key), limit=6, item_limit=50)
+        if items:
+            result[key] = items
+    variation_rule = _text(value.get("variationRule"), limit=200)
+    if variation_rule:
+        result["variationRule"] = variation_rule
     max_actions = value.get("maxActions")
     if isinstance(max_actions, int) and not isinstance(max_actions, bool):
         result["maxActions"] = max(0, min(max_actions, 1))
@@ -1601,6 +1608,29 @@ def _build_affection_initiative_card(
             + "；".join(warmth_signals)
             + "。"
         )
+    personal_signals = _compact_text_list(
+        affection.get("personalSignals"),
+        limit=6,
+        item_limit=50,
+    )
+    support_signals = _compact_text_list(
+        affection.get("supportSignals"),
+        limit=6,
+        item_limit=50,
+    )
+    if personal_signals:
+        instructions.append(
+            "本轮至少自然使用一类 personalSignals 指向玩家本人；"
+            "可以是专属选择、玩家触发的期待、个人化照顾、脆弱分享或符合角色的轻微回撩。"
+        )
+    if support_signals:
+        instructions.append(
+            "陪伴和安排不能单独充当爱意；companionship、specific_plan 等 supportSignals "
+            "只能辅助已经明确指向玩家本人的个人亲近。"
+        )
+    variation_rule = _text(affection.get("variationRule"), limit=200)
+    if variation_rule:
+        instructions.append(f"连续轮次约束：{variation_rule}")
     if channel_rule:
         instructions.append(f"本渠道规则：{channel_rule}")
     if intensity in {"none", "light", "direct", "explicit"}:

@@ -206,6 +206,7 @@ def test_load_latest_quality_run_preserves_bounded_initiative_diagnostics(
                         "turnId": "turn-1",
                         "initiativeExpectation": "proactive",
                         "initiativeKind": "specific_plan",
+                        "detectedInitiativeKind": "creative_share",
                         "initiativeDetected": True,
                         "initiativeTags": ["specific_plan"],
                     }
@@ -224,6 +225,71 @@ def test_load_latest_quality_run_preserves_bounded_initiative_diagnostics(
     assert payload["results"][0]["initiativeDetected"] is True
     assert payload["results"][0]["initiativeTags"] == ["specific_plan", "secret prompt"]
     assert payload["results"][0]["turns"][0]["initiativeKind"] == "specific_plan"
+    assert payload["results"][0]["turns"][0]["detectedInitiativeKind"] == "creative_share"
+
+
+def test_load_latest_quality_run_preserves_safe_personal_affection_diagnostics(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "20260903-personal-affection"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        json.dumps({"schemaVersion": 3, "caseCount": 1}),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        json.dumps(
+            {
+                "caseId": "sophia-dating-wine",
+                "personalAffectionDetected": True,
+                "companionshipDetected": False,
+                "specificPlanDetected": False,
+                "affectionEvidence": ["exclusive_share"],
+                "affectionShape": "exclusive_share",
+                "turns": [
+                    {
+                        "turnId": "turn-2",
+                        "personalAffectionDetected": True,
+                        "companionshipDetected": False,
+                        "specificPlanDetected": False,
+                        "affectionEvidence": ["exclusive_share"],
+                        "affectionShape": "exclusive_share",
+                        "affectionVariation": {
+                            "mechanical": False,
+                            "affectionShape": "exclusive_share",
+                            "initiativeKind": "creative_share",
+                            "hasNewAnchor": True,
+                            "tags": [],
+                            "opening": "这首歌我只想先给你听",
+                        },
+                    }
+                ],
+                "prompt": "secret prompt",
+                "token": "secret token",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = load_latest_quality_run(tmp_path)
+
+    result = payload["results"][0]
+    assert result["personalAffectionDetected"] is True
+    assert result["affectionEvidence"] == ["exclusive_share"]
+    turn = result["turns"][0]
+    assert turn["affectionShape"] == "exclusive_share"
+    assert turn["affectionVariation"] == {
+        "mechanical": False,
+        "affectionShape": "exclusive_share",
+        "initiativeKind": "creative_share",
+        "hasNewAnchor": True,
+        "tags": [],
+    }
+    rendered = json.dumps(payload, ensure_ascii=False)
+    assert "secret prompt" not in rendered
+    assert "secret token" not in rendered
 
 
 def test_load_latest_quality_run_preserves_mechanical_restatement_flag(

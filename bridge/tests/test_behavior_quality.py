@@ -270,3 +270,121 @@ def test_proactive_affection_accepts_longing_expressed_as_looking_forward_to_pla
     assert diagnostic["initiativeDetected"] is True
     assert "affection_signal" in diagnostic["initiativeTags"]
     assert "missing_proactive_affection" not in diagnostic["initiativeTags"]
+
+
+def _high_affection_case(*, mode: str = "proactive") -> dict[str, object]:
+    return {
+        "relationship_stage": "dating",
+        "channel": "remote",
+        "flirt_intensity": "direct",
+        "adult_consensual": True,
+        "romance_eligible": True,
+        "initiative_mode": mode,
+    }
+
+
+def test_affection_diagnostic_recognizes_exclusive_player_only_sharing() -> None:
+    diagnostic = diagnose_affection_initiative(
+        _high_affection_case(),
+        {"initiative_expectation": "proactive", "initiative_kind": "creative_share"},
+        "这首歌我只想先给你听。你一说想听，我就一直在挑。",
+    )
+
+    assert diagnostic["personalAffectionDetected"] is True
+    assert diagnostic["affectionShape"] == "exclusive_share"
+    assert "exclusive_share" in diagnostic["affectionEvidence"]
+    assert "missing_personal_affection" not in diagnostic["initiativeTags"]
+
+
+def test_affection_diagnostic_recognizes_player_caused_anticipation_and_personal_care() -> None:
+    anticipation = diagnose_affection_initiative(
+        _high_affection_case(),
+        {"initiative_expectation": "proactive", "initiative_kind": "affection_signal"},
+        "因为你会来，我才把灯留着。",
+    )
+    care = diagnose_affection_initiative(
+        _high_affection_case(),
+        {"initiative_expectation": "proactive", "initiative_kind": "guarded_care"},
+        "知道你总会忘记带伞，所以我多带了一把。",
+    )
+
+    assert anticipation["personalAffectionDetected"] is True
+    assert anticipation["affectionShape"] == "player_caused_anticipation"
+    assert care["personalAffectionDetected"] is True
+    assert care["affectionShape"] == "personalized_care"
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected_shape"),
+    [
+        ("这件事我没和别人说过，想先告诉你。", "vulnerable_disclosure"),
+        ("你上次胃不舒服，我熬了粥给你。", "personalized_care"),
+    ],
+)
+def test_affection_diagnostic_recognizes_natural_private_share_and_personalized_care(
+    reply: str,
+    expected_shape: str,
+) -> None:
+    diagnostic = diagnose_affection_initiative(
+        _high_affection_case(),
+        {"initiative_expectation": "proactive", "initiative_kind": "affection_signal"},
+        reply,
+    )
+
+    assert diagnostic["personalAffectionDetected"] is True
+    assert diagnostic["affectionShape"] == expected_shape
+    assert "missing_personal_affection" not in diagnostic["initiativeTags"]
+
+
+def test_affection_diagnostic_does_not_promote_functional_cooperation_to_personal_affection() -> None:
+    diagnostic = diagnose_affection_initiative(
+        _high_affection_case(),
+        {"initiative_expectation": "proactive", "initiative_kind": "specific_plan"},
+        "我想和你一起把鸡舍收拾好，下午来搭把手。",
+    )
+
+    assert diagnostic["personalAffectionDetected"] is False
+    assert diagnostic["initiativeDetected"] is False
+    assert diagnostic["specificPlanDetected"] is True
+    assert "missing_personal_affection" in diagnostic["initiativeTags"]
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected_tag"),
+    [
+        ("今晚我陪你待一会儿。", "companionship_only"),
+        ("明天一起骑车，七点在桥边见。", "specific_plan_only"),
+        ("我在等你，到了再说。", "companionship_only"),
+        ("这张照片给你看看。", "companionship_only"),
+    ],
+)
+def test_affection_diagnostic_does_not_count_functional_support_as_personal_affection(
+    reply: str,
+    expected_tag: str,
+) -> None:
+    diagnostic = diagnose_affection_initiative(
+        _high_affection_case(),
+        {"initiative_expectation": "proactive", "initiative_kind": "specific_plan"},
+        reply,
+    )
+
+    assert diagnostic["personalAffectionDetected"] is False
+    assert diagnostic["initiativeDetected"] is False
+    assert expected_tag in diagnostic["initiativeTags"]
+    assert "missing_personal_affection" in diagnostic["initiativeTags"]
+
+
+def test_affection_diagnostic_keeps_shane_guarded_exit_without_forcing_personal_signal() -> None:
+    diagnostic = diagnose_affection_initiative(
+        {
+            **_high_affection_case(mode="guarded"),
+            "relationship_stage": "married",
+        },
+        {"initiative_expectation": "guarded", "initiative_kind": "conversation_exit"},
+        "今天真撑不住了，我想一个人待会儿。明天再说。",
+    )
+
+    assert diagnostic["personalAffectionDetected"] is False
+    assert diagnostic["initiativeDetected"] is True
+    assert "guarded_exit_allowed" in diagnostic["initiativeTags"]
+    assert "missing_personal_affection" not in diagnostic["initiativeTags"]

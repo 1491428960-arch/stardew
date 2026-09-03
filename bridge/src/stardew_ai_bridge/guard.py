@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from .behavior_quality import diagnose_personal_affection
 from .evaluation_budget import EvaluationBudgetExceeded
 from .models import ProviderResult
 
@@ -75,6 +76,13 @@ AFFECTION_RETRY_FINAL_CONTENT = (
     "让这份爱意在前一两句自然出现，优先使用陈述句，例如‘我想你了’或‘我想和你待在一起’，不要用反问（例如‘你会不会也想我’）代替爱意；"
     "再自然接住当前话题。不要先复述或总结玩家原话，不要解释规则，不要使用模板化的‘你说得对’开场，"
     "只输出一小段角色自然会说的中文对白，保持角色个性，不主动升级成人内容。"
+)
+
+VARIATION_RETRY_CONTENT = (
+    "上一条回复复用了最近一轮的个人亲近形状。只重新回答最后一条玩家消息，"
+    "换一种个人亲近形状，例如从专属分享改成因玩家而起的期待、个人化照顾、脆弱分享或符合角色的轻微回撩；"
+    "仍要自然接住当前话题和渠道边界。不要套用同一个爱意开场或同一种邀约顺序，"
+    "不要求把话说得更甜，也不要升级亲密强度、成人内容或替玩家作决定。"
 )
 
 _WARMTH_SIGNAL_MARKERS = (
@@ -184,6 +192,20 @@ _CLOSE_REPLY_MARKERS = (
     "不想聊",
     "先这样",
     "到这吧",
+)
+_GUARDED_BOUNDARY_REPLY_MARKERS = (
+    "想一个人待",
+    "需要一点空间",
+    "需要空间",
+    "别过来",
+    "不想见人",
+    "今天状态很差",
+    "真撑不住",
+    "累得不行",
+    "今天太累",
+    "想静一静",
+    "别等我",
+    "让我缓缓",
 )
 
 
@@ -455,16 +477,12 @@ def _missing_proactive_affection(
         return False
     if _contains_marker(text, _CLOSE_REPLY_MARKERS):
         return False
-    direct_required = _affection_intensity(prompt) in {"direct", "explicit"}
-    if mode == "guarded":
-        markers = _GUARDED_WARMTH_MARKERS
-    elif direct_required or _is_topic_prompt(prompt):
-        markers = _DIRECT_WARMTH_SIGNAL_MARKERS
-    else:
-        markers = _WARMTH_SIGNAL_MARKERS
-    if not _contains_marker(text, markers):
-        return True
-    return not _has_affection_priority_opening(prompt, text)
+    if mode == "guarded" and _contains_marker(
+        text,
+        _GUARDED_BOUNDARY_REPLY_MARKERS,
+    ):
+        return False
+    return not bool(diagnose_personal_affection(text)["personalAffectionDetected"])
 
 
 def _warmth_score(prompt: list[dict[str, str]], reply: object) -> int:
@@ -472,10 +490,8 @@ def _warmth_score(prompt: list[dict[str, str]], reply: object) -> int:
 
     if not isinstance(reply, str) or not reply.strip():
         return 0
-    if _affection_mode(prompt) == "guarded":
-        return int(_contains_marker(reply, _GUARDED_WARMTH_MARKERS))
-    if _affection_intensity(prompt) in {"direct", "explicit"} or _is_topic_prompt(prompt):
-        if not _contains_marker(reply, _DIRECT_WARMTH_SIGNAL_MARKERS):
+    if _affection_mode(prompt) in {"proactive", "guarded"}:
+        if not diagnose_personal_affection(reply)["personalAffectionDetected"]:
             return 0
         return (
             3
@@ -483,7 +499,7 @@ def _warmth_score(prompt: list[dict[str, str]], reply: object) -> int:
             and _has_affection_priority_opening(prompt, reply)
             else 2
         )
-    return int(_contains_marker(reply, _WARMTH_SIGNAL_MARKERS))
+    return 0
 
 
 def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int, ...]:
@@ -506,6 +522,7 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
         not _has_repeated_opening(prompt, reply)
         and not _repeats_history_speech_particle(prompt, reply)
     )
+    variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     return (
         format_clean,
         restatement_clean,
@@ -513,6 +530,7 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
         priority_opening,
         continuity_clean,
         _warmth_score(prompt, reply),
+        variation_clean,
         style_clean,
     )
 
@@ -556,6 +574,13 @@ def retry_for_format_noise(
             issue = "prompt_echo"
             retry_kind = "topic_leakage"
             retry_content = TOPIC_LEAKAGE_RETRY_CONTENT
+        elif issue is None and _repeats_personal_affection_shape(
+            prompt,
+            current.reply,
+        ):
+            issue = "mechanical_affection_shape"
+            retry_kind = "variation"
+            retry_content = VARIATION_RETRY_CONTENT
         elif issue is None and _has_repeated_opening(prompt, current.reply):
             issue = "repeated"
             retry_kind = "opening"
@@ -695,6 +720,53 @@ def _has_repeated_opening(prompt: list[dict[str, str]], reply: object) -> bool:
     prefixes = _string_values(payload.get("avoidOpeningPrefixes"))
     text = reply.strip()
     return any(text.startswith(value) for value in (*openings, *prefixes))
+
+
+def _affection_opening(value: str) -> str:
+    first_clause = re.split(r"[，,、。！？!?；;：:]", value.strip(), maxsplit=1)[0]
+    return re.sub(r"[\s，,、。！？!?；;：:]", "", first_clause.casefold())[:12]
+
+
+def _repeats_personal_affection_shape(
+    prompt: list[dict[str, str]],
+    reply: object,
+) -> bool:
+    """仅在相邻回复复用同一专属形状和开场时触发变化重试。"""
+
+    if not isinstance(reply, str) or not reply.strip():
+        return False
+    affection = _prompt_payload(prompt, "affection_initiative").get(
+        "affectionInitiative"
+    )
+    if not isinstance(affection, Mapping) or not isinstance(
+        affection.get("variationRule"),
+        str,
+    ):
+        return False
+    current = diagnose_personal_affection(reply)
+    if not current["personalAffectionDetected"]:
+        return False
+    current_shape = current["affectionShape"]
+    current_opening = _affection_opening(reply)
+    if not current_shape or not current_opening:
+        return False
+    previous_reply = next(
+        (
+            str(message.get("content", "")).strip()
+            for message in reversed(prompt)
+            if message.get("name") == "conversation_history"
+            and message.get("role") == "assistant"
+            and isinstance(message.get("content"), str)
+            and message.get("content", "").strip()
+        ),
+        "",
+    )
+    previous = diagnose_personal_affection(previous_reply)
+    return bool(
+        previous["personalAffectionDetected"]
+        and previous["affectionShape"] == current_shape
+        and _affection_opening(previous_reply) == current_opening
+    )
 
 
 def _missing_history_anchor(prompt: list[dict[str, str]], reply: object) -> bool:

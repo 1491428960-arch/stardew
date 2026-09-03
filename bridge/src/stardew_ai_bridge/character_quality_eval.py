@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
+import re
 from typing import Iterable, Mapping
 
 from .behavior_quality import diagnose_affection_initiative
@@ -1846,6 +1847,111 @@ def score_dialogue_progression(
     return scores
 
 
+def _affection_opening(value: str) -> str:
+    """归一化回复开场，只用于相邻轮次的模板重复诊断。"""
+
+    first_clause = re.split(r"[，,、。！？!?；;：:]", value.strip(), maxsplit=1)[0]
+    normalized = _normalize_progression_text(first_clause)
+    return normalized[:12]
+
+
+def _turn_affection_anchors(turn: CharacterQualityTurn | None) -> set[str]:
+    if turn is None:
+        return set()
+    return {
+        _normalize_progression_text(term)
+        for term in turn.expected_terms
+        if _normalize_progression_text(term)
+    }
+
+
+def _reply_affection_anchors(
+    reply: str,
+    turn: CharacterQualityTurn | None,
+) -> set[str]:
+    """只保留回复实际提到的评测话题对象，避免预期词掩盖重复。"""
+
+    if turn is None or not reply.strip():
+        return set()
+    return {
+        _normalize_progression_text(term)
+        for term in turn.expected_terms
+        if _normalize_progression_text(term) and _term_matches(term, reply)
+    }
+
+
+def score_affection_variation(
+    replies: Iterable[str],
+    turns: Iterable[CharacterQualityTurn],
+    diagnostics: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """识别相邻高亲密回复是否机械复用同一种亲近形状。
+
+    只在亲近形状、主动类型和归一化开场同时重复、且当前轮没有新的
+    评测话题锚点时标记，明确收口始终允许复用短句而不受此规则影响。
+    """
+
+    reply_list = [reply if isinstance(reply, str) else "" for reply in replies]
+    turn_list = list(turns)
+    diagnostic_list = list(diagnostics)
+    scores: list[dict[str, object]] = []
+    previous_shape = ""
+    previous_kind = ""
+    previous_opening = ""
+    previous_anchors: set[str] = set()
+    for index, reply in enumerate(reply_list):
+        turn = turn_list[index] if index < len(turn_list) else None
+        diagnostic = (
+            diagnostic_list[index]
+            if index < len(diagnostic_list)
+            and isinstance(diagnostic_list[index], Mapping)
+            else {}
+        )
+        shape = str(diagnostic.get("affectionShape", "") or "").strip()
+        kind = str(
+            diagnostic.get("detectedInitiativeKind", diagnostic.get("initiativeKind", ""))
+            or ""
+        ).strip()
+        diagnostic_tags = {
+            str(tag)
+            for tag in diagnostic.get("initiativeTags", [])
+            if isinstance(tag, str)
+        }
+        opening = _affection_opening(reply)
+        anchors = _reply_affection_anchors(reply, turn)
+        has_new_anchor = bool(anchors - previous_anchors)
+        allowed_close = (
+            "guarded_exit_allowed" in diagnostic_tags
+            or kind == "conversation_exit"
+            or shape == "conversation_exit"
+        )
+        mechanical = bool(
+            index
+            and shape
+            and shape == previous_shape
+            and kind == previous_kind
+            and opening
+            and opening == previous_opening
+            and not has_new_anchor
+            and not allowed_close
+        )
+        scores.append(
+            {
+                "mechanical": mechanical,
+                "affectionShape": shape,
+                "initiativeKind": kind,
+                "opening": opening,
+                "hasNewAnchor": has_new_anchor,
+                "tags": ["mechanical_affection_shape"] if mechanical else [],
+            }
+        )
+        previous_shape = shape
+        previous_kind = kind
+        previous_opening = opening
+        previous_anchors = anchors
+    return scores
+
+
 def _history_continues(
     case: CharacterQualityCase,
     text: str,
@@ -2053,17 +2159,18 @@ def score_character_reply(
         marker in text for marker in _FACE_TO_FACE_MARKERS
     ):
         tags.add("wrong_channel")
+    affection_diagnostic: dict[str, object] | None = None
     if player_input is not None:
-        mechanical_diagnostic = diagnose_affection_initiative(
+        affection_diagnostic = diagnose_affection_initiative(
             case,
             turn or CharacterQualityTurn("turn-1", player_input),
             text,
             player_input=player_input,
         )
-        if mechanical_diagnostic["mechanicalRestatement"]:
+        if affection_diagnostic["mechanicalRestatement"]:
             tags.add("mechanical_restatement")
 
-    return {
+    score: dict[str, object] = {
         "expectedHits": expected_hits,
         "exactExpectedHits": exact_expected_hits,
         "topicEvidence": (
@@ -2089,3 +2196,16 @@ def score_character_reply(
         and "missing_continuity_evidence" not in tags
         and "mechanical_restatement" not in tags,
     }
+    if affection_diagnostic is not None:
+        score.update({
+            key: affection_diagnostic[key]
+            for key in (
+                "mechanicalRestatement",
+                "personalAffectionDetected",
+                "companionshipDetected",
+                "specificPlanDetected",
+                "affectionEvidence",
+                "affectionShape",
+            )
+        })
+    return score

@@ -3321,6 +3321,58 @@ def test_prompt_adds_affection_initiative_card_for_dating_without_waiting_for_lo
     assert "不要把每轮回复写成固定顺序" in card["instruction"]
 
 
+def test_prompt_projects_personal_signals_and_rejects_support_actions_as_love() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sebastian",
+            "displayName": "Sebastian",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["companionship", "specific_plan"],
+                    "personalSignals": [
+                        "exclusive_share",
+                        "player_caused_anticipation",
+                    ],
+                    "supportSignals": ["companionship", "specific_plan"],
+                    "variationRule": "连续轮次换一种亲近形状。",
+                    "maxActions": 1,
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "adultConsensual": True,
+            "romanceEligible": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    card = json.loads(
+        next(
+            message
+            for message in PromptBuilder().build(context, "你最近在听什么歌？")
+            if message["name"] == "affection_initiative"
+        )["content"]
+    )
+
+    assert card["affectionInitiative"]["personalSignals"] == [
+        "exclusive_share",
+        "player_caused_anticipation",
+    ]
+    assert card["affectionInitiative"]["supportSignals"] == [
+        "companionship",
+        "specific_plan",
+    ]
+    assert card["affectionInitiative"]["variationRule"] == "连续轮次换一种亲近形状。"
+    assert "陪伴和安排不能单独充当爱意" in card["instruction"]
+
+
 def test_prompt_places_a_final_affection_priority_check_before_the_player_turn() -> None:
     context = {
         "npcIdentity": {

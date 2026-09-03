@@ -22,6 +22,7 @@ from stardew_ai_bridge.character_quality_eval import (  # noqa: E402
     CharacterQualityCase,
     diagnose_affection_initiative,
     quality_cases_for_suite,
+    score_affection_variation,
     score_dialogue_progression,
     score_character_reply,
     score_generated_player_input,
@@ -653,6 +654,7 @@ def run_evaluation(
                     "styleQuality": style_quality,
                     "initiativeExpectation": turn.initiative_expectation,
                     "initiativeKind": turn.initiative_kind,
+                    "detectedInitiativeKind": initiative_diagnostic["initiativeKind"],
                     "initiativeDetected": initiative_diagnostic[
                         "initiativeDetected"
                     ],
@@ -660,6 +662,17 @@ def run_evaluation(
                     "mechanicalRestatement": initiative_diagnostic[
                         "mechanicalRestatement"
                     ],
+                    "personalAffectionDetected": initiative_diagnostic[
+                        "personalAffectionDetected"
+                    ],
+                    "companionshipDetected": initiative_diagnostic[
+                        "companionshipDetected"
+                    ],
+                    "specificPlanDetected": initiative_diagnostic[
+                        "specificPlanDetected"
+                    ],
+                    "affectionEvidence": initiative_diagnostic["affectionEvidence"],
+                    "affectionShape": initiative_diagnostic["affectionShape"],
                 }
             )
             if actual_message:
@@ -682,6 +695,14 @@ def run_evaluation(
                 for record in turn_records
             ],
             case_turns,
+        )
+        affection_variation_scores = score_affection_variation(
+            [
+                record.get("reply", "") if isinstance(record, dict) else ""
+                for record in turn_records
+            ],
+            case_turns,
+            turn_records,
         )
         progression_tags: set[str] = set()
         novel_expected_terms: list[str] = []
@@ -713,12 +734,36 @@ def run_evaluation(
                 })
                 score["passed"] = False
 
+        for index, variation in enumerate(affection_variation_scores):
+            if index >= len(turn_records):
+                continue
+            turn_record = turn_records[index]
+            if "reply" not in turn_record or not isinstance(variation, dict):
+                continue
+            turn_record["affectionVariation"] = variation
+            variation_tags = {
+                str(tag) for tag in variation.get("tags", []) if isinstance(tag, str)
+            }
+            progression_tags.update(variation_tags)
+            score = turn_record.get("score")
+            if not isinstance(score, dict) or variation.get("mechanical") is not True:
+                continue
+            score["tags"] = sorted({
+                *(str(tag) for tag in score.get("tags", [])),
+                *variation_tags,
+            })
+            score["passed"] = False
+
         progression_record: dict[str, object] = {
             "passed": bool(turn_records)
             and len(turn_records) == len(case_turns)
             and all(
                 isinstance(progression, dict)
                 and progression.get("repeated") is not True
+                and (
+                    index >= len(affection_variation_scores)
+                    or affection_variation_scores[index].get("mechanical") is not True
+                )
                 and "reply" in turn_records[index]
                 for index, progression in enumerate(progression_scores)
                 if index < len(turn_records)
@@ -814,6 +859,31 @@ def run_evaluation(
             "initiativeTags": initiative_tags,
             "mechanicalRestatement": case_mechanical_restatement_count > 0,
             "mechanicalRestatementCount": case_mechanical_restatement_count,
+            "personalAffectionDetected": (
+                first_initiative.get("personalAffectionDetected", False)
+                if first_initiative
+                else False
+            ),
+            "companionshipDetected": (
+                first_initiative.get("companionshipDetected", False)
+                if first_initiative
+                else False
+            ),
+            "specificPlanDetected": (
+                first_initiative.get("specificPlanDetected", False)
+                if first_initiative
+                else False
+            ),
+            "affectionEvidence": (
+                first_initiative.get("affectionEvidence", [])
+                if first_initiative
+                else []
+            ),
+            "affectionShape": (
+                first_initiative.get("affectionShape", "")
+                if first_initiative
+                else ""
+            ),
             "elapsedMs": int((perf_counter() - case_started_at) * 1000),
         }
         if first_result is not None:

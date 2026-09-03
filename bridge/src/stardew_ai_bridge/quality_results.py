@@ -273,6 +273,51 @@ def _safe_player_input_quality(value: Any) -> dict[str, object] | None:
     return safe or None
 
 
+def _copy_safe_affection_diagnostics(value: Any, safe: dict[str, object]) -> None:
+    if not isinstance(value, Mapping):
+        return
+    for key in (
+        "personalAffectionDetected",
+        "companionshipDetected",
+        "specificPlanDetected",
+    ):
+        detected = value.get(key)
+        if isinstance(detected, bool):
+            safe[key] = detected
+    evidence = value.get("affectionEvidence")
+    if isinstance(evidence, list):
+        safe["affectionEvidence"] = [
+            item[:TAG_TEXT_LIMIT]
+            for item in evidence[:TAG_LIMIT]
+            if isinstance(item, str)
+        ]
+    shape = _text(value.get("affectionShape"), limit=TAG_TEXT_LIMIT)
+    if shape is not None:
+        safe["affectionShape"] = shape
+
+
+def _safe_affection_variation(value: Any) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    safe: dict[str, object] = {}
+    for key in ("mechanical", "hasNewAnchor"):
+        flag = value.get(key)
+        if isinstance(flag, bool):
+            safe[key] = flag
+    for key in ("affectionShape", "initiativeKind"):
+        text = _text(value.get(key), limit=TAG_TEXT_LIMIT)
+        if text is not None:
+            safe[key] = text
+    tags = value.get("tags")
+    if isinstance(tags, list):
+        safe["tags"] = [
+            tag[:TAG_TEXT_LIMIT]
+            for tag in tags[:TAG_LIMIT]
+            if isinstance(tag, str)
+        ]
+    return safe or None
+
+
 def _safe_turn(value: Any) -> dict[str, object] | None:
     if not isinstance(value, Mapping):
         return None
@@ -290,7 +335,12 @@ def _safe_turn(value: Any) -> dict[str, object] | None:
         text = _text(value.get(key))
         if text is not None:
             safe[key] = text
-    for key in ("initiativeExpectation", "initiativeKind", "intent"):
+    for key in (
+        "initiativeExpectation",
+        "initiativeKind",
+        "detectedInitiativeKind",
+        "intent",
+    ):
         text = _text(value.get(key), limit=40)
         if text is not None:
             safe[key] = text
@@ -307,6 +357,10 @@ def _safe_turn(value: Any) -> dict[str, object] | None:
             for tag in initiative_tags[:TAG_LIMIT]
             if isinstance(tag, str)
         ]
+    _copy_safe_affection_diagnostics(value, safe)
+    affection_variation = _safe_affection_variation(value.get("affectionVariation"))
+    if affection_variation is not None:
+        safe["affectionVariation"] = affection_variation
     fallback = value.get("fallback")
     if isinstance(fallback, bool):
         safe["fallback"] = fallback
@@ -370,7 +424,12 @@ def _safe_result(value: Any) -> dict[str, object] | None:
         text = _text(value.get(key))
         if text is not None:
             safe[key] = text
-    for key in ("initiativeExpectation", "initiativeKind", "intent"):
+    for key in (
+        "initiativeExpectation",
+        "initiativeKind",
+        "detectedInitiativeKind",
+        "intent",
+    ):
         text = _text(value.get(key), limit=40)
         if text is not None:
             safe[key] = text
@@ -387,6 +446,7 @@ def _safe_result(value: Any) -> dict[str, object] | None:
             for tag in initiative_tags[:TAG_LIMIT]
             if isinstance(tag, str)
         ]
+    _copy_safe_affection_diagnostics(value, safe)
     fallback = value.get("fallback")
     if isinstance(fallback, bool):
         safe["fallback"] = fallback

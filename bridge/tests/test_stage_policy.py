@@ -162,3 +162,28 @@ def test_dating_and_married_policy_requires_a_personal_first_signal() -> None:
 
             assert "先" in instruction
             assert "玩家本人" in instruction
+
+
+@pytest.mark.parametrize("npc_id", CHARACTERS)
+@pytest.mark.parametrize("stage", ("dating", "married"))
+def test_high_affinity_policy_distinguishes_personal_signals_from_support_actions(
+    npc_id: str,
+    stage: str,
+) -> None:
+    affection = build_stage_policy(npc_id, stage)["affectionInitiative"]
+
+    assert {
+        "personalSignals",
+        "supportSignals",
+        "variationRule",
+    } <= set(affection)
+    assert "exclusive_share" in affection["personalSignals"]
+    assert "specific_plan" in affection["supportSignals"]
+    assert "不能单独充当" in affection["minimumExpression"]
+    assert affection["variationRule"]
+
+
+def test_non_romance_policy_does_not_project_personal_signal_contract() -> None:
+    affection = build_stage_policy("Sophia", "friend").get("affectionInitiative", {})
+
+    assert affection == {}

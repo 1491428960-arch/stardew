@@ -7,7 +7,11 @@ import sys
 
 from stardew_ai_bridge.models import ProviderResult
 from stardew_ai_bridge.profile_index import ProfileIndexStore
-from stardew_ai_bridge.character_quality_eval import case_by_id
+from stardew_ai_bridge.character_quality_eval import (
+    CharacterQualityCase,
+    CharacterQualityTurn,
+    case_by_id,
+)
 
 try:
     from stardew_ai_bridge.topic_start_intimacy_cases import topic_start_intimacy_cases
@@ -786,6 +790,160 @@ def test_adaptive_eval_diagnoses_restatement_from_the_actual_generated_input(
     assert record["turns"][1]["mechanicalRestatement"] is True
     assert "mechanical_restatement" in record["turns"][1]["initiativeTags"]
     assert "mechanical_restatement" in record["turns"][1]["score"]["tags"]
+
+
+def test_eval_marks_repeated_personal_affection_shape_as_failed_quality(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+
+    class RepeatedAffectionProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del request, messages
+            return ProviderResult(
+                reply="这首歌我只想先给你听。",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", RepeatedAffectionProvider)
+    monkeypatch.setattr(
+        module,
+        "retry_for_format_noise",
+        lambda result, messages, generate: result,
+    )
+    case = CharacterQualityCase(
+        case_id="variation-sophia-dating",
+        profile_key="sophia",
+        npc_id="Sophia",
+        display_name="Sophia",
+        source_mods=("Stardew Valley Expanded",),
+        relationship_stage="dating",
+        channel="remote",
+        message="",
+        friendship_hearts=10,
+        flirt_intensity="direct",
+        adult_consensual=True,
+        romance_eligible=True,
+        relationship_context="已确认恋爱关系，Sophia 想把新曲先分享给玩家。",
+        turns=(
+            CharacterQualityTurn(
+                "turn-1",
+                "聊聊新歌。",
+                expected_terms=("歌",),
+                initiative_expectation="proactive",
+                initiative_kind="creative_share",
+            ),
+            CharacterQualityTurn(
+                "turn-2",
+                "你刚才说的歌是什么？",
+                expected_terms=("歌",),
+                initiative_expectation="proactive",
+                initiative_kind="creative_share",
+            ),
+            CharacterQualityTurn(
+                "turn-3",
+                "再给我听一点。",
+                expected_terms=("歌",),
+                initiative_expectation="proactive",
+                initiative_kind="creative_share",
+            ),
+        ),
+    )
+
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    second_turn = record["turns"][1]
+    assert second_turn["affectionVariation"]["mechanical"] is True
+    assert "mechanical_affection_shape" in second_turn["affectionVariation"]["tags"]
+    assert second_turn["score"]["passed"] is False
+    assert "mechanical_affection_shape" in second_turn["score"]["tags"]
+    assert "mechanical_affection_shape" in record["progression"]["tags"]
+    assert record["casePassed"] is False
+
+
+def test_eval_uses_detected_initiative_kind_for_affection_variation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+
+    class RepeatedShareProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del request, messages
+            return ProviderResult(
+                reply="这首歌我只想先给你听。",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", RepeatedShareProvider)
+    monkeypatch.setattr(
+        module,
+        "retry_for_format_noise",
+        lambda result, messages, generate: result,
+    )
+    case = CharacterQualityCase(
+        case_id="variation-detected-kind",
+        profile_key="sophia",
+        npc_id="Sophia",
+        display_name="Sophia",
+        source_mods=("Stardew Valley Expanded",),
+        relationship_stage="dating",
+        channel="remote",
+        message="",
+        friendship_hearts=10,
+        flirt_intensity="direct",
+        adult_consensual=True,
+        romance_eligible=True,
+        relationship_context="已确认恋爱关系，Sophia 想把新曲先分享给玩家。",
+        turns=(
+            CharacterQualityTurn(
+                "turn-1",
+                "聊聊新歌。",
+                expected_terms=("歌",),
+                initiative_expectation="proactive",
+                initiative_kind="specific_plan",
+            ),
+            CharacterQualityTurn(
+                "turn-2",
+                "再放一点。",
+                expected_terms=("歌",),
+                initiative_expectation="proactive",
+                initiative_kind="shared_evening",
+            ),
+        ),
+    )
+
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    second_turn = record["turns"][1]
+    assert second_turn["initiativeKind"] == "shared_evening"
+    assert second_turn["detectedInitiativeKind"] == "creative_share"
+    assert second_turn["affectionVariation"]["mechanical"] is True
 
 
 def test_eval_adaptive_player_input_failure_is_reported_without_fake_npc_reply(

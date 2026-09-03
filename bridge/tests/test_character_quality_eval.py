@@ -17,6 +17,11 @@ try:
         "score_dialogue_progression",
         None,
     )
+    score_affection_variation = getattr(
+        quality_eval,
+        "score_affection_variation",
+        None,
+    )
     validate_quality_cases = getattr(quality_eval, "validate_quality_cases", None)
     diagnose_affection_initiative = getattr(
         quality_eval,
@@ -30,6 +35,7 @@ except ModuleNotFoundError:
     quality_case_catalog = None  # type: ignore[assignment]
     score_character_reply = None  # type: ignore[assignment]
     score_dialogue_progression = None  # type: ignore[assignment]
+    score_affection_variation = None  # type: ignore[assignment]
     validate_quality_cases = None  # type: ignore[assignment]
     diagnose_affection_initiative = None  # type: ignore[assignment]
 
@@ -96,6 +102,26 @@ def test_quality_score_rejects_reply_without_current_topic_evidence() -> None:
     assert score["expectedHits"] == 0
     assert "missing_expected_evidence" in score["tags"]
     assert score["passed"] is False
+
+
+def test_quality_score_records_personal_affection_diagnostics_without_changing_legacy_score() -> None:
+    if case_by_id is None or score_character_reply is None:
+        pytest.fail("Task 6 固定角色评测模块尚未实现")
+
+    case = case_by_id("sophia-dating-wine")
+    score = score_character_reply(
+        case,
+        "这首歌我只想先给你听。",
+        turn=case.dialogue_turns()[1],
+        player_input="新歌准备好了吗？",
+    )
+
+    assert score["personalAffectionDetected"] is True
+    assert score["companionshipDetected"] is True
+    assert score["specificPlanDetected"] is False
+    assert score["affectionEvidence"] == ["exclusive_share"]
+    assert score["affectionShape"] == "exclusive_share"
+    assert "mechanicalRestatement" in score
 
 
 def test_quality_score_accepts_natural_topic_aliases_without_lowering_topic_bar() -> None:
@@ -294,6 +320,87 @@ def test_progression_accepts_new_detail_and_explicit_shane_closing() -> None:
     )
 
     assert all(score["repeated"] is False for score in scores)
+
+
+def test_affection_variation_flags_repeated_shape_kind_and_opening_without_new_anchor() -> None:
+    if score_affection_variation is None:
+        pytest.fail("亲近形状变化评分尚未实现")
+
+    turn_type = quality_eval.CharacterQualityTurn
+    turns = (
+        turn_type("turn-1", "", expected_terms=("歌",)),
+        turn_type("turn-2", "", expected_terms=("歌",)),
+        turn_type("turn-3", "", expected_terms=("歌",)),
+    )
+    diagnostics = (
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+    )
+    scores = score_affection_variation(
+        (
+            "这首歌我只想先给你听。",
+            "这首歌我只想先给你听。",
+            "这首歌我只想先给你听。",
+        ),
+        turns,
+        diagnostics,
+    )
+
+    assert scores[0]["mechanical"] is False
+    assert scores[1]["mechanical"] is True
+    assert "mechanical_affection_shape" in scores[1]["tags"]
+
+
+def test_affection_variation_accepts_new_anchor_or_guarded_close() -> None:
+    if score_affection_variation is None:
+        pytest.fail("亲近形状变化评分尚未实现")
+
+    turn_type = quality_eval.CharacterQualityTurn
+    turns = (
+        turn_type("turn-1", "", expected_terms=("歌",)),
+        turn_type("turn-2", "", expected_terms=("摩托车",)),
+        turn_type("turn-3", "", expected_terms=("摩托车",)),
+    )
+    diagnostics = (
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+        {"affectionShape": "conversation_exit", "initiativeKind": "conversation_exit", "initiativeTags": ["guarded_exit_allowed"]},
+    )
+    scores = score_affection_variation(
+        (
+            "这首歌我只想先给你听。",
+            "摩托车的声音也只想先给你听。",
+            "今天到这吧，我想一个人待会儿。",
+        ),
+        turns,
+        diagnostics,
+    )
+
+    assert all(score["mechanical"] is False for score in scores)
+
+
+def test_affection_variation_requires_reply_to_actually_introduce_new_anchor() -> None:
+    if score_affection_variation is None:
+        pytest.fail("亲近形状变化评分尚未实现")
+
+    turn_type = quality_eval.CharacterQualityTurn
+    turns = (
+        turn_type("turn-1", "", expected_terms=("歌",)),
+        turn_type("turn-2", "", expected_terms=("摩托车",)),
+    )
+    diagnostics = (
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+        {"affectionShape": "exclusive_share", "initiativeKind": "creative_share", "initiativeTags": []},
+    )
+    scores = score_affection_variation(
+        ("这首歌我只想先给你听。", "这首歌我只想先给你听。"),
+        turns,
+        diagnostics,
+    )
+
+    assert scores[1]["hasNewAnchor"] is False
+    assert scores[1]["mechanical"] is True
 
 
 def test_married_cases_use_distinct_player_turns_and_intimate_progression() -> None:
