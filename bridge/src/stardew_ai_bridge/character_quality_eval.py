@@ -1896,8 +1896,6 @@ def score_affection_variation(
     diagnostic_list = list(diagnostics)
     scores: list[dict[str, object]] = []
     previous_shape = ""
-    previous_kind = ""
-    previous_opening = ""
     previous_anchors: set[str] = set()
     for index, reply in enumerate(reply_list):
         turn = turn_list[index] if index < len(turn_list) else None
@@ -1929,9 +1927,6 @@ def score_affection_variation(
             index
             and shape
             and shape == previous_shape
-            and kind == previous_kind
-            and opening
-            and opening == previous_opening
             and not has_new_anchor
             and not allowed_close
         )
@@ -1946,8 +1941,6 @@ def score_affection_variation(
             }
         )
         previous_shape = shape
-        previous_kind = kind
-        previous_opening = opening
         previous_anchors = anchors
     return scores
 

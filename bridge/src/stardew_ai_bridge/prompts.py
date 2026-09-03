@@ -57,6 +57,14 @@ _QUALITY_INITIATIVE_KINDS = {
     "shared_evening",
     "care_action",
 }
+_GUARDED_PLAYER_BOUNDARY_MARKERS = (
+    "别逼我",
+    "没心情",
+    "心情很差",
+    "很难受",
+    "不想聊",
+    "先不说了",
+)
 _CHANNEL_INSTRUCTIONS = {
     "remote": (
         "这是手机或线上聊天；本轮只发生在远程消息中。"
@@ -1375,6 +1383,31 @@ def _compact_affection_initiative(
     mode = _text(value.get("initiativeMode"), limit=20).casefold()
     if mode in {"proactive", "guarded", "responsive", "none"}:
         result["initiativeMode"] = mode
+    if not include_response_order:
+        for key in ("allowedIntensities", "allowedKinds"):
+            items = _compact_text_list(value.get(key), limit=5, item_limit=40)
+            if items:
+                result[key] = items
+        warmth_signals = _compact_text_list(
+            value.get("warmthSignals"),
+            limit=1,
+            item_limit=48,
+        )
+        if warmth_signals:
+            result["warmthSignals"] = warmth_signals
+        max_actions = value.get("maxActions")
+        if isinstance(max_actions, int) and not isinstance(max_actions, bool):
+            result["maxActions"] = max(0, min(max_actions, 1))
+        channel_rules = value.get("channelRules")
+        if isinstance(channel_rules, Mapping):
+            rules: dict[str, str] = {}
+            for channel in ("remote", "face_to_face"):
+                rule = _text(channel_rules.get(channel), limit=80)
+                if rule:
+                    rules[channel] = _remove_secret_labels(rule)
+            if rules:
+                result["channelRules"] = rules
+        return result
     if include_response_order:
         response_order = _compact_text_list(
             value.get("responseOrder"),
@@ -1563,29 +1596,49 @@ def _build_affection_initiative_card(
     if isinstance(rules, Mapping) and channel:
         channel_rule = _text(rules.get(channel), limit=180)
 
-    instructions = [
-        "这是关系阶段的主动亲密行为卡，不是需要说出口的台词。",
-        "把玩家当前话题当作背景，直接接住其意思并推进；不要先复述、改写或总结玩家原话，"
-        "不要把回复拆成‘复述一句→回答一句’的模板。",
-        "不要把每轮回复写成固定顺序。直接接住玩家的真实意思，让爱意在自然位置尽早出现（通常在前一两句或同一句中），"
-        "再根据需要补充具体话题和最多一个可商量的小安排；可以把爱意融进事实、感受或玩笑，"
-        "不要每次都用同一套‘先说想你、再说话题、最后邀约’。",
-        "正常的高亲密回复不能只礼貌答题、重复事实或泛泛反问；除明确收口、拒绝、"
-        "状态需要停下或仅确认安排外，必须自然落下一处 minimumExpression 所要求的爱意或亲近信号。",
-        "不要让天气、地点、工作、物品或安排占据整个开场；如果先从具体话题开口，应在同一句或紧接的一句里让玩家听见角色对玩家本人的明确情绪或愿望，"
-        "不能只说‘和你待着’这种中性陪伴。",
-        "然后最多一个亲密动作；不要连续升级或把回复写成长篇告白。",
-        "proactive 模式不需要等待玩家先说情话，但主动行为必须来自当前话题和角色自己的表达方式。",
-        "只在 allowedKinds 与 allowedIntensities 范围内选择；explicit 不凭空主动露骨，必须由玩家先提出且有明确同意。",
-        "玩家拒绝、明确结束、说不打扰或先休息时不得调情，只按角色语气简短收口。",
-        "仅说共同安排不够；给出事务计划也不算充分爱意，必须让玩家感到被想念、被选择、被在乎或被期待。",
-        "功能性邀约不够；像‘来帮忙’‘有空来’‘一起安排’这样的计划，必须同时说清楚角色为什么想和玩家相处。",
-        "亲密落点必须明确指向玩家本人：让玩家听见角色对‘你’的感受、选择或期待；不能只写对话题、地点或安排的态度。",
-    ]
+    if compact:
+        instructions = [
+            "高亲密卡：接住当前话题。除明确结束、拒绝或状态须停下外，说清为何是玩家："
+            "偏爱、专属选择、因玩家而期待、个人照顾或轻微回撩之一。",
+            "‘耳朵只对你竖着’‘那段时间归你’这类只对玩家开放的注意力/选择算个人亲近；"
+            "单独‘陪你’‘一起’‘坐近’‘回房间’或事务安排无效；必须补‘因为是你’‘舍不得’‘想听你说’等个人理由；"
+            "勿复用上一轮亲近形状。",
+        ]
+        if mode == "proactive" and re.search(
+            r"(?:陪我|陪你).{0,12}(?:坐|待|去里面)",
+            player_input,
+        ):
+            instructions.append(
+                "共享时光类不能只写‘这里只有我们’或‘多待一会儿’；必须补‘因为你在这里我才安心’等因果或专属理由。"
+            )
+    else:
+        instructions = [
+            "这是关系阶段的主动亲密行为卡，不是需要说出口的台词。",
+            "把玩家当前话题当作背景，直接接住其意思并推进；不要先复述、改写或总结玩家原话，"
+            "不要把回复拆成‘复述一句→回答一句’的模板。",
+            "不要把每轮回复写成固定顺序。直接接住玩家的真实意思，让爱意在自然位置尽早出现（通常在前一两句或同一句中），"
+            "再根据需要补充具体话题和最多一个可商量的小安排；可以把爱意融进事实、感受或玩笑，"
+            "不要每次都用同一套‘先说想你、再说话题、最后邀约’。",
+            "正常的高亲密回复不能只礼貌答题、重复事实或泛泛反问；除明确收口、拒绝、"
+            "状态需要停下或仅确认安排外，必须自然落下一处 minimumExpression 所要求的爱意或亲近信号。",
+            "不要让天气、地点、工作、物品或安排占据整个开场；如果先从具体话题开口，应在同一句或紧接的一句里让玩家听见角色对玩家本人的明确情绪或愿望，"
+            "不能只说‘和你待着’这种中性陪伴。",
+            "然后最多一个亲密动作；不要连续升级或把回复写成长篇告白。",
+            "proactive 模式不需要等待玩家先说情话，但主动行为必须来自当前话题和角色自己的表达方式。",
+            "只在 allowedKinds 与 allowedIntensities 范围内选择；explicit 不凭空主动露骨，必须由玩家先提出且有明确同意。",
+            "玩家拒绝、明确结束、说不打扰或先休息时不得调情，只按角色语气简短收口。",
+            "仅说共同安排不够；给出事务计划也不算充分爱意，必须让玩家感到被想念、被选择、被在乎或被期待。",
+            "功能性邀约不够；像‘来帮忙’‘有空来’‘一起安排’这样的计划，必须同时说清楚角色为什么想和玩家相处。",
+            "亲密落点必须明确指向玩家本人：让玩家听见角色对‘你’的感受、选择或期待；不能只写对话题、地点或安排的态度。",
+        ]
     if mode == "guarded":
         instructions.append(
             "guarded 模式优先实际关心、需要空间或自然收口；状态差时可以拒绝，不把拒绝写成关系倒退。"
         )
+        if any(marker in player_input for marker in _GUARDED_PLAYER_BOUNDARY_MARKERS):
+            instructions.append(
+                "玩家已说没心情或别逼我：先承认当前状态，可简短说需要空间、先休息或不聊；不要反问‘你现在想做什么’，也不要重新抛出安排。"
+            )
     if channel == "remote":
         instructions.append(
             "当前是远程聊天：只写消息中的表达或待确认安排，不得写成已经见面、已经碰面或已经赴约。"
@@ -1595,19 +1648,24 @@ def _build_affection_initiative_card(
             "当前是当面聊天：可以描述当前当面反应，但不要写成发消息或把已经发生的互动推迟到以后。"
         )
     minimum_expression = _text(affection.get("minimumExpression"), limit=240)
-    if minimum_expression:
+    if minimum_expression and not compact:
         instructions.append(f"最低表达要求：{minimum_expression}")
     warmth_signals = _compact_text_list(
         affection.get("warmthSignals"),
-        limit=4,
-        item_limit=120,
+        limit=1 if compact else 4,
+        item_limit=48 if compact else 120,
     )
     if warmth_signals:
-        instructions.append(
-            "优先从以下角色化 warmthSignals 中选择一处自然落地，不要逐字照抄："
-            + "；".join(warmth_signals)
-            + "。"
-        )
+        if compact:
+            instructions.append(
+                "角色化落点：" + warmth_signals[0] + "。不要逐字照抄。"
+            )
+        else:
+            instructions.append(
+                "优先从以下角色化 warmthSignals 中选择一处自然落地，不要逐字照抄："
+                + "；".join(warmth_signals)
+                + "。"
+            )
     personal_signals = _compact_text_list(
         affection.get("personalSignals"),
         limit=6,
@@ -1618,30 +1676,41 @@ def _build_affection_initiative_card(
         limit=6,
         item_limit=50,
     )
-    if personal_signals:
+    if personal_signals and not compact:
         instructions.append(
             "本轮至少自然使用一类 personalSignals 指向玩家本人；"
             "可以是专属选择、玩家触发的期待、个人化照顾、脆弱分享或符合角色的轻微回撩。"
         )
-    if support_signals:
+    if support_signals and not compact:
         instructions.append(
             "陪伴和安排不能单独充当爱意；companionship、specific_plan 等 supportSignals "
             "只能辅助已经明确指向玩家本人的个人亲近。"
         )
     variation_rule = _text(affection.get("variationRule"), limit=200)
-    if variation_rule:
+    if variation_rule and not compact:
         instructions.append(f"连续轮次约束：{variation_rule}")
     if channel_rule:
         instructions.append(f"本渠道规则：{channel_rule}")
     if intensity in {"none", "light", "direct", "explicit"}:
-        instructions.append(f"本轮评测强度是 {intensity}；它是边界提示，不要把强度名称说出口。")
+        if compact and intensity == "explicit":
+            instructions.append(
+                "本轮评测强度是 explicit；仅在玩家先提出且明确同意时使用。"
+            )
+        else:
+            instructions.append(
+                f"本轮评测强度是 {intensity}；它是边界提示，不要把强度名称说出口。"
+            )
 
     return {
         "affectionInitiative": affection,
         "channel": channel or None,
         "instruction": "".join(instructions),
     }
-def _build_affection_priority_final_card(value: object) -> dict[str, str]:
+def _build_affection_priority_final_card(
+    value: object,
+    *,
+    compact: bool = False,
+) -> dict[str, str]:
     """在最终用户触发消息前补一层简短的亲密表达默检。"""
 
     if not isinstance(value, Mapping):
@@ -1652,6 +1721,25 @@ def _build_affection_priority_final_card(value: object) -> dict[str, str]:
     mode = _text(affection.get("initiativeMode"), limit=20).casefold()
     if mode not in {"proactive", "guarded"}:
         return {}
+    if compact:
+        warmth_signal = _compact_text_list(
+            affection.get("warmthSignals"),
+            limit=1,
+            item_limit=48,
+        )
+        character_hint = (
+            f"角色化落点：{warmth_signal[0]}。"
+            if warmth_signal
+            else ""
+        )
+        return {
+            "instruction": (
+                "输出前默检：除收口或拒绝外，必须说清为何是玩家：用比较、因果或专属选择（如‘比起…更想你’‘因为你…’‘只对你…’）；"
+                "单独陪伴或安排不足。玩家提出拥抱或回房间等亲密安排时，补一句自己愿意、想靠近或舍不得的理由，"
+                "不能只确认动作。"
+                f"{character_hint}保留角色、渠道和同意边界，只输出对白。"
+            ),
+        }
     return {
         "instruction": (
             "这是输出前的最后一次默检，不是要说出口的台词。"
@@ -2893,10 +2981,9 @@ class PromptBuilder:
                     "content": _json(topic_context),
                 }
             )
-            final_affection_card = (
-                {}
-                if compact
-                else _build_affection_priority_final_card(affection_card)
+            final_affection_card = _build_affection_priority_final_card(
+                affection_card,
+                compact=compact,
             )
             if final_affection_card:
                 messages.append(
@@ -2917,10 +3004,9 @@ class PromptBuilder:
                 }
             )
         else:
-            final_affection_card = (
-                {}
-                if compact
-                else _build_affection_priority_final_card(affection_card)
+            final_affection_card = _build_affection_priority_final_card(
+                affection_card,
+                compact=compact,
             )
             if final_affection_card:
                 messages.append(

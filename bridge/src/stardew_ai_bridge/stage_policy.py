@@ -287,7 +287,7 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
             "allowedIntensities": ["light", "direct", "explicit"],
             "allowedKinds": ["affection_signal", "specific_plan", "shared_evening"],
             "warmthSignals": [
-                "让玩家明确感到自己被想念、被选择",
+                "因为是玩家，才愿意放下记录、留出一段安静的独处时间",
                 "把私下相处说成因为珍惜玩家，而不是事务安排",
                 "用一个熟悉的共同小习惯表达偏爱",
             ],
@@ -316,7 +316,7 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
             "allowedIntensities": ["light", "direct", "explicit"],
             "allowedKinds": ["affection_signal", "specific_plan", "creative_share"],
             "warmthSignals": [
-                "自然说出想念或想和玩家共享小事",
+                "在酒窖里，酒杯再好看也更想看玩家；害羞地把这句偏爱留给伴侣",
                 "把创作或日常分享当作只留给伴侣的亲近",
                 "用温柔而具体的期待表达偏爱",
             ],
@@ -395,7 +395,7 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
             "allowedIntensities": ["light", "direct", "explicit"],
             "allowedKinds": ["companionship", "creative_share", "specific_plan"],
             "warmthSignals": [
-                "把陪伴写成只想和玩家一起，而不是泛泛消磨时间",
+                "音乐停下后的安静明确留给玩家，想先给玩家一个拥抱，让玩家知道这段停顿是为自己留下的",
                 "用一个共同的音乐、骑行或安静习惯表达偏爱",
                 "少量但明确地说出想靠近或想念",
             ],
@@ -424,7 +424,7 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
             "allowedIntensities": ["light", "direct", "explicit"],
             "allowedKinds": ["playful_tease", "affection_signal", "specific_plan"],
             "warmthSignals": [
-                "直接说出对玩家的偏爱或想念，再带一点带笑的打趣",
+                "不舍得把和玩家的时间压缩成直接回房间，今晚先选玩家，再用带笑的自信打趣说出偏爱",
                 "把亲密落到一起吃饭、出门或共享时间",
                 "让自信的语气服务于宠爱玩家，而不是喊口号",
             ],

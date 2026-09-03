@@ -24,6 +24,12 @@ FORMAT_RETRY_FINAL_CONTENT = (
     "保留当前话题，不要解释规则。"
 )
 
+FORMAT_AND_AFFECTION_RETRY_SUFFIX = (
+    "同时，当前关系阶段缺少个人亲近：在去掉格式噪声的同时，说清为什么是玩家，"
+    "用偏爱、专属选择、因玩家而期待、个人化照顾或符合角色的轻微回撩中的一类自然落地；"
+    "陪伴、安排或反问不能单独替代。"
+)
+
 VOICE_PARTICLE_RETRY_CONTENT = (
     "上一条回复重复了历史中已经用过的口头颗粒。只重新回答最后一条玩家消息："
     "不要使用 avoidSpeechParticles 中的任何词，不要补固定口头禅；"
@@ -67,6 +73,9 @@ AFFECTION_RETRY_CONTENT = (
     "不要套固定的‘先爱意、再话题、最后安排’顺序，也不要让天气、地点、工作、物品或安排占满开场，"
     "不要先复述、总结或改写玩家原话，"
     "不要把‘有空来’‘一起安排’这类功能性邀约单独当作爱意，"
+    "不要只说“陪你”“过来吧”“这里只有我们两个”或“坐近点”，也不能只确认动作或安排；第一句先说明为什么是玩家，再决定是否补行动。"
+    "不要写括号动作。第一句用具体的比较、原因或专属对象说明为什么是玩家；可以换说法，但不能用泛泛的‘陪你’代替。"
+    "若写到‘陪你’‘坐近’‘回房间’等动作，必须再补个人理由，例如‘因为是你’‘我舍不得’‘我想听你说’，否则仍算未完成。"
     "不要写成长篇告白，不要主动升级成人内容，保持角色语气和渠道边界。"
 )
 
@@ -74,8 +83,17 @@ AFFECTION_RETRY_FINAL_CONTENT = (
     "这是第二次亲密表达重写。不要再只写地点、天气、工作或‘有空来’这类安排，也不要套固定开场顺序；"
     "必须明确指向玩家本人，直接写出 NPC 对玩家的想念、偏爱、舍不得、等待或想陪伴中的至少一种，"
     "让这份爱意在前一两句自然出现，优先使用陈述句，例如‘我想你了’或‘我想和你待在一起’，不要用反问（例如‘你会不会也想我’）代替爱意；"
+    "不要只说“陪你”“过来吧”“这里只有我们两个”或“坐近点”，也不能只确认动作或安排；第一句先说明为什么是玩家，再决定是否补行动。"
+    "不要写括号动作。第一句用具体的比较、原因或专属对象说明为什么是玩家；可以换说法，但不能用泛泛的‘陪你’代替。"
+    "若写到‘陪你’‘坐近’‘回房间’等动作，必须再补个人理由，例如‘因为是你’‘我舍不得’‘我想听你说’，否则仍算未完成。"
     "再自然接住当前话题。不要先复述或总结玩家原话，不要解释规则，不要使用模板化的‘你说得对’开场，"
     "只输出一小段角色自然会说的中文对白，保持角色个性，不主动升级成人内容。"
+)
+
+CLOSE_RETRY_CONTENT = (
+    "玩家已经明确要结束这轮对话。只重新回答最后一条玩家消息："
+    "不得主动抛出新问题、新对象或安排，只简短收口并尊重对方现在要离开的选择；"
+    "不要补邀约、家务、见面或下一步计划，不要解释规则，保持角色语气和渠道边界。"
 )
 
 VARIATION_RETRY_CONTENT = (
@@ -180,6 +198,12 @@ _CLOSE_INPUT_MARKERS = (
     "不想聊",
     "不用陪",
     "别过来",
+    "别逼我",
+    "没心情",
+    "心情很差",
+    "很难受",
+    "就这样吧",
+    "先不说了",
 )
 _CLOSE_REPLY_MARKERS = (
     "明天再聊",
@@ -200,12 +224,39 @@ _GUARDED_BOUNDARY_REPLY_MARKERS = (
     "别过来",
     "不想见人",
     "今天状态很差",
+    "状态也不好",
     "真撑不住",
     "累得不行",
     "今天太累",
+    "没法陪你多聊",
     "想静一静",
     "别等我",
     "让我缓缓",
+    "别说了",
+    "不说了",
+    "不聊了",
+    "别勉强",
+    "别跟我较劲",
+)
+_CLOSE_REOPENING_PATTERNS = (
+    re.compile(
+        r"(?:明天|下次|改天|过会儿|等会儿|之后|以后|晚点|等下|回头).{0,16}(?P<action>来|过来|一起|见|约|帮我|帮你|找我|陪我|看看|送|带|拿|准备|联系|告诉|问|安排)"
+    ),
+    re.compile(
+        r"(?:要不要|有空).{0,16}(?P<action>来|过来|一起|见|约|帮我|帮你|找我|陪我|送|带|拿|准备|联系|告诉|问|安排)"
+    ),
+)
+_NEGATED_FUTURE_ACTION = re.compile(r"(?:别|不要|不用|不必|无需).{0,3}$")
+_GUARDED_CARE_REPLY_MARKERS = (
+    "吃点东西",
+    "别空着肚子",
+    "带点吃的",
+    "先休息",
+    "早点睡",
+    "别担心",
+    "照看你",
+    "帮你吃点",
+    "帮你休息",
 )
 
 
@@ -482,7 +533,33 @@ def _missing_proactive_affection(
         _GUARDED_BOUNDARY_REPLY_MARKERS,
     ):
         return False
+    if mode == "guarded" and _contains_marker(
+        text,
+        _GUARDED_CARE_REPLY_MARKERS,
+    ):
+        return False
     return not bool(diagnose_personal_affection(text)["personalAffectionDetected"])
+
+
+def _reopens_after_player_close(
+    prompt: list[dict[str, str]],
+    reply: object,
+) -> bool:
+    """玩家收口后，不允许 NPC 借下一步安排把对话重新拉开。"""
+
+    if not isinstance(reply, str) or not _contains_marker(
+        _last_player_input(prompt),
+        _CLOSE_INPUT_MARKERS,
+    ):
+        return False
+    for pattern in _CLOSE_REOPENING_PATTERNS:
+        for match in pattern.finditer(reply):
+            action_start = match.start("action")
+            preceding = reply[max(match.start(), action_start - 6) : action_start]
+            if _NEGATED_FUTURE_ACTION.search(preceding):
+                continue
+            return True
+    return False
 
 
 def _warmth_score(prompt: list[dict[str, str]], reply: object) -> int:
@@ -510,6 +587,7 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
         and ResponseGuard.format_issue(reply) is None
         and not ResponseGuard.is_topic_prompt_echo(reply)
     )
+    close_clean = int(not _reopens_after_player_close(prompt, reply))
     required_clean = int(not _missing_required_term(prompt, reply))
     continuity_clean = int(not _missing_history_anchor(prompt, reply))
     priority_opening = int(
@@ -525,6 +603,7 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
     variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     return (
         format_clean,
+        close_clean,
         restatement_clean,
         required_clean,
         priority_opening,
@@ -570,10 +649,26 @@ def retry_for_format_noise(
         issue = ResponseGuard.format_issue(current.reply)
         retry_kind = "format"
         retry_content = FORMAT_RETRY_CONTENT
-        if issue is None and ResponseGuard.is_topic_prompt_echo(current.reply):
+        missing_personal_affection = _missing_proactive_affection(prompt, current.reply)
+        if (
+            issue is not None
+            and missing_personal_affection
+            and max_retries is not None
+        ):
+            # 经济评测传入总重试上限时，优先保留个人亲近的重试配额；亲近
+            # 重试本身也明确要求去掉括号动作。正式聊天仍保留格式后再补亲近
+            # 的完整恢复链路。
+            issue = "missing_proactive_affection"
+            retry_kind = "affection"
+            retry_content = AFFECTION_RETRY_CONTENT
+        elif issue is None and ResponseGuard.is_topic_prompt_echo(current.reply):
             issue = "prompt_echo"
             retry_kind = "topic_leakage"
             retry_content = TOPIC_LEAKAGE_RETRY_CONTENT
+        elif issue is None and _reopens_after_player_close(prompt, current.reply):
+            issue = "new_plan_after_player_close"
+            retry_kind = "close"
+            retry_content = CLOSE_RETRY_CONTENT
         elif issue is None and _repeats_personal_affection_shape(
             prompt,
             current.reply,
@@ -610,6 +705,10 @@ def retry_for_format_noise(
             retry_content = VOICE_PARTICLE_RETRY_CONTENT
         if issue is None or current.fallback or skip:
             return _best_retry_result(best, current)
+        retry_needs_personal_affection = (
+            retry_kind != "affection"
+            and missing_personal_affection
+        )
         if max_retries is not None and total_retries >= max_retries:
             return _best_retry_result(best, current)
         retry_limit = (
@@ -627,6 +726,8 @@ def retry_for_format_noise(
             return _best_retry_result(best, current)
         if retry_kind == "format" and retry_counts.get(retry_kind, 0) >= 1:
             retry_content = FORMAT_RETRY_FINAL_CONTENT
+        if retry_needs_personal_affection:
+            retry_content += FORMAT_AND_AFFECTION_RETRY_SUFFIX
         if (
             retry_kind == "affection"
             and retry_counts.get(retry_kind, 0) == 0
@@ -637,6 +738,8 @@ def retry_for_format_noise(
             retry_content = AFFECTION_RETRY_FINAL_CONTENT
         if retry_kind == "affection" and retry_counts.get(retry_kind, 0) >= 1:
             retry_content = AFFECTION_RETRY_FINAL_CONTENT
+        if retry_kind == "affection":
+            retry_content += _affection_warmth_signal_suffix(prompt)
         retry_counts[retry_kind] = retry_counts.get(retry_kind, 0) + 1
         total_retries += 1
 
@@ -662,9 +765,17 @@ def retry_for_format_noise(
             )
         try:
             retried = generate(retry_messages)
-        except EvaluationBudgetExceeded:
+        except EvaluationBudgetExceeded as exc:
             # 经济模式可能在初始回复后耗尽批次预算；保留已有回复，
-            # 不把“预算停止”伪装成 ProviderError。
+            # 不把“预算停止”伪装成 ProviderError，并让脱敏工件可审计。
+            current = current.model_copy(
+                update={
+                    "warnings": [
+                        *current.warnings,
+                        f"response_{retry_kind}_retry_skipped: budget_{exc.reason}",
+                    ]
+                }
+            )
             return _best_retry_result(best, current)
         except Exception:  # noqa: BLE001 - 重试失败交给调用方现有兜底链路
             current = current.model_copy(
@@ -712,6 +823,21 @@ def _string_values(value: object) -> list[str]:
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
+def _affection_warmth_signal_suffix(prompt: list[dict[str, str]]) -> str:
+    affection = _prompt_payload(prompt, "affection_initiative").get(
+        "affectionInitiative"
+    )
+    if not isinstance(affection, Mapping):
+        return ""
+    signals = _string_values(affection.get("warmthSignals"))
+    if not signals:
+        return ""
+    return (
+        f"角色化落点：{signals[0]}。"
+        "用角色自己的语气把它变成对玩家的真实表达，不要逐字照抄。"
+    )
+
+
 def _has_repeated_opening(prompt: list[dict[str, str]], reply: object) -> bool:
     if not isinstance(reply, str):
         return False
@@ -731,7 +857,7 @@ def _repeats_personal_affection_shape(
     prompt: list[dict[str, str]],
     reply: object,
 ) -> bool:
-    """仅在相邻回复复用同一专属形状和开场时触发变化重试。"""
+    """仅在相邻回复复用同一专属形状时触发变化重试。"""
 
     if not isinstance(reply, str) or not reply.strip():
         return False
@@ -765,7 +891,6 @@ def _repeats_personal_affection_shape(
     return bool(
         previous["personalAffectionDetected"]
         and previous["affectionShape"] == current_shape
-        and _affection_opening(previous_reply) == current_opening
     )
 
 

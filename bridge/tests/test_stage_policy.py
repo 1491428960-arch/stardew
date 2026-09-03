@@ -138,6 +138,36 @@ def test_high_affinity_policy_exposes_role_specific_warmth_signals() -> None:
     assert any("实际" in signal for signal in policies["Shane"]["warmthSignals"])
 
 
+def test_sebastian_and_alex_married_warmth_signals_explain_why_the_player_is_special() -> None:
+    sebastian = build_stage_policy("Sebastian", "married")["affectionInitiative"]
+    alex = build_stage_policy("Alex", "married")["affectionInitiative"]
+
+    assert "音乐停下后的安静明确留给玩家" in sebastian["warmthSignals"][0]
+    assert "拥抱" in sebastian["warmthSignals"][0]
+    assert "今晚先选玩家" in alex["warmthSignals"][0]
+
+
+def test_sophia_and_alex_married_warmth_signals_keep_a_character_specific_reason() -> None:
+    sophia = build_stage_policy("Sophia", "married")["affectionInitiative"]
+    alex = build_stage_policy("Alex", "married")["affectionInitiative"]
+
+    assert any(
+        "酒窖" in signal and "酒杯" in signal and "更想看玩家" in signal
+        for signal in sophia["warmthSignals"]
+    )
+    assert any(
+        "不舍得" in signal and "玩家" in signal and "时间" in signal
+        for signal in alex["warmthSignals"]
+    )
+
+
+def test_wizard_married_warmth_signal_keeps_his_private_time_for_the_player() -> None:
+    wizard = build_stage_policy("Wizard", "married")["affectionInitiative"]
+
+    assert "因为是玩家" in wizard["warmthSignals"][0]
+    assert "放下记录" in wizard["warmthSignals"][0]
+
+
 def test_high_affinity_reply_prioritizes_personal_affection_before_topic_or_plan() -> None:
     for npc_id in CHARACTERS:
         for stage in ("dating", "married"):

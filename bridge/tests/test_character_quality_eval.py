@@ -403,6 +403,32 @@ def test_affection_variation_requires_reply_to_actually_introduce_new_anchor() -
     assert scores[1]["mechanical"] is True
 
 
+def test_affection_variation_flags_same_personal_shape_even_when_kind_changes() -> None:
+    if score_affection_variation is None:
+        pytest.fail("亲近形状变化评分尚未实现")
+
+    turn_type = quality_eval.CharacterQualityTurn
+    turns = (
+        turn_type("turn-1", "", expected_terms=("酒",)),
+        turn_type("turn-2", "", expected_terms=("酒",)),
+    )
+    diagnostics = (
+        {"affectionShape": "player_directed_preference", "initiativeKind": "shared_evening", "initiativeTags": []},
+        {"affectionShape": "player_directed_preference", "initiativeKind": "specific_plan", "initiativeTags": []},
+    )
+    scores = score_affection_variation(
+        (
+            "也只有你能让我放下酒杯。今晚的时间都给你。",
+            "也就只有你能让我把酒杯推开。过来坐。",
+        ),
+        turns,
+        diagnostics,
+    )
+
+    assert scores[1]["mechanical"] is True
+    assert "mechanical_affection_shape" in scores[1]["tags"]
+
+
 def test_married_cases_use_distinct_player_turns_and_intimate_progression() -> None:
     if case_by_id is None:
         pytest.fail("婚后质量案例尚未实现")

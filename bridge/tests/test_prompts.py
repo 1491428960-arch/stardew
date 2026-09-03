@@ -3413,6 +3413,97 @@ def test_prompt_places_a_final_affection_priority_check_before_the_player_turn()
     assert "不要先复述或总结玩家原话" in final_check["content"]
 
 
+def test_compact_prompt_keeps_a_short_final_personal_affection_check() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Alex",
+            "displayName": "Alex",
+            "stagePolicy": {
+                "stage": "married",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "personalSignals": ["player_directed_preference"],
+                    "supportSignals": ["companionship", "specific_plan"],
+                    "warmthSignals": ["用共同音乐或安静习惯表达偏爱"],
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "face_to_face"},
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "romanceEligible": True,
+            "adultConsensual": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "今晚想先聊会儿吗？", compact=True)
+    names = [message["name"] for message in messages]
+    final_check = next(
+        message for message in messages if message["name"] == "affection_priority_final"
+    )
+
+    assert names.index("affection_initiative") < names.index("affection_priority_final")
+    assert names.index("affection_priority_final") < names.index("player_input")
+    assert "拥抱或回房间等亲密安排" in final_check["content"]
+    assert "为何是玩家" in final_check["content"]
+    assert "陪伴或安排不足" in final_check["content"]
+    assert "共同音乐或安静习惯" in final_check["content"]
+    assert "比较、因果或专属选择" in final_check["content"]
+    assert len(final_check["content"]) <= 160
+
+
+def test_compact_affection_card_keeps_only_a_short_hard_priority_contract() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Alex",
+            "displayName": "Alex",
+            "stagePolicy": {
+                "stage": "married",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "personalSignals": [
+                        "player_directed_preference",
+                        "vulnerable_disclosure",
+                    ],
+                    "supportSignals": ["companionship", "specific_plan"],
+                    "minimumExpression": "这段很长的最低表达要求不该进入 compact 行为卡。" * 8,
+                    "variationRule": "这段很长的变化规则不该进入 compact 行为卡。" * 8,
+                    "warmthSignals": [
+                        "不舍得把和玩家的时间压缩成直接回房间，先用带笑的自信打趣说出偏爱",
+                        "第二条角色化落点不该和第一条一起塞进 compact 行为卡",
+                    ],
+                    "channelRules": {
+                        "face_to_face": "当前当面聊天可以描述此刻反应，但不能写成发消息。"
+                    },
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "face_to_face"},
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "romanceEligible": True,
+            "adultConsensual": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "比赛结束了，陪我回房间待会儿？", compact=True)
+    card = next(message for message in messages if message["name"] == "affection_initiative")
+    rendered = card["content"]
+
+    assert "为何是玩家" in rendered
+    assert "单独‘陪你’‘一起’‘坐近’‘回房间’或事务安排无效" in rendered
+    assert "勿复用上一轮亲近形状" in rendered
+    assert "当前当面聊天可以描述此刻反应" in rendered
+    assert "最低表达要求不该进入" not in rendered
+    assert "变化规则不该进入" not in rendered
+    assert "第二条角色化落点" not in rendered
+    assert len(rendered) <= 600
+
+
 def test_prompt_affection_card_keeps_explicit_consent_and_end_boundaries() -> None:
     context = {
         "npcIdentity": {
@@ -3449,6 +3540,171 @@ def test_prompt_affection_card_keeps_explicit_consent_and_end_boundaries() -> No
     assert "explicit" in rendered
     assert "同意" in rendered
     assert "明确结束" in rendered
+
+
+def test_compact_affection_card_keeps_remote_guarded_consent_and_end_boundaries() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Shane",
+            "displayName": "Shane",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "affectionInitiative": {
+                    "initiativeMode": "guarded",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["guarded_care", "conversation_exit"],
+                    "maxActions": 1,
+                    "channelRules": {"remote": "不写成见面"},
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "explicit",
+            "adultConsensual": False,
+            "romanceEligible": True,
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "算了，你先休息，我不打扰了。", compact=True)
+    card = next(
+        message for message in messages if message["name"] == "affection_initiative"
+    )
+    rendered = card["content"]
+
+    assert "explicit" in rendered
+    assert "同意" in rendered
+    assert "明确结束" in rendered
+    assert "不写成见面" in rendered
+
+
+def test_compact_guarded_card_handles_player_low_mood_without_a_follow_up_question() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Shane",
+            "displayName": "Shane",
+            "stageProfile": {"stage": "dating"},
+            "stagePolicy": {
+                "stage": "dating",
+                "affectionInitiative": {
+                    "initiativeMode": "guarded",
+                    "allowedIntensities": ["light", "direct"],
+                    "allowedKinds": ["guarded_care", "conversation_exit"],
+                    "maxActions": 1,
+                    "channelRules": {"remote": "不写成见面"},
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "remote"},
+        "qualityContext": {
+            "flirtIntensity": "direct",
+            "adultConsensual": True,
+            "romanceEligible": True,
+            "initiativeExpectation": "guarded",
+            "initiativeKind": "guarded_care",
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(
+        context,
+        "别逼我说这种话，今天真的没心情。",
+        compact=True,
+    )
+    card = next(message for message in messages if message["name"] == "affection_initiative")
+    rendered = card["content"]
+
+    assert "没心情" in rendered
+    assert "不要反问" in rendered
+    assert "需要空间" in rendered
+
+
+def test_compact_proactive_card_requires_a_personal_reason_for_companionship_actions() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Alex",
+            "displayName": "Alex",
+            "stageProfile": {"stage": "married"},
+            "stagePolicy": {
+                "stage": "married",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct", "explicit"],
+                    "allowedKinds": ["affection_signal", "specific_plan"],
+                    "maxActions": 1,
+                    "warmthSignals": ["先选玩家，再用带笑的自信打趣说出偏爱"],
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "face_to_face"},
+        "qualityContext": {
+            "flirtIntensity": "explicit",
+            "adultConsensual": True,
+            "romanceEligible": True,
+            "initiativeExpectation": "proactive",
+            "initiativeKind": "affection_signal",
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(
+        context,
+        "先陪你，当然。坐近一点，我还有话跟你说。",
+        compact=True,
+    )
+    card = next(message for message in messages if message["name"] == "affection_initiative")
+    rendered = card["content"]
+
+    assert "因为是你" in rendered
+    assert "舍不得" in rendered
+    assert "想听你说" in rendered
+
+
+def test_compact_shared_evening_card_rejects_exclusive_room_as_a_standalone_reason() -> None:
+    context = {
+        "npcIdentity": {
+            "npcId": "Sophia",
+            "displayName": "Sophia",
+            "stageProfile": {"stage": "married"},
+            "stagePolicy": {
+                "stage": "married",
+                "affectionInitiative": {
+                    "initiativeMode": "proactive",
+                    "allowedIntensities": ["light", "direct", "explicit"],
+                    "allowedKinds": ["shared_evening", "specific_plan"],
+                    "maxActions": 1,
+                    "warmthSignals": ["在酒窖里，酒杯再好看也更想看玩家"],
+                },
+            },
+        },
+        "interaction": {"intent": "chat", "channel": "face_to_face"},
+        "qualityContext": {
+            "flirtIntensity": "explicit",
+            "adultConsensual": True,
+            "romanceEligible": True,
+            "initiativeExpectation": "proactive",
+            "initiativeKind": "shared_evening",
+        },
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(
+        context,
+        "再喝一口，然后陪我去里面坐会儿，好吗？",
+        compact=True,
+    )
+    card = next(message for message in messages if message["name"] == "affection_initiative")
+    rendered = card["content"]
+
+    assert "共享时光" in rendered
+    assert "这里只有我们" in rendered
+    assert "因为你在这里" in rendered
 
 
 def test_prompt_direct_reply_does_not_force_a_restatement_before_the_answer() -> None:

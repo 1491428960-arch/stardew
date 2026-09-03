@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 try:
+    from stardew_ai_bridge.evaluation_budget import EvaluationBudgetExceeded
     from stardew_ai_bridge.guard import ResponseGuard, retry_for_format_noise
     from stardew_ai_bridge.models import ProviderResult
 except ModuleNotFoundError:
@@ -16,6 +17,7 @@ except ModuleNotFoundError:
 
     retry_for_format_noise = None
     ProviderResult = None
+    EvaluationBudgetExceeded = RuntimeError
 
 
 @pytest.fixture()
@@ -161,6 +163,40 @@ def test_format_retry_explicitly_rejects_stage_directions_again() -> None:
     assert calls[0][-1]["name"] == "format_retry"
     assert "即使上一条包含括号" in calls[0][-1]["content"]
     assert "绝不输出括号内容" in calls[0][-1]["content"]
+
+
+def test_high_stage_format_noise_prioritizes_personal_affection_retry() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "今晚想聊会儿吗？"},
+    ]
+    result = ProviderResult(
+        reply="（挑眉）行啊，先聊聊今天训练的事。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(
+            update={"reply": "今天把时间空出来，是想先听你把话说完。"}
+        ),
+        max_retries=1,
+    )
+
+    assert retried.reply == "今天把时间空出来，是想先听你把话说完。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "affection_retry"
+    assert "具体的比较、原因或专属对象" in calls[0][-1]["content"]
+    assert "不要写括号动作" in calls[0][-1]["content"]
 
 
 def test_guard_allows_known_stardew_names_and_places_in_chinese_dialogue() -> None:
@@ -463,6 +499,318 @@ def test_retry_for_format_noise_does_not_force_warmth_after_explicit_close() -> 
 
     assert retried.reply == result.reply
     assert calls == []
+
+
+def test_retry_for_format_noise_keeps_shane_player_low_mood_boundary_without_affection_retry() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {
+            "role": "user",
+            "name": "player_input",
+            "content": "别逼我说这种话，今天真的没心情。",
+        },
+    ]
+    result = ProviderResult(
+        reply="哦，那不说了。你现在还好吗？早点休息吧。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_keeps_shane_refusal_close_without_affection_retry() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {
+            "role": "user",
+            "name": "player_input",
+            "content": "别逼我说这种话，今天真的没心情。",
+        },
+    ]
+    result = ProviderResult(
+        reply="哦，是我强求了。那你就别说了，早点休息吧，我先睡了，晚安。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "player_input",
+    [
+        "今天心情很差，就这样吧。",
+        "我现在很难受，先不说了。",
+    ],
+)
+def test_retry_for_format_noise_skips_affection_after_natural_low_mood_close(
+    player_input: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": player_input},
+    ]
+    result = ProviderResult(
+        reply="好。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_rewrites_new_delivery_plan_after_player_closes() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "我先睡了。"},
+    ]
+    result = ProviderResult(
+        reply="好，明天我给你送早餐。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "好，晚安。"}),
+    )
+
+    assert accepted.reply == "好，晚安。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "close_retry"
+
+
+def test_retry_for_format_noise_keeps_shane_guarded_care_without_forcing_affection() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "你今天还好吗？"},
+    ]
+    result = ProviderResult(
+        reply="吃点东西，别空着肚子。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_rewrites_new_plan_after_player_closes() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "行了，我先睡了。明天再说。"},
+    ]
+    result = ProviderResult(
+        reply="行吧，那你好好休息。明天要是有空，来帮我看看鸡舍？",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "行吧，你好好休息，晚安。"}),
+    )
+
+    assert accepted.reply == "行吧，你好好休息，晚安。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "close_retry"
+    assert "不得主动抛出新问题、新对象或安排" in calls[0][-1]["content"]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "好，之后联系你。",
+        "行，以后再给你带点吃的。",
+        "好，等会儿我再问你。",
+    ],
+)
+def test_retry_for_format_noise_rewrites_delayed_reopening_after_player_closes(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "我先睡了。"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "好，晚安。"}),
+    )
+
+    assert accepted.reply == "好，晚安。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "close_retry"
+
+
+def test_retry_for_format_noise_keeps_a_negated_future_question_as_closure() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "我先睡了。"},
+    ]
+    result = ProviderResult(
+        reply="好，以后别再问这事了。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_does_not_treat_functional_help_as_shane_guarded_care() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "鸡舍修好了吗？"},
+    ]
+    result = ProviderResult(
+        reply="我帮你修好栅栏了。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "我今天状态还行，想把这会儿留给你。"}),
+    )
+
+    assert accepted.reply == "我今天状态还行，想把这会儿留给你。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "affection_retry"
+
+
+def test_affection_retry_foregrounds_role_specific_warmth_signal() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": (
+                '{"affectionInitiative":{"initiativeMode":"proactive",'
+                '"warmthSignals":["把音乐停下后的安静明确留给玩家"]}}'
+            ),
+        },
+        {"role": "user", "name": "player_input", "content": "音乐停下来以后，过来抱我一会儿？"},
+    ]
+    result = ProviderResult(
+        reply="外面雨大。就抱一小会儿，别吵我。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "雨声再大，我也想把这会儿留给你。"}),
+    )
+
+    assert accepted.reply == "雨声再大，我也想把这会儿留给你。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "affection_retry"
+    assert "角色化落点：把音乐停下后的安静明确留给玩家" in calls[0][-1]["content"]
 
 
 def test_retry_for_format_noise_accepts_direct_memory_as_warmth() -> None:
@@ -771,6 +1119,50 @@ def test_retry_for_format_noise_retries_functional_cooperation_with_generic_play
     assert calls[0][-1]["name"] == "affection_retry"
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "今晚就咱们俩把鸡舍收拾好，明早还得喂鸡。",
+        "现在我们两个一起整理账本，早点算完吧。",
+        "我多留点时间给你整理账本。",
+        "你可别只看我，把账本也过一遍。",
+        "我只想给你看账本。",
+        "我只想把账本给你看。",
+    ],
+)
+def test_retry_for_format_noise_retries_two_person_functional_work(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "账本和鸡舍都等着收拾。"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(
+            update={"reply": "知道你忙完总会累，所以我先把重活留给自己。"}
+        ),
+    )
+
+    assert accepted.reply == "知道你忙完总会累，所以我先把重活留给自己。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "affection_retry"
+
+
 def test_retry_for_format_noise_accepts_natural_exclusive_share_without_old_marker() -> None:
     prompt = [
         {
@@ -832,6 +1224,363 @@ def test_retry_for_format_noise_accepts_natural_personal_affection_without_retry
 
     assert accepted.reply == result.reply
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "不过我更想看你。",
+        "这安静下来的时间，我只给你留着。",
+        "这首我只听给你一个人。",
+        "跟你在一起的时间怎么都不够。",
+        "你可是我最想陪的人。",
+    ],
+)
+def test_retry_for_format_noise_keeps_v7_player_directed_affection_without_retry(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "你在看什么？"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == reply
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "我只想陪着你。",
+        "比起杯子，我一直都在看你。",
+        "比起杯子，我一直都在看你；酒还没倒好。",
+        "我只想给你听这首歌，账本明天再核对。",
+        "我只想给你看这张画，账本明天再核对。",
+        "因为你在这儿，那些记录便可以等等。我现在就过来陪你坐会儿。",
+        "好呀，今晚就陪你好好的。在这酒窖里，有你在身边，喝酒都变得更美妙了呢。",
+        "酒窖里只有你我才热闹。再喝一口就陪你去里面坐着。",
+        "也就你让我这么凑过去听了。",
+        "好啊，就回我们的房间。这一首听完，那段时间归你。",
+        "嘿，当然是先陪你聊会儿啦。我可舍不得直接去房间，和你待在一起时间总是过得特别快。",
+    ],
+)
+def test_retry_for_format_noise_keeps_natural_exclusive_and_comparison_affection(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "你在看什么？"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == reply
+    assert calls == []
+
+
+def test_affection_retry_rejects_bare_companionship_or_action_confirmation() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": (
+                '{"affectionInitiative":{"initiativeMode":"proactive",'
+                '"warmthSignals":["在酒窖里，酒杯再好看也更想看玩家"]}}'
+            ),
+        },
+        {"role": "user", "name": "player_input", "content": "再喝一口，然后陪我去里面坐会儿，好吗？"},
+    ]
+    result = ProviderResult(
+        reply="好呀，再喝一口就陪你去里面。这里只有我们两个，真好。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "比起酒杯，我更想看你。"}),
+    )
+
+    assert accepted.reply == "比起酒杯，我更想看你。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "affection_retry"
+    assert "不要只说“陪你”“过来吧”“这里只有我们两个”或“坐近点”" in calls[0][-1]["content"]
+    assert "因为是你" in calls[0][-1]["content"]
+    assert "舍不得" in calls[0][-1]["content"]
+    assert "角色化落点：在酒窖里，酒杯再好看也更想看玩家" in calls[0][-1]["content"]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "比起那些记录，我还是更想把时间留给你。",
+        "我最喜欢和你一起喝酒。",
+        "我就喜欢陪你一起待着。",
+        "训练虽然结束了，但我满脑子都是你。今晚就咱们俩，怎么样？",
+        "我靠过来，你可别只看着我呀。",
+    ],
+)
+def test_retry_for_format_noise_keeps_real_cloud_personal_affection_variants(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "今晚想留一会儿吗？"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == reply
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "那些记录哪有你重要。我这就放下，今晚的时间都是你的。",
+        "比起那些记录，陪你才是正事。我坐过去，想让我抱吗？",
+        "好啊，今晚就只陪你。我们一起慢慢享受这杯美酒。",
+        "好，那你先倒酒吧。我靠过去，今晚只看着你。",
+        "喝完这口就陪你去里面坐着，只和你待着真好。",
+        "我可不想让你等太久。我呀，就喜欢跟你待在一起。",
+    ],
+)
+def test_retry_for_format_noise_keeps_cloud_v3_personal_affection_without_retry(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "今晚想留一会儿吗？"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == reply
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "好，都听你的。我把灯调暗一点，今晚的时间，就只给你我二人。",
+        "好呀，能和你一起喝酒，我很开心呢。",
+        "你倒酒的样子很有魅力呢。",
+        "能陪你在这儿坐着，我觉得特别安心。",
+        "去房间肯定不会让你等太久。我可舍不得，你就安心等着吧。",
+    ],
+)
+def test_retry_for_format_noise_keeps_cloud_v4_personal_affection_without_retry(
+    reply: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "今晚想留一会儿吗？"},
+    ]
+    result = ProviderResult(
+        reply=reply,
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_keeps_natural_alex_exclusive_attention_without_retry() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "我说个训练后的安排。"},
+    ]
+    result = ProviderResult(
+        reply="我就知道你会选陪我。坐过来点，我耳朵只对你竖着呢，说吧。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_affection_retry_retries_plain_companionship_confirmation() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "晚饭后想坐一会儿吗？"},
+    ]
+    result = ProviderResult(
+        reply="能过来陪你坐一会儿。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "因为是你，我才想把今晚留给你。"}),
+    )
+
+    assert accepted.reply == "因为是你，我才想把今晚留给你。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == "affection_retry"
+
+
+@pytest.mark.parametrize(
+    ("reply_contract", "reply_kind"),
+    [
+        ('{"historyAnchors":["酒窖"]}', "continuity_retry"),
+        ('{"mustMention":["摩托车"]}', "topic_retry"),
+    ],
+)
+def test_non_affection_retry_carries_personal_affection_requirement_when_needed(
+    reply_contract: str,
+    reply_kind: str,
+) -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"proactive"}}',
+        },
+        {"role": "system", "name": "reply_contract", "content": reply_contract},
+        {"role": "user", "name": "player_input", "content": "今晚怎么样？"},
+    ]
+    result = ProviderResult(
+        reply="今晚天气不错。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages)
+        or result.model_copy(update={"reply": "我想你了，今晚也想听你慢慢说。"}),
+        max_retries=1,
+    )
+
+    assert retried.reply == "我想你了，今晚也想听你慢慢说。"
+    assert len(calls) == 1
+    assert calls[0][-1]["name"] == reply_kind
+    assert "说清为什么是玩家" in calls[0][-1]["content"]
+
+
+def test_retry_for_format_noise_records_when_budget_skips_a_format_retry() -> None:
+    result = ProviderResult(
+        reply="（挪开耳机）今天还行。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+
+    accepted = retry_for_format_noise(
+        result,
+        [],
+        lambda messages: (_ for _ in ()).throw(
+            EvaluationBudgetExceeded("max_requests")
+        ),
+        max_retries=1,
+    )
+
+    assert accepted.reply == result.reply
+    assert "response_format_retry_skipped: budget_max_requests" in accepted.warnings
 
 
 def test_retry_for_format_noise_retries_repeated_personal_shape_with_variation_prompt() -> None:
@@ -900,6 +1649,33 @@ def test_retry_for_format_noise_keeps_shane_guarded_low_mood_boundary() -> None:
     assert calls == []
 
 
+def test_retry_for_format_noise_keeps_shane_irritated_refusal_without_retry() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "别逼我说这种话，今天真的没心情。"},
+    ]
+    result = ProviderResult(
+        reply="今天真的，我脑子都快浆糊了。你别跟我较劲行不行？",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
 def test_retry_for_format_noise_keeps_shane_tired_quiet_boundary_without_retry() -> None:
     prompt = [
         {
@@ -911,6 +1687,33 @@ def test_retry_for_format_noise_keeps_shane_tired_quiet_boundary_without_retry()
     ]
     result = ProviderResult(
         reply="我累得不行，今天想静一静，别等我了。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    accepted = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert accepted.reply == result.reply
+    assert calls == []
+
+
+def test_retry_for_format_noise_keeps_shane_low_mood_unavailable_boundary_without_retry() -> None:
+    prompt = [
+        {
+            "role": "system",
+            "name": "affection_initiative",
+            "content": '{"affectionInitiative":{"initiativeMode":"guarded"}}',
+        },
+        {"role": "user", "name": "player_input", "content": "我能陪你聊聊吗？"},
+    ]
+    result = ProviderResult(
+        reply="我今天状态也不好，可能没法陪你多聊。",
         provider="cloud",
         fallback=False,
         latencyMs=12,
