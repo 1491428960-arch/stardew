@@ -79,13 +79,28 @@ def _matches_event(candidate: object, completed: set[str]) -> bool:
 
 
 def _string_list(value: object) -> list[str]:
+    """把字符串或字符串序列归一成去重列表。
+
+    元素规则与 ``behavior_quality._string_list`` 对齐（B9 第三处“同概念多实现”）：
+    **只接受真正的字符串**，``bytes``／``bytearray``／``Mapping`` 整体拒绝，
+    非字符串项直接丢弃——而不是 ``str()`` 化后保留。后者看着无害，实际会把
+    ``b"ab"`` 变成 ``["97", "98"]``（迭代 bytes 得到整数），或把字典变成
+    ``["{'k': 1}"]``，都是“看着正常其实全错”的数据。
+
+    **返回类型保持 ``list[str]``**（调用方用 ``extend`` 合并），所以这里用 ``[]``
+    表示“没有”，而不像 ``behavior_quality`` 版用 ``None`` 表示“格式不对”。
+    """
+
     if isinstance(value, str):
-        return [value.strip()] if value.strip() else []
-    if not isinstance(value, Iterable):
+        text = value.strip()
+        return [text] if text else []
+    if not isinstance(value, Iterable) or isinstance(value, (bytes, bytearray, Mapping)):
         return []
     result: list[str] = []
     for item in value:
-        text = str(item).strip()
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
         if text and text not in result:
             result.append(text)
     return result

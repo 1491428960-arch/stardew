@@ -49,6 +49,18 @@ _STARDEW_BRANCH_HEADER = re.compile(
     r"(?<![A-Za-z0-9_])\d+\s+-?\d+\s+[A-Za-z][A-Za-z0-9_]*\b"
 )
 _STARDEW_BRANCH_SEPARATOR = "\x00"
+_EVENT_TARGET_PREFIX = "data/events/"
+_EVENT_COMMAND = re.compile(
+    r'(?:^|/)(?P<command>speak|end\s+dialogue|textAboveHead)\s+'
+    r'(?P<speaker>[A-Za-z][A-Za-z0-9_]*)\s+"(?P<text>(?:\\.|[^"\\])*)"',
+    re.IGNORECASE,
+)
+_EVENT_ID_PREFIX = re.compile(r"^\s*(?P<event_id>\d+)(?:_|/|$)")
+_EVENT_PARTICIPANT_CONDITION = re.compile(
+    r"/(?P<condition>[fo])\s+(?P<npc>[A-Za-z][A-Za-z0-9_]*)",
+    re.IGNORECASE,
+)
+_NON_PLAYER_EVENT_SPEAKERS = {"farmer", "player", "host"}
 
 
 def _normalise_source_path(source_path: str | Path) -> str:
@@ -275,16 +287,143 @@ def classify_dialogue_target(target: str) -> tuple[str, str]:
     """从 Content Patcher target 得到 NPC ID 和证据类型。"""
 
     normalised = str(target).replace("\\", "/").strip("/")
-    if not normalised.casefold().startswith(_DIALOGUE_PREFIX):
-        return "", ""
-
-    dialogue_target = normalised[len(_DIALOGUE_PREFIX):]
+    if normalised.casefold().startswith(_DIALOGUE_PREFIX):
+        dialogue_target = normalised[len(_DIALOGUE_PREFIX):]
+    else:
+        # 派生索引的 sourcePath 通常只保留文件名，例如
+        # ``MarriageDialogueElliott.zh-CN.json``。旧索引没有保存
+        # evidenceKind 时仍应能从这个路径恢复婚后来源，而不是把它当
+        # 成普通日常对白。
+        dialogue_target = normalised.rsplit("/", 1)[-1]
+        if not dialogue_target.casefold().startswith(
+            ("marriagedialogue", "roommatedialogue")
+        ):
+            return "", ""
     lowered = dialogue_target.casefold()
     if lowered.startswith("marriagedialogue"):
         return dialogue_target[len("MarriageDialogue"):], "marriage_dialogue"
     if lowered.startswith("roommatedialogue"):
         return dialogue_target[len("RoommateDialogue"):], "roommate_dialogue"
     return dialogue_target, "dialogue"
+
+
+def _is_event_target(target: str) -> bool:
+    normalised = str(target).replace("\\", "/").strip("/").casefold()
+    return normalised.startswith(_EVENT_TARGET_PREFIX)
+
+
+def _event_id_from_source_key(source_key: str) -> str:
+    match = _EVENT_ID_PREFIX.match(str(source_key))
+    return match.group("event_id") if match else ""
+
+
+def _unescape_event_text(text: str) -> str:
+    # 事件脚本中的引号通常已经由 JSON 解码还原；这里只处理命令参数中
+    # 仍残留的转义引号和反斜杠，不对中文做 unicode_escape 二次解码。
+    return str(text).replace(r"\"", '"').replace(r"\\", "\\")
+
+
+def _event_participants(source_key: str, raw_script: str) -> list[str]:
+    """提取事件涉及的 NPC，而不把玩家或旁白误算成角色。"""
+
+    participants: list[str] = []
+    seen: set[str] = set()
+
+    def append(value: str) -> None:
+        npc_id = str(value).strip()
+        if not npc_id or npc_id.casefold() in _NON_PLAYER_EVENT_SPEAKERS:
+            return
+        folded = npc_id.casefold()
+        if folded in seen:
+            return
+        seen.add(folded)
+        participants.append(npc_id)
+
+    # /f 和 /o 是事件键中最常见的角色条件；即使角色没有发言，
+    # 也必须保留为事件参与者，避免用“实际发言者”冒充完整事件阵容。
+    for match in _EVENT_PARTICIPANT_CONDITION.finditer(str(source_key)):
+        append(match.group("npc"))
+    for match in _EVENT_COMMAND.finditer(str(raw_script)):
+        append(match.group("speaker"))
+    return participants
+
+
+def _event_conditions(source_key: str) -> dict[str, str]:
+    """保留原始事件键，供审计触发条件，不猜测游戏内部语义。"""
+
+    value = str(source_key).strip()
+    return {"raw": value} if value else {}
+
+
+def _extract_event_dialogue_records(
+    entries: Mapping[Any, Any],
+    *,
+    source_mod: str,
+    source_path: str | Path,
+    i18n_catalogs: Mapping[str, Mapping[str, Any]] | None = None,
+    locale: str = "zh-CN",
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    safe_source_mod = str(source_mod).strip() or "unknown"
+    safe_source_path = _normalise_source_path(source_path)
+    for raw_key, raw_script in entries.items():
+        source_key = str(raw_key).strip()
+        if not source_key or not isinstance(raw_script, str) or not raw_script.strip():
+            continue
+        event_id = _event_id_from_source_key(source_key)
+        participants = _event_participants(source_key, raw_script)
+        for line_index, match in enumerate(_EVENT_COMMAND.finditer(raw_script), start=1):
+            speaker = match.group("speaker").strip()
+            if speaker.casefold() in _NON_PLAYER_EVENT_SPEAKERS:
+                continue
+            raw_text = _unescape_event_text(match.group("text")).strip()
+            if not raw_text:
+                continue
+            record: dict[str, Any] = {
+                "sampleId": (
+                    f"{safe_source_mod}:{safe_source_path}:{source_key}:"
+                    f"event-line-{line_index}"
+                ),
+                "npcId": speaker,
+                "sourceMod": safe_source_mod,
+                "sourcePath": safe_source_path,
+                "sourceKey": source_key,
+                "text": raw_text,
+                "evidenceKind": "event_dialogue",
+                "eventLineIndex": line_index,
+                "conditions": {"eventId": event_id} if event_id else {},
+                "eventConditions": _event_conditions(source_key),
+                "participants": participants,
+            }
+            if event_id:
+                record["eventId"] = event_id
+            variants = clean_dialogue_variants(raw_text)
+            if variants and (len(variants) > 1 or variants[0] != raw_text.strip()):
+                record["dialogueVariants"] = variants
+            if i18n_catalogs:
+                resolved_text = resolve_i18n_text(
+                    raw_text,
+                    i18n_catalogs,
+                    locale=locale,
+                )
+                if resolved_text != raw_text and not _I18N_REFERENCE.search(
+                    resolved_text
+                ):
+                    resolved_variants = clean_dialogue_variants(resolved_text)
+                    if resolved_variants:
+                        record["resolvedText"] = resolved_variants[0]
+                    if len(resolved_variants) > 1:
+                        record["dialogueVariants"] = resolved_variants
+                else:
+                    dynamic_candidates = resolve_i18n_candidates(
+                        raw_text,
+                        i18n_catalogs,
+                        locale=locale,
+                    )
+                    if dynamic_candidates:
+                        record["dynamicCandidates"] = dynamic_candidates
+            records.append(record)
+    return records
 
 
 def _iter_dialogue_targets(raw_target: object) -> Iterable[str]:
@@ -351,6 +490,17 @@ def extract_content_patcher_dialogue(
             warnings.append(f"对白 Entries 不是对象：{safe_source_path}")
             continue
         for target in _iter_dialogue_targets(change.get("Target", "")):
+            if _is_event_target(target):
+                records.extend(
+                    _extract_event_dialogue_records(
+                        entries,
+                        source_mod=safe_source_mod,
+                        source_path=safe_source_path,
+                        i18n_catalogs=i18n_catalogs,
+                        locale=locale,
+                    )
+                )
+                continue
             npc_id, evidence_kind = classify_dialogue_target(target)
             if not npc_id:
                 continue
@@ -412,7 +562,12 @@ def _extract_plain_dialogue(
         entries = payload
 
     safe_source_mod = str(source_mod).strip() or "unknown"
-    npc_id = _LOCALE_SUFFIX.sub("", str(npc_id).strip()) or "unknown"
+    raw_npc_id = _LOCALE_SUFFIX.sub("", str(npc_id).strip()) or "unknown"
+    dialogue_target = f"Characters/Dialogue/{raw_npc_id}"
+    canonical_id, evidence_kind = classify_dialogue_target(dialogue_target)
+    if not canonical_id:
+        canonical_id = raw_npc_id
+        evidence_kind = "dialogue"
     safe_source_path = _normalise_source_path(source_path)
     records: list[dict[str, Any]] = []
     for raw_key, raw_text in entries.items():
@@ -422,19 +577,36 @@ def _extract_plain_dialogue(
         records.append(
             {
                 "sampleId": f"{safe_source_mod}:{safe_source_path}:{source_key}",
-                "npcId": npc_id,
+                "npcId": canonical_id,
                 "sourceMod": safe_source_mod,
                 "sourcePath": safe_source_path,
                 "sourceKey": source_key,
                 "text": raw_text,
-                "evidenceKind": "dialogue",
-                "conditions": infer_dialogue_conditions("", source_key),
+                "evidenceKind": evidence_kind,
+                "conditions": infer_dialogue_conditions(dialogue_target, source_key),
             }
         )
         variants = clean_dialogue_variants(raw_text)
         if variants and (len(variants) > 1 or variants[0] != raw_text.strip()):
             records[-1]["dialogueVariants"] = variants
     return records
+
+
+def _extract_plain_events(
+    payload: Mapping[str, Any],
+    *,
+    source_mod: str,
+    source_path: str | Path,
+) -> list[dict[str, Any]]:
+    """提取已解包的 vanilla ``Data/Events/*.json``。"""
+
+    if not isinstance(payload, Mapping):
+        return []
+    return _extract_event_dialogue_records(
+        payload,
+        source_mod=source_mod,
+        source_path=source_path,
+    )
 
 
 def _relative_path(path: Path, root: Path) -> str:
@@ -545,11 +717,12 @@ def _manifest_source_mod(root: Path, warnings: list[str]) -> str:
 def build_dialogue_corpus(
     *,
     vanilla_root: str | Path | None = None,
+    vanilla_events_root: str | Path | None = None,
     mod_roots: Iterable[str | Path] = (),
     locale: str = "zh-CN",
     vanilla_locale: str | None = None,
 ) -> dict[str, Any]:
-    """从已解包 vanilla JSON 和 Content Patcher mod 根目录构建语料。"""
+    """从已解包 vanilla 对白、事件和 Content Patcher 根目录构建语料。"""
 
     corpus: dict[str, Any] = {
         "schemaVersion": 1,
@@ -584,6 +757,31 @@ def build_dialogue_corpus(
                         npc_id=path.stem,
                         source_mod="vanilla",
                         source_path=relative,
+                    )
+                )
+
+    if vanilla_events_root is not None:
+        root = Path(vanilla_events_root)
+        if not root.is_dir():
+            warnings.append(f"vanilla 事件根目录不存在：{root.name}")
+        else:
+            sources.append({"sourceMod": "vanilla", "root": root.name})
+            _warn_for_unpacked_sources(root, warnings)
+            event_paths = _select_vanilla_dialogue_paths(
+                root.rglob("*.json"),
+                root,
+                vanilla_locale,
+            )
+            for path in event_paths:
+                relative = _relative_path(path, root)
+                payload = _read_payload(path, root, warnings)
+                if payload is None or not isinstance(payload, Mapping):
+                    continue
+                records.extend(
+                    _extract_plain_events(
+                        payload,
+                        source_mod="vanilla",
+                        source_path=Path("Data") / "Events" / relative,
                     )
                 )
 

@@ -12,6 +12,10 @@ _LOCAL_ENV_KEYS = frozenset(
         "BRIDGE_DIALOGUE_SESSION_PATH",
         "BRIDGE_FALLBACK_REPLY",
         "BRIDGE_PROFILE_INDEX",
+        "BRIDGE_CLOUD_ONLY",
+        "BRIDGE_CLOUD_VERTEX_PROJECT",
+        "BRIDGE_CLOUD_VERTEX_LOCATION",
+        "BRIDGE_CLOUD_VERTEX_CREDENTIALS",
         *{
             f"BRIDGE_{provider}_{suffix}"
             for provider in ("LOCAL", "CLOUD")
@@ -28,6 +32,18 @@ _LOCAL_ENV_KEYS = frozenset(
     }
 )
 _ENV_ASSIGNMENT = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+
+_VERTEX_HOST = "https://aiplatform.googleapis.com"
+_VERTEX_DEFAULT_LOCATION = "global"
+
+
+def build_vertex_url(*, project: str, location: str = _VERTEX_DEFAULT_LOCATION) -> str:
+    """构造 Vertex AI 的 OpenAI-compatible chat completions 端点。"""
+
+    return (
+        f"{_VERTEX_HOST}/v1/projects/{project}/locations/{location}"
+        "/endpoints/openapi/chat/completions"
+    )
 
 
 def _parse_local_env_value(raw_value: str) -> str:
@@ -93,6 +109,8 @@ class ProviderSettings:
     timeout: float = 10.0
     enabled: bool = True
     api_mode: str = "openai"
+    vertex_project: str | None = None
+    vertex_location: str | None = None
 
     @property
     def base_url(self) -> str | None:
@@ -111,6 +129,18 @@ class ProviderSettings:
             f"{prefix}_URL",
             f"{prefix}_BASE_URL",
         )
+        api_mode = (
+            _first_env(f"{prefix}_API_MODE", default="openai") or "openai"
+        ).lower()
+        vertex_project = _first_env(f"{prefix}_VERTEX_PROJECT")
+        vertex_location = _first_env(f"{prefix}_VERTEX_LOCATION")
+        if url is None and api_mode == "vertex" and vertex_project:
+            # Vertex 模式下 project/location 是唯一必需输入；显式 URL 仍然优先，
+            # 便于临时指向本地网关做离线排查。
+            url = build_vertex_url(
+                project=vertex_project,
+                location=vertex_location or _VERTEX_DEFAULT_LOCATION,
+            )
         return cls(
             name=name,
             url=url,
@@ -118,15 +148,15 @@ class ProviderSettings:
             api_key=_first_env(f"{prefix}_API_KEY"),
             timeout=_env_float(f"{prefix}_TIMEOUT", default=default_timeout),
             enabled=_env_bool(f"{prefix}_ENABLED", default=url is not None),
-            api_mode=(
-                _first_env(f"{prefix}_API_MODE", default="openai") or "openai"
-            ).lower(),
+            api_mode=api_mode,
+            vertex_project=vertex_project,
+            vertex_location=vertex_location,
         )
 
 
 @dataclass(frozen=True)
 class BridgeSettings:
-    """Bridge 路由配置，默认不启用云端 Provider。"""
+    """Bridge 路由配置；cloud_only 用于正式运行时锁定云端自动路由。"""
 
     local: ProviderSettings = field(
         default_factory=lambda: ProviderSettings(name="local")
@@ -135,6 +165,7 @@ class BridgeSettings:
         default_factory=lambda: ProviderSettings(name="cloud", enabled=False)
     )
     cloud_enabled: bool = False
+    cloud_only: bool = False
     fallback_reply: str = "Rasmodia：暂时没有合适的回复，请稍后再试。"
     profile_index_path: str | None = None
 
@@ -156,12 +187,13 @@ class BridgeSettings:
         cloud = ProviderSettings.from_env(
             "BRIDGE_CLOUD",
             name="cloud",
-            default_timeout=15.0,
+            default_timeout=45.0,
         )
         return cls(
             local=local,
             cloud=cloud,
             cloud_enabled=_env_bool("BRIDGE_CLOUD_ENABLED", default=False),
+            cloud_only=_env_bool("BRIDGE_CLOUD_ONLY", default=False),
             fallback_reply=(
                 _first_env("BRIDGE_FALLBACK_REPLY", default=cls.fallback_reply)
                 or cls.fallback_reply

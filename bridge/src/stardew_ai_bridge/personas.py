@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .source_aliases import normalize_source_marker, source_matches
+from .source_aliases import normalize_source_marker, source_family, source_matches
 
 
 _STAGE_KEYS = (
@@ -106,9 +106,39 @@ def canonical_npc_id(npc_id: object) -> str:
     """将游戏中的别名归并到唯一 NPC ID。"""
 
     value = str(npc_id).strip()
+    lowered = value.casefold()
+    for prefix in ("marriagedialogue", "roommatedialogue"):
+        if lowered.startswith(prefix) and len(value) > len(prefix):
+            value = value[len(prefix) :].strip()
+            break
     if value.casefold() in {"wizard", "rasmodia"}:
         return "Wizard"
     return value
+
+
+# 这是“女性化表达 overlay”的资格集合，不等同于全部可恋爱角色。
+# Sophia 等原本就是女性的角色仍可进入恋爱评测，但不能套用本层。
+FEMALE_BACHELOR_NPC_IDS = frozenset(
+    {
+        "Wizard",
+        "Shane",
+        "Sebastian",
+        "Alex",
+        "Elliott",
+        "Harvey",
+        "Sam",
+    }
+)
+
+
+def is_female_bachelor_eligible(npc_id: object) -> bool:
+    """判断 NPC 是否允许应用 female-bachelors 表达层。"""
+
+    canonical_id = canonical_npc_id(npc_id)
+    return any(
+        candidate.casefold() == canonical_id.casefold()
+        for candidate in FEMALE_BACHELOR_NPC_IDS
+    )
 
 
 def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
@@ -145,15 +175,23 @@ def merge_persona(
     for source_mod in source_mod_list:
         for marker, overlay in overlays.items():
             marker_key = str(marker)
+            # 去重身份用**归一化**标记：`"SVE"` 与 `"  SVE  "` 是同一份覆盖层。
+            # 否则它会被 `_deep_merge` 应用两次（嵌套字典会把两处内容都并进来）。
+            marker_identity = normalize_source_marker(marker_key)
             if (
-                marker_key in applied_markers
+                source_family(marker_key) == "femalebachelors"
+                and not is_female_bachelor_eligible(persona.get("npcId", ""))
+            ):
+                continue
+            if (
+                marker_identity in applied_markers
                 or not _marker_matches(marker, {_normalise_marker(source_mod)})
                 or not isinstance(overlay, Mapping)
             ):
                 continue
             merged = _deep_merge(merged, overlay)
             merged["modOverlay"][marker_key] = copy.deepcopy(dict(overlay))
-            applied_markers.add(marker_key)
+            applied_markers.add(marker_identity)
     return merged
 
 

@@ -63,14 +63,14 @@ DIALOGUE_LAB_HTML = """<!doctype html>
     </header>
     <div class="layout">
       <section class="panel" id="scene-panel"><div class="panel-header"><h2>场景</h2></div><div class="panel-body"><div class="field-grid">
-        <label data-npc-catalog="all">NPC（全部可聊天 NPC）<select id="npc-select"></select></label><div class="quick-switch"><span class="quick-switch-label">本次评测角色（只是快捷入口）</span><div id="npc-buttons" class="npc-buttons" role="group" aria-label="本次评测角色只是快捷入口"></div></div><label>聊天场景<select id="conversation-channel"><option value="face_to_face" selected>当面聊天</option><option value="remote">远程（手机/线上）</option></select></label><label>Provider 模式<select id="provider-mode"><option value="auto">自动（本地 → 云端 → 兜底）</option><option value="cloud" selected>云端（显式，当前配置）</option><option value="fake">Fake 演示（非真实 AI）</option></select></label>
+        <label data-npc-catalog="all">NPC（全部可聊天 NPC）<select id="npc-select"></select></label><div class="quick-switch"><span class="quick-switch-label">本次评测角色（只是快捷入口）</span><div id="npc-buttons" class="npc-buttons" role="group" aria-label="本次评测角色只是快捷入口"></div></div><label>聊天场景<select id="conversation-channel"><option value="face_to_face" selected>当面聊天</option><option value="remote">远程（手机/线上）</option></select></label><label>Provider 模式<select id="provider-mode"><option value="auto">自动（正式：仅 Gemini，失败安全兜底）</option><option value="cloud" selected>Gemini 云端（正式运行，默认）</option><option value="local">Qwen 本地（手动 A/B / 回滚）</option><option value="fake">Fake 演示（非真实 AI）</option></select></label>
         <label>显示名<input id="display-name" value="Rasmodia"></label><label>来源 Mod<input id="source-mods" value="Romanceable Rasmodius, Nom0ri.RomRas, Parrot.RomRas, Dacar.SeasRomRasmodia"></label>
         <label>关系阶段<select id="relationship-stage"><option value="stranger">初识</option><option value="acquaintance">熟悉</option><option value="friend" selected>朋友</option><option value="close">亲近</option><option value="dating">恋爱</option><option value="married">婚后</option><option value="parent">育儿</option></select></label>
         <div class="field-row"><label>季节<input id="season" value="春"></label><label>日期<input id="date" value="春 1 日"></label></div>
         <div class="field-row"><label>天气<input id="weather" value="晴天"></label><label>时间<input id="time" type="number" min="600" max="2600" step="10" value="800"></label></div>
         <label>地点<input id="location" value="法师塔"></label><label>好感度（原始点数）<input id="friendship" type="number" min="0" value="128"></label>
         <label class="field-wide">最近事实（每行一条）<textarea id="recent-facts" rows="3" placeholder="可选；只填写已确认事实"></textarea></label>
-      </div><p class="hint">自动模式使用 Bridge 当前配置的 Provider；没有上游时会安全回退。Fake 只用于无网络的上下文演示。</p><div class="scene-actions"><button class="secondary" id="reset-scene" type="button">恢复默认场景</button></div></div></section>
+      </div><p class="hint">正式自动模式只使用 Gemini；中转站波动不会静默切回 Qwen，失败时进入安全兜底。Qwen 仅通过显式本地模式用于手动 A/B 或回滚，Fake 只用于无网络的上下文演示。</p><div class="scene-actions"><button class="secondary" id="reset-scene" type="button">恢复默认场景</button></div></div></section>
       <section class="panel transcript-panel"><div class="panel-header"><h2>对话记录</h2></div><div class="transcript" id="transcript" aria-live="polite"><div class="empty" id="empty-transcript">还没有消息。输入一句话开始测试。</div></div>
         <div class="composer"><p class="status" id="status" aria-live="polite"></p><div class="composer-row"><textarea id="message-input" rows="2" placeholder="输入消息；Enter 发送，Shift+Enter 换行">你好，最近在研究什么？</textarea></div><div class="composer-actions"><button id="send" type="button">发送</button><button id="topic" class="secondary" type="button">主动找话题</button></div></div><div id="reply" class="sr-only" role="status"></div>
       </section>
@@ -84,7 +84,7 @@ DIALOGUE_LAB_HTML = """<!doctype html>
     const messageInput = $("message-input");
     const SESSION_VERSION = 1;
     const EVALUATION_NPC_IDS = ["Wizard", "Sophia", "Shane", "Sebastian", "Alex"];
-    const EVALUATION_PROFILES = [{npcId:"Wizard",label:"Rasmodia / Wizard",displayName:"Rasmodia",sourceMods:["Romanceable Rasmodius","Nom0ri.RomRas","Parrot.RomRas","Dacar.SeasRomRasmodia"]},{npcId:"Sophia",label:"Sophia",displayName:"Sophia",sourceMods:["SVE","FlashShifter.SVECode","FlashShifter.StardewValleyExpandedCP","FlashShifter.SVE-FTM"]},{npcId:"Shane",label:"Shane",displayName:"Shane",sourceMods:["female-bachelors","Invatorzen.idcsm","female.bachelors.beach","female.bachelors.winter"]},{npcId:"Sebastian",label:"Sebastian",displayName:"Sebastian",sourceMods:["female-bachelors","Invatorzen.idcsm","female.bachelors.beach","female.bachelors.winter"]},{npcId:"Alex",label:"Alex",displayName:"Alex",sourceMods:["vanilla"]}];
+    const EVALUATION_PROFILES = [{npcId:"Wizard",label:"Rasmodia / Wizard",displayName:"Rasmodia",sourceMods:["Romanceable Rasmodius","Nom0ri.RomRas","Parrot.RomRas","Dacar.SeasRomRasmodia"]},{npcId:"Sophia",label:"Sophia",displayName:"Sophia",sourceMods:["SVE","FlashShifter.SVECode","FlashShifter.StardewValleyExpandedCP","FlashShifter.SVE-FTM"]},{npcId:"Shane",label:"珊恩 / Shane",displayName:"珊恩",sourceMods:["female-bachelors","Invatorzen.idcsm","female.bachelors.beach","female.bachelors.winter"]},{npcId:"Sebastian",label:"塞布瑞娜 / Sebastian",displayName:"塞布瑞娜",sourceMods:["female-bachelors","Invatorzen.idcsm","female.bachelors.beach","female.bachelors.winter"]},{npcId:"Alex",label:"爱丽克斯 / Alex",displayName:"爱丽克斯",sourceMods:["female-bachelors","Invatorzen.idcsm","female.bachelors.beach","female.bachelors.winter"]}];
     const state = { messages: [], history: [], initialHistory: [], lastPayload: null, lastDiagnostics: null, npcs: [], activeEvaluationId:"Wizard", activeCaseId:"", pendingCase:null };
     function canonicalNpcId(npcId) { const value=typeof npcId==="string"?npcId.trim():""; return ["wizard","rasmodia"].includes(value.toLowerCase())?"Wizard":value; }
     function evaluationProfileForNpc(npcId) { const canonicalId=canonicalNpcId(npcId); return EVALUATION_PROFILES.find((profile)=>profile.npcId===canonicalId)||null; }
@@ -107,7 +107,54 @@ DIALOGUE_LAB_HTML = """<!doctype html>
      function buildPayload(message,intent="chat") { const npc=selectedNpc(); const profile=evaluationProfileForNpc(npc.npcId)||{sourceMods:$('source-mods').value.split(',').map((item)=>item.trim()).filter(Boolean)}; const payload={npcId:npc.npcId,displayName:npc.displayName,sourceMods:profile.sourceMods,recentFacts:$('recent-facts').value.split("\\n").map((item)=>item.trim()).filter(Boolean),message,intent,history:[...state.initialHistory,...state.history].slice(-50),gameState:sceneState(),channel:$("conversation-channel").value}; if($("provider-mode").value!=="auto") payload.provider=$("provider-mode").value; return payload; }
     function renderTranscript() { const transcript=$("transcript"); transcript.replaceChildren(); const npc=selectedNpc(); const messages=state.messages.filter((message)=>message.npcId===npc.npcId); if(!messages.length){const empty=document.createElement("div");empty.className="empty";empty.id="empty-transcript";empty.textContent=`当前角色没有已保存记录。切换到${npc.displayName}后，可在此发送消息。`;transcript.append(empty);$("message-count").textContent="0";return;} for(const message of messages){const bubble=document.createElement("article");bubble.className=`message ${message.role==="user"?"user":"npc"}`;const meta=document.createElement("div");meta.className="message-meta";meta.textContent=message.role==="user"?"你":message.displayName||message.npcId||npc.displayName;const body=document.createElement("div");body.textContent=message.text;bubble.append(meta,body);transcript.append(bubble);} transcript.scrollTop=transcript.scrollHeight;$("message-count").textContent=String(messages.length); }
     function setStatus(text,kind=""){const status=$("status");status.textContent=text;status.className=`status ${kind}`;}
-    function renderDiagnostics(){const data=state.lastDiagnostics;$("provider-value").textContent=data?.provider||"—";$("latency-value").textContent=Number.isFinite(data?.latencyMs)?`${data.latencyMs} ms`:"—";$("fallback-value").textContent=data?data.fallback?"是":"否":"—";$("usage-value").textContent=formatUsage(data?.usage);$("warnings").textContent=data?.warnings?.length?`提示：${data.warnings.join("；")}`:"";$("raw-request").textContent=state.lastPayload?JSON.stringify(state.lastPayload,null,2):data?"会话已恢复；原始请求未保存。":"尚未发送请求。";$("reply").textContent=data?.reply||"";}
+    function diagnosticReasonLabel(reason) {
+      const value = String(reason || "").trim();
+      return {
+        missing_proactive_affection: "缺少主动亲密信号",
+        missing_personal_affection: "缺少个人亲密表达",
+        missing_conversation_lead: "缺少主动对话推进",
+        missing_current_topic_answer: "未回应当前话题",
+        missing_topic_evidence: "缺少当前话题证据",
+        missing_history_anchor: "缺少前文承接",
+        provider_error: "Provider 调用失败",
+        budget_max_requests: "达到请求预算上限",
+        budget_max_total_tokens: "达到总 token 预算上限",
+        prompt_echo: "复述了提示内容",
+        repeated: "出现重复表达",
+        stage_direction: "混入舞台动作",
+        mechanical_affection_shape: "主动亲密表达过于机械",
+      }[value] || (value ? value.replace(/_/g, " ") : "未知诊断");
+    }
+    function warningReasonLabel(warning) {
+      const reasonMatch = String(warning).match(/^response_[^:]+_(?:retry|retry_failed|retry_skipped):\s*(.+)$/);
+      const reason = reasonMatch ? reasonMatch[1].trim() : "";
+      return reason ? diagnosticReasonLabel(reason) : String(warning);
+    }
+    function warningPayload(warning) {
+      const value = String(warning);
+      const separator = value.indexOf(":");
+      return separator >= 0 ? diagnosticReasonLabel(value.slice(separator + 1)) : value;
+    }
+    function formatChatWarning(warning) {
+      const value = String(warning || "").trim();
+      if (!value) return "";
+      if (/^response_[^:]+_retry_failed:/.test(value)) return `质量重试失败：${warningReasonLabel(value)}`;
+      if (/^response_[^:]+_retry_skipped:/.test(value)) return `质量重试未执行：${warningReasonLabel(value)}`;
+      if (/^response_[^:]+_retry:/.test(value)) return `质量重试：${warningReasonLabel(value)}`;
+      if (/^(?:response_guard|fallback_guard):/.test(value)) return `响应 Guard：${warningPayload(value)}`;
+      if (/^(?:response_|fallback_)/.test(value)) return `响应诊断：${warningPayload(value)}`;
+      return `Provider 诊断：${value}`;
+    }
+    function formatChatWarnings(warnings) {
+      if (!Array.isArray(warnings)) return [];
+      const counts = new Map();
+      warnings.filter((warning) => typeof warning === "string" && warning.trim()).forEach((warning) => {
+        const label = formatChatWarning(warning);
+        if (label) counts.set(label, (counts.get(label) || 0) + 1);
+      });
+      return [...counts.entries()].map(([label, count]) => `${label}${count > 1 ? `（${count} 次）` : ""}`);
+    }
+    function renderDiagnostics(){const data=state.lastDiagnostics;$("provider-value").textContent=data?.provider||"—";$("latency-value").textContent=Number.isFinite(data?.latencyMs)?`${data.latencyMs} ms`:"—";$("fallback-value").textContent=data?data.fallback?"是":"否":"—";$("usage-value").textContent=formatUsage(data?.usage);const warningLines=formatChatWarnings(data?.warnings);$("warnings").textContent=warningLines.length?`提示：${warningLines.join("；")}`:"";$("raw-request").textContent=state.lastPayload?JSON.stringify(state.lastPayload,null,2):data?"会话已恢复；原始请求未保存。":"尚未发送请求。";$("reply").textContent=data?.reply||"";}
     function updateDiagnostics(data,payload){state.lastDiagnostics=normalizeDiagnostics(data);state.lastPayload=payload;renderDiagnostics();}
     function renderContext(context){const summary=$("context-summary");summary.replaceChildren();const identity=context.personaSummary||{};const evidenceSources=[...new Set((context.speechEvidence||[]).map((item)=>item?.sourceMod).filter(Boolean))];const rows=[["角色",identity.displayName||identity.npcId||"—"],["关系阶段",identity.stageProfile?.stage||"由当前场景推断"],["来源 Mod",(context.modSources||[]).join("、")||"—"],["原文证据来源",evidenceSources.join("、")||"未取到来源原文"],["事实",`${(context.recentFacts||[]).length} 条`],["风格证据",`${(context.speechEvidence||context.styleSamples||[]).length} 条`],["故事事件",`${(context.storyEvents||[]).length} 条`]];for(const [label,value] of rows){const row=document.createElement("div");const strong=document.createElement("strong");strong.textContent=label;row.append(strong,document.createTextNode(`：${value}`));summary.append(row);}}
     function errorText(data,fallback){if(Array.isArray(data?.detail))return data.detail.map((item)=>item.msg||"请求参数错误").join("；");return data?.detail||data?.message||fallback;}
@@ -116,7 +163,7 @@ DIALOGUE_LAB_HTML = """<!doctype html>
     function resetScene(){$("relationship-stage").value="friend";$("season").value="春";$("date").value="春 1 日";$("weather").value="晴天";$("time").value="800";$("location").value="法师塔";$("friendship").value="128";$("recent-facts").value="";state.activeCaseId="";state.pendingCase=null;state.initialHistory=[];applyEvaluationProfile(state.activeEvaluationId||"Wizard");window.dispatchEvent(new CustomEvent("dialogue-lab:npc-selected",{detail:{...selectedNpc(),source:"chat"}}));}
     async function clearSession(){state.messages=[];state.history=[];state.lastPayload=null;state.lastDiagnostics=null;renderTranscript();renderDiagnostics();$("context-summary").innerHTML="<span>发送消息后生成。</span>";try{const response=await fetch("/api/dialogue/session",{method:"DELETE"});if(!response.ok)throw new Error("本地会话清理失败");setStatus("会话已清空。","success");}catch(error){setStatus(`页面已清空，但本地文件清理失败：${error.message}`,"error");}}
     function exportSession(){const exportData={exportedAt:new Date().toISOString(),npc:selectedNpc(),gameState:sceneState(),messages:state.messages,history:state.history,lastDiagnostics:state.lastDiagnostics};const link=document.createElement("a");link.href=URL.createObjectURL(new Blob([JSON.stringify(exportData,null,2)],{type:"application/json"}));link.download=`stardew-dialogue-${Date.now()}.json`;link.click();URL.revokeObjectURL(link.href);}
-    async function loadNpcs(){const response=await fetch("/api/npcs");if(!response.ok)throw new Error("NPC 资料加载失败");state.npcs=(await response.json()).npcs||[];const select=$("npc-select");select.replaceChildren();for(const npc of state.npcs){const option=document.createElement("option");option.value=npc.npcId;option.textContent=`${npc.displayName} (${npc.npcId})`;option.title=Array.isArray(npc.sourceMods)&&npc.sourceMods.length?`来源：${npc.sourceMods.join("、")}`:"暂无来源标记";option.dataset.hasDialogueEvidence=String(Boolean(npc.hasDialogueEvidence));select.append(option);}applyEvaluationProfile("Wizard");select.addEventListener("change",async()=>{await loadSession();const canonicalId=canonicalNpcId(select.value);const profile=evaluationProfileForNpc(canonicalId);if(profile){state.activeEvaluationId=profile.npcId;$("display-name").value=profile.displayName;$("source-mods").value=profile.sourceMods.join(", ");}else{const selected=state.npcs.find((npc)=>canonicalNpcId(npc.npcId)===canonicalId);$("display-name").value=selected?.displayName||canonicalId;$("source-mods").value=Array.isArray(selected?.sourceMods)?selected.sourceMods.join(", "):"";}state.activeCaseId="";state.initialHistory=[];state.history=historyForNpc(canonicalId);state.lastPayload=null;state.lastDiagnostics=null;renderTranscript();renderDiagnostics();renderNpcButtons();window.dispatchEvent(new CustomEvent("dialogue-lab:npc-selected",{detail:{...selectedNpc(),source:"chat"}}));});state.history=historyForNpc(select.value);renderTranscript();renderDiagnostics();renderNpcButtons();if(state.pendingCase)applyQualityCase(state.pendingCase);}
+    async function loadNpcs(){const response=await fetch("/api/npcs");if(!response.ok)throw new Error("NPC 资料加载失败");state.npcs=(await response.json()).npcs||[];const select=$("npc-select");select.replaceChildren();for(const npc of state.npcs){const option=document.createElement("option");const profile=evaluationProfileForNpc(npc.npcId);const displayName=profile?.displayName||npc.displayName||npc.npcId;option.value=npc.npcId;option.textContent=`${displayName} (${npc.npcId})`;option.title=Array.isArray(npc.sourceMods)&&npc.sourceMods.length?`来源：${npc.sourceMods.join("、")}`:"暂无来源标记";option.dataset.hasDialogueEvidence=String(Boolean(npc.hasDialogueEvidence));select.append(option);}applyEvaluationProfile("Wizard");select.addEventListener("change",async()=>{await loadSession();const canonicalId=canonicalNpcId(select.value);const profile=evaluationProfileForNpc(canonicalId);if(profile){state.activeEvaluationId=profile.npcId;$("display-name").value=profile.displayName;$("source-mods").value=profile.sourceMods.join(", ");}else{const selected=state.npcs.find((npc)=>canonicalNpcId(npc.npcId)===canonicalId);$("display-name").value=selected?.displayName||canonicalId;$("source-mods").value=Array.isArray(selected?.sourceMods)?selected.sourceMods.join(", "):"";}state.activeCaseId="";state.initialHistory=[];state.history=historyForNpc(canonicalId);state.lastPayload=null;state.lastDiagnostics=null;renderTranscript();renderDiagnostics();renderNpcButtons();window.dispatchEvent(new CustomEvent("dialogue-lab:npc-selected",{detail:{...selectedNpc(),source:"chat"}}));});state.history=historyForNpc(select.value);renderTranscript();renderDiagnostics();renderNpcButtons();if(state.pendingCase)applyQualityCase(state.pendingCase);}
     window.addEventListener("dialogue-lab:apply-case",(event)=>applyQualityCase(event.detail));
     window.addEventListener("dialogue-lab:npc-selected",async(event)=>{if(event.detail?.source==="chat")return;const profile=evaluationProfileForNpc(event.detail?.npcId);if(!profile)return;await loadSession();applyEvaluationProfile(profile.npcId);state.activeCaseId="";state.pendingCase=null;state.initialHistory=[];state.history=historyForNpc(profile.npcId);state.lastPayload=null;state.lastDiagnostics=null;renderTranscript();renderDiagnostics();renderNpcButtons();});
     async function loadHealth(){try{const response=await fetch("/health");const data=await response.json();if(!response.ok)throw new Error();$("health").textContent=`Bridge 在线 · ${data.provider}`;$("health").classList.add("ready");}catch(_){$("health").textContent="Bridge 不可用";}}
@@ -229,6 +276,7 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     .result-meta { margin-top:7px; color:#6d796f; font-size:10px; line-height:1.45; }
     .result-tags { margin-top:5px; color:#896225; font-size:10px; line-height:1.45; }
     .result-warning { margin-top:5px; color:#896225; font-size:10px; line-height:1.45; }
+    .transcript-turn-warning { margin-top:5px; padding:5px 7px; border-left:3px solid #d0ad63; border-radius:0 6px 6px 0; color:#896225; background:#fff8e9; font-size:10px; line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; }
     .transcript-card { margin-top:13px; padding:11px; border:1px solid #c9dccb; border-radius:9px; background:linear-gradient(135deg,#f1f8f0,#fbfcf7); }
     .transcript-card.review { border-color:#ead4aa; background:#fffaf0; }
     .transcript-card.error { border-color:#e2bdb7; background:#fff5f3; }
@@ -254,6 +302,22 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     .transcript-turn-score { color:#896225; }
     .transcript-empty { margin-top:9px; padding:9px; color:#8a968c; background:#f5f7f3; font-size:10px; line-height:1.5; }
     .batch-run-status { display:block; margin-top:3px; color:#52745a; font-size:10px; }
+    .batch-run-status.invalid { color:#994d45; font-weight:600; }
+    .transcript-card.diagnostic-invalid { border-color:#e2bdb7; background:#fff8f6; }
+    .event-impact-comparison { margin-top:13px; padding:11px; border:1px solid #d8c99e; border-radius:9px; background:linear-gradient(135deg,#fffaf0,#fffef9); }
+    .event-impact-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+    .event-impact-header strong { color:#76571d; font-size:13px; }
+    .event-impact-meta { margin-top:4px; color:#806c42; font-size:10px; line-height:1.5; }
+    .event-impact-warning { margin-top:8px; padding:7px 8px; border-left:3px solid #c47a70; border-radius:0 6px 6px 0; color:#70413b; background:#fff2ef; font-size:10px; line-height:1.5; }
+    .event-impact-evidence { margin-top:8px; padding:8px 9px; border-left:3px solid #d0ad63; border-radius:0 7px 7px 0; color:#6f6040; background:#fff9e9; font-size:10px; line-height:1.5; }
+    .event-impact-evidence strong { display:block; margin-bottom:3px; color:#8a6a2e; font-size:9px; }
+    .event-impact-evidence ul { margin:0; padding-left:17px; }
+    .event-impact-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:10px; }
+    .event-impact-column { min-width:0; }
+    .event-impact-column-title { padding:7px 8px; border:1px solid #dfe7de; border-radius:7px 7px 0 0; color:#315d43; background:#f5faf4; font-size:11px; font-weight:700; }
+    .event-impact-column.after .event-impact-column-title { border-color:#d8c99e; color:#76571d; background:#fff9e9; }
+    .event-impact-column .transcript-card { margin-top:0; border-top:0; border-radius:0 0 9px 9px; }
+    @media (max-width:850px) { .event-impact-columns { grid-template-columns:1fr; } }
     .coverage-intro { padding:9px; border-radius:8px; color:#67746b; background:var(--soft); font-size:9px; line-height:1.5; }
     .coverage-intro b { color:var(--green); } .coverage-section { margin-top:14px; }
     .coverage-section h3 { margin:0 0 7px; font-size:11px; } .metric-list { display:grid; gap:7px; }
@@ -287,7 +351,7 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     const state = { cases: [], selectedCaseId: "", filter: "all", results: {}, run: null, caseSuite: "default", caseSource: "" };
     const stageLabels = { stranger:"初识", acquaintance:"熟悉", friend:"朋友", close:"亲近", dating:"恋爱", married:"婚后", parent:"育儿" };
     const channelLabels = { remote:"远程（手机/线上）", face_to_face:"当面聊天" };
-    const roleNames = { Wizard:"Rasmodia / Wizard", Sophia:"Sophia", Shane:"Shane", Sebastian:"Sebastian", Alex:"Alex" };
+    const roleNames = { Wizard:"Rasmodia / Wizard", Sophia:"Sophia", Shane:"珊恩 / Shane", Sebastian:"塞布瑞娜 / Sebastian", Alex:"爱丽克斯 / Alex" };
     function categoryOf(item) { if (Array.isArray(item.history) && item.history.length) return "continuity"; if (item.channel === "remote") return "channel"; return "daily"; }
     function categoryLabel(item) { return categoryOf(item) === "continuity" ? "上下文续聊" : categoryOf(item) === "channel" ? "渠道场景" : "日常状态"; }
     function visibleCases() { return state.cases.filter((item) => state.filter === "all" || categoryOf(item) === state.filter); }
@@ -303,7 +367,7 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     function formatCost(cost) { if (!cost || !Number.isFinite(Number(cost.amount))) return "费用未配置"; return `估算费用：¥${Number(cost.amount).toFixed(4)}`; }
     function plannedTurns(item) { const turns=Array.isArray(item.turns)&&item.turns.length?item.turns:[{turnId:"turn-1",playerInput:item.playerInput||""}]; return turns; }
     function caseUsage(result) { const turns=Array.isArray(result?.turns)?result.turns:[]; const usage={inputTokens:0,outputTokens:0,totalTokens:0}; let count=0; turns.forEach((turn)=>{ if(!turn?.usage)return; count+=1; ["inputTokens","outputTokens","totalTokens"].forEach((key)=>{if(Number.isInteger(turn.usage[key]))usage[key]+=turn.usage[key];}); }); return count?{...usage,count}:null; }
-    function renderCaseTranscript(container, item) { const result=state.results[item.caseId]||{}; const definitions=plannedTurns(item); const resultTurns=Array.isArray(result.turns)?result.turns:[]; const count=Math.max(definitions.length,resultTurns.length,1); const card=document.createElement("section"); card.className="transcript-card"; const header=document.createElement("div"); header.className="transcript-card-header"; const heading=document.createElement("strong"); heading.textContent=`#${item.caseNumber || "?"} · 完整连续对话 · 实际生成回复`; const status=document.createElement("span"); status.className="result-status"; status.textContent=resultStatus(item); header.append(heading,status); card.append(header); const usage=caseUsage(result); const summary=document.createElement("div"); summary.className="transcript-summary"; const passedTurnsText=Number.isInteger(result.passedTurnCount) ? `单轮通过 ${result.passedTurnCount}/${definitions.length}（${formatPassRate(result.turnPassRate)}）` : "单轮通过 未检测"; const passedCaseText=typeof result.casePassed === "boolean" ? `完整案例通过 ${result.casePassed ? "是" : "否"}` : "完整案例通过 未检测"; summary.textContent=`${count} 轮 · ${resultTurns.length?`${resultTurns.length} 轮已返回`:`尚未生成`} · ${passedTurnsText} · ${passedCaseText} · ${usage?formatUsage(usage):"用量未返回"}`; card.append(summary); if(Array.isArray(item.history)&&item.history.length){ const history=document.createElement("div"); history.className="transcript-history"; const historyTitle=document.createElement("div"); historyTitle.className="transcript-history-title"; historyTitle.textContent="预置上下文"; history.append(historyTitle); item.history.forEach((message)=>{ const line=document.createElement("div"); line.className="transcript-history-line"; const role=document.createElement("b"); role.textContent=message.role==="assistant"?"NPC":"玩家"; line.append(role,document.createTextNode(`　${message.content||""}`)); history.append(line); }); card.append(history); } for(let index=0;index<count;index+=1){ const definition=definitions[index]||{}; const turn=resultTurns[index]||{}; const turnCard=document.createElement("article"); turnCard.className="transcript-turn"; if(turn.error)turnCard.classList.add("error"); else if(turn.score?.passed===false)turnCard.classList.add("review"); const turnHead=document.createElement("div"); turnHead.className="transcript-turn-head"; const turnTitle=document.createElement("span"); turnTitle.textContent=`第 ${index+1} 轮 · ${turn.turnId||definition.turnId||`turn-${index+1}`}`; const turnState=document.createElement("span"); turnState.className="transcript-turn-state"; turnState.textContent=turn.reply?"已生成":turn.error?"失败":"待生成"; if(!turn.reply&&!turn.error)turnState.classList.add("ready"); turnHead.append(turnTitle,turnState); turnCard.append(turnHead); const playerLabel=document.createElement("div"); playerLabel.className="transcript-turn-label"; playerLabel.textContent="玩家"; const player=document.createElement("div"); player.className="transcript-turn-player"; player.textContent=turn.playerInput||definition.playerInput||"未设置"; turnCard.append(playerLabel,player); const npcLabel=document.createElement("div"); npcLabel.className="transcript-turn-label"; npcLabel.textContent="NPC"; const reply=document.createElement("div"); reply.className="transcript-turn-reply"; if(turn.reply)reply.textContent=turn.reply; else if(turn.error)reply.textContent=`生成失败：${turn.error}`; else {reply.classList.add("pending");reply.textContent="本轮尚未生成实际回复。";} turnCard.append(npcLabel,reply); const meta=document.createElement("div"); meta.className="transcript-turn-meta"; meta.textContent=[turn.provider?`Provider：${turn.provider}`:"Provider：未记录",turn.latencyMs!==undefined?`延迟：${turn.latencyMs} ms`:"延迟：—",formatUsage(turn.usage)].join(" · "); turnCard.append(meta); const score=turn.score||{}; const scoreParts=[]; if(score.expectedHits!==undefined)scoreParts.push(`话题证据 ${score.expectedHits}`); if(score.exactExpectedHits!==undefined)scoreParts.push(`精确命中 ${score.exactExpectedHits}`); if(score.forbiddenHits!==undefined)scoreParts.push(`禁用词 ${score.forbiddenHits}`); if(Array.isArray(score.tags)&&score.tags.length)scoreParts.push(`标签：${score.tags.map(progressionTagLabel).join("、")}`); const progression=turn.progression||{}; if(progression.repeated===true)scoreParts.push("推进：repeated_turn_content"); else if(Array.isArray(progression.tags)&&progression.tags.length)scoreParts.push(`推进：${progression.tags.map(progressionTagLabel).join("、")}`); if(scoreParts.length){const scoreLine=document.createElement("div");scoreLine.className="transcript-turn-score";scoreLine.textContent=scoreParts.join(" · ");turnCard.append(scoreLine);} card.append(turnCard); } if(result?.error&&!resultTurns.length){ const empty=document.createElement("div"); empty.className="transcript-empty"; empty.textContent=`生成失败：${result.error}`; card.append(empty); } container.append(card); }
+    function renderCaseTranscript(container, item) { const result=state.results[item.caseId]||{}; const definitions=plannedTurns(item); const resultTurns=Array.isArray(result.turns)?result.turns:[]; const count=Math.max(definitions.length,resultTurns.length,1); const card=document.createElement("section"); card.className="transcript-card"; const header=document.createElement("div"); header.className="transcript-card-header"; const heading=document.createElement("strong"); heading.textContent=`#${item.caseNumber || "?"} · 完整连续对话 · 实际生成回复`; const status=document.createElement("span"); status.className="result-status"; status.textContent=resultStatus(item); header.append(heading,status); card.append(header); const usage=caseUsage(result); const summary=document.createElement("div"); summary.className="transcript-summary"; const passedTurnsText=Number.isInteger(result.passedTurnCount) ? `单轮通过 ${result.passedTurnCount}/${definitions.length}（${formatPassRate(result.turnPassRate)}）` : "单轮通过 未检测"; const passedCaseText=typeof result.casePassed === "boolean" ? `完整案例通过 ${result.casePassed ? "是" : "否"}` : "完整案例通过 未检测"; summary.textContent=`${count} 轮 · ${resultTurns.length?`${resultTurns.length} 轮已返回`:`尚未生成`} · ${passedTurnsText} · ${passedCaseText} · ${usage?formatUsage(usage):"用量未返回"}`; card.append(summary); if(Array.isArray(item.history)&&item.history.length){ const history=document.createElement("div"); history.className="transcript-history"; const historyTitle=document.createElement("div"); historyTitle.className="transcript-history-title"; historyTitle.textContent="预置上下文"; history.append(historyTitle); item.history.forEach((message)=>{ const line=document.createElement("div"); line.className="transcript-history-line"; const role=document.createElement("b"); role.textContent=message.role==="assistant"?"NPC":"玩家"; line.append(role,document.createTextNode(`　${message.content||""}`)); history.append(line); }); card.append(history); } for(let index=0;index<count;index+=1){ const definition=definitions[index]||{}; const turn=resultTurns[index]||{}; const turnCard=document.createElement("article"); turnCard.className="transcript-turn"; if(turn.error)turnCard.classList.add("error"); else if(turn.score?.passed===false)turnCard.classList.add("review"); const turnHead=document.createElement("div"); turnHead.className="transcript-turn-head"; const turnTitle=document.createElement("span"); turnTitle.textContent=`第 ${index+1} 轮 · ${turn.turnId||definition.turnId||`turn-${index+1}`}`; const turnState=document.createElement("span"); turnState.className="transcript-turn-state"; turnState.textContent=turn.reply?"已生成":turn.error?"失败":"待生成"; if(!turn.reply&&!turn.error)turnState.classList.add("ready"); turnHead.append(turnTitle,turnState); turnCard.append(turnHead); const playerLabel=document.createElement("div"); playerLabel.className="transcript-turn-label"; playerLabel.textContent="玩家"; const player=document.createElement("div"); player.className="transcript-turn-player"; player.textContent=turn.playerInput||definition.playerInput||"未设置"; turnCard.append(playerLabel,player); const npcLabel=document.createElement("div"); npcLabel.className="transcript-turn-label"; npcLabel.textContent="NPC"; const reply=document.createElement("div"); reply.className="transcript-turn-reply"; if(turn.reply)reply.textContent=turn.reply; else if(turn.error)reply.textContent=`生成失败：${turn.error}`; else {reply.classList.add("pending");reply.textContent="本轮尚未生成实际回复。";} turnCard.append(npcLabel,reply); const meta=document.createElement("div"); meta.className="transcript-turn-meta"; meta.textContent=[turn.provider?`Provider：${turn.provider}`:"Provider：未记录",turn.latencyMs!==undefined?`延迟：${turn.latencyMs} ms`:"延迟：—",formatUsage(turn.usage)].join(" · "); turnCard.append(meta); const score=turn.score||{}; const scoreParts=[]; if(score.expectedHits!==undefined)scoreParts.push(`话题证据 ${score.expectedHits}`); if(score.exactExpectedHits!==undefined)scoreParts.push(`精确命中 ${score.exactExpectedHits}`); if(score.forbiddenHits!==undefined)scoreParts.push(`禁用词 ${score.forbiddenHits}`); if(Array.isArray(score.tags)&&score.tags.length)scoreParts.push(`标签：${score.tags.map(diagnosticTagLabel).join("、")}`); const progression=turn.progression||{}; if(progression.repeated===true)scoreParts.push("推进：相邻回复重复"); else if(Array.isArray(progression.tags)&&progression.tags.length)scoreParts.push(`推进：${progression.tags.map(diagnosticTagLabel).join("、")}`); if(scoreParts.length){const scoreLine=document.createElement("div");scoreLine.className="transcript-turn-score";scoreLine.textContent=scoreParts.join(" · ");turnCard.append(scoreLine);} card.append(turnCard); } if(result?.error&&!resultTurns.length){ const empty=document.createElement("div"); empty.className="transcript-empty"; empty.textContent=`生成失败：${result.error}`; card.append(empty); } container.append(card); }
     function renderCaseResult(container, item) { renderCaseTranscript(container, item); }
     function renderCaseDetail() {
       const item = state.cases.find((candidate) => candidate.caseId === state.selectedCaseId) || state.cases[0];
@@ -425,7 +489,7 @@ DIALOGUE_CASE_BROWSER_HTML = """<!doctype html>
     }
     function renderBars(container, counts, labels) { container.replaceChildren(); const max = Math.max(...Object.values(counts), 1); Object.entries(counts).forEach(([key,value]) => { const row = document.createElement("div"); row.className = "bar-row"; row.innerHTML = `<span>${labels[key] || key}</span><span class="bar"><i style="width:${Math.round(value / max * 100)}%"></i></span><b>${value}</b>`; container.append(row); }); }
     function renderCoverage() { const roles = new Set(state.cases.map((item) => item.npcId)); const history = state.cases.filter((item) => item.history?.length).length; const channels = new Set(state.cases.map((item) => item.channel)); const sceneKeys = ["season","date","weather","time","location","friendshipHearts"]; const completeScenes = state.cases.filter((item) => sceneKeys.every((key) => item.gameState && item.gameState[key] !== undefined)).length; $("coverage-total").textContent = state.cases.length; $("coverage-roles").textContent = roles.size; $("coverage-history").textContent = `${history} / ${state.cases.length}`; $("coverage-channels").textContent = [...channels].map((item) => channelLabels[item] || item).join("、"); $("coverage-scenes").textContent = `${completeScenes} / ${state.cases.length}`; const summary=state.run?.summary||{}; const plannedTurns=state.cases.reduce((total,item)=>total+(Array.isArray(item.turns)?item.turns.length:1),0); $("coverage-turns").textContent = summary.turnCount!==undefined?`${summary.turnCount} 轮（${summary.successfulTurns??0} 轮成功）`:`${plannedTurns} 轮待生成`; $("coverage-passed-turns").textContent = Number.isInteger(summary.passedTurns)?`${summary.passedTurns} / ${summary.turnCount ?? plannedTurns}（${formatPassRate(summary.turnPassRate)}）`:"未检测"; $("coverage-passed-cases").textContent = Number.isInteger(summary.passedCases)?`${summary.passedCases} / ${summary.caseCount ?? state.cases.length}（${formatPassRate(summary.casePassRate)}）`:"未检测"; const usage=summary.usage; $("coverage-tokens").textContent = usage&&Number.isInteger(usage.totalTokens)?`${usage.totalTokens} tokens（${usage.usageReturnedTurns??0} 轮有返回，${usage.missingUsageTurns??0} 轮无用量）`:"用量未返回"; $("coverage-cost").textContent = formatCost(summary.estimatedCost); const stages = {}; const channelCounts = {}; state.cases.forEach((item) => { stages[item.relationshipStage] = (stages[item.relationshipStage] || 0) + 1; channelCounts[item.channel] = (channelCounts[item.channel] || 0) + 1; }); renderBars($("stage-bars"), stages, stageLabels); renderBars($("channel-bars"), channelCounts, {remote:"远程",face_to_face:"当面"}); }
-    async function loadQualityResults() { try { const response = await fetch("/api/quality/results"); if (!response.ok) throw new Error("质量结果接口不可用"); const payload = await response.json(); const results = Array.isArray(payload.results) ? payload.results : []; const resultByCaseId = Object.fromEntries(results.filter((item) => item && item.caseId).map((item) => [item.caseId, item])); state.run = payload; state.results = resultByCaseId; } catch (_) { state.run = null; state.results = {}; } }
+    async function loadQualityResults() { try { const requestedSuite = new URLSearchParams(window.location.search).get("suite")?.trim(); const query = requestedSuite ? `?suite=${encodeURIComponent(requestedSuite)}` : ""; const response = await fetch(`/api/quality/results${query}`); if (!response.ok) throw new Error("质量结果接口不可用"); const payload = await response.json(); const results = Array.isArray(payload.results) ? payload.results : []; const resultByCaseId = Object.fromEntries(results.filter((item) => item && item.caseId).map((item) => [item.caseId, item])); state.run = payload; state.results = resultByCaseId; } catch (_) { state.run = null; state.results = {}; } }
     function batchProviderLabel(provider) { return {cloud:"云端（显式）",local:"本地 qwen3.5:9b",fake:"Fake 演示"}[provider] || provider || "未知 Provider"; } function renderBatchSummary() { const summary = state.run?.summary || {}; const results = Object.keys(state.results).length; const inputTotal = Number.isInteger(summary.playerInputGenerationCount) ? summary.playerInputGenerationCount : summary.playerInputRequestCount; const inputValid = Number.isInteger(summary.playerInputValidCount) ? summary.playerInputValidCount : null; const inputInvalid = Number.isInteger(summary.playerInputInvalidCount) ? summary.playerInputInvalidCount : null; const inputTags = Array.isArray(summary.playerInputQualityTags) ? summary.playerInputQualityTags.filter((tag) => typeof tag === "string") : []; const playerInputText = Number.isInteger(inputTotal) && inputTotal > 0 && inputValid !== null ? `动态玩家输入质量：${inputValid}/${inputTotal} 通过${inputInvalid !== null ? `，${inputInvalid} 条需复核` : ""}${inputTags.length ? ` · 输入标签：${inputTags.join("、")}` : ""}` : "动态玩家输入质量：未检测"; if (state.run?.batchId) { $("batch-title").textContent = `本轮生成 · ${state.run.batchId}`; const usage=summary.usage; const tokenText=usage&&Number.isInteger(usage.totalTokens)?` · ${usage.totalTokens} tokens`:" · 用量未返回"; $("batch-summary").textContent = `${results} 条实际结果 · ${summary.successful ?? results} 个案例返回 · ${summary.turnCount ?? "—"} 轮${tokenText}`; const npcPassText = Number.isInteger(summary.passedTurns) ? `NPC 单轮通过：${summary.passedTurns}/${summary.turnCount ?? "—"}（${formatPassRate(summary.turnPassRate)}）` : "NPC 单轮通过：未检测"; const casePassText = Number.isInteger(summary.passedCases) ? `完整案例通过：${summary.passedCases}/${summary.caseCount ?? "—"}（${formatPassRate(summary.casePassRate)}）` : "完整案例通过：未检测"; $("batch-pass-summary").textContent = `${npcPassText} · ${casePassText} · ${playerInputText}`; const providers = [...new Set(Object.values(state.results).flatMap((item) => Array.isArray(item?.turns)?item.turns.map((turn)=>turn?.provider):[item?.provider]).filter(Boolean))]; $("batch-run-status").textContent = `${providers.length ? `来源：${providers.map(batchProviderLabel).join("、")}` : "来源：未记录 Provider"} · ${formatCost(summary.estimatedCost)}`; } else { $("batch-title").textContent = "固定角色场景"; $("batch-summary").textContent = `${state.cases.length} 个案例 · 尚未接入生成结果`; $("batch-pass-summary").textContent = "NPC 单轮通过：未检测 · 完整案例通过：未检测 · 动态玩家输入质量：未检测"; $("batch-run-status").textContent = ""; } }
     async function loadQualityCases() { try { await loadQualityResults(); const requestedSuite = new URLSearchParams(window.location.search).get("suite")?.trim(); const summary = state.run?.summary || {}; const suite = requestedSuite || summary.suite || "default"; const response = await fetch(`/api/quality/cases?suite=${encodeURIComponent(suite)}`); if (!response.ok) throw new Error("测试例接口不可用"); const payload = await response.json(); state.caseSuite = payload.suite || suite; state.caseSource = payload.source || ""; state.cases = Array.isArray(payload.cases) ? payload.cases : []; renderBatchSummary(); renderFilterCounts(); renderCoverage(); renderCaseList(); renderCaseDetail(); if (state.cases[0]) window.setTimeout(() => selectCase(state.cases[0]), 0); } catch (error) { $("case-list").innerHTML = `<div class="empty-state">${error.message}</div>`; $("case-detail").innerHTML = `<div class="empty-state">无法加载测试例目录。<br>请检查 Bridge 是否在线。</div>`; } }
     function applyCaseFilter(filter) { state.filter = filter; $$(".filter-btn").forEach((button) => button.classList.toggle("active", button.dataset.filter === filter)); renderCaseList(); if (!visibleCases().some((item) => item.caseId === state.selectedCaseId)) { state.selectedCaseId = visibleCases()[0]?.caseId || ""; renderCaseDetail(); } }
@@ -519,8 +583,8 @@ RAW_DIALOGUE_REFERENCE_HTML = """<!doctype html>
   <script>
     const $ = (id) => document.getElementById(id);
     const EVALUATION_NPC_IDS = ["Wizard", "Sophia", "Shane", "Sebastian", "Alex"];
-    const EVALUATION_LABELS = {Wizard:"Rasmodia / Wizard",Sophia:"Sophia",Shane:"Shane",Sebastian:"Sebastian",Alex:"Alex"};
-    const state = {npcs:[],activeNpcId:"Wizard",rawDialogue:{npcId:"",total:0,representatives:[],dialogues:[]}};
+    const EVALUATION_LABELS = {Wizard:"Rasmodia / Wizard",Sophia:"Sophia",Shane:"珊恩 / Shane",Sebastian:"塞布瑞娜 / Sebastian",Alex:"爱丽克斯 / Alex"};
+    const state = {npcs:[],activeNpcId:"Wizard",requestedNpcId:"",rawDialogue:{npcId:"",total:0,representatives:[],dialogues:[]}};
     function canonicalNpcId(npcId){const value=typeof npcId==="string"?npcId.trim():"";return ["wizard","rasmodia"].includes(value.toLowerCase())?"Wizard":value;}
     function rawDialogueMatches(item){const query=$("raw-dialogue-filter").value.trim().toLocaleLowerCase();if(!query)return true;return [item.text,item.sourceMod,item.sourcePath,item.sourceKey,JSON.stringify(item.conditions||{})].some((value)=>String(value||"").toLocaleLowerCase().includes(query));}
     function renderRawDialogueList(container,items,emptyText,pinned=false){container.replaceChildren();if(!items.length){const empty=document.createElement("div");empty.className="raw-empty";empty.textContent=emptyText;container.append(empty);return;}for(const item of items){const entry=document.createElement("article");entry.className=`raw-entry ${pinned?"pinned":""}`;const meta=document.createElement("div");meta.className="raw-entry-meta";const condition=Object.entries(item.conditions||{}).map(([key,value])=>`${key}=${value}`).join("；");meta.textContent=[pinned?"置顶参照":"原文",item.sourceMod||"未知来源",item.sourceKey||"未标注",condition].filter(Boolean).join(" · ");const body=document.createElement("div");body.className="raw-entry-text";body.textContent=item.text||"";const source=document.createElement("div");source.className="raw-entry-source";source.textContent=`来源文件：${item.sourcePath||"未记录"}`;entry.append(meta,body,source);container.append(entry);}}
@@ -528,7 +592,8 @@ RAW_DIALOGUE_REFERENCE_HTML = """<!doctype html>
     function selectNpc(npcId){const canonicalId=canonicalNpcId(npcId);state.activeNpcId=canonicalId;window.dispatchEvent(new CustomEvent("dialogue-lab:npc-selected",{detail:{npcId:canonicalId,displayName:EVALUATION_LABELS[canonicalId]||canonicalId,source:"raw"}}));renderQuickButtons();}
     async function loadRawDialogue(npcId){const canonicalId=canonicalNpcId(npcId);selectNpc(canonicalId);state.rawDialogue={npcId:canonicalId,total:0,representatives:[],dialogues:[]};renderRawDialogue();try{const response=await fetch(`/api/dialogue/raw?npcId=${encodeURIComponent(npcId)}`);if(!response.ok)throw new Error("原始对白加载失败");const data=await response.json();state.rawDialogue={npcId:canonicalNpcId(data.npcId||npcId),total:Number.isFinite(data.total)?data.total:0,representatives:Array.isArray(data.representatives)?data.representatives:[],dialogues:Array.isArray(data.dialogues)?data.dialogues:[]};renderRawDialogue();}catch(error){state.rawDialogue={npcId:canonicalId,total:0,representatives:[],dialogues:[]};renderRawDialogue();$("raw-dialogue-count").textContent=`原始对白加载失败：${error.message}`;}}
     function renderQuickButtons(){const container=$("npc-buttons");container.replaceChildren();for(const npcId of EVALUATION_NPC_IDS){const button=document.createElement("button");button.type="button";button.className=`npc-switch ${npcId===state.activeNpcId?"active":""}`;button.textContent=EVALUATION_LABELS[npcId];button.setAttribute("aria-pressed",String(npcId===state.activeNpcId));button.addEventListener("click",()=>{const select=$("npc-select");if(Array.from(select.options).some((option)=>option.value===npcId))select.value=npcId;loadRawDialogue(npcId);});container.append(button);}}
-    async function loadNpcs(){const response=await fetch("/api/npcs");if(!response.ok)throw new Error("NPC 资料加载失败");state.npcs=(await response.json()).npcs||[];const select=$("npc-select");select.replaceChildren();for(const npc of state.npcs){const option=document.createElement("option");option.value=npc.npcId;option.textContent=`${npc.displayName} (${npc.npcId})`;select.append(option);}select.value="Wizard";select.addEventListener("change",()=>loadRawDialogue(select.value));renderQuickButtons();await loadRawDialogue(select.value);}
+    window.addEventListener("dialogue-lab:case-selected",(event)=>{const npcId=event.detail?.npcId;if(!npcId)return;state.requestedNpcId=canonicalNpcId(npcId);const select=$("npc-select");if(!Array.from(select.options).some((option)=>option.value===state.requestedNpcId))return;select.value=state.requestedNpcId;loadRawDialogue(event.detail?.npcId);});
+    async function loadNpcs(){const response=await fetch("/api/npcs");if(!response.ok)throw new Error("NPC 资料加载失败");state.npcs=(await response.json()).npcs||[];const select=$("npc-select");select.replaceChildren();for(const npc of state.npcs){const option=document.createElement("option");const label=EVALUATION_LABELS[npc.npcId]||npc.displayName||npc.npcId;option.value=npc.npcId;option.textContent=`${label} (${npc.npcId})`;select.append(option);}const initialNpcId=state.requestedNpcId&&Array.from(select.options).some((option)=>option.value===state.requestedNpcId)?state.requestedNpcId:"Wizard";select.value=initialNpcId;select.addEventListener("change",()=>loadRawDialogue(select.value));renderQuickButtons();await loadRawDialogue(initialNpcId);}
     async function loadHealth(){try{const response=await fetch("/health");const data=await response.json();if(!response.ok)throw new Error();$("health").textContent=`Bridge 在线 · ${data.provider}`;$("health").classList.add("ready");}catch(_){$("health").textContent="Bridge 不可用";}}
     $("raw-dialogue-filter").addEventListener("input",renderRawDialogue);renderQuickButtons();Promise.all([loadNpcs(),loadHealth()]).catch((error)=>$("raw-dialogue-count").textContent=error.message);
   </script>
@@ -643,8 +708,13 @@ DIALOGUE_LAB_SHARED_UI_CSS = """
     #dialogue-lab-workspace [data-workspace-view="cases"] .case-search-clear:disabled { cursor:default; opacity:.45; }
     #dialogue-lab-workspace [data-workspace-view="cases"] .case-filter-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:7px; }
     #dialogue-lab-workspace [data-workspace-view="cases"] .case-filter-grid label { display:grid; gap:3px; color:#738076; font-size:9px; }
-    #dialogue-lab-workspace [data-workspace-view="cases"] .case-filter-grid select { width:100%; padding:5px 6px; border:1px solid #d9e2d8; border-radius:6px; color:var(--ink); background:#fff; font-size:9px; }
-    #dialogue-lab-workspace [data-workspace-view="cases"] .review-filter { color:#896225; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .case-filter-grid select { width:100%; padding:5px 6px; border:1px solid #d9e2d8; border-radius:6px; color:var(--ink); background:#fff; font-size:9px; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .case-display-row { display:flex; align-items:center; gap:7px; margin-top:8px; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .case-display-toggle { flex:0 0 auto; padding:5px 7px; border:1px solid #d9e2d8; border-radius:6px; color:#4f6957; background:#fff; font-size:9px; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .case-display-toggle:hover { border-color:#9cbaa4; background:#f4faf3; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .case-display-toggle[aria-pressed="true"] { border-color:#d4b36e; color:#896225; background:#fff8e7; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .case-display-hint { color:#738076; font-size:9px; line-height:1.35; }
+     #dialogue-lab-workspace [data-workspace-view="cases"] .review-filter { color:#896225; }
     #dialogue-lab-workspace [data-workspace-view="cases"] .case-detail-toolbar { position:sticky; top:-14px; z-index:2; display:flex; align-items:center; justify-content:space-between; gap:8px; margin:-14px -15px 10px; padding:8px 15px; border-bottom:1px solid #dfe7de; background:#fffffff2; box-shadow:0 3px 8px #3d5d460b; }
     #dialogue-lab-workspace [data-workspace-view="cases"] .case-position { color:#6d796f; font-size:10px; font-weight:700; white-space:nowrap; }
     #dialogue-lab-workspace [data-workspace-view="cases"] .case-nav-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; }
@@ -738,16 +808,20 @@ def _augment_case_browser_script(script: str) -> str:
     state.query = "";
     state.roleFilter = "";
     state.statusFilter = "";
+    state.showAllDefinitions = false;
     function readCaseViewState() {
       const searchParams = new URLSearchParams(window.location.search);
       const filter = searchParams.get("filter");
       const status = searchParams.get("status");
+      const scope = searchParams.get("scope");
       return {
         caseId: searchParams.get("case") || "",
         filter: caseFilterValues.has(filter) ? filter : "all",
         query: searchParams.get("q") || "",
         role: searchParams.get("role") || "",
         status: caseStatusValues.has(status) ? status : "",
+        view: searchParams.get("view") || "",
+        showAllDefinitions: scope === "all" || status === "unrun",
       };
     }
     const initialCaseViewState = readCaseViewState();
@@ -755,6 +829,7 @@ def _augment_case_browser_script(script: str) -> str:
     state.query = initialCaseViewState.query;
     state.roleFilter = initialCaseViewState.role;
     state.statusFilter = initialCaseViewState.status;
+    state.showAllDefinitions = initialCaseViewState.showAllDefinitions;
     function updateCaseViewUrl() {
       const url = new URL(window.location.href);
       const searchParams = url.searchParams;
@@ -763,7 +838,18 @@ def _augment_case_browser_script(script: str) -> str:
       if (state.query) searchParams.set("q", state.query); else searchParams.delete("q");
       if (state.roleFilter) searchParams.set("role", state.roleFilter); else searchParams.delete("role");
       if (state.statusFilter) searchParams.set("status", state.statusFilter); else searchParams.delete("status");
+      if (state.showAllDefinitions) searchParams.set("scope", "all"); else searchParams.delete("scope");
       window.history.replaceState({}, "", url);
+    }
+    function hasActualReply(item) {
+      const result = state.results[item.caseId];
+      if (!result || typeof result !== "object") return false;
+      if (typeof result.reply === "string" && result.reply.trim()) return true;
+      return Array.isArray(result.turns)
+        && result.turns.some((turn) => typeof turn?.reply === "string" && turn.reply.trim());
+    }
+    function caseIsInDisplayScope(item) {
+      return state.showAllDefinitions || Boolean(state.statusFilter) || hasActualReply(item);
     }
     function caseMatchesSearch(item) {
       const haystack = [item.caseId, item.displayName, item.npcId, item.playerInput, item.storyProgress, item.channel, channelLabels[item.channel], item.relationshipStage, relationshipStageLabel[item.relationshipStage], ...(item.sourceMods || []), ...Object.values(item.gameState || {})].join(" ").toLocaleLowerCase();
@@ -786,7 +872,8 @@ def _augment_case_browser_script(script: str) -> str:
           : relationshipStageLabel[state.filter]
             ? item.relationshipStage === state.filter
             : state.filter === "all" || categoryOf(item) === state.filter;
-      return categoryMatches
+      return caseIsInDisplayScope(item)
+        && categoryMatches
         && (state.filter !== "needs_review" || statusMatches(item, "needs_review"))
         && (!state.roleFilter || item.npcId === state.roleFilter)
         && statusMatches(item)
@@ -812,20 +899,33 @@ def _augment_case_browser_script(script: str) -> str:
       if (status && status.value !== state.statusFilter) status.value = state.statusFilter;
       $("case-search-clear")?.toggleAttribute("disabled", !state.query);
     }
+    function syncDefinitionScopeControl() {
+      const button = $("show-all-definitions");
+      const hint = $("case-display-hint");
+      if (button) {
+        button.textContent = state.showAllDefinitions ? "只显示已生成回复" : "显示全部定义";
+        button.setAttribute("aria-pressed", String(state.showAllDefinitions));
+      }
+      if (hint) hint.textContent = state.showAllDefinitions ? "当前显示完整定义目录" : "仅显示已生成回复";
+    }
     function selectFirstVisibleCaseIfNeeded() {
       if (visibleCases().some((item) => item.caseId === state.selectedCaseId)) return;
       state.selectedCaseId = visibleCases()[0]?.caseId || "";
     }
     function initialCaseForSelection() {
-      return state.cases.find((item) => item.caseId === initialCaseViewState.caseId)
+      const requested = state.cases.find((item) => item.caseId === initialCaseViewState.caseId);
+      return (requested && (initialCaseViewState.view === "raw" || caseIsInDisplayScope(requested)) ? requested : null)
         || visibleCases()[0]
-        || state.cases[0];
+        || (state.showAllDefinitions ? state.cases[0] : null);
     }
     const baseRenderFilterCounts = renderFilterCounts;
     renderFilterCounts = function () {
       baseRenderFilterCounts();
       const counts = { needs_review: 0, high_affinity: 0, stranger: 0, acquaintance: 0, friend: 0, close: 0, dating: 0, married: 0, parent: 0 };
-      state.cases.forEach((item) => {
+      const countableCases = state.cases.filter((item) => caseIsInDisplayScope(item));
+      const allCountElement = $("filter-all-count");
+      if (allCountElement) allCountElement.textContent = countableCases.length;
+      countableCases.forEach((item) => {
         if (statusMatches(item, "needs_review")) counts.needs_review += 1;
         if (highAffinityStages.has(item.relationshipStage)) counts.high_affinity += 1;
         if (Object.prototype.hasOwnProperty.call(counts, item.relationshipStage)) counts[item.relationshipStage] += 1;
@@ -869,6 +969,13 @@ def _augment_case_browser_script(script: str) -> str:
         repeated_speech_particle: "重复语气词",
         repeated_opening: "重复开场",
         too_many_speech_particles: "语气词过密",
+        missing_personal_affection: "缺少个人亲密表达",
+        missing_proactive_affection: "缺少主动亲密信号",
+        missing_conversation_lead: "缺少主动对话推进",
+        missing_current_topic_answer: "未回应当前话题",
+        missing_topic_evidence: "缺少当前话题证据",
+        missing_history_anchor: "缺少前文承接",
+        jealousy_recovery_missing: "未完成嫉妒恢复",
       }[tag] || tag;
     }
     function initiativeExpectationLabel(value) {
@@ -893,14 +1000,31 @@ def _augment_case_browser_script(script: str) -> str:
         care_action: "实际关心",
       }[value] || value || "未设置";
     }
-    function initiativeTagLabel(tag) {
+    function initiativeTagLabel(tag) { return diagnosticTagLabel(tag); }
+    function diagnosticTagLabel(tag) {
       return {
+        repeated_turn_content: "相邻回复重复",
+        repeated_speech_particle: "重复语气词",
+        repeated_opening: "重复开场",
+        too_many_speech_particles: "语气词过密",
         affection_signal: "主动回撩",
         specific_plan: "具体邀约",
         guarded_care: "克制接住",
         conversation_exit: "允许收口",
         guarded_exit_allowed: "允许收口",
+        missing_personal_affection: "缺少个人亲密表达",
         missing_proactive_affection: "缺少主动亲密信号",
+        missing_topic_evidence: "缺少当前话题证据",
+        missing_expected_evidence: "缺少期望证据",
+        missing_continuity_evidence: "缺少前文承接证据",
+        missing_conversation_lead: "缺少主动对话推进",
+        missing_current_topic_answer: "未回应当前话题",
+        missing_history_anchor: "缺少前文承接",
+        jealousy_recovery_missing: "未完成嫉妒恢复",
+        generic_follow_up_only: "只有泛化追问",
+        companionship_only: "只有陪伴表达",
+        specific_plan_only: "只有具体计划",
+        mechanical_affection_shape: "主动亲密表达过于机械",
         generic_romance: "泛化浪漫表达",
         flirt_stage_mismatch: "阶段不匹配",
         romance_boundary_violation: "亲密边界风险",
@@ -913,9 +1037,8 @@ def _augment_case_browser_script(script: str) -> str:
       const turns = Array.isArray(result.turns) ? result.turns : [];
       const turnTags = turns.flatMap((turn) => Array.isArray(turn?.initiativeTags) ? turn.initiativeTags : []);
       const tags = [...new Set([...(Array.isArray(item.initiativeTags) ? item.initiativeTags : []), ...(Array.isArray(result.initiativeTags) ? result.initiativeTags : []), ...turnTags])];
-      const detected = typeof result.initiativeDetected === "boolean"
-        ? result.initiativeDetected
-        : turns.some((turn) => turn?.initiativeDetected === true);
+      const detected = result.initiativeDetected === true
+        || turns.some((turn) => turn?.initiativeDetected === true);
       return {
         expectation: result.initiativeExpectation || item.initiativeExpectation || "none",
         kind: result.initiativeKind || item.initiativeKind || "none",
@@ -935,10 +1058,123 @@ def _augment_case_browser_script(script: str) -> str:
       if (quality.valid === false) return `玩家输入质量：需复核${tags.length ? ` · ${tags.join("、")}` : ""}`;
       return "玩家输入质量：未检测";
     }
+    function uniqueWarningEntries(values) {
+      const counts = new Map();
+      values.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+      return [...counts.entries()].map(([value, count]) => ({ value, count }));
+    }
+    function isLegacyAffectionRetry(warning, initiativeExpectation) {
+      const contract = typeof initiativeExpectation === "string"
+        ? initiativeExpectation.trim().toLowerCase()
+        : "";
+      return ["none", "responsive"].includes(contract)
+        && /^response_affection_retry(?:_failed|_skipped)?:/.test(String(warning));
+    }
+    function diagnosticReasonLabel(reason) {
+      const value = String(reason || "").trim();
+      return {
+        missing_proactive_affection: "缺少主动亲密信号",
+        missing_personal_affection: "缺少个人亲密表达",
+        missing_conversation_lead: "缺少主动对话推进",
+        missing_current_topic_answer: "未回应当前话题",
+        missing_topic_evidence: "缺少当前话题证据",
+        missing_history_anchor: "缺少前文承接",
+        prompt_echo: "复述了提示内容",
+        repeated: "出现重复表达",
+        stage_direction: "混入舞台动作",
+        markdown: "格式噪声",
+        mechanical_affection_shape: "主动亲密表达过于机械",
+        provider_error: "Provider 调用失败",
+        budget_max_requests: "达到请求预算上限",
+        budget_max_total_tokens: "达到总 token 预算上限",
+      }[value] || (value ? value.replace(/_/g, " ") : "未知诊断");
+    }
+    function qualityDiagnosticLabel(warning, initiativeExpectation) {
+      if (isLegacyAffectionRetry(warning, initiativeExpectation)) {
+        return "旧批次亲密重试（当前回合无需主动亲密）";
+      }
+      const value = String(warning || "").trim();
+      const guardMatch = value.match(/^(response_guard|fallback_guard):\s*(.*)$/);
+      if (guardMatch) {
+        const guardLabel = guardMatch[1] === "fallback_guard" ? "Fallback Guard" : "响应 Guard";
+        return `${guardLabel}：${diagnosticReasonLabel(guardMatch[2])}`;
+      }
+      const reasonMatch = value.match(/^response_[^:]+_(?:retry|retry_failed|retry_skipped):\s*(.+)$/);
+      const reason = reasonMatch ? reasonMatch[1].trim() : "";
+      if (reason) return diagnosticReasonLabel(reason);
+      return diagnosticReasonLabel(value);
+    }
+    function qualityDiagnosticSummary(values, initiativeExpectation) {
+      return uniqueWarningEntries(values).map((entry) =>
+        `${qualityDiagnosticLabel(entry.value, initiativeExpectation)}${entry.count > 1 ? `（${entry.count} 次）` : ""}`
+      ).join("；");
+    }
+    function formatTurnWarnings(warnings, score, retryCount, initiativeExpectation) {
+      const values = Array.isArray(warnings)
+        ? warnings.filter((warning) => typeof warning === "string" && warning.trim()).slice(0, 20)
+        : [];
+      if (!values.length) return [];
+      const retryEvents = values.filter((warning) => /^response_[^:]+_retry:/.test(warning));
+      const retryFailures = values.filter((warning) => /^response_[^:]+_retry_failed:/.test(warning));
+      const retrySkips = values.filter((warning) => /^response_[^:]+_retry_skipped:/.test(warning));
+      const hardGuards = values.filter((warning) => /^(?:response_guard|fallback_guard):/.test(warning));
+      const providerDiagnostics = values.filter((warning) =>
+        !retryEvents.includes(warning)
+        && !retryFailures.includes(warning)
+        && !retrySkips.includes(warning)
+        && !hardGuards.includes(warning)
+      );
+      const lines = [];
+      if (retryEvents.length) {
+        const retryTotal = Number.isInteger(retryCount) && retryCount >= 0
+          ? retryCount
+          : retryEvents.length;
+        const legacyAffectionOnly = retryEvents.length > 0
+          && retryEvents.every((warning) => isLegacyAffectionRetry(warning, initiativeExpectation));
+        const outcome = legacyAffectionOnly
+          ? "，旧批次契约不匹配（当前回合无需主动亲密）"
+          : score?.passed === true
+          ? "，重试后通过（最终通过）"
+          : score?.passed === false
+            ? "，重试后仍失败（最终仍需复核）"
+            : retryFailures.length
+              ? "，重试后仍失败"
+              : "";
+        const summary = qualityDiagnosticSummary(retryEvents, initiativeExpectation);
+        lines.push(`输出质量校验：已重试 ${retryTotal} 次${outcome}${summary ? ` · ${summary}` : ""}`);
+      }
+      if (retryFailures.length) lines.push(`质量重试失败：${qualityDiagnosticSummary(retryFailures, initiativeExpectation)}`);
+      if (retrySkips.length) lines.push(`质量重试未执行：${qualityDiagnosticSummary(retrySkips, initiativeExpectation)}`);
+      if (hardGuards.length) lines.push(`响应 Guard：${qualityDiagnosticSummary(hardGuards, initiativeExpectation)}`);
+      if (providerDiagnostics.length) lines.push(`Provider 诊断：${qualityDiagnosticSummary(providerDiagnostics, initiativeExpectation)}`);
+      return lines;
+    }
+    function appendDiagnosticDetails(container, warnings, score, initiativeExpectation) {
+      const summaryText = qualityDiagnosticSummary(warnings, initiativeExpectation);
+      if (!summaryText) return;
+      const details = document.createElement("details");
+      details.className = "transcript-turn-diagnostics";
+      const summary = document.createElement("summary");
+      summary.textContent = "查看诊断详情（已翻译）";
+      const text = document.createElement("div");
+      text.className = "diagnostic-detail-text";
+      text.textContent = summaryText;
+      details.append(summary, text);
+      container.append(details);
+    }
     const baseRenderCaseTranscript = renderCaseTranscript;
     renderCaseTranscript = function (container, item) {
       baseRenderCaseTranscript(container, item);
       const result = state.results[item.caseId] || {};
+      const runStatus = runStatusInfo();
+      const transcriptCard = container.querySelector(".transcript-card");
+      if (runStatus.invalid && transcriptCard) {
+        transcriptCard.classList.add("diagnostic-invalid");
+        const invalidTranscriptSummary = transcriptCard.querySelector(".transcript-summary");
+        if (invalidTranscriptSummary) {
+          invalidTranscriptSummary.textContent += " · 批次无效，仅作诊断，不代表角色质量";
+        }
+      }
       const definitions = plannedTurns(item);
       const resultTurns = Array.isArray(result.turns) ? result.turns : [];
       const mechanicalRestatementCount = Number.isInteger(result.mechanicalRestatementCount)
@@ -975,20 +1211,49 @@ def _augment_case_browser_script(script: str) -> str:
           diagnosticLine.textContent = "机械复述玩家：NPC 回复大段重复了本轮玩家措辞";
           turnCard.append(diagnosticLine);
         }
+        const warnings = Array.isArray(turn.warnings)
+          ? turn.warnings.filter((warning) => typeof warning === "string").slice(0, 20)
+          : [];
+        if (warnings.length > 0) {
+          formatTurnWarnings(warnings, turn.score, turn.retryCount, turn.initiativeExpectation).forEach((warningText) => {
+            const warningLine = document.createElement("div");
+            warningLine.className = "transcript-turn-warning";
+            warningLine.textContent = warningText;
+            turnCard.append(warningLine);
+          });
+          appendDiagnosticDetails(
+            turnCard,
+            warnings,
+            turn.score,
+            turn.initiativeExpectation,
+          );
+        }
       });
     };
     function renderAdaptiveInputSummary(container, item) {
-      if (item.followUpMode !== "adaptive") return;
+      const card = item.playerExpressionCard && typeof item.playerExpressionCard === "object"
+        ? item.playerExpressionCard
+        : null;
+      if (item.followUpMode !== "adaptive" && !card) return;
       const block = document.createElement("div");
       block.className = "detail-block adaptive-input-block";
-      block.innerHTML = "<h3>测试输入生成方式</h3>";
+      block.innerHTML = `<h3>${card && item.followUpMode !== "adaptive" ? "玩家表达倾向" : "测试输入生成方式"}</h3>`;
       const strip = document.createElement("div");
       strip.className = "context-strip";
-      [
-        ["首轮", "空 topic 入口"],
-        ["后续玩家输入", "根据上一条 NPC 回复动态生成"],
-        ["模拟风格", item.playerSimulationStyle || "未记录"],
-      ].forEach(([label, value]) => {
+      const fields = card && item.followUpMode !== "adaptive"
+        ? [
+            ["关系姿态", card.relationshipStance],
+            ["说话质地", card.languageTexture],
+            ["亲近推进", card.flirtProgression],
+            ["边界表达", card.boundaryStyle],
+            ["自我修正", card.selfCorrection],
+          ]
+        : [
+            ["首轮", "空 topic 入口"],
+            ["后续玩家输入", "根据上一条 NPC 回复动态生成"],
+            ["模拟风格", item.playerSimulationStyle || "未记录"],
+          ];
+      fields.filter(([, value]) => typeof value === "string" && value.trim()).forEach(([label, value]) => {
         const chip = document.createElement("span");
         chip.className = "context-chip";
         const strong = document.createElement("b");
@@ -999,7 +1264,9 @@ def _augment_case_browser_script(script: str) -> str:
       block.append(strip);
       const note = document.createElement("p");
       note.className = "story-progress";
-      note.textContent = "后续玩家台词不预置；它只在上一轮 NPC 回复返回后生成。玩家输入质量单独显示，不能把输入问题误算成 NPC 回复问题。";
+      note.textContent = card && item.followUpMode !== "adaptive"
+        ? "这是固定测试输入背后的玩家表达倾向；它用于解释台词风格，不是 NPC 的运行时提示，也不包含内部评分规则。"
+        : "后续玩家台词不预置；它只在上一轮 NPC 回复返回后生成。玩家输入质量单独显示，不能把输入问题误算成 NPC 回复问题。";
       block.append(note);
       container.append(block);
     }
@@ -1030,7 +1297,7 @@ def _augment_case_browser_script(script: str) -> str:
         data.tags.forEach((tag) => {
           const pill = document.createElement("span");
           pill.className = `term${tag.startsWith("missing_") || tag.includes("mismatch") || tag.includes("violation") ? " forbidden" : ""}`;
-          pill.textContent = initiativeTagLabel(tag);
+          pill.textContent = diagnosticTagLabel(tag);
           tagRow.append(pill);
         });
       }
@@ -1115,12 +1382,175 @@ def _augment_case_browser_script(script: str) -> str:
       });
     }
     const baseRenderCaseDetail = renderCaseDetail;
-    renderCaseDetail = function () {
-      baseRenderCaseDetail();
-      const item = state.cases.find((candidate) => candidate.caseId === state.selectedCaseId) || state.cases[0];
-      if (!item) return;
-      const container = $("case-detail");
-      renderCaseNavigation(container, item);
+    function eventConditionLabel(condition) {
+      return condition === "after" ? "事件后 · 已完成事件" : "事件前 · 未完成事件";
+    }
+    function eventSourceStatusLabel(status) {
+      return status === "unresolved_i18n" ? "原文未解析（不可据此判定）" : "原文已解析";
+    }
+    function renderEventImpactComparison(container, item) {
+      if (!item?.eventPairId) return;
+      const pair = state.cases
+        .filter((candidate) => candidate.eventPairId === item.eventPairId)
+        .sort((left, right) => (left.eventCondition === "before" ? -1 : 1) - (right.eventCondition === "before" ? -1 : 1));
+      if (pair.length !== 2) return;
+      const block = document.createElement("section");
+      block.className = "event-impact-comparison";
+      block.dataset.eventPairId = item.eventPairId;
+      const header = document.createElement("div");
+      header.className = "event-impact-header";
+      const heading = document.createElement("strong");
+      heading.textContent = `事件前后对照 · ${item.eventPairId}`;
+      const status = document.createElement("span");
+      status.className = "case-status";
+      status.textContent = `事件 ${item.eventId || "未标注"}`;
+      header.append(heading, status);
+      block.append(header);
+      const meta = document.createElement("div");
+      meta.className = "event-impact-meta";
+      meta.textContent = `${item.eventSummary || "未提供事件摘要"} · ${eventSourceStatusLabel(item.eventSourceStatus)}`;
+      block.append(meta);
+      const evidence = document.createElement("div");
+      evidence.className = "event-impact-evidence";
+      const evidenceTitle = document.createElement("strong");
+      evidenceTitle.textContent = "事件原文证据（仅供人工对照，不会自动注入回复）";
+      evidence.append(evidenceTitle);
+      const evidenceList = document.createElement("ul");
+      (Array.isArray(item.eventEvidence) ? item.eventEvidence : []).forEach((entry) => {
+        const line = document.createElement("li");
+        line.textContent = entry;
+        evidenceList.append(line);
+      });
+      if (!evidenceList.children.length) {
+        const line = document.createElement("li");
+        line.textContent = "未记录可展示的原文证据。";
+        evidenceList.append(line);
+      }
+      evidence.append(evidenceList);
+      block.append(evidence);
+      if (item.eventSourceStatus === "unresolved_i18n") {
+        const warning = document.createElement("div");
+        warning.className = "event-impact-warning";
+        warning.textContent = "Sophia 的事件文本仍是 i18n 占位符；下面只能看事件状态是否改变了输出，不能把差异归因到已知事件内容。";
+        block.append(warning);
+      }
+      const columns = document.createElement("div");
+      columns.className = "event-impact-columns";
+      pair.forEach((candidate) => {
+        const column = document.createElement("div");
+        column.className = `event-impact-column ${candidate.eventCondition}`;
+        const title = document.createElement("div");
+        title.className = "event-impact-column-title";
+        title.textContent = eventConditionLabel(candidate.eventCondition);
+        column.append(title);
+        renderCaseTranscript(column, candidate);
+        columns.append(column);
+      });
+      block.append(columns);
+      const anchor = container.querySelector(".context-strip");
+      if (anchor) container.insertBefore(block, anchor);
+      else container.append(block);
+    }
+    function runStatusInfo() {
+      const summary = state.run?.summary || {};
+      const status = summary.runStatus || state.run?.runStatus || null;
+      const reasons = Array.isArray(summary.runStatusReasons)
+        ? summary.runStatusReasons.filter((item) => typeof item === "string")
+        : Array.isArray(state.run?.runStatusReasons)
+          ? state.run.runStatusReasons.filter((item) => typeof item === "string")
+          : [];
+      return { invalid: status === "diagnostic_invalid", reasons };
+    }
+    function runStatusReasonLabel(reason) {
+      return {
+        provider_error: "ProviderError",
+        fallback: "fallback",
+        missing_reply: "缺失回复",
+        truncated_output: "截断输出",
+      }[reason] || reason;
+    }
+    function resultStatus(item) {
+      const result = state.results[item.caseId];
+      if (!result) return "未生成";
+      const runStatus = runStatusInfo();
+      if (runStatus.invalid) return result.error ? "仅诊断 · 生成失败" : "仅诊断";
+      if (result.error) return "生成失败";
+      if (result.casePassed === true) return "完整案例通过";
+      if (result.casePassed === false) return "需人工复核";
+      if (result.score?.passed === true) return "自动通过";
+      return result.score?.tags?.includes("format_noise") ? "格式需复核" : "需人工复核";
+    }
+    function renderBatchSummary() {
+      const summary = state.run?.summary || {};
+      const results = Object.keys(state.results).length;
+      const inputTotal = Number.isInteger(summary.playerInputGenerationCount)
+        ? summary.playerInputGenerationCount
+        : summary.playerInputRequestCount;
+      const inputValid = Number.isInteger(summary.playerInputValidCount) ? summary.playerInputValidCount : null;
+      const inputInvalid = Number.isInteger(summary.playerInputInvalidCount) ? summary.playerInputInvalidCount : null;
+      const inputTags = Array.isArray(summary.playerInputQualityTags)
+        ? summary.playerInputQualityTags.filter((tag) => typeof tag === "string")
+        : [];
+      const playerInputText = Number.isInteger(inputTotal) && inputTotal > 0 && inputValid !== null
+        ? `动态玩家输入质量：${inputValid}/${inputTotal} 通过${inputInvalid !== null ? `，${inputInvalid} 条需复核` : ""}${inputTags.length ? ` · 输入标签：${inputTags.join("、")}` : ""}`
+        : "动态玩家输入质量：未检测";
+      const runStatus = runStatusInfo();
+      if (state.run?.batchId) {
+        $("batch-title").textContent = runStatus.invalid
+          ? `历史失败 · 仅诊断 · ${state.run.batchId}`
+          : `本轮生成 · ${state.run.batchId}`;
+        const usage = summary.usage;
+        const tokenText = usage && Number.isInteger(usage.totalTokens)
+          ? ` · ${usage.totalTokens} tokens`
+          : " · 用量未返回";
+        const plannedCases = state.cases.length;
+        const coverageText = plannedCases > 0
+          ? ` · 结果覆盖 ${results} / ${plannedCases}${plannedCases > results ? `，${plannedCases - results} 个案例未生成` : ""}`
+          : "";
+        $("batch-summary").textContent = `${results} 条实际结果 · ${summary.successful ?? results} 个案例返回 · ${summary.turnCount ?? "—"} 轮${tokenText}${coverageText}`;
+        const npcPassText = Number.isInteger(summary.passedTurns)
+          ? `NPC 单轮通过：${summary.passedTurns}/${summary.turnCount ?? "—"}（${formatPassRate(summary.turnPassRate)}）`
+          : "NPC 单轮通过：未检测";
+        const casePassText = Number.isInteger(summary.passedCases)
+          ? `完整案例通过：${summary.passedCases}/${summary.caseCount ?? "—"}（${formatPassRate(summary.casePassRate)}）`
+          : "完整案例通过：未检测";
+        $("batch-pass-summary").textContent = `${npcPassText} · ${casePassText} · ${playerInputText}`;
+        const providers = [...new Set(Object.values(state.results).flatMap((item) => Array.isArray(item?.turns)
+          ? item.turns.map((turn) => turn?.provider)
+          : [item?.provider]).filter(Boolean))];
+        const reasonText = runStatus.reasons.length
+          ? ` · 原因：${runStatus.reasons.map(runStatusReasonLabel).join("、")}`
+          : "";
+        const status = $("batch-run-status");
+        status.classList.toggle("invalid", runStatus.invalid);
+        status.textContent = `${runStatus.invalid ? "结果无效，仅诊断，不代表角色质量" : "结果有效，可人工复核"}${reasonText} · ${providers.length ? `来源：${providers.map(batchProviderLabel).join("、")}` : "来源：未记录 Provider"} · ${formatCost(summary.estimatedCost)}`;
+      } else {
+        $("batch-title").textContent = "固定角色场景";
+        $("batch-summary").textContent = `${state.cases.length} 个案例 · 尚未接入生成结果`;
+        $("batch-pass-summary").textContent = "NPC 单轮通过：未检测 · 完整案例通过：未检测 · 动态玩家输入质量：未检测";
+        $("batch-run-status").textContent = "";
+        $("batch-run-status").classList.remove("invalid");
+      }
+     }
+     renderCaseDetail = function () {
+       const displayItems = visibleCases();
+       const item = displayItems.find((candidate) => candidate.caseId === state.selectedCaseId)
+         || displayItems[0]
+         || (state.showAllDefinitions ? state.cases[0] : null);
+       const container = $("case-detail");
+       if (!item) {
+         state.selectedCaseId = "";
+         container.replaceChildren();
+         const empty = document.createElement("div");
+         empty.className = "empty-state";
+         empty.textContent = "当前没有已生成的实际回复；点击“显示全部定义”可查看完整目录。";
+         container.append(empty);
+         return;
+       }
+       state.selectedCaseId = item.caseId;
+       baseRenderCaseDetail();
+       renderCaseNavigation(container, item);
+      renderEventImpactComparison(container, item);
       const strip = container.querySelector(".context-strip");
        if (strip) {
         const stage = document.createElement("span");
@@ -1154,6 +1584,7 @@ def _augment_case_browser_script(script: str) -> str:
       selectFirstVisibleCaseIfNeeded();
       renderCaseDetail();
       syncCaseFilterControls();
+      syncDefinitionScopeControl();
       updateCaseViewUrl();
     }
     const baseLoadQualityCases = loadQualityCases;
@@ -1178,6 +1609,13 @@ def _augment_case_browser_script(script: str) -> str:
     $("case-status-filter")?.addEventListener("change", (event) => {
       state.statusFilter = event.target.value;
       if (state.statusFilter === "needs_review") state.filter = "all";
+      rerenderCaseBrowser();
+    });
+    $("show-all-definitions")?.addEventListener("click", () => {
+      state.showAllDefinitions = !state.showAllDefinitions;
+      if (!state.showAllDefinitions && ["unrun", "error"].includes(state.statusFilter)) {
+        state.statusFilter = "";
+      }
       rerenderCaseBrowser();
     });
     '''
@@ -1210,7 +1648,7 @@ def _build_integrated_dialogue_lab_template() -> str:
         r'<div class="filter-list">.*?</div>',
         (
             '<div class="filter-list">'
-            '<button class="filter-btn active" data-filter="all">全部测试例 <span id="filter-all-count">—</span></button>'
+             '<button class="filter-btn active" data-filter="all">已生成回复 <span id="filter-all-count">—</span></button>'
             '<button class="filter-btn" data-filter="daily">日常状态 <span id="filter-daily-count">—</span></button>'
             '<button class="filter-btn" data-filter="channel">远程 / 当面 <span id="filter-channel-count">—</span></button>'
             '<button class="filter-btn" data-filter="continuity">上下文续聊 <span id="filter-continuity-count">—</span></button>'
@@ -1241,7 +1679,9 @@ def _build_integrated_dialogue_lab_template() -> str:
         '<label for="case-status-filter">结果<select id="case-status-filter">'
         '<option value="">全部结果</option><option value="needs_review">待人工复核</option>'
         '<option value="unrun">未生成</option><option value="passed">自动通过</option><option value="error">生成失败</option>'
-        '</select></label></div></div><div class="nav-section">',
+        '</select></label></div>'
+        '<div class="case-display-row"><button class="case-display-toggle" id="show-all-definitions" type="button" aria-pressed="false">显示全部定义</button>'
+        '<span class="case-display-hint" id="case-display-hint">仅显示已生成回复</span></div></div><div class="nav-section">',
         1,
     )
     case_inner = case_inner.replace(
@@ -1375,6 +1815,7 @@ def _build_integrated_dialogue_lab_template() -> str:
         <a class="workspace-tab" href="/test" data-view-target="cases" __CASES_CURRENT__>测试例浏览</a>
         <a class="workspace-tab" href="/test/chat" data-view-target="chat" __CHAT_CURRENT__>单次聊天</a>
         <a class="workspace-tab" href="/raw" data-view-target="raw" __RAW_CURRENT__>原始对白</a>
+        <a class="workspace-tab" href="/test/group">多人实验</a>
       </nav>
     """
     chat_heading = """
@@ -1470,7 +1911,7 @@ def _build_integrated_dialogue_lab_template() -> str:
         "      function updateSharedContext(detail) {\n"
         "        const item = detail && typeof detail === \"object\" ? detail : {};\n"
         "        const npcId = item.npcId || sharedSelection.npcId || \"Wizard\";\n"
-        "        const displayName = item.displayName || ({Wizard: \"Rasmodia / Wizard\", Sophia: \"Sophia\", Shane: \"Shane\", Sebastian: \"Sebastian\", Alex: \"Alex\"}[npcId] || npcId);\n"
+        "        const displayName = item.displayName || ({Wizard: \"Rasmodia / Wizard\", Sophia: \"Sophia\", Shane: \"珊恩 / Shane\", Sebastian: \"塞布瑞娜 / Sebastian\", Alex: \"爱丽克斯 / Alex\"}[npcId] || npcId);\n"
         "        const gameState = item.gameState || {};\n"
         "        const scene = [gameState.season, gameState.date, gameState.weather, gameState.time, gameState.location].filter((value) => value !== undefined && value !== null && value !== \"\").join(\" · \") || \"未设置\";\n"
         "        root.querySelector(\"#context-character\").textContent = displayName;\n"

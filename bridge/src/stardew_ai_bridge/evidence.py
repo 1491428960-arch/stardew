@@ -153,9 +153,15 @@ def is_model_evidence_record(record: Mapping[str, Any]) -> bool:
     if has_dialogue_source_residue(record):
         return False
     evidence_kind = str(record.get("evidenceKind", "dialogue")).strip().casefold()
-    if evidence_kind in {"runtime_dialogue", "marriage_dialogue", "roommate_dialogue"}:
+    if evidence_kind in {
+        "runtime_dialogue",
+        "marriage_dialogue",
+        "roommate_dialogue",
+        "event_dialogue",
+    }:
         # 实际运行时样本和婚后样本有额外条件，分别由运行时归属或关系阶段
-        # 检索处理；不能在索引构建时无条件丢弃。
+        # 检索处理；事件样本还要经过 completedEventIds 门控，不能在索引
+        # 构建时无条件丢弃。
         return True
     return not _is_special_dialogue_record(record)
 

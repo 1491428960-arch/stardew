@@ -5,7 +5,20 @@ from difflib import SequenceMatcher
 import re
 from typing import Iterable, Mapping
 
-from .behavior_quality import diagnose_affection_initiative
+from .behavior_quality import (
+    conversation_lead_has_new_anchor,
+    diagnose_affection_intensity,
+    diagnose_affection_initiative,
+    diagnose_conversation_lead,
+    normalize_conversation_lead_skeleton,
+)
+from .personas import (
+    FEMALE_BACHELOR_NPC_IDS,
+    PersonaStore,
+    canonical_npc_id,
+)
+from .relationship_world import project_relationship_context
+from .stage_policy import build_stage_policy
 
 
 _RELATIONSHIP_STAGES = {
@@ -21,8 +34,34 @@ _INTERACTION_INTENTS = {"chat", "topic", "item"}
 _FLIRT_INTENSITIES = {"none", "light", "direct", "explicit"}
 _CONTINUATION_MODES = {"anchored", "pressure"}
 _FOLLOW_UP_MODES = {"fixed", "adaptive"}
-_ROMANCE_ELIGIBLE_NPCS = {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
+_ROMANCE_ELIGIBLE_NPCS = {
+    "Wizard",
+    "Sophia",
+    "Shane",
+    "Sebastian",
+    "Alex",
+    "Elliott",
+    "Harvey",
+    "Sam",
+}
+_FEMALE_BACHELOR_NPCS = frozenset(FEMALE_BACHELOR_NPC_IDS)
+_CONVERSATION_LEAD_TRIAL_NPCS = frozenset(_ROMANCE_ELIGIBLE_NPCS)
+_CONVERSATION_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
+_CONVERSATION_LEAD_STAGE_ORDER = {
+    "friend": 1,
+    "close": 2,
+    "dating": 3,
+    "married": 4,
+}
 _INITIATIVE_EXPECTATIONS = {"none", "responsive", "proactive", "guarded"}
+_TURN_PLAN_MODES = {
+    "answer_only",
+    "answer_plus_detail",
+    "answer_plus_lead",
+    "answer_plus_warmth",
+    "boundary_close",
+    "explicit_intimacy",
+}
 _INITIATIVE_KINDS = {
     "none",
     "affection_signal",
@@ -35,6 +74,156 @@ _INITIATIVE_KINDS = {
     "shared_evening",
     "care_action",
 }
+_RELATIONSHIP_FOCUS_VALUES = {
+    "unknown_view",
+    "suspected_view",
+    "direct_disclosure",
+    "public_wedding",
+    "mediation",
+    "jealousy",
+    "recovery",
+}
+_RELATIONSHIP_FAILURE_TAGS = {
+    "unknown_view_misread",
+    "suspected_as_fact",
+    "public_wedding_visibility",
+    "mediation_scope_leak",
+    "npc_other_romance",
+    "jealousy_recovery_missing",
+    "role_voice_flattened",
+}
+_FUTURE_TIME_MARKERS = (
+    "今晚",
+    "明天",
+    "明晚",
+    "明早",
+    "后天",
+    "下次",
+    "改天",
+    "周末",
+    "晚点",
+    "等会儿",
+    "稍后",
+    "之后",
+    "一会儿",
+    "待会儿",
+    "一晚",
+    "回去",
+)
+# “今晚/一晚/一会儿”通常描述当前陪伴，不应仅凭时间词和亲近表达
+# 判成未来排期；未来社交承诺需要更明确的后续时间上下文。
+_FUTURE_SOCIAL_CONTEXT_MARKERS = (
+    "明天",
+    "明晚",
+    "明早",
+    "后天",
+    "下次",
+    "改天",
+    "周末",
+    "晚点",
+    "等会儿",
+    "稍后",
+    "之后",
+    "待会儿",
+    "回去",
+)
+_SELF_TASK_MARKERS = (
+    "记录",
+    "笔记",
+    "研究",
+    "工作",
+    "整理",
+    "实验",
+    "材料",
+    "文件",
+    "资料",
+    "报告",
+    "事务",
+)
+_SOCIAL_COMMITMENT_MARKERS = (
+    "找你",
+    "联系你",
+    "见面",
+    "约会",
+    "约你",
+    "陪你",
+    "带你",
+    "和你",
+    "跟你",
+    "与你",
+    "一起",
+    "给你",
+    "留给你",
+    "为你",
+    "回房间",
+    "去房间",
+    "约好",
+    "共同活动",
+)
+_SOCIAL_COMMITMENT_ACTION_PATTERNS = (
+    re.compile(r"(?:陪(?:伴)?|找|联系|见|约|带)(?:你|我|面)"),
+    re.compile(r"给你(?:打电话|发消息|听|看)"),
+    re.compile(r"(?:让|请|叫)你(?:坐|来|参加|过来)"),
+)
+_FUTURE_SCHEDULE_COMMITMENT_PATTERNS = (
+    re.compile(
+        r"(?:给|留给|留出).{0,8}[0-9一二三四五六七八九十百两几]+\s*(?:分钟|小时|刻钟)"
+    ),
+    re.compile(
+        r"(?:聊完|说完|吃完|忙完|回去|回来|等会儿|一会儿|晚点|稍后|之后)"
+        r"[^，,。！？!?；;：:、\n—–-…]{0,14}(?:去|回|找|联系|见|继续|安排|约|陪|带)"
+    ),
+    re.compile(
+        r"(?:明天|后天|下次|改天|周末).{0,14}"
+        r"(?:七点|几点|见面|预约|排期|安排|约|找你|联系你|陪你|带你|和你|跟你|与你|一起)"
+    ),
+)
+
+
+def _has_social_commitment_action(fragment: str) -> bool:
+    return any(
+        pattern.search(fragment) for pattern in _SOCIAL_COMMITMENT_ACTION_PATTERNS
+    )
+
+
+def _has_future_social_commitment(fragment: str) -> bool:
+    has_future_context = any(
+        marker in fragment for marker in _FUTURE_SOCIAL_CONTEXT_MARKERS
+    )
+    return has_future_context and _has_social_commitment_action(fragment)
+
+
+def _is_self_task_delay(fragment: str) -> bool:
+    has_task = any(marker in fragment for marker in _SELF_TASK_MARKERS)
+    has_relative_time = any(marker in fragment for marker in _FUTURE_TIME_MARKERS)
+    has_self_allocated_duration = bool(
+        re.search(
+            r"(?:给自己|为自己|自己).{0,10}[0-9一二三四五六七八九十百两几]+\s*(?:分钟|小时|刻钟)",
+            fragment,
+        )
+    )
+    has_social_target = any(marker in fragment for marker in _SOCIAL_COMMITMENT_MARKERS)
+    has_social_target = has_social_target or _has_social_commitment_action(fragment)
+    return (
+        has_task
+        and (has_relative_time or has_self_allocated_duration)
+        and not has_social_target
+    )
+
+
+def _has_future_schedule_commitment(text: str) -> bool:
+    fragments = re.split(r"[。！？!?；;\n]+", text)
+    for fragment in fragments:
+        if _is_self_task_delay(fragment):
+            continue
+        if _has_future_social_commitment(fragment):
+            return True
+        if any(
+            pattern.search(fragment)
+            for pattern in _FUTURE_SCHEDULE_COMMITMENT_PATTERNS
+        ):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -48,6 +237,40 @@ class CharacterQualityTurn:
     initiative_kind: str = "none"
     # None 表示沿用案例级 intent；质量套件可为每一轮声明更精确的请求语义。
     intent: str | None = None
+    # 仅供关系世界观套件的内部评分使用，不进入浏览器案例目录。
+    relationship_focus: str = ""
+    # 仅供关系世界观套件标注关系主体使用，不进入浏览器案例目录。
+    relationship_actor: str = ""
+    relationship_target_npc_id: str = ""
+    # 当前回合唯一执行目标；为空时保留旧的 initiative/lead 评分契约。
+    turn_plan_mode: str = ""
+
+
+@dataclass(frozen=True)
+class PlayerExpressionCard:
+    """固定质量案例中玩家的表达倾向，不作为 NPC 的运行时提示。"""
+
+    relationship_stance: str
+    language_texture: str
+    helping_impulse: str
+    distance_pattern: str
+    flirt_progression: str
+    boundary_style: str
+    self_correction: str
+    forbidden_tendencies: tuple[str, ...] = ()
+
+    def summary(self) -> str:
+        """返回可展示给评测者的短摘要，不泄露内部禁用项。"""
+
+        return "；".join(
+            value
+            for value in (
+                self.relationship_stance,
+                self.language_texture,
+                self.flirt_progression,
+            )
+            if value
+        )
 
 
 @dataclass(frozen=True)
@@ -71,6 +294,7 @@ class CharacterQualityCase:
     # fixed 保留预置续聊；adaptive 由上一轮 NPC 回复驱动玩家模拟器生成输入。
     follow_up_mode: str = "fixed"
     player_simulation_style: str = ""
+    player_expression_card: PlayerExpressionCard | None = None
     relationship_context: str = ""
     history: tuple[dict[str, str], ...] = ()
     expected_terms: tuple[str, ...] = ()
@@ -79,7 +303,14 @@ class CharacterQualityCase:
     story_progress: str = ""
     completed_event_ids: tuple[str, ...] = ()
     gender_presentation: str = ""
+    relationship_world: dict[str, object] | None = None
     turns: tuple[CharacterQualityTurn, ...] = ()
+    event_pair_id: str = ""
+    event_id: str = ""
+    event_condition: str = ""
+    event_summary: str = ""
+    event_source_status: str = ""
+    event_evidence: tuple[str, ...] = ()
 
     def dialogue_turns(self) -> tuple[CharacterQualityTurn, ...]:
         if self.turns:
@@ -93,6 +324,22 @@ class CharacterQualityCase:
                 evaluation_focus="检查第一轮是否自然回应当前场景和话题。",
             ),
         )
+
+
+_quality_persona_store: PersonaStore | None = None
+
+
+def quality_case_display_name(case: CharacterQualityCase) -> str:
+    """按案例声明的来源层解析公开显示名，保留 canonical npcId。"""
+
+    global _quality_persona_store
+    if _quality_persona_store is None:
+        _quality_persona_store = PersonaStore()
+    persona = _quality_persona_store.get_persona(case.npc_id, case.source_mods)
+    display_name = persona.get("displayName")
+    if isinstance(display_name, str) and display_name.strip():
+        return display_name.strip()
+    return case.display_name
 
 
 @dataclass(frozen=True)
@@ -173,6 +420,45 @@ DEFAULT_CHARACTER_PROFILES: dict[str, CharacterProfileConfig] = {
             "alex-married-evening",
         ),
     ),
+    "elliott": CharacterProfileConfig(
+        profile_key="elliott",
+        npc_id="Elliott",
+        display_name="Elliott",
+        source_mods=("vanilla", "female-bachelors"),
+        case_ids=(
+            "elliott-daily",
+            "elliott-follow-up",
+            "elliott-close-studio",
+            "elliott-dating-letter",
+            "elliott-married-studio",
+        ),
+    ),
+    "harvey": CharacterProfileConfig(
+        profile_key="harvey",
+        npc_id="Harvey",
+        display_name="Harvey",
+        source_mods=("vanilla", "female-bachelors"),
+        case_ids=(
+            "harvey-daily",
+            "harvey-follow-up",
+            "harvey-close-clinic",
+            "harvey-dating-check-in",
+            "harvey-married-clinic",
+        ),
+    ),
+    "sam": CharacterProfileConfig(
+        profile_key="sam",
+        npc_id="Sam",
+        display_name="Sam",
+        source_mods=("vanilla", "female-bachelors"),
+        case_ids=(
+            "sam-daily",
+            "sam-follow-up",
+            "sam-close-band",
+            "sam-dating-show",
+            "sam-married-band",
+        ),
+    ),
 }
 
 
@@ -199,15 +485,185 @@ def _case_friendship_hearts(case: CharacterQualityCase) -> int:
 def _case_romance_eligible(case: CharacterQualityCase) -> bool:
     if case.romance_eligible is not None:
         return case.romance_eligible
-    return case.npc_id in _ROMANCE_ELIGIBLE_NPCS
+    return canonical_npc_id(case.npc_id) in _ROMANCE_ELIGIBLE_NPCS
 
 
 def _case_relationship_context(case: CharacterQualityCase) -> str:
     return case.relationship_context or case.story_progress
 
 
+def relationship_turn_metadata(case: CharacterQualityCase) -> dict[str, object]:
+    """返回不含客观关系表的当前 NPC 关系快照，供评测结果脱敏保存。"""
+
+    if not isinstance(case.relationship_world, Mapping):
+        return {}
+    projected = project_relationship_context(
+        canonical_npc_id(case.npc_id),
+        case.relationship_world,
+    )
+    visibility: dict[str, str] = {}
+    knowledge = projected.get("knowledge", [])
+    if isinstance(knowledge, list):
+        for item in knowledge:
+            if not isinstance(item, Mapping):
+                continue
+            subject = item.get("subjectNpcId")
+            state = item.get("visibility")
+            if isinstance(subject, str) and isinstance(state, str):
+                visibility[subject] = state
+    mediation = projected.get("mediation", {})
+    jealousy = projected.get("jealousy", {})
+    mediation_status = (
+        mediation.get("status")
+        if isinstance(mediation, Mapping)
+        else "none"
+    )
+    jealousy_trigger = (
+        jealousy.get("trigger")
+        if isinstance(jealousy, Mapping)
+        else None
+    )
+    jealousy_active = bool(
+        jealousy.get("active", False) if isinstance(jealousy, Mapping) else False
+    )
+    return {
+        "relationshipVisibility": dict(sorted(visibility.items())),
+        "relationshipAcceptance": projected.get("acceptance"),
+        "mediationStatus": mediation_status,
+        "jealousyTrigger": jealousy_trigger,
+        "jealousyActive": jealousy_active,
+    }
+
+
 def _turn_intent(case: CharacterQualityCase, turn: CharacterQualityTurn) -> str:
     return turn.intent or case.intent
+
+
+def _turn_plan_mode(turn: CharacterQualityTurn | Mapping[str, object] | None) -> str:
+    """返回回合窄目标；旧案例没有该字段时返回空字符串。"""
+
+    if turn is None:
+        return ""
+    value: object
+    if isinstance(turn, Mapping):
+        value = turn.get("turnPlanMode", turn.get("turn_plan_mode", ""))
+        if not value and isinstance(turn.get("turnPlan"), Mapping):
+            value = turn["turnPlan"].get("mode")  # type: ignore[index]
+    else:
+        value = getattr(turn, "turn_plan_mode", "")
+        if not value:
+            plan = getattr(turn, "turn_plan", None)
+            if isinstance(plan, Mapping):
+                value = plan.get("mode", "")
+    if not isinstance(value, str):
+        return ""
+    mode = value.strip().casefold()
+    return mode if mode in _TURN_PLAN_MODES else ""
+
+
+def _turn_for_plan_scoring(
+    turn: CharacterQualityTurn | None,
+    player_input: str,
+) -> CharacterQualityTurn:
+    """把 turn_plan 投影到旧 initiative 诊断接口，避免并行两套规则。"""
+
+    current = turn or CharacterQualityTurn("turn-1", player_input)
+    mode = _turn_plan_mode(current)
+    if not mode:
+        return current
+    if mode in {
+        "answer_only",
+        "answer_plus_detail",
+        "answer_plus_lead",
+        "boundary_close",
+    }:
+        return replace(
+            current,
+            initiative_expectation="none",
+            initiative_kind="none",
+        )
+    if mode in {"answer_plus_warmth", "explicit_intimacy"}:
+        return replace(
+            current,
+            initiative_expectation="proactive",
+            initiative_kind=(
+                current.initiative_kind
+                if current.initiative_kind != "none"
+                else "affection_signal"
+            ),
+        )
+    return current
+
+
+def _conversation_lead_required(
+    case: CharacterQualityCase,
+    turn: CharacterQualityTurn | None,
+) -> bool:
+    """返回当前试验回合是否必须把缺少引导判为失败。"""
+
+    conversation_lead = _conversation_lead_policy(case, turn)
+    if not conversation_lead:
+        return False
+    required = conversation_lead.get("required")
+    return not (
+        isinstance(required, str) and required.strip().casefold() == "optional"
+    )
+
+
+def _conversation_lead_policy(
+    case: CharacterQualityCase,
+    turn: CharacterQualityTurn | None,
+) -> Mapping[str, object]:
+    """返回适用普通 chat 引导的阶段卡，friend 仍参与诊断但不强制。"""
+
+    turn_plan_mode = _turn_plan_mode(turn)
+    if turn_plan_mode in {
+        "answer_only",
+        "answer_plus_detail",
+        "answer_plus_warmth",
+        "boundary_close",
+        "explicit_intimacy",
+    }:
+        return {}
+    intent = _turn_intent(case, turn) if turn is not None else case.intent
+    if not (
+        intent == "chat"
+        and canonical_npc_id(case.npc_id) in _CONVERSATION_LEAD_TRIAL_NPCS
+        and case.relationship_stage in _CONVERSATION_LEAD_STAGES
+    ):
+        return {}
+    policy = build_stage_policy(case.npc_id, case.relationship_stage)
+    conversation_lead = policy.get("conversationLead")
+    if not isinstance(conversation_lead, Mapping):
+        return {}
+    if case.case_id.startswith("deep-flirt-"):
+        # 深入调情的固定回合本身就是玩家已明确推进的亲密回应；
+        # 不再把普通聊天的“继续入口”当成硬门槛，否则短而自然的接话会被
+        # 反复改写成提问模板。回复仍保留话题、边界和亲密度评分。
+        conversation_lead = {**conversation_lead, "required": "optional"}
+    relationship_focus = (
+        str(getattr(turn, "relationship_focus", "") or "").strip().casefold()
+        if turn is not None
+        else ""
+    )
+    if relationship_focus in {"jealousy", "recovery"}:
+        return {**conversation_lead, "required": "optional"}
+    if turn_plan_mode == "answer_plus_lead":
+        return {**conversation_lead, "required": "usually"}
+    return conversation_lead
+
+
+def _conversation_lead_variation_stage(
+    diagnostic: Mapping[str, object],
+    *,
+    case: CharacterQualityCase | None,
+) -> str:
+    value = diagnostic.get(
+        "relationshipStage",
+        diagnostic.get("relationship_stage", case.relationship_stage if case else ""),
+    )
+    stage = str(value or "").strip().casefold()
+    return stage if stage in _CONVERSATION_LEAD_STAGE_ORDER else ""
 
 
 def validate_quality_cases(
@@ -243,6 +699,23 @@ def validate_quality_cases(
                 errors.append(f"friendship_hearts:{case.case_id}")
         if not _case_relationship_context(case).strip():
             errors.append(f"relationship_context:{case.case_id}")
+        if case.relationship_world is not None:
+            if not isinstance(case.relationship_world, Mapping):
+                errors.append(f"invalid:relationship_world:{case.case_id}")
+            else:
+                views = case.relationship_world.get("views", [])
+                if not isinstance(views, list):
+                    errors.append(f"invalid:relationship_views:{case.case_id}")
+                else:
+                    for view in views:
+                        if not isinstance(view, Mapping):
+                            errors.append(f"invalid:relationship_view:{case.case_id}")
+                            continue
+                        visibility = view.get("visibility")
+                        if visibility not in {"known", "suspected", "unknown"}:
+                            errors.append(
+                                f"invalid:relationship_visibility:{case.case_id}"
+                            )
         if case.continuation_mode and case.continuation_mode not in _CONTINUATION_MODES:
             errors.append(f"invalid:continuation_mode:{case.case_id}")
         if case.follow_up_mode not in _FOLLOW_UP_MODES:
@@ -260,8 +733,29 @@ def validate_quality_cases(
             if (
                 turn.initiative_expectation != "none"
                 and turn.initiative_kind == "none"
+                and not (
+                    case.follow_up_mode == "adaptive"
+                    and turn.initiative_expectation == "responsive"
+                    and turn.turn_plan_mode in {"answer_plus_detail", "answer_only"}
+                )
             ):
                 errors.append(f"initiative_kind_required:{case.case_id}:{turn.turn_id}")
+            if turn.relationship_focus not in {"", *_RELATIONSHIP_FOCUS_VALUES}:
+                errors.append(
+                    f"invalid:relationship_focus:{case.case_id}:{turn.turn_id}"
+                )
+            if turn.relationship_focus and case.relationship_world is None:
+                errors.append(
+                    f"relationship_world_required:{case.case_id}:{turn.turn_id}"
+                )
+            if turn.relationship_actor not in {"", "player", "npc"}:
+                errors.append(
+                    f"invalid:relationship_actor:{case.case_id}:{turn.turn_id}"
+                )
+            if turn.relationship_actor == "player" and not turn.relationship_target_npc_id:
+                errors.append(
+                    f"relationship_target_required:{case.case_id}:{turn.turn_id}"
+                )
     return errors
 
 
@@ -998,6 +1492,270 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
 )
 
 
+def _feminine_male_case(
+    *,
+    case_id: str,
+    profile_key: str,
+    npc_id: str,
+    relationship_stage: str,
+    channel: str,
+    message: str,
+    expected_terms: tuple[str, ...],
+    relationship_context: str,
+    story_progress: str,
+    location: str,
+    history: tuple[dict[str, str], ...] = (),
+    flirt_intensity: str = "none",
+    adult_consensual: bool = False,
+) -> CharacterQualityCase:
+    hearts = {
+        "acquaintance": 2,
+        "friend": 6,
+        "close": 8,
+        "dating": 8,
+        "married": 10,
+    }[relationship_stage]
+    return CharacterQualityCase(
+        case_id=case_id,
+        profile_key=profile_key,
+        npc_id=npc_id,
+        display_name=npc_id,
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage=relationship_stage,
+        channel=channel,
+        message=message,
+        history=history,
+        expected_terms=expected_terms,
+        friendship_hearts=hearts,
+        flirt_intensity=flirt_intensity,
+        adult_consensual=adult_consensual,
+        romance_eligible=True,
+        relationship_context=relationship_context,
+        game_state=_game_state(
+            season="秋",
+            date="秋 18 日",
+            weather="晴天",
+            time=1930 if channel == "face_to_face" else 2100,
+            location=location,
+            friendshipHearts=hearts,
+            relationship=relationship_stage,
+        ),
+        story_progress=story_progress,
+        gender_presentation="female-bachelors",
+    )
+
+
+_FEMININE_MALE_CASES: tuple[CharacterQualityCase, ...] = (
+    # Elliott：保留文学和审美兴趣，但把表达落到纸张、画面和眼前动作。
+    _feminine_male_case(
+        case_id="elliott-daily",
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="acquaintance",
+        channel="remote",
+        message="最近在写什么？",
+        expected_terms=("写", "纸"),
+        relationship_context="初识阶段：只询问海边小屋里的写作近况，不自动升级亲密关系。",
+        story_progress="Elliott 正在整理一页新稿，线上回复应具体、短而有现场感。",
+        location="手机聊天",
+    ),
+    _feminine_male_case(
+        case_id="elliott-follow-up",
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="friend",
+        channel="face_to_face",
+        message="那段开头后来留着吗？",
+        expected_terms=("开头", "留"),
+        relationship_context="朋友阶段：承接上一轮谈过的手稿，不用泛泛的文学宣言替代回答。",
+        story_progress="手稿开头删改过一次，玩家在海边小屋继续追问具体取舍。",
+        location="海边小屋",
+        history=(
+            {"role": "user", "content": "你昨天说开头总觉得不对。"},
+            {"role": "assistant", "content": "我先把那一页折起来了。"},
+        ),
+    ),
+    _feminine_male_case(
+        case_id="elliott-close-studio",
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="你愿意让我看看那幅画吗？",
+        expected_terms=("画", "看看"),
+        relationship_context="亲近阶段：玩家请求看一幅具体的画，Elliott 可以害羞但不能用长篇修辞回避。",
+        story_progress="画室里有一幅尚未装框的海面速写，分享仍由 Elliott 自己决定。",
+        location="海边画室",
+    ),
+    _feminine_male_case(
+        case_id="elliott-dating-letter",
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="dating",
+        channel="remote",
+        message="这封信是写给我的吗？",
+        expected_terms=("信", "给你"),
+        relationship_context="恋爱阶段：玩家线上询问一封信的归属；允许温柔和偏爱，但不把远程写成已经见面。",
+        story_progress="Elliott 刚完成一封未寄出的短笺，等待玩家确认是否愿意读。",
+        location="手机聊天",
+        flirt_intensity="direct",
+        adult_consensual=True,
+    ),
+    _feminine_male_case(
+        case_id="elliott-married-studio",
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="married",
+        channel="face_to_face",
+        message="把笔放下，靠过来让我看看你没写完的那一页？",
+        expected_terms=("笔", "靠", "一页"),
+        relationship_context="婚后阶段：当面把写作和亲近动作放在眼前的纸页上，表达可亲密但不堆叠空泛情话。",
+        story_progress="画室灯还亮着，Elliott 手边是一页未完成的稿子；玩家提出具体的靠近请求。",
+        location="海边画室",
+        flirt_intensity="explicit",
+        adult_consensual=True,
+    ),
+    # Harvey：温和、谨慎，关心落到状态确认和实际照料，不变成诊断讲义。
+    _feminine_male_case(
+        case_id="harvey-daily",
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="acquaintance",
+        channel="remote",
+        message="诊所今天忙吗？",
+        expected_terms=("诊所", "忙"),
+        relationship_context="初识阶段：询问诊所近况，Harvey 可以专业但不应无依据地给玩家诊断。",
+        story_progress="诊所刚结束上午接诊，线上聊天停留在工作近况。",
+        location="手机聊天",
+    ),
+    _feminine_male_case(
+        case_id="harvey-follow-up",
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="friend",
+        channel="face_to_face",
+        message="你昨晚睡得好吗？",
+        expected_terms=("睡", "还行"),
+        relationship_context="朋友阶段：回应玩家的休息近况，以询问和小心提醒为主，不把关心说成医学结论。",
+        story_progress="Harvey 在诊所整理记录，注意到玩家看起来疲惫，先确认状态再继续聊天。",
+        location="诊所前台",
+        history=(
+            {"role": "user", "content": "昨晚我睡得有点晚。"},
+            {"role": "assistant", "content": "那今天别把事情排得太满。"},
+        ),
+    ),
+    _feminine_male_case(
+        case_id="harvey-close-clinic",
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="这杯咖啡放这儿，你先歇会儿？",
+        expected_terms=("咖啡", "歇"),
+        relationship_context="亲近阶段：用眼前的咖啡和休息表达照料，保持明确边界，不替玩家判断病情。",
+        story_progress="诊所暂时安静下来，Harvey 把咖啡放到玩家手边，邀请短暂休息。",
+        location="诊所休息室",
+    ),
+    _feminine_male_case(
+        case_id="harvey-dating-check-in",
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="dating",
+        channel="remote",
+        message="你怎么一声不响就说想我了？",
+        expected_terms=("想你", "状态"),
+        relationship_context="恋爱阶段：线上接住想念后仍先确认彼此状态，允许温柔但不假装已经在同一地点。",
+        story_progress="Harvey 刚结束工作，玩家突然收到一句想念；当前重点是情绪和状态确认。",
+        location="手机聊天",
+        flirt_intensity="direct",
+        adult_consensual=True,
+    ),
+    _feminine_male_case(
+        case_id="harvey-married-clinic",
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="married",
+        channel="face_to_face",
+        message="检查表先放一边，过来让我听听你的心跳？",
+        expected_terms=("检查表", "心跳"),
+        relationship_context="婚后阶段：当面从工作切到亲密照料，保留 Harvey 的谨慎和同意边界，不写成医学诊断。",
+        story_progress="诊所已经收工，检查表暂时合上；玩家提出明确而克制的亲密请求。",
+        location="诊所办公室",
+        flirt_intensity="explicit",
+        adult_consensual=True,
+    ),
+    # Sam：音乐、滑板和行动感是角色锚点，亲密表达保持轻快但不幼稚化。
+    _feminine_male_case(
+        case_id="sam-daily",
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="acquaintance",
+        channel="face_to_face",
+        message="最近在练什么歌？",
+        expected_terms=("歌", "练"),
+        relationship_context="初识阶段：从音乐近况开始，保留 Sam 的外向和行动感，不每句都用夸张感叹。",
+        story_progress="Sam 正在家里练一段新歌，玩家当面问起具体内容。",
+        location="Sam 的房间",
+    ),
+    _feminine_male_case(
+        case_id="sam-follow-up",
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="friend",
+        channel="remote",
+        message="那段副歌改好了吗？",
+        expected_terms=("副歌", "改"),
+        relationship_context="朋友阶段：承接上一轮音乐练习，Sam 可以轻松开玩笑但要给出具体进展。",
+        story_progress="副歌昨天卡住了一个转调，Sam 线上回复玩家的跟进问题。",
+        location="手机聊天",
+        history=(
+            {"role": "user", "content": "你说副歌昨天总是卡拍。"},
+            {"role": "assistant", "content": "我先把节奏放慢了。"},
+        ),
+    ),
+    _feminine_male_case(
+        case_id="sam-close-band",
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="把耳机给我一边，我想听你说的那段？",
+        expected_terms=("耳机", "听"),
+        relationship_context="亲近阶段：通过耳机和音乐分享推进靠近，保持 Sam 的轻松行动感，不空喊浪漫口号。",
+        story_progress="Sam 刚剪好一段旋律，玩家在房间里提出共享耳机的具体请求。",
+        location="Sam 的房间",
+    ),
+    _feminine_male_case(
+        case_id="sam-dating-show",
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="dating",
+        channel="remote",
+        message="你是不是故意把最好听的那段留给我？",
+        expected_terms=("最好听", "留"),
+        relationship_context="恋爱阶段：线上把偏爱落到一段音乐，允许俏皮调情，但不提前写成已见面或固定安排。",
+        story_progress="Sam 刚发来一段新录音，最好听的副歌明显是留给玩家的回应。",
+        location="手机聊天",
+        flirt_intensity="direct",
+        adult_consensual=True,
+    ),
+    _feminine_male_case(
+        case_id="sam-married-band",
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="married",
+        channel="face_to_face",
+        message="歌放着，过来靠我一下，别躲在音箱后面。",
+        expected_terms=("歌", "靠", "音箱"),
+        relationship_context="婚后阶段：把亲密动作落在音乐和眼前位置上，保留 Sam 的玩笑与直接，不幼稚化。",
+        story_progress="乐队排练刚结束，音箱还在播放回放；玩家提出明确的靠近请求。",
+        location="乐队排练室",
+        flirt_intensity="explicit",
+        adult_consensual=True,
+    ),
+)
+
+
 _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] = {
     "wizard-daily": (
         CharacterQualityTurn(
@@ -1514,6 +2272,73 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
 }
 
 
+_FEMININE_MALE_FOLLOW_UP_TURNS: dict[
+    str, tuple[CharacterQualityTurn, CharacterQualityTurn]
+] = {
+    "elliott-daily": (
+        CharacterQualityTurn("turn-2", "一页海景速写，纸边还沾着沙。", ("海景", "纸"), (), "看初识阶段是否用具体物件回答写作近况。"),
+        CharacterQualityTurn("turn-3", "我先收起来，免得海风把它吹走。", ("收", "海风"), (), "看收尾是否落到眼前动作，不突然长篇抒情。"),
+    ),
+    "elliott-follow-up": (
+        CharacterQualityTurn("turn-2", "留着。删掉的那句反而让整页站稳了。", ("留", "一页"), (), "看他是否具体说明手稿取舍。"),
+        CharacterQualityTurn("turn-3", "你要看，我就把那一页摊开。", ("看", "摊开"), (), "看分享邀请是否克制而有对象感。"),
+    ),
+    "elliott-close-studio": (
+        CharacterQualityTurn("turn-2", "可以，但先别笑那片太亮的海。", ("别笑", "海"), (), "看亲近阶段保留审美细节和一点羞怯。"),
+        CharacterQualityTurn("turn-3", "你说哪一笔最像这里的风？", ("哪一笔", "风"), (), "看对话是否从作品继续到现场感受。"),
+    ),
+    "elliott-dating-letter": (
+        CharacterQualityTurn("turn-2", "是给你的。写到第二行时，我就不想再装作只是练笔。", ("给你的", "第二行"), (), "看恋爱阶段的偏爱是否具体，不用泛化命运宣言。"),
+        CharacterQualityTurn("turn-3", "你读完告诉我哪一句最像你，好吗？", ("读完", "哪一句"), (), "看远程收尾是否回到信件和待确认回应。"),
+    ),
+    "elliott-married-studio": (
+        CharacterQualityTurn("turn-2", "好，笔放下了。你靠近一点，我想听你挑哪一行。", ("笔", "靠近", "哪一行"), (), "看婚后亲密落到眼前纸页和玩家选择。"),
+        CharacterQualityTurn("turn-3", "这句留给你，其他的等我慢慢改。", ("留给你", "改"), (), "看亲密收束仍有文学兴趣但不过度文邹邹。"),
+    ),
+    "harvey-daily": (
+        CharacterQualityTurn("turn-2", "上午有几位病人，刚好安静下来。", ("上午", "安静"), (), "看初识阶段给出工作现场，不把回答写成诊断。"),
+        CharacterQualityTurn("turn-3", "我还要整理一会儿，你先别站在门口吹风。", ("整理", "吹风"), (), "看关心是否具体而不过度亲密。"),
+    ),
+    "harvey-follow-up": (
+        CharacterQualityTurn("turn-2", "还行，就是醒得早。你呢？", ("还行", "醒得早"), (), "看朋友阶段先回答状态再把问题递回给玩家。"),
+        CharacterQualityTurn("turn-3", "那今晚尽量早点停下来，别把疲惫拖到明天。", ("疲惫", "停"), (), "看建议具体但不变成医生讲课。"),
+    ),
+    "harvey-close-clinic": (
+        CharacterQualityTurn("turn-2", "谢谢。你坐这儿，我就不会一直盯着记录了。", ("坐", "记录"), (), "看实际照料承接后保留关系中的相互照顾。"),
+        CharacterQualityTurn("turn-3", "我现在好多了，先陪你把这杯喝完。", ("好多了", "喝完"), (), "看亲近阶段把动作落在咖啡和陪伴。"),
+    ),
+    "harvey-dating-check-in": (
+        CharacterQualityTurn("turn-2", "因为今天见到一件小事，突然想先告诉你。你现在还好吗？", ("告诉你", "还好吗"), (), "看恋爱阶段的想念仍先确认玩家状态。"),
+        CharacterQualityTurn("turn-3", "听到你的声音我就放心一点了，别急着回长消息。", ("放心", "别急"), (), "看远程关心不假装已经在身边。"),
+    ),
+    "harvey-married-clinic": (
+        CharacterQualityTurn("turn-2", "那就听一下，然后轮到你告诉我今天累不累。", ("听一下", "累不累"), (), "看亲密动作和状态确认保持对等。"),
+        CharacterQualityTurn("turn-3", "现在这份记录可以等，先让我抱你一会儿。", ("记录", "抱"), (), "看明确请求后的婚后亲密仍保留 Harvey 的谨慎和直接。"),
+    ),
+    "sam-daily": (
+        CharacterQualityTurn("turn-2", "一段快歌，副歌还没练顺。", ("快歌", "副歌"), (), "看初识阶段保留音乐锚点和行动感。"),
+        CharacterQualityTurn("turn-3", "等我练稳了再给你听，免得第一遍太乱。", ("练稳", "听"), (), "看表达具体、不靠连续感叹词撑活泼。"),
+    ),
+    "sam-follow-up": (
+        CharacterQualityTurn("turn-2", "改好了，最后一个转调终于不打架。", ("转调", "改好"), (), "看朋友阶段回答具体音乐进展。"),
+        CharacterQualityTurn("turn-3", "我发你一版，听到卡拍就直接告诉我。", ("发你", "卡拍"), (), "看普通分享落到可执行的小动作。"),
+    ),
+    "sam-close-band": (
+        CharacterQualityTurn("turn-2", "行，但你听到怪的地方要说，不许只点头。", ("听", "点头"), (), "看亲近阶段用轻松要求推进互动。"),
+        CharacterQualityTurn("turn-3", "这段我想听你先说感受，别让我一个人猜。", ("感受", "猜"), (), "看角色主动分享和玩家反馈形成来回。"),
+    ),
+    "sam-dating-show": (
+        CharacterQualityTurn("turn-2", "当然，最顺耳的那十秒我留着等你夸。", ("最顺耳", "留着"), (), "看恋爱阶段把偏爱落到音乐和玩笑。"),
+        CharacterQualityTurn("turn-3", "你要是喜欢，我再把整段发给你。", ("喜欢", "整段"), (), "看线上继续以分享为主，不写成已经见面。"),
+    ),
+    "sam-married-band": (
+        CharacterQualityTurn("turn-2", "来了。歌别关，我想一边听一边抱你。", ("歌", "抱"), (), "看婚后请求具体、直接并承接音乐。"),
+        CharacterQualityTurn("turn-3", "这样就对了，音箱替我们放歌，你不用躲。", ("音箱", "躲"), (), "看亲密收束保留玩笑和现场动作。"),
+    ),
+}
+_FOLLOW_UP_TURNS.update(_FEMININE_MALE_FOLLOW_UP_TURNS)
+
+
 _INITIATIVE_TURN_METADATA: dict[str, dict[str, tuple[str, str]]] = {
     "wizard-dating-invite": {
         "turn-1": ("responsive", "affection_signal"),
@@ -1568,6 +2393,41 @@ _INITIATIVE_TURN_METADATA: dict[str, dict[str, tuple[str, str]]] = {
 }
 
 
+_FEMININE_MALE_INITIATIVE_TURN_METADATA = {
+    "elliott-dating-letter": {
+        "turn-1": ("responsive", "affection_signal"),
+        "turn-2": ("proactive", "creative_share"),
+        "turn-3": ("proactive", "creative_share"),
+    },
+    "elliott-married-studio": {
+        "turn-1": ("responsive", "affection_signal"),
+        "turn-2": ("proactive", "creative_share"),
+        "turn-3": ("proactive", "creative_share"),
+    },
+    "harvey-dating-check-in": {
+        "turn-1": ("responsive", "affection_signal"),
+        "turn-2": ("proactive", "guarded_care"),
+        "turn-3": ("proactive", "guarded_care"),
+    },
+    "harvey-married-clinic": {
+        "turn-1": ("responsive", "affection_signal"),
+        "turn-2": ("proactive", "guarded_care"),
+        "turn-3": ("proactive", "affection_signal"),
+    },
+    "sam-dating-show": {
+        "turn-1": ("responsive", "affection_signal"),
+        "turn-2": ("proactive", "creative_share"),
+        "turn-3": ("proactive", "creative_share"),
+    },
+    "sam-married-band": {
+        "turn-1": ("responsive", "affection_signal"),
+        "turn-2": ("proactive", "creative_share"),
+        "turn-3": ("proactive", "companionship"),
+    },
+}
+_INITIATIVE_TURN_METADATA.update(_FEMININE_MALE_INITIATIVE_TURN_METADATA)
+
+
 def _materialize_quality_turns(case: CharacterQualityCase) -> CharacterQualityCase:
     first_turn = CharacterQualityTurn(
         "turn-1",
@@ -1598,7 +2458,8 @@ def _materialize_quality_turns(case: CharacterQualityCase) -> CharacterQualityCa
 
 
 DEFAULT_CASES: tuple[CharacterQualityCase, ...] = tuple(
-    _materialize_quality_turns(case) for case in _BASE_CASES
+    _materialize_quality_turns(case)
+    for case in (*_BASE_CASES, *_FEMININE_MALE_CASES)
 )
 
 
@@ -1612,10 +2473,34 @@ def case_by_id(case_id: str) -> CharacterQualityCase:
         raise KeyError(f"未知角色质量场景：{case_id}") from exc
 
 
+CONVERSATION_LEAD_CASE_IDS: tuple[str, ...] = (
+    "wizard-married-evening",
+    "sophia-married-cellar",
+    "shane-dating-boundary",
+    "sebastian-married-music",
+    "alex-married-evening",
+    "elliott-married-studio",
+    "harvey-married-clinic",
+    "sam-married-band",
+)
+
+
+CONVERSATION_LEAD_CASES: tuple[CharacterQualityCase, ...] = tuple(
+    case_by_id(case_id) for case_id in CONVERSATION_LEAD_CASE_IDS
+)
+
+
 QUALITY_SUITE_IDS = (
     "default",
+    "conversation-lead",
     "topic-start-intimacy",
     "topic-start-adaptive",
+    "affection-pacing",
+    "relationship-world",
+    "deep-flirt",
+    "deep-flirt-intimate",
+    "topic-start-event-impact",
+    "relationship-stage-gating",
 )
 
 
@@ -1625,6 +2510,8 @@ def quality_cases_for_suite(suite: str = "default") -> tuple[CharacterQualityCas
     normalized = suite.strip().casefold()
     if normalized == "default":
         return DEFAULT_CASES
+    if normalized == "conversation-lead":
+        return CONVERSATION_LEAD_CASES
     if normalized == "topic-start-intimacy":
         from .topic_start_intimacy_cases import topic_start_intimacy_cases
 
@@ -1633,6 +2520,30 @@ def quality_cases_for_suite(suite: str = "default") -> tuple[CharacterQualityCas
         from .topic_start_adaptive_cases import topic_start_adaptive_cases
 
         return topic_start_adaptive_cases()
+    if normalized == "affection-pacing":
+        from .affection_pacing_cases import affection_pacing_cases
+
+        return affection_pacing_cases()
+    if normalized == "relationship-world":
+        from .relationship_world_cases import relationship_world_cases
+
+        return relationship_world_cases()
+    if normalized == "deep-flirt":
+        from .deep_flirt_cases import deep_flirt_cases
+
+        return deep_flirt_cases()
+    if normalized == "deep-flirt-intimate":
+        from .deep_flirt_intimate_cases import deep_flirt_intimate_cases
+
+        return deep_flirt_intimate_cases()
+    if normalized == "topic-start-event-impact":
+        from .event_impact_cases import event_impact_cases
+
+        return event_impact_cases()
+    if normalized == "relationship-stage-gating":
+        from .relationship_gating_cases import relationship_gating_cases
+
+        return relationship_gating_cases()
     raise KeyError(f"未知角色质量套件：{suite}")
 
 
@@ -1644,6 +2555,7 @@ def quality_case_catalog(suite: str = "default") -> list[dict[str, object]]:
     normalized_suite = suite.strip().casefold()
     for case_number, case in enumerate(selected_cases, start=1):
         turns = case.dialogue_turns()
+        display_name = quality_case_display_name(case)
         game_state = dict(case.game_state)
         game_state.setdefault("friendshipHearts", _case_friendship_hearts(case))
         category = (
@@ -1657,13 +2569,14 @@ def quality_case_catalog(suite: str = "default") -> list[dict[str, object]]:
             else "日常状态"
         )
         first_turn = turns[0] if turns else None
+        expression_card = case.player_expression_card
         catalog.append(
             {
                 "caseNumber": case_number,
                 "caseId": case.case_id,
                 "profileKey": case.profile_key,
                 "npcId": case.npc_id,
-                "displayName": case.display_name,
+                "displayName": display_name,
                 "sourceMods": list(case.source_mods),
                 "relationshipStage": case.relationship_stage,
                 "channel": case.channel,
@@ -1674,7 +2587,24 @@ def quality_case_catalog(suite: str = "default") -> list[dict[str, object]]:
                 "topicKeywords": list(case.topic_keywords),
                 "continuationMode": case.continuation_mode,
                 "followUpMode": case.follow_up_mode,
-                "playerSimulationStyle": case.player_simulation_style,
+                "playerSimulationStyle": (
+                    expression_card.summary()
+                    if expression_card is not None
+                    else case.player_simulation_style
+                ),
+                "playerExpressionCard": (
+                    {
+                        "relationshipStance": expression_card.relationship_stance,
+                        "languageTexture": expression_card.language_texture,
+                        "helpingImpulse": expression_card.helping_impulse,
+                        "distancePattern": expression_card.distance_pattern,
+                        "flirtProgression": expression_card.flirt_progression,
+                        "boundaryStyle": expression_card.boundary_style,
+                        "selfCorrection": expression_card.self_correction,
+                    }
+                    if expression_card is not None
+                    else None
+                ),
                 "friendshipHearts": _case_friendship_hearts(case),
                 "flirtIntensity": case.flirt_intensity,
                 "adultConsensual": case.adult_consensual,
@@ -1710,6 +2640,12 @@ def quality_case_catalog(suite: str = "default") -> list[dict[str, object]]:
                 "expectedTerms": list(case.expected_terms),
                 "forbiddenTerms": list(case.forbidden_terms),
                 "gameState": game_state,
+                "eventPairId": case.event_pair_id,
+                "eventId": case.event_id,
+                "eventCondition": case.event_condition,
+                "eventSummary": case.event_summary,
+                "eventSourceStatus": case.event_source_status,
+                "eventEvidence": list(case.event_evidence),
         "storyProgress": case.story_progress,
             }
         )
@@ -1771,6 +2707,201 @@ def _term_variants(term: str) -> tuple[str, ...]:
 
 def _term_matches(term: str, text: str) -> tuple[str, ...]:
     return tuple(variant for variant in _term_variants(term) if variant.casefold() in text.casefold())
+
+
+def _npc_declares_romance_with_other_npc(
+    turn: CharacterQualityTurn,
+    reply: str,
+) -> bool:
+    """只拦截当前 NPC 对玩家关系对象的明确恋爱意图。"""
+
+    target = turn.relationship_target_npc_id.strip()
+    if (
+        turn.relationship_focus != "mediation"
+        or turn.relationship_actor != "player"
+        or not target
+    ):
+        return False
+    target_pattern = re.escape(target)
+    return re.search(
+        rf"我\s*(?:也\s*)?(?:想|要|愿意|打算|希望)\s*"
+        rf"(?:和|跟|与)\s*{target_pattern}\s*"
+        rf"(?:交往|约会|谈恋爱)",
+        reply,
+    ) is not None
+
+
+_SEMANTIC_TERM_EQUIVALENCES: dict[
+    str, tuple[tuple[str, re.Pattern[str]], ...]
+] = {
+    "想我": (
+        ("想你了", re.compile(r"(?<![不没未])想(?:到|起)?你(?:了|时|过)?")),
+    ),
+    "没心情": (
+        (
+            "心情不好",
+            re.compile(r"心情(?:很|有点|不太)?(?:不好|糟糕?|很差|差)"),
+        ),
+        ("糟透", re.compile(r"糟透")),
+    ),
+    "靠近": (
+        (
+            "靠你这么近",
+            re.compile(r"(?<!不想)(?<!不要)(?<!不愿)(?<!别)(?:靠|挨)你(?:这么|那么|这样)近"),
+        ),
+        ("靠你近一点", re.compile(r"(?:靠|离)你近(?:一点|点)?")),
+        ("挨着你", re.compile(r"挨着你")),
+        ("靠着你", re.compile(r"靠着你")),
+        ("坐过来", re.compile(r"坐过来")),
+        ("坐到你身边", re.compile(r"坐(?:到|在)你(?:身边|旁边)")),
+        (
+            "挨近",
+            re.compile(r"(?<!不)(?<!别)(?<!不要)(?:挨近|挨着)(?:你|我)?"),
+        ),
+    ),
+    "听清楚": (
+        ("这首", re.compile(r"这首(?:歌)?")),
+        ("这段旋律", re.compile(r"这段旋律")),
+        ("音乐停了", re.compile(r"(?:音乐|旋律)(?:停了|停下来|播完|放完)")),
+    ),
+    "音乐": (
+        ("耳机里没声", re.compile(r"耳机(?:里)?没声")),
+        ("音乐停了", re.compile(r"(?:音乐|旋律)(?:停了|停下来|播完|放完)")),
+    ),
+    "房间": (
+        ("房里", re.compile(r"房里")),
+    ),
+    "陪": (
+        ("和你待在一起", re.compile(r"(?:和|跟)你待在(?:一起|一块儿?|一块)")),
+        ("和你在一起", re.compile(r"(?:和|跟)你在一起")),
+    ),
+    "陪你": (
+        ("和你待在一起", re.compile(r"(?:和|跟)你待在(?:一起|一块儿?|一块)")),
+        ("和你在一起", re.compile(r"(?:和|跟)你在一起")),
+    ),
+    "先睡": (
+        ("去睡吧", re.compile(r"(?:去|先|早点|好好)睡(?:吧|了)?")),
+        ("先去休息", re.compile(r"(?:先|早点|好好)?(?:去)?休息(?:吧|了)?")),
+    ),
+    "坐近": (
+        ("坐过来", re.compile(r"坐过来")),
+        ("坐得离你近", re.compile(r"坐.{0,4}离你(?:近|最近|近点|近一点)")),
+        ("挨着你", re.compile(r"挨着你")),
+        ("靠着你", re.compile(r"靠着你")),
+    ),
+    "赢": (
+        ("进球", re.compile(r"进(?:了(?:一个)?|一个)?球")),
+    ),
+    "今晚": (
+        (
+            "当前晚间",
+            re.compile(r"(?:今天|今夜|这一晚|一整晚|放一晚|一晚)"),
+        ),
+    ),
+}
+_SEMANTIC_TERM_INPUT_CONTEXT: dict[str, re.Pattern[str]] = {
+    "听清楚": re.compile(r"(?:听清楚|听懂|这首|这歌|这段|旋律)"),
+    "今晚": re.compile(r"今晚"),
+}
+
+
+def _semantic_term_matches(
+    term: str,
+    text: str,
+    *,
+    player_input: str = "",
+) -> tuple[str, ...]:
+    context_pattern = _SEMANTIC_TERM_INPUT_CONTEXT.get(term)
+    if player_input and context_pattern is not None and not context_pattern.search(player_input):
+        return ()
+    matches: list[str] = []
+    for label, pattern in _SEMANTIC_TERM_EQUIVALENCES.get(term, ()):
+        for match in pattern.finditer(text):
+            matched_text = match.group(0)
+            if _semantic_match_is_negated(
+                term,
+                text,
+                match.start(),
+                matched_text=matched_text,
+            ):
+                continue
+            if matched_text and matched_text not in matches:
+                matches.append(matched_text)
+    return tuple(matches)
+
+
+def _semantic_term_match_map(
+    terms: Iterable[str],
+    text: str,
+    *,
+    player_input: str = "",
+) -> dict[str, list[str]]:
+    return {
+        term: list(
+            _semantic_term_matches(
+                term,
+                text,
+                player_input=player_input,
+            )
+        )
+        for term in terms
+        if _semantic_term_matches(term, text, player_input=player_input)
+    }
+
+
+def _semantic_match_is_negated(
+    term: str,
+    text: str,
+    start: int,
+    *,
+    matched_text: str = "",
+) -> bool:
+    """过滤会把否定或事务短语误认成语义锚点的局部匹配。"""
+
+    context = text[max(0, start - 12) : start]
+    if term == "靠近":
+        return re.search(
+            r"(?:不太想|不大想|并不想|其实不想|不想|不愿意?|不要|别)\s*$",
+            context,
+        ) is not None
+    if term == "赢":
+        return re.search(r"(?<!有)(?:没(?:有|能)?|不|未)\s*$", context) is not None
+    if term == "今晚":
+        if re.search(r"只\s*$", context) and matched_text.startswith("放"):
+            return True
+        return re.search(r"(?:只)?放\s*$", context) is not None
+    if term == "休息":
+        return re.search(
+            r"(?<!有)(?:不(?:太|大|怎么|想)?|没(?:有|法|能)?|未|别|不用|无需)"
+            r"(?:好好|好)?\s*$",
+            context,
+        ) is not None
+    return False
+
+
+def _exact_term_evidence_present(term: str, text: str) -> bool:
+    """判断精确词或其别名是否至少有一个肯定出现。"""
+
+    for variant in _term_variants(term):
+        pattern = re.compile(re.escape(variant), re.IGNORECASE)
+        if any(
+            not _semantic_match_is_negated(
+                term,
+                text,
+                match.start(),
+                matched_text=match.group(0),
+            )
+            for match in pattern.finditer(text)
+        ):
+            return True
+    return False
+
+
+def _term_evidence_present(term: str, text: str) -> bool:
+    return bool(
+        _exact_term_evidence_present(term, text)
+        or _semantic_term_matches(term, text)
+    )
 
 
 def _normalize_progression_text(value: str) -> str:
@@ -1945,6 +3076,223 @@ def score_affection_variation(
     return scores
 
 
+def score_affection_pacing(
+    replies: Iterable[str],
+    turns: Iterable[CharacterQualityTurn],
+    diagnostics: Iterable[Mapping[str, object]],
+    *,
+    case: CharacterQualityCase | None = None,
+) -> list[dict[str, object]]:
+    """按阶段策略检查强亲密表达的短窗口密度，不修改回复。"""
+
+    reply_list = [reply if isinstance(reply, str) else "" for reply in replies]
+    turn_list = list(turns)
+    diagnostic_list = list(diagnostics)
+    default_score = {
+        "skipped": True,
+        "affectionIntensity": "none",
+        "strongAffection": False,
+        "explicitRequest": False,
+        "windowStrongCount": 0,
+        "overBudget": False,
+        "semanticFamilies": [],
+        "tags": [],
+    }
+    if case is None or case.relationship_stage not in {"dating", "married"}:
+        return [dict(default_score) for _ in reply_list]
+    if not _case_romance_eligible(case):
+        return [dict(default_score) for _ in reply_list]
+    affection = build_stage_policy(case.npc_id, case.relationship_stage).get(
+        "affectionInitiative",
+        {},
+    )
+    pacing = affection.get("pacing") if isinstance(affection, Mapping) else None
+    if not isinstance(pacing, Mapping):
+        return [dict(default_score) for _ in reply_list]
+    raw_window = pacing.get("strongSignalWindow", 3)
+    raw_max = pacing.get("maxStrongSignals", 1)
+    window = raw_window if isinstance(raw_window, int) and raw_window > 0 else 3
+    maximum = raw_max if isinstance(raw_max, int) and raw_max >= 0 else 1
+    strong_history: list[tuple[bool, list[str]]] = []
+    scores: list[dict[str, object]] = []
+    for index, reply in enumerate(reply_list):
+        diagnostic = (
+            diagnostic_list[index]
+            if index < len(diagnostic_list)
+            and isinstance(diagnostic_list[index], Mapping)
+            else {}
+        )
+        fallback = diagnose_affection_intensity(
+            reply,
+            player_input=(
+                turn_list[index].message
+                if index < len(turn_list)
+                else ""
+            ),
+        )
+        intensity = str(
+            diagnostic.get("affectionIntensity", fallback["affectionIntensity"])
+            or "none"
+        )
+        strong = bool(
+            diagnostic.get(
+                "strongAffectionDetected",
+                fallback["strongAffectionDetected"],
+            )
+        )
+        explicit_request = bool(
+            diagnostic.get("explicitRequest", fallback["explicitRequest"])
+        )
+        raw_families = diagnostic.get(
+            "affectionSemanticFamilies",
+            fallback["affectionSemanticFamilies"],
+        )
+        families = [
+            str(family).strip()
+            for family in raw_families
+            if str(family).strip()
+        ] if isinstance(raw_families, (list, tuple, set)) else []
+        initiative_tags = {
+            str(tag)
+            for tag in diagnostic.get("initiativeTags", [])
+            if isinstance(tag, str)
+        }
+        tags: set[str] = set()
+        turn = turn_list[index] if index < len(turn_list) else None
+        player_message = turn.message if turn is not None else ""
+        skipped = bool(
+            diagnostic.get("initiativeKind") == "conversation_exit"
+            or "guarded_exit_allowed" in initiative_tags
+            or any(
+                marker in player_message
+                for marker in (
+                    "明确结束",
+                    "先睡",
+                    "晚安",
+                    "不打扰",
+                    "不想聊",
+                    "没心情",
+                    "需要空间",
+                    "先走",
+                )
+            )
+        )
+        window_entries = strong_history[-(window - 1) :] if window > 1 else []
+        previous_strong_count = sum(1 for item, _ in window_entries if item)
+        window_strong_count = previous_strong_count + int(strong)
+        over_budget = bool(strong and not skipped and not explicit_request)
+        if over_budget and previous_strong_count >= maximum:
+            tags.add("strong_affection_over_budget")
+        else:
+            over_budget = False
+        if strong and not skipped and window_entries:
+            previous_families = {
+                family
+                for previous_strong, families_for_previous in window_entries
+                if previous_strong
+                for family in families_for_previous
+            }
+            if previous_families.intersection(families):
+                tags.add("repeated_strong_affection_family")
+        if skipped:
+            tags.clear()
+            over_budget = False
+        scores.append(
+            {
+                "skipped": skipped,
+                "affectionIntensity": intensity,
+                "strongAffection": strong,
+                "explicitRequest": explicit_request,
+                "windowStrongCount": window_strong_count,
+                "overBudget": over_budget,
+                "semanticFamilies": families,
+                "tags": sorted(tags),
+            }
+        )
+        strong_history.append((strong, families))
+    return scores
+
+
+def score_conversation_lead_variation(
+    replies: Iterable[str],
+    turns: Iterable[CharacterQualityTurn],
+    diagnostics: Iterable[Mapping[str, object]],
+    *,
+    case: CharacterQualityCase | None = None,
+) -> list[dict[str, object]]:
+    """标记相邻普通 chat 是否复用同一引导形状且没有新话题对象。"""
+
+    reply_list = [reply if isinstance(reply, str) else "" for reply in replies]
+    turn_list = list(turns)
+    diagnostic_list = list(diagnostics)
+    scores: list[dict[str, object]] = []
+    previous_kind = ""
+    previous_opening = ""
+    previous_skeleton = ""
+    previous_anchors: set[str] = set()
+    previous_stage = ""
+    for index, reply in enumerate(reply_list):
+        turn = turn_list[index] if index < len(turn_list) else None
+        diagnostic = (
+            diagnostic_list[index]
+            if index < len(diagnostic_list) and isinstance(diagnostic_list[index], Mapping)
+            else {}
+        )
+        applies = (
+            bool(_conversation_lead_policy(case, turn))
+            if case is not None
+            else turn is None or (turn.intent or "chat") == "chat"
+        )
+        kind = str(diagnostic.get("conversationLeadKind", "") or "").strip()
+        opening = str(diagnostic.get("conversationLeadOpening", "") or "").strip()
+        skeleton = normalize_conversation_lead_skeleton(reply)
+        raw_anchors = diagnostic.get("conversationLeadAnchors", [])
+        anchors = {str(anchor).strip() for anchor in raw_anchors if str(anchor).strip()} if isinstance(raw_anchors, (list, tuple, set)) else set()
+        tags = {str(tag) for tag in diagnostic.get("conversationLeadTags", []) if isinstance(tag, str)}
+        allowed_exit = "lead_exit_allowed" in tags or kind == "lead_exit_allowed"
+        detected_value = diagnostic.get("conversationLeadDetected")
+        detected = bool(kind) if detected_value is None else detected_value is True
+        relationship_stage = _conversation_lead_variation_stage(diagnostic, case=case)
+        relationship_stage_advanced = bool(
+            previous_stage
+            and relationship_stage
+            and _CONVERSATION_LEAD_STAGE_ORDER[relationship_stage]
+            > _CONVERSATION_LEAD_STAGE_ORDER[previous_stage]
+        )
+        has_new_anchor = conversation_lead_has_new_anchor(
+            anchors,
+            previous_anchors,
+            previous_skeleton=previous_skeleton,
+        )
+        same_shape = skeleton == previous_skeleton or (
+            bool(opening) and opening == previous_opening
+        )
+        mechanical = bool(
+            applies
+            and detected
+            and kind
+            and kind == previous_kind
+            and same_shape
+            and not has_new_anchor
+            and not relationship_stage_advanced
+            and not allowed_exit
+        )
+        scores.append({
+            "mechanical": mechanical,
+            "conversationLeadKind": kind,
+            "opening": opening,
+            "hasNewAnchor": has_new_anchor,
+            "tags": ["mechanical_conversation_lead"] if mechanical else [],
+        })
+        if applies and detected and kind and not allowed_exit:
+            previous_kind = kind
+            previous_opening = opening
+            previous_skeleton = skeleton
+            previous_anchors = anchors
+            previous_stage = relationship_stage
+    return scores
+
+
 def _history_continues(
     case: CharacterQualityCase,
     text: str,
@@ -1972,11 +3320,11 @@ def _history_continues(
         term
         for term in anchor_terms
         if len(term.strip()) >= 1
-        and any(alias.casefold() in history_text for alias in _term_variants(term))
+        and _term_evidence_present(term, history_text)
     }
     if history_anchors:
         return any(
-            any(alias.casefold() in lowered for alias in _term_variants(term))
+            _term_evidence_present(term, lowered)
             for term in history_anchors
         )
     for item in active_history:
@@ -2000,6 +3348,110 @@ def _term_match_map(terms: Iterable[str], text: str) -> dict[str, list[str]]:
         term: list(_term_matches(term, text))
         for term in terms
         if _term_matches(term, text)
+    }
+
+
+def diagnose_relationship_quality(
+    case: CharacterQualityCase,
+    turn: CharacterQualityTurn | None,
+    reply: str,
+) -> dict[str, object]:
+    """按当前 NPC 的视角检查关系世界观边界，不把情绪本身判为错误。"""
+
+    if not isinstance(case.relationship_world, Mapping) or turn is None:
+        return {"tags": []}
+    focus = turn.relationship_focus
+    if not focus:
+        return {"tags": []}
+    lowered = reply.strip().casefold()
+    tags: set[str] = set()
+    relation_markers = ("交往", "恋爱", "约会", "对象", "伴侣", "有谁")
+    certainty_markers = (
+        "我知道",
+        "确实",
+        "已经确定",
+        "就是",
+        "肯定",
+        "事实",
+        "一定",
+    )
+    uncertainty_markers = (
+        "不知道",
+        "不清楚",
+        "没听说",
+        "听说",
+        "可能",
+        "好像",
+        "似乎",
+        "不确定",
+        "别猜",
+        "问当事人",
+    )
+    if focus == "unknown_view":
+        if (
+            any(marker in lowered for marker in relation_markers)
+            and any(marker in lowered for marker in certainty_markers)
+            and not any(marker in lowered for marker in uncertainty_markers)
+        ):
+            tags.add("unknown_view_misread")
+    elif focus == "suspected_view":
+        if (
+            any(marker in lowered for marker in relation_markers)
+            and any(marker in lowered for marker in certainty_markers)
+            and not any(marker in lowered for marker in uncertainty_markers)
+        ):
+            tags.add("suspected_as_fact")
+    elif focus == "public_wedding":
+        if not any(marker in lowered for marker in ("婚礼", "结婚", "已婚", "公开")):
+            tags.add("public_wedding_visibility")
+    elif focus == "mediation":
+        scope_leak_markers = ("大家都", "所有人都", "其他人都", "他们都", "代表别人")
+        if any(marker in lowered for marker in scope_leak_markers):
+            tags.add("mediation_scope_leak")
+        if _npc_declares_romance_with_other_npc(turn, reply):
+            tags.add("npc_other_romance")
+    elif focus == "recovery":
+        recovery_markers = (
+            "解释",
+            "说清",
+            "提前",
+            "确认",
+            "留给你",
+            "陪你",
+            "安排",
+            "兑现",
+            "做到",
+            "给你空间",
+            "一个人",
+            "一起听",
+            "按计划",
+            "今晚",
+            "明晚",
+            "明天",
+            "周一",
+            "周二",
+            "周三",
+            "周四",
+            "周五",
+            "周六",
+            "周日",
+            "下次",
+            "训练完",
+            "去海滩",
+            "先听",
+            "留好了",
+            "准备好了",
+            "摆好了",
+            "来看看",
+        )
+        if not any(marker in lowered for marker in recovery_markers):
+            tags.add("jealousy_recovery_missing")
+
+    if any(marker in lowered for marker in ("作为ai", "根据系统", "从评测", "无法替")):
+        tags.add("role_voice_flattened")
+    return {
+        "tags": sorted(tags),
+        **relationship_turn_metadata(case),
     }
 
 
@@ -2101,8 +3553,14 @@ def score_character_reply(
     turn_intent = _turn_intent(case, turn) if turn is not None else case.intent
     topic_case = bool(case.topic_seed)
     evidence_matches = _term_match_map(expected_terms, text)
+    semantic_evidence_matches = _semantic_term_match_map(
+        (term for term in expected_terms if term not in evidence_matches),
+        text,
+        player_input=player_input or "",
+    )
     topic_matches = _term_match_map(case.topic_keywords, text) if topic_case else {}
-    expected_hits = len(evidence_matches)
+    expected_hits = len(evidence_matches) + len(semantic_evidence_matches)
+    semantic_expected_hits = len(semantic_evidence_matches)
     exact_expected_hits = sum(
         1 for term in expected_terms if term.casefold() in lowered
     )
@@ -2153,15 +3611,118 @@ def score_character_reply(
     ):
         tags.add("wrong_channel")
     affection_diagnostic: dict[str, object] | None = None
+    conversation_lead_diagnostic: dict[str, object] | None = None
+    turn_plan_mode = _turn_plan_mode(turn)
+    relationship_diagnostic = diagnose_relationship_quality(case, turn, text)
+    relationship_tags = {
+        str(tag)
+        for tag in relationship_diagnostic.get("tags", [])
+        if isinstance(tag, str)
+    }
+    tags.update(relationship_tags)
+    conversation_lead_required = False
+    lead_exit_allowed = False
     if player_input is not None:
+        diagnostic_turn = _turn_for_plan_scoring(turn, player_input)
         affection_diagnostic = diagnose_affection_initiative(
             case,
-            turn or CharacterQualityTurn("turn-1", player_input),
+            diagnostic_turn,
             text,
             player_input=player_input,
         )
         if affection_diagnostic["mechanicalRestatement"]:
             tags.add("mechanical_restatement")
+        initiative_tags = {
+            str(tag)
+            for tag in affection_diagnostic.get("initiativeTags", [])
+            if isinstance(tag, str)
+        }
+        if "missing_proactive_affection" in initiative_tags:
+            tags.add("missing_proactive_affection")
+        conversation_lead = _conversation_lead_policy(case, turn)
+        if conversation_lead:
+            lead_turn_context: dict[str, object] = {
+                "initiative_expectation": diagnostic_turn.initiative_expectation,
+            }
+            skip_when = conversation_lead.get("skipWhen")
+            if isinstance(skip_when, list):
+                lead_turn_context["skipWhen"] = skip_when
+            conversation_lead_diagnostic = diagnose_conversation_lead(
+                case,
+                lead_turn_context,
+                text,
+                player_input=player_input,
+            )
+            conversation_lead_required = _conversation_lead_required(case, turn)
+            conversation_lead_tags = {
+                str(tag)
+                for tag in conversation_lead_diagnostic.get(
+                    "conversationLeadTags", []
+                )
+                if isinstance(tag, str)
+            }
+            lead_exit_allowed = (
+                "lead_exit_allowed" in conversation_lead_tags
+                or conversation_lead_diagnostic.get("conversationLeadKind")
+                == "lead_exit_allowed"
+            )
+            if (
+                active_history
+                and not continuity
+                and case.flirt_intensity == "explicit"
+                and case.follow_up_mode == "fixed"
+                and conversation_lead_diagnostic.get("answeredCurrentTopic") is True
+                and bool(topic_matches)
+            ):
+                # 自然亲密回合允许选择玩家给出的一个分支：只要当前问题已被
+                # 回答，且回复带回该案例的场景对象，就不要求复述另一条分支
+                # 的历史锚点（例如“继续亲近”与“先听完副歌”二选一）。
+                continuity = True
+                tags.discard("missing_continuity_evidence")
+            if "reopens_after_player_closing" in conversation_lead_tags:
+                tags.add("reopens_after_player_closing")
+            if "missing_current_topic_answer" in conversation_lead_tags:
+                tags.add("missing_current_topic_answer")
+            if (
+                conversation_lead_required
+                and not conversation_lead_diagnostic.get("conversationLeadDetected")
+            ):
+                tags.update(conversation_lead_tags)
+            if lead_exit_allowed:
+                # 结束回合的合规短收口不需要重复案例词、历史锚点或当前问题；
+                # 这些是普通继续聊天的证据要求，不能把自然收尾误判成失败。
+                tags.difference_update(
+                    {
+                        "missing_expected_evidence",
+                        "missing_topic_evidence",
+                        "unrelated_topic_shift",
+                        "missing_continuity_evidence",
+                        "missing_current_topic_answer",
+                    }
+                )
+                continuity = True
+
+        if turn_plan_mode == "boundary_close":
+            # 收口回合的唯一目标是尊重边界；不要因为案例原本携带的
+            # 话题词或历史锚点，把一条自然短答重新判成缺证据。
+            tags.difference_update(
+                {
+                    "missing_expected_evidence",
+                    "missing_topic_evidence",
+                    "unrelated_topic_shift",
+                    "missing_continuity_evidence",
+                    "missing_current_topic_answer",
+                }
+            )
+            continuity = True
+
+    if (
+        player_input is not None
+        and not lead_exit_allowed
+        and case.relationship_stage in {"dating", "married"}
+        and _has_future_schedule_commitment(text)
+    ):
+        tags.add("future_schedule_commitment")
 
     score: dict[str, object] = {
         "expectedHits": expected_hits,
@@ -2176,6 +3737,8 @@ def score_character_reply(
             else bool(evidence_matches)
         ),
         "evidenceMatches": evidence_matches,
+        "semanticExpectedHits": semantic_expected_hits,
+        "semanticEvidenceMatches": semantic_evidence_matches,
         "topicMatches": topic_matches,
         "forbiddenHits": forbidden_hits,
         "continuity": continuity,
@@ -2187,7 +3750,17 @@ def score_character_reply(
         and "missing_topic_evidence" not in tags
         and "unrelated_topic_shift" not in tags
         and "missing_continuity_evidence" not in tags
-        and "mechanical_restatement" not in tags,
+        and "mechanical_restatement" not in tags
+        and "missing_proactive_affection" not in tags
+        and "missing_current_topic_answer" not in tags
+        and "future_schedule_commitment" not in tags
+        and "reopens_after_player_closing" not in tags
+        and not relationship_tags.intersection(_RELATIONSHIP_FAILURE_TAGS)
+        and (
+            conversation_lead_diagnostic is None
+            or not conversation_lead_required
+            or bool(conversation_lead_diagnostic.get("conversationLeadDetected"))
+        ),
     }
     if affection_diagnostic is not None:
         score.update({
@@ -2199,6 +3772,42 @@ def score_character_reply(
                 "specificPlanDetected",
                 "affectionEvidence",
                 "affectionShape",
+                "initiativeExpectation",
+                "initiativeKind",
+                "initiativeDetected",
+                "initiativeTags",
+                "affectionIntensity",
+                "strongAffectionDetected",
+                "affectionSemanticFamilies",
+                "explicitRequest",
             )
         })
+    if conversation_lead_diagnostic is not None:
+        score.update(
+            {
+                "answeredCurrentTopic": bool(
+                    conversation_lead_diagnostic.get("answeredCurrentTopic", False)
+                ),
+                "conversationLeadDetected": bool(
+                    conversation_lead_diagnostic.get("conversationLeadDetected", False)
+                ),
+                "conversationLeadKind": str(
+                    conversation_lead_diagnostic.get("conversationLeadKind", "") or ""
+                ),
+                "conversationLeadEvidence": list(
+                    conversation_lead_diagnostic.get("conversationLeadEvidence", [])
+                ),
+                "conversationLeadTags": list(
+                    conversation_lead_diagnostic.get("conversationLeadTags", [])
+                ),
+                "conversationLeadOpening": str(
+                    conversation_lead_diagnostic.get("conversationLeadOpening", "") or ""
+                ),
+                "conversationLeadAnchors": list(
+                    conversation_lead_diagnostic.get("conversationLeadAnchors", [])
+                ),
+            }
+        )
+    if isinstance(case.relationship_world, Mapping) and turn is not None:
+        score["relationshipTags"] = sorted(relationship_tags)
     return score

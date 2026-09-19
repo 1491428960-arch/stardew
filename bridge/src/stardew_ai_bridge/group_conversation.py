@@ -1,0 +1,687 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Mapping, Sequence
+from time import perf_counter
+
+from .models import (
+    DialogueTestRequest,
+    GroupDialogueRequest,
+    GroupDialogueResponse,
+    GroupParticipant,
+    GroupTurn,
+    NpcGameState,
+    ProviderResult,
+    ProviderUsage,
+    RelationshipWorldContext,
+)
+from .providers import ProviderRouter
+
+
+class GroupResponseError(ValueError):
+    """多人回复不符合参与者或结构约束。"""
+
+
+# 回放页已经用气泡展示发言人，对白里再写一遍名字会明显像评测腔。
+_SPEECH_HYGIENE_RULE = (
+    "对白只写这个角色真正会说出口的话：不要在对白开头重复写自己的名字或“名字：”，"
+    "不要写括号里的舞台动作、旁白或具体日期。"
+)
+
+# 群聊里的角色差异过去只靠 npcId 撑着，模型会退回通用文艺腔。
+_GROUP_NATURAL_CONTRACT = (
+    "对白要像熟人聊天，不写评测答案：不写情绪标签和解释，"
+    "不要写成散文或统一的书面模板，比喻只在角色本来就会用时才用；"
+    "优先参考每个参与者 voice.voiceAnchors 的句式和口语颗粒度，"
+    "多数时候直接说事实、动作或短感受。"
+)
+
+# 解析失败只重试一次：把整条多轮结果丢掉太亏，但也不能无限重试。
+_FORMAT_REPAIR_RULE = (
+    "上一次输出不是合法 JSON，或者回合数超出了上限。现在只输出一个 JSON 对象："
+    '{"turns":[{"speakerNpcId":"名单内 ID","content":"对白","addressedTo":[]}]}。'
+    "不要 Markdown 代码块、不要解释、不要任何多余文字；"
+    "每个回合都必须同时有 speakerNpcId 和 content。"
+)
+
+
+def _participant_value(
+    participant: GroupParticipant | Mapping[str, object],
+    key: str,
+    alias: str,
+) -> object:
+    if isinstance(participant, GroupParticipant):
+        return getattr(participant, key)
+    return participant.get(alias, participant.get(key))
+
+
+def _group_scene_instruction(
+    *,
+    active_npc_id: str,
+    roster_ids: list[str],
+    strategy: str,
+    turn_count: int | None,
+) -> str:
+    others = [item for item in roster_ids if item.casefold() != active_npc_id.casefold()]
+    other_rule = (
+        "不能替 " + "、".join(others) + " 发言。" if others else "不能替其他 NPC 发言。"
+    )
+    if strategy == "multi_turn":
+        limit = turn_count or (len(roster_ids) if roster_ids else 1)
+        return (
+            "这是公开线上群聊，channel=remote。像几个熟人同时在群里说话，"
+            "不要写成轮流做任务汇报。"
+            "自然节奏优先于任何格式要求：长度要参差，可以只有两三个字，也可以连着说两三句，"
+            "不要人人一句等长；允许只是附和、追问、吐槽或重复对方一个词表示在听，"
+            "这些回合不需要推进话题；允许打岔、突然说起别的事、说到一半停住，"
+            "也可以有人整场不说话；不要每条都以总结、感悟或小道理收尾，"
+            "也不要写“我先说……你呢？”这种对称发言模板。"
+            "谁说话：第一个发言的人先接玩家，之后由内容和角色决定谁接；"
+            "有人想接别人的话就自然接，不必每条都严丝合缝地对上，"
+            "几个人各给一条建议、各说各的近况都很正常；"
+            "但不要让一个人把话说完：名单里每个人都应有机会开口，"
+            "两个人里不要只有一个人说话，三个人里也不要只出现一个人。"
+            "如果某条对白点名或提到了名单里的另一个人，那个人应当接一轮，"
+            "不能只被别人议论却没有自己的回合；整段至少出现一次真正的来回。"
+            "事实与指代要准确：说“你们”时只指名单里除自己以外的人，人数必须与名单一致"
+            "（只有两个别人就说“你们俩”，别写“你们仨”）；把自己也算进去时说“我们”。"
+            "人称要自然：对名单里某个人说话时直接用“你”，不要当面叫他的名字或用第三人称"
+            "（对 Harvey 说“你大概不会同意”而不是“Harvey 大概不会同意”）；"
+            "只有对玩家说话、或提到不在场的人时才用名字。"
+            "addressedTo 要和这句话的人称对上：对某个 NPC 说“你”时才填他的 ID；"
+            "如果是在对玩家说、只是提到某个 NPC（说“他”“她”或名字），就留空数组。"
+            f"最多输出 {limit} 个公开回合，每个回合只说对应 speakerNpcId 自己的话。"
+            "addressedTo 只能填这条对白真正在回应或递给的人，且只能填名单内的参与者 ID；"
+            "回应玩家时留空数组，不要写 player、you 之类的代称。"
+            "每张角色卡只描述它自己；本轮允许同时输出这些角色的对白，"
+            "这部分覆盖角色卡里“只输出当前 NPC 的对白”的收尾限制，但不得因此改变任何角色的说话方式。"
+            "不能让名单外 NPC 加入，不能把远程聊天写成已经线下见面。"
+            "不能修改关系、好感度、库存或 NPC 日程。"
+            + _SPEECH_HYGIENE_RULE
+            + _GROUP_NATURAL_CONTRACT
+            + "节奏示例（只示范长短参差与接话方式，内容不要照抄）："
+            "玩家问“你们周末一般干什么”，依次是："
+            "“睡到中午。”／“我周六去镇上，顺便看看种子店开没开。”／"
+            "“啊对，我要买点肥料。”／“……我周末都在补觉，别问我。”"
+            + '只输出 JSON 对象 {"turns":[{"speakerNpcId":"参与者 ID",'
+            '"content":"对白","addressedTo":["目标 ID"]}],"memory":["…"]}，不要输出 Markdown 或解释。'
+            "memory 可选：只挑 1～2 条值得长期记住的内容（玩家提到的事实、约定、承诺、重要变化），"
+            "每条写成一句简短陈述，例如“玩家说下周要交报告”；"
+            "闲聊、寒暄、当轮情绪和 NPC 自己的近况都不要写，没有就省略或给空数组。"
+        )
+    return (
+        "这是公开线上群聊，channel=remote。"
+        f"当前策略是 {strategy}，当前发言人只能说 {active_npc_id} 自己的话。"
+        + other_rule
+        + "不能让名单外 NPC 加入，不能把远程聊天写成已经线下见面。"
+        "不能修改关系、好感度、库存或 NPC 日程。"
+        + _SPEECH_HYGIENE_RULE
+        + _GROUP_NATURAL_CONTRACT
+    )
+
+
+def build_group_messages(
+    *,
+    participants: list[GroupParticipant | Mapping[str, object]],
+    active_npc_id: str,
+    participant_prompts: Mapping[str, Sequence[Mapping[str, str]]] | None,
+    strategy: str,
+    turn_count: int | None = None,
+    player_message: str = "",
+    public_history: Sequence[Mapping[str, object]] = (),
+) -> list[dict[str, str]]:
+    """群聊消息：参与者角色卡与私聊完全同源，只额外追加一张群聊场景卡。
+
+    角色卡由单 NPC 的 ``PromptBuilder`` 产出，这里不再自己拼角色描述；
+    因此私聊侧的每次迭代都会自动作用到群聊，两边不会各自演进。
+    """
+
+    prompts = participant_prompts or {}
+    roster_ids = [
+        str(_participant_value(item, "npc_id", "npcId")) for item in participants
+    ]
+    roster_ids = [item for item in roster_ids if item]
+    speakers = (
+        roster_ids
+        if strategy == "multi_turn"
+        else [item for item in roster_ids if item.casefold() == active_npc_id.casefold()]
+    )
+    messages: list[dict[str, str]] = []
+    for npc_id in speakers:
+        block = prompts.get(npc_id.casefold()) or ()
+        for message in block:
+            if not isinstance(message, Mapping):
+                continue
+            # 玩家输入由群聊统一追加，角色卡里各自的末条 user 消息要去掉。
+            if str(message.get("role")) == "user":
+                continue
+            entry = {
+                "role": str(message.get("role") or "system"),
+                "content": str(message.get("content") or ""),
+            }
+            name = message.get("name")
+            if isinstance(name, str) and name:
+                entry["name"] = name
+            messages.append(entry)
+    messages.append(
+        {
+            "role": "system",
+            "name": "group_scene",
+            "content": json.dumps(
+                {
+                    "instruction": _group_scene_instruction(
+                        active_npc_id=active_npc_id,
+                        roster_ids=roster_ids,
+                        strategy=strategy,
+                        turn_count=turn_count,
+                    ),
+                    "participants": [
+                        {
+                            "npcId": _participant_value(item, "npc_id", "npcId"),
+                            "displayName": _participant_value(
+                                item, "display_name", "displayName"
+                            ),
+                        }
+                        for item in participants
+                    ],
+                    "publicHistory": [dict(item) for item in public_history],
+                },
+                ensure_ascii=False,
+            ),
+        }
+    )
+    if player_message:
+        messages.append({"role": "user", "content": player_message})
+    return messages
+
+
+def build_group_prompt(
+    *,
+    active_npc_id: str,
+    participants: list[GroupParticipant | Mapping[str, object]],
+    shared_game_state: NpcGameState | None,
+    relationship_world: RelationshipWorldContext | None,
+    recent_facts: list[str],
+    public_history: list[dict[str, object]],
+    player_message: str,
+    strategy: str,
+    turn_count: int | None = None,
+    invitation_topic: str | None = None,
+    invitation_guidance: str | None = None,
+    participant_cards: Mapping[str, Mapping[str, object]] | None = None,
+) -> list[dict[str, str]]:
+    cards = participant_cards or {}
+    roster: list[dict[str, object]] = []
+    for item in participants:
+        npc_id = _participant_value(item, "npc_id", "npcId")
+        entry: dict[str, object] = {
+            "npcId": npc_id,
+            "displayName": _participant_value(item, "display_name", "displayName"),
+        }
+        voice = cards.get(str(npc_id).casefold()) if npc_id else None
+        if isinstance(voice, Mapping) and voice:
+            entry["voice"] = dict(voice)
+        roster.append(entry)
+    scene = (
+        shared_game_state.model_dump(by_alias=True, exclude_none=True)
+        if shared_game_state is not None
+        else {}
+    )
+    relationship = (
+        relationship_world.model_dump(by_alias=True, exclude_none=True)
+        if relationship_world is not None
+        else {}
+    )
+    invitation = {}
+    if invitation_topic or invitation_guidance:
+        invitation = {
+            "topic": invitation_topic,
+            "guidance": invitation_guidance,
+            "scope": (
+                "这是玩家选择的话题方向，不是 NPC 已确认的事实、NPC 记忆或未来承诺。"
+            ),
+        }
+    other_npcs = [
+        str(item["npcId"])
+        for item in roster
+        if item["npcId"] and str(item["npcId"]).casefold() != active_npc_id.casefold()
+    ]
+    other_speaker_rule = (
+        "不能替 " + "、".join(other_npcs) + " 发言。"
+        if other_npcs
+        else "不能替其他 NPC 发言。"
+    )
+    if strategy == "multi_turn":
+        instruction = (
+            "这是公开线上群聊，channel=remote。当前策略是自然接话流；"
+            "名单内每个 NPC 都可以发言，但不要求每个人都发言，也不要求一人恰好一句。"
+            "根据玩家输入、公开历史和各自角色气质决定谁先接话；允许另一个 NPC 插话，"
+            "也允许同一 NPC 连续补一句或把话题递给指定参与者。"
+            "如果某条对白点名了名单里的另一个人（addressedTo），那个人应当接一轮；"
+            "整段至少出现一次来回：有人说完，另一个人接住并推进一次。"
+            "其余人可以不发言——沉默要来自角色自己没话说，而不是因为没人接。"
+            f"最多输出 {turn_count or (len(participants) if participants else 1)} 个公开回合，"
+            "每个回合只说对应 speakerNpcId 自己的话，不要替别人代答。"
+            + other_speaker_rule
+            + "不能让名单外 NPC 加入，不能把远程聊天写成已经线下见面。"
+            "不能修改关系、好感度、库存或 NPC 日程。" + _SPEECH_HYGIENE_RULE
+            + _GROUP_NATURAL_CONTRACT
+        )
+        instruction += (
+            '只输出 JSON 对象 {"turns":[{"speakerNpcId":"参与者 ID",'
+            '"content":"对白","addressedTo":["目标 ID"]}]}，不要输出 Markdown 或解释。'
+        )
+    else:
+        instruction = (
+            "这是公开线上群聊，channel=remote。"
+            f"当前策略是 {strategy}，当前发言人只能说 {active_npc_id} 自己的话。"
+            + other_speaker_rule
+            + "不能让名单外 NPC 加入，不能把远程聊天写成已经线下见面。"
+            "不能修改关系、好感度、库存或 NPC 日程。" + _SPEECH_HYGIENE_RULE
+            + _GROUP_NATURAL_CONTRACT
+        )
+    return [
+        {
+            "role": "system",
+            "name": "group_conversation",
+            "content": json.dumps(
+                {
+                    "instruction": instruction,
+                    "participants": roster,
+                    "gameState": scene,
+                    "relationshipWorld": relationship,
+                    "invitation": invitation,
+                    "recentFacts": recent_facts,
+                    "publicHistory": public_history,
+                },
+                ensure_ascii=False,
+            ),
+        },
+        {"role": "user", "content": player_message},
+    ]
+
+
+def _normalize_addressed_to(
+    value: object,
+    participant_ids: set[str],
+) -> list[str]:
+    """只保留名单内目标：模型偶尔会写 player/you 或大小写不符的代称。
+
+    回应玩家时没有名单内目标，归一化成空数组，回放页就不会显示多余的箭头。
+    """
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    allowed = {item.casefold(): item for item in participant_ids}
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        canonical = allowed.get(item.strip().casefold())
+        if canonical and canonical not in normalized:
+            normalized.append(canonical)
+    return normalized
+
+
+_MAX_MEMORY_HIGHLIGHTS = 3
+_MEMORY_HIGHLIGHT_LENGTH = 160
+
+# 公开回合的硬上限，与 models.GroupDialogueRequest.turn_count 的 le=4 保持一致。
+_MAX_GROUP_TURNS = 4
+
+
+def turn_budget(turn_count: int | None, participant_count: int) -> int:
+    """回合上限：显式指定就照用；没指定就按在场人数给。
+
+    调用方（例如游戏客户端）不传 turnCount 时，旧默认值 2 会让 3 人场必然有人
+    整场不开口——实测 3 人案例在 turnCount=2 下两个案例各漏一人。按人数给额度
+    才能保证名单里每个人都有机会说话，同时仍受 _MAX_GROUP_TURNS 限制。
+    """
+
+    if isinstance(turn_count, int) and turn_count >= 1:
+        return min(turn_count, _MAX_GROUP_TURNS)
+    return max(1, min(participant_count, _MAX_GROUP_TURNS))
+
+
+def _normalize_memory_highlights(value: object) -> list[str]:
+    """挑选值得长期记住的候选：只要简短短语，闲聊与超长内容一律丢弃。"""
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    highlights: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or len(text) > _MEMORY_HIGHLIGHT_LENGTH:
+            continue
+        if text not in highlights:
+            highlights.append(text)
+        if len(highlights) >= _MAX_MEMORY_HIGHLIGHTS:
+            break
+    return highlights
+
+
+def parse_multi_turn_payload(
+    reply: str,
+    *,
+    participant_ids: set[str],
+    expected_turn_count: int,
+) -> tuple[list[GroupTurn], list[str]]:
+    """解析多轮回复，并取出可选 memory 字段（值得长期记住的事实或约定）。"""
+    try:
+        parsed = json.loads(reply)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise GroupResponseError("multi_turn 回复不是有效 JSON") from exc
+
+    if not isinstance(parsed, Mapping) or not isinstance(parsed.get("turns"), list):
+        raise GroupResponseError("multi_turn 回复缺少 turns")
+    if not parsed["turns"] or len(parsed["turns"]) > expected_turn_count:
+        raise GroupResponseError("multi_turn 返回轮数越界")
+
+    normalized_ids = {item.casefold() for item in participant_ids}
+    turns: list[GroupTurn] = []
+    for item in parsed["turns"]:
+        if not isinstance(item, Mapping):
+            raise GroupResponseError("multi_turn 中存在无效回合")
+        speaker = item.get("speakerNpcId")
+        content = item.get("content")
+        if not isinstance(speaker, str) or speaker.casefold() not in normalized_ids:
+            raise GroupResponseError("未知发言人")
+        if not isinstance(content, str) or not content.strip():
+            raise GroupResponseError("multi_turn 存在空对白")
+        turns.append(
+            GroupTurn.model_validate(
+                {
+                    "speakerNpcId": speaker,
+                    "content": content,
+                    "addressedTo": _normalize_addressed_to(
+                        item.get("addressedTo", []), participant_ids
+                    ),
+                }
+            )
+        )
+    return turns, _normalize_memory_highlights(parsed.get("memory"))
+
+
+def parse_multi_turn_reply(
+    reply: str,
+    *,
+    participant_ids: set[str],
+    expected_turn_count: int,
+) -> list[GroupTurn]:
+    """兼容入口：只要回合，长期记忆候选由 parse_multi_turn_payload 提供。"""
+
+    turns, _ = parse_multi_turn_payload(
+        reply,
+        participant_ids=participant_ids,
+        expected_turn_count=expected_turn_count,
+    )
+    return turns
+
+
+class GroupConversationService:
+    """编排线上多人对话策略；不负责线下 NPC 在场判断。"""
+
+    def __init__(
+        self,
+        provider_router: ProviderRouter,
+        voice_card_provider: (
+            Callable[[list[GroupParticipant]], Mapping[str, Mapping[str, object]]] | None
+        ) = None,
+        prompt_provider: (
+            Callable[
+                [list[GroupParticipant], GroupDialogueRequest],
+                Mapping[str, Sequence[Mapping[str, str]]],
+            ]
+            | None
+        ) = None,
+    ) -> None:
+        self.provider_router = provider_router
+        self.voice_card_provider = voice_card_provider
+        self.prompt_provider = prompt_provider
+
+    def _participant_prompts(
+        self,
+        participants: list[GroupParticipant],
+        request: GroupDialogueRequest,
+    ) -> dict[str, Sequence[Mapping[str, str]]]:
+        """取每个参与者与私聊同源的角色卡；取不到时回退到旧组装方式。"""
+
+        if self.prompt_provider is None:
+            return {}
+        try:
+            raw_prompts = self.prompt_provider(participants, request)
+        except Exception:  # noqa: BLE001 - 取卡失败不应让群聊整体不可用
+            return {}
+        if not isinstance(raw_prompts, Mapping):
+            return {}
+        return {
+            str(key).casefold(): value
+            for key, value in raw_prompts.items()
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+        }
+
+    def _participant_cards(
+        self, participants: list[GroupParticipant]
+    ) -> dict[str, Mapping[str, object]]:
+        if self.voice_card_provider is None:
+            return {}
+        try:
+            raw_cards = self.voice_card_provider(participants)
+        except Exception:  # noqa: BLE001 - 语气卡失败不应让整场群聊不可用
+            return {}
+        if not isinstance(raw_cards, Mapping):
+            return {}
+        return {
+            str(key).casefold(): value
+            for key, value in raw_cards.items()
+            if isinstance(value, Mapping)
+        }
+
+    def generate(self, request: GroupDialogueRequest) -> GroupDialogueResponse:
+        started_at = perf_counter()
+        if request.turn_count is None:
+            # 未显式指定回合上限时按在场人数给：3 人场只给 2 个回合必然漏人。
+            request = request.model_copy(
+                update={"turn_count": turn_budget(None, len(request.participants))}
+            )
+        participant_by_id = {
+            item.npc_id.casefold(): item for item in request.participants
+        }
+        participant_cards = self._participant_cards(request.participants)
+        participant_prompts = self._participant_prompts(request.participants, request)
+        if request.strategy == "fanout":
+            results = [
+                self._call_participant(
+                    request,
+                    participant,
+                    participant.npc_id,
+                    participant_cards,
+                    participant_prompts,
+                )
+                for participant in request.participants
+            ]
+        else:
+            active_id = request.active_speaker_npc_id or request.participants[0].npc_id
+            active = participant_by_id[active_id.casefold()]
+            results = [
+                self._call_participant(
+                    request, active, active.npc_id, participant_cards, participant_prompts
+                )
+            ]
+
+        turns: list[GroupTurn] = []
+        provider_errors: list[str] = []
+        warnings: list[str] = []
+        memory_highlights: list[str] = []
+        provider_results = []
+        for participant, result, provider_request, messages in results:
+            provider_results.append(result)
+            warnings.extend(result.warnings)
+            if result.fallback:
+                provider_errors.extend(result.warnings or ["provider fallback"])
+                continue
+            if request.strategy == "multi_turn":
+                parsed, memory, retried, failure = self._multi_turn_turns(
+                    request=request,
+                    result=result,
+                    # 用规范大小写的 ID，避免归一化后把 addressedTo 写成小写。
+                    participant_ids={item.npc_id for item in request.participants},
+                    provider_request=provider_request,
+                    messages=messages,
+                )
+                if retried is not None:
+                    provider_results.append(retried)
+                    warnings.extend(retried.warnings)
+                if failure:
+                    provider_errors.append(failure)
+                turns.extend(parsed)
+                for item in memory:
+                    if item not in memory_highlights:
+                        memory_highlights.append(item)
+                continue
+            turns.append(
+                GroupTurn(
+                    speakerNpcId=participant.npc_id,
+                    content=result.reply,
+                )
+            )
+
+        if request.strategy == "multi_turn" and not provider_errors and not turns:
+            provider_errors.append("multi_turn 没有可用对白")
+
+        provider_names = {result.provider for result in provider_results}
+        provider = next(iter(provider_names), "unknown")
+        if len(provider_names) > 1:
+            provider = "mixed"
+        return GroupDialogueResponse(
+            strategy=request.strategy,
+            channel=request.channel,
+            provider=provider,
+            fallback=any(result.fallback for result in provider_results),
+            turns=turns,
+            providerCalls=len(provider_results),
+            providerErrors=provider_errors,
+            fallbackCount=sum(result.fallback for result in provider_results),
+            latencyMs=int((perf_counter() - started_at) * 1000),
+            warnings=warnings,
+            usage=_merge_usage([result.usage for result in provider_results]),
+            memoryHighlights=memory_highlights[:_MAX_MEMORY_HIGHLIGHTS],
+        )
+
+    def _call_participant(
+        self,
+        request: GroupDialogueRequest,
+        participant: GroupParticipant,
+        active_npc_id: str,
+        participant_cards: Mapping[str, Mapping[str, object]] | None = None,
+        participant_prompts: Mapping[str, Sequence[Mapping[str, str]]] | None = None,
+    ) -> tuple[GroupParticipant, ProviderResult]:
+        provider_request = DialogueTestRequest.model_validate(
+            {
+                "npcId": participant.npc_id,
+                "message": request.message,
+                "provider": request.provider,
+                "displayName": participant.display_name,
+                "sourceMods": participant.source_mods,
+                "gameState": participant.game_state or request.game_state,
+                "recentFacts": request.recent_facts,
+                "history": [item.model_dump(by_alias=True) for item in request.history],
+                "relationshipWorld": request.relationship_world,
+                "channel": request.channel,
+            "groupStrategy": request.strategy,
+            "groupParticipantIds": [item.npc_id for item in request.participants],
+            "groupTurnCount": request.turn_count,
+        }
+        )
+        if participant_prompts:
+            messages = build_group_messages(
+                participants=request.participants,
+                active_npc_id=active_npc_id,
+                participant_prompts=participant_prompts,
+                strategy=request.strategy,
+                turn_count=request.turn_count,
+                player_message=request.message,
+                public_history=[
+                    item.model_dump(by_alias=True) for item in request.history
+                ],
+            )
+        else:
+            messages = build_group_prompt(
+            active_npc_id=active_npc_id,
+            participants=request.participants,
+            shared_game_state=request.game_state,
+            relationship_world=request.relationship_world,
+            recent_facts=request.recent_facts,
+            public_history=[item.model_dump(by_alias=True) for item in request.history],
+            player_message=request.message,
+            strategy=request.strategy,
+            turn_count=request.turn_count,
+            invitation_topic=request.invitation_topic,
+            invitation_guidance=request.invitation_guidance,
+            participant_cards=participant_cards,
+        )
+        result = self.provider_router.generate(provider_request, messages=messages)
+        return participant, result, provider_request, messages
+
+    def _multi_turn_turns(
+        self,
+        *,
+        request: GroupDialogueRequest,
+        result: ProviderResult,
+        participant_ids: set[str],
+        provider_request: DialogueTestRequest,
+        messages: list[dict[str, str]],
+    ) -> tuple[list[GroupTurn], ProviderResult | None, str | None]:
+        """解析多轮 JSON；首次失败时带着格式修复提示重试一次。
+
+        整条多轮结果因为格式问题被丢掉太亏，但也不能无限重试。
+        """
+
+        def parse(candidate: str) -> tuple[list[GroupTurn], list[str]]:
+            return parse_multi_turn_payload(
+                candidate,
+                participant_ids=participant_ids,
+                expected_turn_count=request.turn_count,
+            )
+
+        first_error = ""
+        try:
+            turns, memory = parse(result.reply)
+            return turns, memory, None, None
+        except GroupResponseError as exc:
+            first_error = str(exc)
+
+        retried = self.provider_router.generate(
+            provider_request,
+            messages=[
+                *messages,
+                {
+                    "role": "system",
+                    "name": "format_repair",
+                    "content": _FORMAT_REPAIR_RULE,
+                },
+            ],
+        )
+        try:
+            turns, memory = parse(retried.reply)
+            return turns, memory, retried, None
+        except GroupResponseError as exc:
+            return [], [], retried, f"{first_error}；重试后仍失败：{exc}"
+
+
+def _merge_usage(usages: list[ProviderUsage | None]) -> ProviderUsage | None:
+    present = [item for item in usages if item is not None]
+    if not present:
+        return None
+
+    def total(field: str) -> int | None:
+        values = [getattr(item, field) for item in present]
+        return sum(values) if all(value is not None for value in values) else None
+
+    return ProviderUsage(
+        inputTokens=total("input_tokens"),
+        outputTokens=total("output_tokens"),
+        totalTokens=total("total_tokens"),
+    )

@@ -3,19 +3,69 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 import inspect
+import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from time import perf_counter
 from typing import Protocol, runtime_checkable
 
 import httpx
+from pydantic import ValidationError
 
 from .config import BridgeSettings, ProviderSettings
-from .models import DialogueTestRequest, ProviderResult, ProviderUsage
+from .models import DialogueTestRequest, OpenLoopSignal, ProviderResult, ProviderUsage
+from .vertex_auth import AccessTokenSource, AdcAccessTokenSource, VertexAuthError
 
 
 class ProviderError(RuntimeError):
     """Provider 调用失败，消息不包含请求凭据。"""
+
+
+_KNOWN_GROUP_NPC_IDS = frozenset(
+    {
+        "Abigail",
+        "Alex",
+        "Andy",
+        "Birdie",
+        "Caroline",
+        "Claire",
+        "Clint",
+        "Demetrius",
+        "Dwarf",
+        "Emily",
+        "Evelyn",
+        "George",
+        "Gunther",
+        "Gus",
+        "Haley",
+        "Jas",
+        "Jodi",
+        "Kent",
+        "Krobus",
+        "Lance",
+        "Leah",
+        "Leo",
+        "Lewis",
+        "Linus",
+        "Marlon",
+        "Marnie",
+        "Maru",
+        "Morris",
+        "Olivia",
+        "Pam",
+        "Penny",
+        "Pierre",
+        "Robin",
+        "Sandy",
+        "Sebastian",
+        "Shane",
+        "Sophia",
+        "Victor",
+        "Vincent",
+        "Willy",
+        "Wizard",
+    }
+)
 
 
 def _non_negative_count(value: object) -> int | None:
@@ -57,6 +107,15 @@ def _usage_from_mapping(value: object) -> ProviderUsage | None:
     )
 
 
+def _open_loop_from_mapping(value: object) -> tuple[OpenLoopSignal | None, str | None]:
+    if value is None:
+        return None, None
+    try:
+        return OpenLoopSignal.model_validate(value), None
+    except (TypeError, ValueError, ValidationError):
+        return None, "openLoop: invalid metadata"
+
+
 def _default_provider_messages(request: DialogueTestRequest) -> list[dict[str, str]]:
     messages = [
         {
@@ -78,6 +137,22 @@ def _default_provider_messages(request: DialogueTestRequest) -> list[dict[str, s
     else:
         messages.append({"role": "user", "content": request.message})
     return messages
+
+
+_SINGLE_TURN_MAX_TOKENS = 160
+_MULTI_TURN_MAX_TOKENS = 900
+
+
+def _max_tokens_for(request: DialogueTestRequest) -> int:
+    """群聊自然接话流一次要写多条对白，沿用单条上限会被截断成一条。
+
+    单 NPC 对话保持 160：它已在游戏内验证过延迟与稳定性；多人自然接话流
+    按回合数给足预算，否则模型写到一半就被截断，JSON 也不完整。
+    """
+
+    if request.group_strategy == "multi_turn":
+        return _MULTI_TURN_MAX_TOKENS
+    return _SINGLE_TURN_MAX_TOKENS
 
 
 @runtime_checkable
@@ -105,6 +180,10 @@ class FakeProvider(Provider):
         "wizard": "Rasmodia",
         "stardewai_npc_test": "Rasmodia（测试）",
     }
+    _GROUP_LABELS = {
+        item.casefold(): item for item in _KNOWN_GROUP_NPC_IDS
+    }
+    _GROUP_LABELS.update({"wizard": "Rasmodia", "rasmodia": "Rasmodia"})
 
     _SEASONS = {
         "spring": "春天",
@@ -164,6 +243,9 @@ class FakeProvider(Provider):
         # Fake mode is reachable without an upstream model, so never reflect
         # request-controlled identity, message, fact, or item text. Only exact
         # known IDs are mapped to fixed labels.
+        if request.group_strategy == "multi_turn":
+            return self._build_multi_turn_demo_reply(request)
+
         display_name = self._NPC_LABELS.get(request.npc_id.strip().lower(), "NPC")
         state = request.game_state
         context_parts: list[str] = []
@@ -231,6 +313,38 @@ class FakeProvider(Provider):
             )
 
         return f"{self.DEMO_MARKER}{display_name}：{body}"
+
+    def _build_multi_turn_demo_reply(self, request: DialogueTestRequest) -> str:
+        candidate_ids = [
+            item.strip()
+            for item in request.group_participant_ids
+            if isinstance(item, str) and item.strip()
+        ]
+        if not candidate_ids:
+            candidate_ids = [request.npc_id.strip()]
+        # Fake mode must not reflect an arbitrary request-controlled identity.
+        # Unknown IDs are omitted instead of being turned into fabricated NPC
+        # dialogue; the real group service will report an empty/invalid demo
+        # result rather than displaying untrusted identity text.
+        participant_ids = [
+            item
+            for item in candidate_ids
+            if item.casefold() in self._GROUP_LABELS
+        ][: request.group_turn_count]
+
+        turns = []
+        for participant_id in participant_ids:
+            label = self._GROUP_LABELS.get(participant_id.casefold(), "NPC")
+            turns.append(
+                {
+                    "speakerNpcId": participant_id,
+                    "content": (
+                        f"{self.DEMO_MARKER}{label}：这是多人线上演示中的一条公开回复。"
+                    ),
+                    "addressedTo": [],
+                }
+            )
+        return json.dumps({"turns": turns}, ensure_ascii=False)
 
     @staticmethod
     def _normalise_context(
@@ -313,6 +427,12 @@ class OpenAICompatibleProvider:
     def name(self) -> str:
         return self.settings.name
 
+    def _headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {"content-type": "application/json"}
+        if self.settings.api_key:
+            headers["authorization"] = f"Bearer {self.settings.api_key}"
+        return headers
+
     def generate(
         self,
         request: DialogueTestRequest,
@@ -341,14 +461,16 @@ class OpenAICompatibleProvider:
         if not self.settings.model:
             raise ProviderError(f"{self.name} provider model is not configured")
 
-        headers: dict[str, str] = {"content-type": "application/json"}
-        if self.settings.api_key:
-            headers["authorization"] = f"Bearer {self.settings.api_key}"
+        headers: dict[str, str] = self._headers()
         payload = {
             "model": self.settings.model,
             "messages": (
                 messages if messages is not None else _default_provider_messages(request)
             ),
+            # 中转站对非流式收尾不稳定；流式响应能先返回 token，并在 Bridge
+            # 内部拼成一次完整对白，避免游戏端把正常生成误判为超时。
+            "stream": True,
+            "max_tokens": _max_tokens_for(request),
         }
         started_at = perf_counter()
         try:
@@ -356,21 +478,82 @@ class OpenAICompatibleProvider:
                 timeout=self.settings.timeout,
                 transport=self.transport,
             ) as client:
-                response = await client.post(
+                async with client.stream(
+                    "POST",
                     self.settings.url,
                     headers=headers,
                     json=payload,
-                )
+                ) as response:
+                    if response.is_error:
+                        raise ProviderError(
+                            f"{self.name} returned HTTP {response.status_code}"
+                        )
+
+                    reply_parts: list[str] = []
+                    usage: ProviderUsage | None = None
+                    open_loop_value: object = None
+                    is_event_stream = "text/event-stream" in response.headers.get(
+                        "content-type", ""
+                    ).lower()
+                    async for line in response.aiter_lines():
+                        line = line.strip()
+                        if not line or line.startswith(":"):
+                            continue
+                        if line.startswith("data:"):
+                            line = line[5:].strip()
+                        if line == "[DONE]":
+                            break
+                        if not is_event_stream and not line.startswith("{"):
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError as exc:
+                            raise ProviderError(
+                                f"{self.name} returned an invalid response"
+                            ) from exc
+                        if not isinstance(chunk, Mapping):
+                            continue
+                        if isinstance(chunk.get("error"), Mapping):
+                            raise ProviderError(
+                                f"{self.name} returned embedded provider error"
+                            )
+                        choices = chunk.get("choices")
+                        if isinstance(choices, list) and choices:
+                            choice = choices[0]
+                            if isinstance(choice, Mapping):
+                                finish_reason = choice.get("finish_reason")
+                                if finish_reason == "length":
+                                    raise ProviderError(
+                                        f"{self.name} returned truncated stream "
+                                        "(finish_reason=length)"
+                                    )
+                                delta = choice.get("delta")
+                                if isinstance(delta, Mapping):
+                                    content = delta.get("content")
+                                else:
+                                    message = choice.get("message")
+                                    content = (
+                                        message.get("content")
+                                        if isinstance(message, Mapping)
+                                        else None
+                                    )
+                                if isinstance(content, str):
+                                    reply_parts.append(content)
+                        chunk_usage = _usage_from_mapping(chunk.get("usage"))
+                        if chunk_usage is not None:
+                            usage = chunk_usage
+                        if "openLoop" in chunk:
+                            open_loop_value = chunk.get("openLoop")
+                    reply = "".join(reply_parts)
+        except ProviderError:
+            raise
         except (httpx.HTTPError, asyncio.TimeoutError) as exc:
             raise ProviderError(f"{self.name} request failed") from exc
 
-        if response.is_error:
-            raise ProviderError(f"{self.name} returned HTTP {response.status_code}")
-
         try:
-            body = response.json()
-            reply = body["choices"][0]["message"]["content"]
-            usage = _usage_from_mapping(body.get("usage"))
+            if not reply.strip():
+                raise ValueError("empty content")
+            open_loop, open_loop_warning = _open_loop_from_mapping(open_loop_value)
             if not isinstance(reply, str) or not reply.strip():
                 raise ValueError("empty content")
         except (KeyError, IndexError, TypeError, ValueError) as exc:
@@ -381,9 +564,48 @@ class OpenAICompatibleProvider:
             provider=self.name,
             fallback=False,
             latencyMs=int((perf_counter() - started_at) * 1000),
-            warnings=[],
+            warnings=[open_loop_warning] if open_loop_warning else [],
             usage=usage,
+            openLoop=open_loop,
         )
+
+
+class VertexOpenAICompatibleProvider(OpenAICompatibleProvider):
+    """用 ADC 短期 access token 调用 Vertex AI OpenAI-compatible 端点。
+
+    与 API-key 模式的区别只有鉴权来源和 TLS 要求：请求体、流式解析、
+    usage 和 openLoop 处理全部复用 `OpenAICompatibleProvider`。凭据不可用
+    时抛出不含 token 的 `ProviderError`，让路由器走安全兜底。
+    """
+
+    def __init__(
+        self,
+        settings: ProviderSettings,
+        *,
+        token_source: AccessTokenSource | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        super().__init__(settings, transport=transport)
+        self._token_source = token_source
+
+    @property
+    def token_source(self) -> AccessTokenSource:
+        if self._token_source is None:
+            self._token_source = AdcAccessTokenSource()
+        return self._token_source
+
+    def _headers(self) -> dict[str, str]:
+        url = self.settings.url or ""
+        if not url.startswith("https://"):
+            raise ProviderError(f"{self.name} vertex endpoint must use https")
+        try:
+            token = self.token_source.access_token()
+        except VertexAuthError as exc:
+            raise ProviderError(str(exc)) from exc
+        return {
+            "content-type": "application/json",
+            "authorization": f"Bearer {token}",
+        }
 
 
 class OllamaNativeProvider:
@@ -438,7 +660,7 @@ class OllamaNativeProvider:
             ),
             "stream": False,
             "think": False,
-            "options": {"num_predict": 160},
+            "options": {"num_predict": _max_tokens_for(request)},
         }
         started_at = perf_counter()
         try:
@@ -463,6 +685,7 @@ class OllamaNativeProvider:
             usage = _usage_from_mapping(body.get("usage"))
             if usage is None:
                 usage = _usage_from_mapping(body)
+            open_loop, open_loop_warning = _open_loop_from_mapping(body.get("openLoop"))
             if not isinstance(reply, str) or not reply.strip():
                 raise ValueError("empty content")
         except (KeyError, IndexError, TypeError, ValueError) as exc:
@@ -473,8 +696,9 @@ class OllamaNativeProvider:
             provider=self.name,
             fallback=False,
             latencyMs=int((perf_counter() - started_at) * 1000),
-            warnings=[],
+            warnings=[open_loop_warning] if open_loop_warning else [],
             usage=usage,
+            openLoop=open_loop,
         )
 
 
@@ -490,7 +714,7 @@ def _run_async(coroutine):  # type: ignore[no-untyped-def]
 
 
 class ProviderRouter:
-    """本地优先、云端降级、预设回复兜底的 Provider 路由器。"""
+    """支持正式云端锁定、显式本地 A/B 和安全回复兜底的 Provider 路由器。"""
 
     def __init__(
         self,
@@ -500,6 +724,7 @@ class ProviderRouter:
         *,
         fake_provider: Provider | None = None,
         cloud_enabled: bool = False,
+        cloud_only: bool = False,
         default_provider: str = "auto",
     ) -> None:
         if fallback_provider is None:
@@ -511,6 +736,7 @@ class ProviderRouter:
         self.fallback_provider = fallback_provider
         self.fake_provider = fake_provider or FakeProvider()
         self.cloud_enabled = cloud_enabled
+        self.cloud_only = cloud_only
         self.default_provider = (
             default_provider
             if default_provider in {"auto", "local", "cloud"}
@@ -553,11 +779,14 @@ class ProviderRouter:
             fallback_provider=fallback_provider,
             fake_provider=fake_provider,
             cloud_enabled=settings.cloud_enabled,
+            cloud_only=settings.cloud_only,
             default_provider="cloud" if cloud is not None else "auto",
         )
 
     @staticmethod
     def _provider_from_settings(settings: ProviderSettings) -> Provider:
+        if settings.api_mode == "vertex":
+            return VertexOpenAICompatibleProvider(settings)
         if settings.api_mode == "ollama":
             return OllamaNativeProvider(settings)
         return OpenAICompatibleProvider(settings)
@@ -576,6 +805,8 @@ class ProviderRouter:
         )
 
     def has_configured_upstream(self) -> bool:
+        if self.cloud_only:
+            return self.cloud_provider is not None
         return self.local_provider is not None or (
             self.cloud_provider is not None
             and (self.cloud_enabled or self.default_provider == "cloud")
@@ -639,6 +870,10 @@ class ProviderRouter:
             if provider == "local" and self.local_provider is not None:
                 candidates.append(self.local_provider)
             if provider == "cloud" and self.cloud_provider is not None:
+                candidates.append(self.cloud_provider)
+            return candidates
+        if self.cloud_only:
+            if self.cloud_provider is not None:
                 candidates.append(self.cloud_provider)
             return candidates
         if self.local_provider is not None:

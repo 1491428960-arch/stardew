@@ -13,8 +13,8 @@ from .evidence import (
     has_dialogue_control_residue,
     is_model_evidence_record as _shared_is_model_evidence_record,
 )
-from .personas import canonical_npc_id
-from .speech import derive_speech_profile
+from .personas import canonical_npc_id, is_female_bachelor_eligible
+from .speech import derive_speech_profile, select_stage_voice_anchors
 from .source_aliases import (
     normalize_source_marker,
     source_family,
@@ -328,7 +328,8 @@ def _is_catalog_npc_id(value: object) -> bool:
     npc_id = str(value).strip()
     if not npc_id or npc_id.casefold() == "rainy":
         return False
-    return not npc_id.casefold().startswith("marriagedialogue")
+    lowered = npc_id.casefold()
+    return not lowered.startswith(("marriagedialogue", "roommatedialogue"))
 
 
 def _append_source_mods(entry: dict[str, Any], values: object) -> None:
@@ -359,8 +360,10 @@ class ProfileIndexBuilder:
         *,
         corpus_paths: Iterable[str | Path] = (),
         vanilla_root: str | Path | None = None,
+        vanilla_events_root: str | Path | None = None,
         vanilla_locale: str | None = None,
         runtime_sample_paths: Iterable[str | Path] = (),
+        locale: str = "zh-CN",
     ) -> dict[str, object]:
         index: dict[str, object] = {
             "schemaVersion": 2,
@@ -396,14 +399,15 @@ class ProfileIndexBuilder:
         self._load_behavior_examples(index)
         for root_value in mod_roots:
             root = Path(root_value)
-            self._load_mod_root(index, root)
-        if vanilla_root is not None:
+            self._load_mod_root(index, root, locale=locale)
+        if vanilla_root is not None or vanilla_events_root is not None:
             from .corpus import build_dialogue_corpus
 
             self._merge_corpus_payload(
                 index,
                 build_dialogue_corpus(
                     vanilla_root=vanilla_root,
+                    vanilla_events_root=vanilla_events_root,
                     vanilla_locale=vanilla_locale,
                 ),
             )
@@ -604,7 +608,7 @@ class ProfileIndexBuilder:
             )
             conditions = raw_record.get("conditions")
             if not isinstance(conditions, Mapping) or not conditions:
-                conditions = infer_dialogue_conditions("", source_key)
+                conditions = infer_dialogue_conditions(source_path, source_key)
             raw_variants = raw_record.get("dialogueVariants")
             if isinstance(resolved_text, str) and resolved_text.strip():
                 # 旧 corpus 可能从未解析的模板切出残缺 dialogueVariants；
@@ -662,12 +666,26 @@ class ProfileIndexBuilder:
                     "candidateKey",
                     "capturedAt",
                     "gameState",
+                    "eventId",
+                    "eventLineIndex",
+                    "eventConditions",
+                    "participants",
                 ):
                     value = raw_record.get(field)
                     if isinstance(value, str) and value.strip():
                         sample[field] = value.strip()
+                    elif field == "eventLineIndex" and isinstance(value, int):
+                        sample[field] = value
                     elif field == "gameState" and isinstance(value, Mapping) and value:
                         sample[field] = dict(value)
+                    elif field == "eventConditions" and isinstance(value, Mapping) and value:
+                        sample[field] = dict(value)
+                    elif field == "participants" and isinstance(value, list) and value:
+                        sample[field] = [
+                            str(item).strip()
+                            for item in value
+                            if str(item).strip()
+                        ]
                 if variant_sample_id in existing_ids:
                     # 直扫 Mod 时可能先留下同 ID 的 i18n 占位符；如果后续
                     # corpus 已经解析出实际对白，应以解析文本替换占位符，
@@ -732,14 +750,24 @@ class ProfileIndexBuilder:
             if not isinstance(entries, Mapping):
                 warnings.append(f"invalid personas mapping: {path.name}")
                 continue
+            # 只保留映射形态的条目：persona 条目必然是映射，而行为样例等数据文件的
+            # 顶层键（如 schemaVersion／description／scenarios）不是。整份文件都没有
+            # persona 条目时**静默跳过**——它与上面按文件名跳过的 behavior-examples.json
+            # 属于同一类情况（目录里放了数据文件），不该刷成索引警告（B13）。
+            persona_entries = {
+                raw_npc_id: raw_persona
+                for raw_npc_id, raw_persona in entries.items()
+                if isinstance(raw_persona, Mapping)
+            }
+            if not persona_entries:
+                continue
+            entries = persona_entries
             markers = _as_markers(payload, path)
             layer = markers[0]
             source_ids = markers[1:] if len(markers) > 1 else []
             is_vanilla = _normalise_marker(layer) == "vanilla"
             for raw_npc_id, raw_persona in entries.items():
-                if not isinstance(raw_persona, Mapping):
-                    warnings.append(f"invalid persona: {path.name}:{raw_npc_id}")
-                    continue
+                # persona_entries（上面）已保证每条都是 Mapping，这里不再重复检查
                 npc_id = str(raw_npc_id).strip()
                 if not npc_id:
                     warnings.append(f"empty npcId: {path.name}")
@@ -893,7 +921,13 @@ class ProfileIndexBuilder:
                         }
                     )
 
-    def _load_mod_root(self, index: dict[str, object], root: Path) -> None:
+    def _load_mod_root(
+        self,
+        index: dict[str, object],
+        root: Path,
+        *,
+        locale: str = "zh-CN",
+    ) -> None:
         warnings = index["warnings"]
         sources = index["sources"]
         profiles = index["profiles"]
@@ -917,6 +951,13 @@ class ProfileIndexBuilder:
             except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
                 warnings.append(f"invalid JSON: {root.name}/manifest.json")
         sources.append({"sourceMod": source_mod, "root": root.name})
+        from .corpus import _load_i18n_catalogs
+
+        i18n_catalogs = _load_i18n_catalogs(
+            root,
+            locale=locale,
+            warnings=warnings,
+        )
 
         for path in sorted(root.rglob("*.json"), key=lambda item: item.as_posix().casefold()):
             if path == manifest or path.name.casefold() in {"config.json"}:
@@ -942,6 +983,8 @@ class ProfileIndexBuilder:
                 samples=samples,
                 speech_evidence=speech_evidence,
                 warnings=warnings,
+                i18n_catalogs=i18n_catalogs,
+                locale=locale,
             )
 
     @staticmethod
@@ -954,6 +997,8 @@ class ProfileIndexBuilder:
         samples: list[dict[str, Any]],
         speech_evidence: list[dict[str, Any]],
         warnings: list[str],
+        i18n_catalogs: Mapping[str, Mapping[str, Any]] | None = None,
+        locale: str = "zh-CN",
     ) -> None:
         # 统一使用 corpus 提取器，确保离线导出与运行时索引的字段和条件一致。
         from .corpus import clean_dialogue_variants, extract_content_patcher_dialogue
@@ -962,6 +1007,8 @@ class ProfileIndexBuilder:
             payload,
             source_mod=source_mod,
             source_path=source_path,
+            i18n_catalogs=i18n_catalogs,
+            locale=locale,
         )
         warnings.extend(extracted_warnings)
         for record in extracted:
@@ -977,7 +1024,10 @@ class ProfileIndexBuilder:
             if not isinstance(raw_text, str) or not raw_text.strip():
                 continue
             raw_variants = record.get("dialogueVariants")
-            if _UNRESOLVED_I18N.search(raw_text):
+            resolved_text = record.get("resolvedText")
+            if isinstance(resolved_text, str) and resolved_text.strip():
+                variants = clean_dialogue_variants(resolved_text)
+            elif _UNRESOLVED_I18N.search(raw_text):
                 # 未解析的 i18n 先保留占位符，供后续 corpus 的已解析文本按
                 # sampleId 替换；检索层会过滤占位符，不把它当作可模仿对白。
                 variants = [raw_text.strip()]
@@ -1015,6 +1065,8 @@ def _source_matches(candidate: object, source_mods: Iterable[str]) -> bool:
 def _behavior_source_matches(
     candidate_sources: object,
     source_mods: Iterable[str],
+    *,
+    npc_id: str = "",
 ) -> bool:
     """匹配行为示例来源，同时允许已确认的通用娘化样本回到 vanilla。"""
 
@@ -1029,6 +1081,11 @@ def _behavior_source_matches(
     ]
     if not candidates:
         return True
+    if (
+        any(source_family(candidate) == "femalebachelors" for candidate in candidates)
+        and not is_female_bachelor_eligible(npc_id)
+    ):
+        return False
     source_mod_list = [
         str(item).strip()
         for item in source_mods
@@ -1088,6 +1145,10 @@ _TOPIC_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("chicken", ("鸡舍", "小鸡", "鸡", "饲料", "农场")),
     ("vineyard", ("葡萄园", "葡萄", "酿酒", "酒", "藤架", "采摘")),
     ("painting", ("画画", "绘画", "画作", "作品", "颜色")),
+    (
+        "writing",
+        ("稿子", "稿", "写作", "写", "纸", "句子", "文字", "创作", "文章", "小说", "诗"),
+    ),
     ("research", ("研究", "实验", "符文", "数据", "记录", "图书馆")),
     ("weather", ("天气", "下雨", "雨天", "雨", "风", "晴天")),
     ("food", ("咖啡", "早餐", "午饭", "吃饭", "食物", "披萨", "鸡蛋")),
@@ -1293,7 +1354,8 @@ def _relationship_stage_matches(
         from .corpus import infer_dialogue_conditions
 
         actual = infer_dialogue_conditions(
-            "", str(record.get("sourceKey", ""))
+            str(record.get("sourcePath", "")),
+            str(record.get("sourceKey", "")),
         ).get("relationshipStage")
     if not isinstance(actual, str) or not actual.strip():
         return True
@@ -1301,6 +1363,15 @@ def _relationship_stage_matches(
     if requested == "parent":
         return actual in {"parent", "married"}
     if requested == "married":
+        if allow_lower_stage:
+            return actual in {
+                "stranger",
+                "acquaintance",
+                "friend",
+                "close",
+                "dating",
+                "married",
+            }
         return actual == "married"
     stage_rank = {
         "stranger": 0,
@@ -1329,6 +1400,10 @@ def _relationship_specificity_priority(
 ) -> int:
     """同阶段对白优先于没有阶段条件的特殊场景对白。"""
 
+    if _is_event_dialogue_record(record):
+        # 这里的事件素材已经通过 completed_event_ids 闸门；既然它是角色
+        # 真实经历，就应先于婚后/日常锚点进入窗口，随后仍由事件配额限量。
+        return 0
     requested = relationship_stage.strip().casefold()
     if not requested:
         return 0
@@ -1342,7 +1417,8 @@ def _relationship_specificity_priority(
         from .corpus import infer_dialogue_conditions
 
         actual = infer_dialogue_conditions(
-            "", str(record.get("sourceKey", ""))
+            str(record.get("sourcePath", "")),
+            str(record.get("sourceKey", "")),
         ).get("relationshipStage")
     if not isinstance(actual, str) or not actual.strip():
         return 1
@@ -1358,6 +1434,33 @@ def _evidence_priority(record: Mapping[str, Any]) -> int:
     """运行时实况优先于静态候选，但保留静态样本作为补充。"""
 
     return 0 if record.get("evidenceKind") == "runtime_dialogue" else 1
+
+
+def _is_event_dialogue_record(record: Mapping[str, Any]) -> bool:
+    return str(record.get("evidenceKind", "")).strip().casefold() == "event_dialogue"
+
+
+def _event_dialogue_is_completed(
+    record: Mapping[str, Any],
+    completed_event_ids: set[str],
+) -> bool:
+    """事件对白只能在游戏状态确认该事件后进入生成证据。"""
+
+    if not _is_event_dialogue_record(record):
+        return True
+    event_id = str(record.get("eventId", "")).strip().casefold()
+    if not event_id or not completed_event_ids:
+        return False
+    source_mod = str(record.get("sourceMod", "")).strip().casefold()
+    accepted = {event_id}
+    if source_mod:
+        accepted.add(f"{source_mod}:{event_id}")
+    return any(
+        completed == candidate
+        or completed.rsplit(":", 1)[-1] == candidate
+        for completed in completed_event_ids
+        for candidate in accepted
+    )
 
 
 def _dialogue_path_priority(record: Mapping[str, Any]) -> int:
@@ -1432,6 +1535,11 @@ def _is_model_evidence_record(record: Mapping[str, Any]) -> bool:
 def _dialogue_key_priority(record: Mapping[str, Any]) -> int:
     """同一文件内优先平日/关系短句，再取季节与事件台词。"""
 
+    if _is_event_dialogue_record(record):
+        # 已完成事件是角色真实经历的高代表性语料；它进入 speechEvidence
+        # 时排在普通日常之前，但由 _select_evidence_candidates 限量，
+        # 不让一整段剧情独占窗口。
+        return 0
     key = str(record.get("sourceKey", "")).strip().casefold()
     if _dialogue_path_priority(record) >= 4:
         return 5
@@ -1479,6 +1587,8 @@ def _dialogue_selection_key_priority(
 ) -> int:
     """泛日常生成时把覆盖层 Introduction 留给无普通日常对白的情况。"""
 
+    if _is_event_dialogue_record(record):
+        return -1
     if (
         _is_generic_small_talk_input(player_input)
         and str(record.get("sourceKey", "")).strip().casefold() == "introduction"
@@ -1509,35 +1619,60 @@ def _select_evidence_candidates(
             seen_texts.add(text)
         unique_ranked.append(item)
     ranked = unique_ranked
+
+    def bounded_event_results(
+        items: list[tuple[int, int, int, int, int, int, int, int, dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        event_cap = min(3, max(1, capped_limit // 3))
+        selected: list[dict[str, Any]] = []
+        event_count = 0
+        for item in items:
+            if _is_event_dialogue_record(item[8]):
+                if event_count >= event_cap:
+                    continue
+                event_count += 1
+            selected.append(item[8])
+            if len(selected) >= capped_limit:
+                break
+        return selected
+
     if any(item[0] < 0 for item in ranked):
         # 只要当前输入已经命中明确话题，就让话题相关性优先于来源配额。
         # 否则覆盖层的 Introduction 可能挤掉 vanilla 中真正回答“研究”、
         # “训练”等问题的日常对白，模型拿到的证据就会再次偏题。
-        return [item[8] for item in ranked[:capped_limit]]
+        return bounded_event_results(ranked)
     source_specific = [
         item for item in ranked
         # 候选元组已经保存了完整原记录的 key/path 优先级；这里不能再从
         # 为返回值裁剪过的 item[8] 读取 sourcePath，否则 style/speech 字段
         # 不含审计路径时会把所有覆盖层误判成普通路径。
         if _normalise_marker(item[8].get("sourceMod")) != "vanilla"
-        and item[4] <= 3
+        and (
+            item[4] <= 3
+            # 已完成事件是高代表性的经历素材，不能被来源配额在这里
+            # 直接筛掉；bounded_event_results 仍会限制它最多占窗口约三分之一。
+            or _is_event_dialogue_record(item[8])
+        )
         # path=3 也表示未提供路径的合成/旧索引记录；只要 key 仍是
         # 普通对白，就不能因为缺少审计路径而丢掉覆盖层的语气证据。
         # 事件/代码路径仍为 4，且 key 优先级会另外排除季节与特殊触发。
-        and item[5] <= 3
+        and (
+            item[5] <= 3
+            or _is_event_dialogue_record(item[8])
+        )
     ]
     vanilla_fallback = [
         item for item in ranked
         if _normalise_marker(item[8].get("sourceMod")) == "vanilla"
     ]
     if not source_specific or not vanilla_fallback:
-        return [item[8] for item in ranked[:capped_limit]]
+        return bounded_event_results(ranked)
 
     if len(ranked) <= capped_limit:
         # 即使候选总数没有超过窗口，也要让当前启用的覆盖层先于原版
         # 进入模型上下文；否则同样数量的 vanilla 日常样本会把覆盖层
         # 的语言风格推到原文证据之后。
-        return [item[8] for item in (source_specific + vanilla_fallback)]
+        return bounded_event_results(source_specific + vanilla_fallback)
 
     # 证据窗口不能被 vanilla 周对白完全占满；同时只预留少量覆盖层，
     # 避免事件/季节长文案完全替代原版的日常节奏。
@@ -1547,7 +1682,7 @@ def _select_evidence_candidates(
         selected.extend(source_specific[reserved:capped_limit - len(selected) + reserved])
     # 保留“先覆盖层、后 vanilla”的配额顺序。再次按完整排序键合并会让
     # 日常 vanilla 样本重新压过季节/事件形式的覆盖层证据。
-    return [item[8] for item in selected[:capped_limit]]
+    return bounded_event_results(selected)
 
 
 def _dialogue_condition_label(record: Mapping[str, Any]) -> str:
@@ -1559,9 +1694,43 @@ def _dialogue_condition_label(record: Mapping[str, Any]) -> str:
     from .corpus import infer_dialogue_conditions
 
     inferred_stage = infer_dialogue_conditions(
-        "", str(record.get("sourceKey", ""))
+        str(record.get("sourcePath", "")),
+        str(record.get("sourceKey", "")),
     ).get("relationshipStage", "").strip().casefold()
     return inferred_stage or "unconditional"
+
+
+def _normalise_dialogue_provenance(record: Mapping[str, Any]) -> dict[str, Any]:
+    """为旧派生索引补齐婚后对白的证据类型和阶段条件。"""
+
+    result = dict(record)
+    from .corpus import classify_dialogue_target, infer_dialogue_conditions
+
+    source_path = str(result.get("sourcePath", ""))
+    source_key = str(result.get("sourceKey", ""))
+    _, inferred_kind = classify_dialogue_target(source_path)
+    current_kind = str(result.get("evidenceKind", "")).strip().casefold()
+    if inferred_kind in {"marriage_dialogue", "roommate_dialogue"} and current_kind in {
+        "",
+        "dialogue",
+    }:
+        result["evidenceKind"] = inferred_kind
+    conditions = result.get("conditions")
+    has_stage = isinstance(conditions, Mapping) and any(
+        str(key).casefold() in {"relationshipstage", "relationship_stage"}
+        and isinstance(value, str)
+        and value.strip()
+        for key, value in conditions.items()
+    )
+    if not has_stage:
+        inferred_conditions = infer_dialogue_conditions(source_path, source_key)
+        if inferred_conditions:
+            merged_conditions = (
+                dict(conditions) if isinstance(conditions, Mapping) else {}
+            )
+            merged_conditions.update(inferred_conditions)
+            result["conditions"] = merged_conditions
+    return result
 
 
 def _representative_source_family(record: Mapping[str, Any]) -> str:
@@ -1614,7 +1783,7 @@ def _select_representative_dialogues(
         item
         for item in ranked
         if str(item[1].get("evidenceKind", "")).strip().casefold()
-        not in {"marriage_dialogue", "roommate_dialogue"}
+        not in {"marriage_dialogue", "roommate_dialogue", "event_dialogue"}
         and _is_model_evidence_record(item[1])
         and _dialogue_key_priority(item[1]) <= 3
     ]
@@ -1718,6 +1887,10 @@ class ProfileIndexStore:
         "sourceKey",
         "text",
         "evidenceKind",
+        "eventId",
+        "eventLineIndex",
+        "eventConditions",
+        "participants",
     )
     _EVENT_FIELDS = (
         "eventId",
@@ -1738,6 +1911,10 @@ class ProfileIndexStore:
         "text",
         "evidenceKind",
         "conditions",
+        "eventId",
+        "eventLineIndex",
+        "eventConditions",
+        "participants",
     )
     _REFERENCE_FIELDS = (
         "sampleId",
@@ -1748,6 +1925,10 @@ class ProfileIndexStore:
         "text",
         "evidenceKind",
         "conditions",
+        "eventId",
+        "eventLineIndex",
+        "eventConditions",
+        "participants",
     )
     _FACT_FIELDS = (
         "factId",
@@ -1879,40 +2060,77 @@ class ProfileIndexStore:
         capped_limit = max(0, min(int(limit), 8))
         if capped_limit == 0:
             return []
-        candidates: list[tuple[int, int, int, int, int, int, int, int, dict[str, Any]]] = []
-        for original_index, raw_sample in enumerate(self._index.get("styleSamples", [])):
-            if not isinstance(raw_sample, Mapping):
-                continue
-            if canonical_npc_id(raw_sample.get("npcId", "")).casefold() != canonical_id.casefold():
-                continue
-            if not _source_matches(raw_sample.get("sourceMod"), source_mods):
-                continue
-            if not _relationship_stage_matches(raw_sample, relationship_stage):
-                continue
-            text = raw_sample.get("text")
-            if not isinstance(text, str) or not text.strip():
-                continue
-            if has_dialogue_control_residue(text):
-                continue
-            if _UNRESOLVED_I18N.search(text):
-                # 原始索引保留模板供审计，但模板不是可模仿的实际台词。
-                continue
-            if not _is_model_evidence_record(raw_sample):
-                continue
-            candidates.append(
-                (
-                    -_evidence_topic_score(raw_sample, player_input),
-                    _relationship_specificity_priority(raw_sample, relationship_stage),
-                    _evidence_priority(raw_sample),
-                    _unrelated_magic_priority(raw_sample, player_input),
-                    _dialogue_selection_key_priority(raw_sample, player_input),
-                    _dialogue_path_priority(raw_sample),
-                    -_source_priority(raw_sample.get("sourceMod")),
-                    original_index,
-                    self._canonicalize_selected_npc(
-                        self._select_fields(raw_sample, self._STYLE_FIELDS)
-                    ),
+        source_mod_list = tuple(source_mods)
+
+        def collect_candidates(
+            *, allow_lower_stage: bool = False
+        ) -> list[tuple[int, int, int, int, int, int, int, int, dict[str, Any]]]:
+            candidates: list[
+                tuple[int, int, int, int, int, int, int, int, dict[str, Any]]
+            ] = []
+            for original_index, raw_sample in enumerate(
+                self._index.get("styleSamples", [])
+            ):
+                if not isinstance(raw_sample, Mapping):
+                    continue
+                raw_sample = _normalise_dialogue_provenance(raw_sample)
+                if (
+                    canonical_npc_id(raw_sample.get("npcId", "")).casefold()
+                    != canonical_id.casefold()
+                ):
+                    continue
+                if not _source_matches(raw_sample.get("sourceMod"), source_mod_list):
+                    continue
+                if not _relationship_stage_matches(
+                    raw_sample,
+                    relationship_stage,
+                    allow_lower_stage=allow_lower_stage,
+                ):
+                    continue
+                text = raw_sample.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    continue
+                if has_dialogue_control_residue(text):
+                    continue
+                if _UNRESOLVED_I18N.search(text):
+                    # 原始索引保留模板供审计，但模板不是可模仿的实际台词。
+                    continue
+                if not _is_model_evidence_record(raw_sample):
+                    continue
+                candidates.append(
+                    (
+                        -_evidence_topic_score(raw_sample, player_input),
+                        _relationship_specificity_priority(
+                            raw_sample, relationship_stage
+                        ),
+                        _evidence_priority(raw_sample),
+                        _unrelated_magic_priority(raw_sample, player_input),
+                        _dialogue_selection_key_priority(raw_sample, player_input),
+                        _dialogue_path_priority(raw_sample),
+                        -_source_priority(raw_sample.get("sourceMod")),
+                        original_index,
+                        self._canonicalize_selected_npc(
+                            self._select_fields(raw_sample, self._STYLE_FIELDS)
+                        ),
+                    )
                 )
+            return candidates
+
+        candidates = collect_candidates()
+        has_vanilla_base = any(
+            source_family(item[8].get("sourceMod")) == "vanilla"
+            for item in candidates
+        )
+        if not has_vanilla_base and any(
+            source_family(marker) == "vanilla" for marker in source_mod_list
+        ):
+            # 高关系阶段的覆盖层可能有婚后/家庭台词，但没有可用的日常
+            # 基底。此时只把 vanilla 的较早阶段日常对白作为语气回退，
+            # 保留当前阶段的覆盖层事实，不让覆盖层吞掉原版口吻。
+            candidates.extend(
+                item
+                for item in collect_candidates(allow_lower_stage=True)
+                if source_family(item[8].get("sourceMod")) == "vanilla"
             )
         return _select_evidence_candidates(candidates, capped_limit)
 
@@ -2036,6 +2254,7 @@ class ProfileIndexStore:
         relationship_stage: str = "",
         player_input: str = "",
         limit: int = 6,
+        completed_event_ids: Iterable[str] = (),
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
@@ -2052,6 +2271,11 @@ class ProfileIndexStore:
             raw_evidence = self._index.get("styleSamples", [])
         elif not isinstance(raw_evidence, list):
             raw_evidence = []
+        completed_keys = {
+            value.strip().casefold()
+            for value in completed_event_ids
+            if isinstance(value, str) and value.strip()
+        }
 
         def collect_candidates(
             *, allow_lower_stage: bool = False
@@ -2062,12 +2286,15 @@ class ProfileIndexStore:
             for original_index, raw_sample in enumerate(raw_evidence):
                 if not isinstance(raw_sample, Mapping):
                     continue
+                raw_sample = _normalise_dialogue_provenance(raw_sample)
                 if (
                     canonical_npc_id(raw_sample.get("npcId", "")).casefold()
                     != canonical_id.casefold()
                 ):
                     continue
                 if not _source_matches(raw_sample.get("sourceMod"), source_mods):
+                    continue
+                if not _event_dialogue_is_completed(raw_sample, completed_keys):
                     continue
                 if not _relationship_stage_matches(
                     raw_sample,
@@ -2205,7 +2432,11 @@ class ProfileIndexStore:
                 continue
             if canonical_npc_id(raw_example.get("npcId", "")).casefold() != canonical_id.casefold():
                 continue
-            if not _behavior_source_matches(raw_example.get("sourceMods"), source_mod_list):
+            if not _behavior_source_matches(
+                raw_example.get("sourceMods"),
+                source_mod_list,
+                npc_id=canonical_id,
+            ):
                 continue
             if not _behavior_dimension_matches(
                 raw_example, "relationshipStages", relationship_stage
@@ -2226,6 +2457,8 @@ class ProfileIndexStore:
         self,
         npc_id: str,
         source_mods: Iterable[str] = (),
+        *,
+        relationship_stage: str = "",
     ) -> dict[str, Any]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return {}
@@ -2233,6 +2466,7 @@ class ProfileIndexStore:
         if not isinstance(raw_cards, Mapping):
             return {}
         canonical_id = canonical_npc_id(npc_id)
+        source_mod_list = tuple(source_mods)
         matches: list[tuple[int, Mapping[str, Any]]] = []
         for raw_npc_id, raw_card in raw_cards.items():
             if canonical_npc_id(raw_npc_id).casefold() != canonical_id.casefold():
@@ -2247,7 +2481,7 @@ class ProfileIndexStore:
             raw_anchors = selected.get("voiceAnchors")
             if isinstance(raw_anchors, list):
                 requested_sources = [
-                    value for value in source_mods
+                    value for value in source_mod_list
                     if isinstance(value, str) and value.strip()
                 ]
                 specific: list[dict[str, Any]] = []
@@ -2268,6 +2502,94 @@ class ProfileIndexStore:
                 # 已启用的内容包对白优先于原版对白；原版仍作为补充，
                 # 避免只有少量覆盖层语料时语气锚点窗口为空。
                 selected["voiceAnchors"] = (specific + vanilla)[:8]
+            if str(relationship_stage).strip():
+                raw_evidence = self._index.get("speechEvidence")
+                schema_version = self._index.get("schemaVersion")
+                if "speechEvidence" not in self._index or (
+                    schema_version == 1 and not isinstance(raw_evidence, list)
+                ):
+                    raw_evidence = self._index.get("styleSamples", [])
+                if not isinstance(raw_evidence, list):
+                    raw_evidence = []
+                requested_sources = [
+                    value
+                    for value in source_mod_list
+                    if isinstance(value, str) and value.strip()
+                ]
+
+                def collect_stage_candidates(
+                    *, allow_nearby_stage: bool = False
+                ) -> list[dict[str, Any]]:
+                    stage_candidates: list[dict[str, Any]] = []
+                    requested = str(relationship_stage).strip().casefold()
+                    for raw_sample in raw_evidence:
+                        if not isinstance(raw_sample, Mapping):
+                            continue
+                        sample = _normalise_dialogue_provenance(raw_sample)
+                        if canonical_npc_id(sample.get("npcId", "")).casefold() != (
+                            canonical_id.casefold()
+                        ):
+                            continue
+                        if requested_sources and not source_matches(
+                            sample.get("sourceMod", ""), requested_sources
+                        ):
+                            continue
+                        if not _relationship_stage_matches(
+                            sample, str(relationship_stage)
+                        ):
+                            if not allow_nearby_stage or requested != "dating":
+                                continue
+                            conditions = sample.get("conditions")
+                            actual = (
+                                conditions.get(
+                                    "relationshipStage",
+                                    conditions.get("relationship_stage", ""),
+                                )
+                                if isinstance(conditions, Mapping)
+                                else ""
+                            )
+                            if not isinstance(actual, str) or actual.strip().casefold() not in {
+                                "stranger",
+                                "acquaintance",
+                                "friend",
+                                "close",
+                            }:
+                                continue
+                        stage_candidates.append(sample)
+                    return stage_candidates
+
+                def stage_label(sample: Mapping[str, Any]) -> str:
+                    conditions = sample.get("conditions")
+                    if not isinstance(conditions, Mapping):
+                        return ""
+                    value = conditions.get(
+                        "relationshipStage",
+                        conditions.get("relationship_stage", ""),
+                    )
+                    return value.strip().casefold() if isinstance(value, str) else ""
+
+                stage_candidates = collect_stage_candidates()
+                has_dating_stage = any(
+                    stage_label(item) in {"dating", "close", "friend", "acquaintance"}
+                    for item in stage_candidates
+                )
+                if not stage_candidates or (
+                    str(relationship_stage).strip().casefold() == "dating"
+                    and not has_dating_stage
+                ):
+                    # 某些索引没有 dating 或更近阶段原文；只在这时把
+                    # stranger 作为最后阶段回退，避免它压过 close/friend。
+                    stage_candidates = collect_stage_candidates(
+                        allow_nearby_stage=True
+                    )
+                stage_anchors = select_stage_voice_anchors(
+                    stage_candidates,
+                    npc_id=canonical_id,
+                    relationship_stage=str(relationship_stage),
+                    max_count=8,
+                )
+                if stage_anchors:
+                    selected["voiceAnchors"] = stage_anchors
             return selected
         return {}
 

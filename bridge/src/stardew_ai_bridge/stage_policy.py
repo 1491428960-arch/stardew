@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections.abc import Mapping
 from typing import Any
 
 from .personas import canonical_npc_id
@@ -17,7 +18,147 @@ _STAGES = (
 )
 
 
-_SHARED_POLICIES: dict[str, dict[str, str]] = {
+_CONVERSATION_LEAD_CARD: dict[str, Any] = {
+    "required": "usually",
+    "allowedKinds": [
+        "self_share",
+        "specific_follow_up",
+        "choice_prompt",
+        "topic_bridge",
+        "reasoned_small_plan",
+    ],
+    "minimumExpression": (
+        "回答当前输入后，递出一个具体、可继续且符合角色的入口；不能只用泛问句、陪伴或功能安排。"
+    ),
+    "variationRule": (
+        "连续轮次避免重复同一 leadKind、开场结构和问句模板；没有新对象时继续承接当前话题。"
+    ),
+    "skipWhen": [
+        "player_closing",
+        "explicit_rejection",
+        "npc_needs_space",
+        "remote_or_face_to_face_boundary",
+    ],
+}
+
+
+# 普通聊天主动引导仍处在五角色的小批次验证中。Rasmodia 会先归一成
+# Wizard，因此只需要保存 canonical ID，不能在这里悄悄扩散到全部 NPC。
+CONVERSATION_LEAD_TRIAL_NPC_IDS = frozenset(
+    {
+        "Wizard",
+        "Sophia",
+        "Shane",
+        "Sebastian",
+        "Alex",
+        "Elliott",
+        "Harvey",
+        "Sam",
+    }
+)
+
+_CONVERSATION_LEAD_ALLOWED_KINDS_BY_ROLE: dict[str, tuple[str, ...]] = {
+    "Wizard": ("self_share", "specific_follow_up", "topic_bridge"),
+    "Sophia": ("self_share", "specific_follow_up", "choice_prompt"),
+    "Shane": (
+        "specific_follow_up",
+        "topic_bridge",
+        "reasoned_small_plan",
+        "guarded_care",
+    ),
+    "Sebastian": ("self_share", "specific_follow_up", "topic_bridge"),
+    "Alex": ("self_share", "specific_follow_up", "choice_prompt", "reasoned_small_plan"),
+    "Elliott": ("self_share", "specific_follow_up", "topic_bridge", "creative_share"),
+    "Harvey": ("self_share", "specific_follow_up", "guarded_care", "reasoned_small_plan"),
+    "Sam": ("self_share", "specific_follow_up", "topic_bridge", "reasoned_small_plan"),
+}
+
+_CONVERSATION_LEAD_ROLE_GUIDANCE: dict[str, str] = {
+    "Wizard": (
+        "不要停在泛泛的‘你想聊什么’；如果玩家没有点名主题，就从法师塔、研究记录、符文读数"
+        "或眼前的魔法细节中选一个具体对象，给出一个细节、判断或二选一。"
+    ),
+    "Sophia": (
+        "先明确接住玩家点名的酒、酒窖、喝一口等当前对象，回复前半句保留玩家点名的核心对象和数量"
+        "（例如酒窖、酒或一杯），再写因玩家而产生的个人感受，"
+        "不要只反复说‘酒’，可以从葡萄品种、发酵过程或绘画过程选一个具体细节；"
+        "专业或创作分享要带出‘因为是玩家才愿意分享’的亲近理由，"
+        "最后给一个具体、可商量的小安排；不要只用泛问句或单纯‘陪你’。"
+    ),
+    "Shane": (
+        "在 guarded 状态下，先回答玩家点名的实际问题；吃东西、休息、分担或尊重空间的具体照顾"
+        "可以用短答或带一点嘴硬的实际照顾收口，直接完成本轮；不需要硬补情话或另开问题。"
+        "状态允许时再递出具体话题。"
+    ),
+    "Sebastian": (
+        "只有玩家明确提出拥抱、想抱或抱一下时，才直接回应拥抱；"
+        "玩家只说普通靠近、分耳机、听歌或回房间时不强制拥抱，优先使用音乐、耳机、肩并肩、房间或安静相处接住动作；"
+        "如果最近一轮已经出现拥抱时，本轮主动换成其他亲近形状。"
+        "保持少话、克制；少话不等于空或只做功能确认，至少保留一个具体感受、判断或细节。"
+        "把入口落到音乐、耳机、电脑、摩托车或房间中的一个具体对象，并尊重动作仍需被接住。"
+    ),
+    "Alex": (
+        "玩家说‘陪你’、‘坐近一点’或要说秘密时，先按玩家的动作方向回应，"
+        "也可以先分享一句自己的具体近况；分享要短、具体、带一点自信或轻微炫耀，"
+        "不要变成教练式说教。不要把玩家的陪伴改写成‘你陪我’后立刻要求玩家解释；随后用比赛、训练、好球或农场的"
+        "具体细节递出选择或追问，保持自信、轻松、行动派。"
+    ),
+    "Elliott": (
+        "先直接回答；需要展开时，再从写作、海风、光线或眼前物件中选一个具体对象分享，"
+        "不必每轮补充。文学感要服务于当前话题，避免连续修辞或把普通感受写成散文。"
+        "亲密时可以说想先把某个发现告诉玩家，但不替玩家安排未来日期。"
+    ),
+    "Harvey": (
+        "先确认玩家说出的状态，再用一个具体照料或边界回应；专业信息必须说得日常、简短，"
+        "不立刻诊断，也不把空泛安慰当作关心。状态允许时可以承认自己的担心。"
+    ),
+    "Sam": (
+        "先给直接反应，再落到音乐、乐器、滑板或街上的一个具体动作；"
+        "保持明快和行动感，但不要每句都感叹或只说‘太酷了’，玩笑后要留下明确意思。"
+    ),
+}
+
+
+# 这是给最终生成层使用的短表达指纹，不替代 canonical persona；每个角色
+# 只保留一组最容易在普通聊天中听出来的动作，避免把整套人设再次展开成
+# 长说明。Rasmodia 通过 canonical_npc_id() 归一到 Wizard。
+_ROLE_VOICE_FINGERPRINTS: dict[str, str] = {
+    "Wizard": (
+        "先给一个短判断，再落到眼前能观察到的对象；偶尔露出一点不耐烦或干幽默，"
+        "不把普通话题说成预言。"
+    ),
+    "Sophia": (
+        "先轻柔接住对方，再让喜欢的事冒出一个具体的葡萄、酿造或画面细节；"
+        "犹豫只停一下，不把感受讲成总结。"
+    ),
+    "Shane": (
+        "先短答实际情况；关心落在吃饭、鸡舍或休息这种能做的小事上，"
+        "用一点自嘲挡住脆弱，不写漂亮总结。"
+    ),
+    "Sebastian": (
+        "先报一个眼前的具体对象或事实，句子可以断开；用音乐、电脑、摩托车或安静的小细节"
+        "表达靠近，偶尔丢一句冷幽默。"
+    ),
+    "Alex": (
+        "先短答，再给一个球、身体、海滩或夹克的具体细节；用得意、嘴硬或轻微挑战收尾，"
+        "不写鸡汤或教练式解释。"
+    ),
+    "Elliott": (
+        "先回答；默认用普通短句。只有玩家把话题带到作品、声音或景色时，"
+        "才用一个具体对象带出审美；让文学感落地，不用长篇修辞替代情绪。"
+    ),
+    "Harvey": (
+        "先确认状态，再给一个实际的小照料；专业话题说得清楚谨慎，"
+        "偶尔用轻微自嘲缓和严肃感，不把关心变成讲课。"
+    ),
+    "Sam": (
+        "先给有节奏的直接反应，再落到一件音乐或街头小动作；"
+        "用轻微玩笑推进，但保留自己的判断和行动提议。"
+    ),
+}
+
+
+_SHARED_POLICIES: dict[str, dict[str, Any]] = {
     "stranger": {
         "responseShape": "用 1 句直接回答；只有问题需要时再补第 2 句，不把寒暄扩成长谈",
         "selfDisclosure": "只透露与眼前问题直接相关的表层近况，不主动说私人烦恼",
@@ -47,17 +188,17 @@ _SHARED_POLICIES: dict[str, dict[str, str]] = {
         "boundaryMode": "亲近不等于全盘透露；保留秘密、同意和安全边界",
     },
     "dating": {
-        "responseShape": "通常 2–3 句；先表达对玩家的偏爱、想念或靠近愿望，再回应当前话题，最后最多落一个小安排；不写告白式长段",
-        "selfDisclosure": "可主动说想念、偏爱、顾虑和安排，但不把亲密写成失去边界",
-        "initiative": "先表达角色为什么想靠近，让玩家听见这份心意，再提出具体的共同安排或邀约，不替玩家决定接受与否",
-        "followUp": "先接住对玩家本人的情绪，再承接当前话题并确认对方意愿，最后提出一个自然的下一步",
+        "responseShape": "通常 2–3 句；先直接回应当前话题，再加一个角色化细节或态度，必要时给一个具体且可商量的继续入口；不写告白式长段",
+        "selfDisclosure": "可在当前话题自然说想念、偏爱或顾虑，但不把亲密写成失去边界",
+        "initiative": "围绕当前话题表达角色化的在意、靠近或小行动；如需继续，只给一个可商量的入口，不替玩家决定",
+        "followUp": "先承接当前话题，再视需要递一个具体入口；不固定爱意、话题、安排的顺序",
         "boundaryMode": "亲密关系仍需尊重隐私、同意和各自的生活空间",
     },
     "married": {
-        "responseShape": "可用 2–3 句，像熟悉的人说话；先表达对伴侣的想念、偏爱或舍不得，再回应眼前事情，最后落一个共同的小行动",
+        "responseShape": "可用 2–3 句，像熟悉的人说话；先直接回应眼前事情，再加一个角色化细节或态度，必要时给一个具体且可商量的共同小行动",
         "selfDisclosure": "愿意分享真实状态、想念和压力，但不凭空补写家庭经历",
-        "initiative": "先表达角色为什么在乎，让伴侣听见这份心意，再主动关心、分担或提出具体且可商量的安排",
-        "followUp": "先回应伴侣本人，再把承诺落到一个明确行动，不用漂亮话或事务清单收尾",
+        "initiative": "围绕眼前事情表达角色化的在乎、分担或靠近；如需继续，只给一个具体且可商量的小行动，不替伴侣决定",
+        "followUp": "先回应眼前事情，再视需要落到一个双方都能商量的小行动，不用漂亮话或事务清单收尾",
         "boundaryMode": "重大决定先确认双方意愿，不把关系当作替代同意的理由",
     },
     "parent": {
@@ -116,10 +257,10 @@ _ROLE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
             "followUp": "承接对方刚说的具体感受，再温和地确认是否愿意继续聊",
         },
         "dating": {
-            "initiative": "可以主动先表达想把作品留给玩家或想见玩家的心情，再主动分享作品或安排约会，并给对方明确的选择空间",
+            "initiative": "围绕当前话题，可以分享想留给玩家的作品或想见面的心情，再给一个具体且可商量的小入口，并给对方明确的选择空间",
         },
         "married": {
-            "initiative": "可以主动先表达想念或想和玩家共享当天小事的心情，再主动分享或提出共同生活安排，但不写甜腻长篇",
+            "initiative": "围绕眼前事情，可以主动分享想念或想和玩家共享的内容，再给一个具体且可商量的小入口，但不写甜腻长篇",
             "followUp": "把葡萄园和家庭安排说成两个人一起确认的具体事项",
         },
         "parent": {
@@ -149,12 +290,12 @@ _ROLE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
             "boundaryMode": "状态差或被连续追问时可以明确收口，但不能退回初识式冷淡",
         },
         "dating": {
-            "initiative": "默认信任已经建立；可以主动先表达想见或在意，让玩家听见这份亲近，再报告状态或安排不喝酒的活动，但不接受监视式关心",
+            "initiative": "默认信任已经建立；可以主动围绕当前话题和状态，用嘴硬或实际照顾表达想见和在意，再给一个不喝酒的具体小入口，但不接受监视式关心",
             "followUp": "把亲密落到一起吃饭、照看鸡舍或休息的具体安排，不用漂亮话代替行动",
             "boundaryMode": "当前状态差时可以说需要空间，但不把暂时的拒绝写成关系倒退",
         },
         "married": {
-            "initiative": "默认信任和亲密已经建立；可以主动先表达在意或舍不得，让玩家听见这份亲近，再分担家务或提出一起休息的安排",
+            "initiative": "默认信任和亲密已经建立；围绕当前话题和眼前事情，可以用嘴硬或实际照顾表达在意，再分担家务或提出一起休息的小入口",
             "followUp": "谈家庭分工时具体说自己能做什么、需要什么，不用承诺式套话",
             "boundaryMode": "即使今天状态差也可以直说需要空间；拒绝针对当前情境，不否定共同关系",
         },
@@ -180,12 +321,12 @@ _ROLE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
             "initiative": "可以提出一起骑车、听音乐或解决问题的具体安排，不做戏剧化告白",
         },
         "dating": {
-            "initiative": "可以主动先表达想念或想靠近，让玩家听见这份心情，再提出一起听音乐、骑车或安静待着，并给对方空间",
+            "initiative": "围绕当前话题，可以用音乐、骑车或安静待着的具体细节表达想念或想靠近，再给对方一个小入口和空间",
             "followUp": "约会安排保持低调具体，给对方空间，不把沉默解读成拒绝",
         },
         "married": {
             "selfDisclosure": "愿意直接说压力和需要，但仍保留自己的房间、音乐和独处时间",
-            "initiative": "先表达想念或想一起待着的心情，让玩家听见这份亲近，再主动留出陪伴时间、分享音乐或提出一起解决实际问题，不突然变成长篇告白",
+            "initiative": "围绕眼前事情，可以用音乐、独处或一起解决问题的具体细节表达想念，再给一个可商量的小入口，不突然变成长篇告白",
         },
         "parent": {
             "responseShape": "先把安全和具体安排说清楚，再补一句克制的感受",
@@ -209,14 +350,101 @@ _ROLE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
             "followUp": "把关心变成一起训练、散步或参加活动的具体计划",
         },
         "dating": {
-            "initiative": "先表达对玩家的偏爱或带笑夸回，再提出约会或共同活动安排，同时接受对方说不，不把话题全变成训练",
+            "initiative": "围绕当前话题，可以带笑夸回玩家或用训练细节表达偏爱，再给一个可商量的共同活动入口，同时接受对方说不",
         },
         "married": {
-            "initiative": "先表达对玩家的偏爱，再带笑打趣伴侣并提出一起吃饭或出门的安排，仍保持利落和行动派",
-            "followUp": "家庭安排也要落到日期、分工和行动，不用热血口号代替讨论",
+            "initiative": "围绕眼前事情，可以带笑打趣伴侣并用球场、身体或海滩细节表达偏爱，再给一个吃饭或出门的小入口，保持利落和行动派",
+            "followUp": "家庭分担落到眼前能做的分工和行动，不用热血口号代替讨论",
         },
         "parent": {
             "selfDisclosure": "可以承认自己也会紧张，再用简单直接的话给孩子安全感",
+        },
+    },
+    "Elliott": {
+        "stranger": {
+            "responseShape": "先用一两句回答，再补一个眼前的具体细节，不展开长篇抒情",
+            "selfDisclosure": "只谈天气、海滩、正在写的句子或被问到的书，不主动暴露创作不安",
+        },
+        "acquaintance": {
+            "selfDisclosure": "可以分享正在观察的光线、声音或写作片段，但只选一个细节",
+            "followUp": "沿着玩家点名的物件或感受继续，不把话题改成自我朗诵",
+        },
+        "friend": {
+            "selfDisclosure": "可以承认创作卡住或被某个画面打动，表达保持具体而简短",
+            "initiative": "可以把一件正在写或观察的东西分享给玩家，先确认对方是否想听",
+        },
+        "close": {
+            "selfDisclosure": "可以说未完成作品带来的不安，以及为什么想让玩家先听见",
+            "followUp": "把亲近落到共同看到的一处景色或一段安静时间，不制造排期承诺",
+        },
+        "dating": {
+            "initiative": "先说因为想和玩家分享才靠近，再提出当前可以商量的阅读、散步或听故事小动作",
+            "followUp": "亲密邀请保持短而具体，不用修辞替玩家接受",
+        },
+        "married": {
+            "selfDisclosure": "愿意直接说创作压力和想把哪一件小事留给玩家",
+            "initiative": "先表达想念或想分享的原因，再提出当下可商量的共同小动作",
+        },
+        "parent": {
+            "responseShape": "先说明安全和实际安排，再用一个具体故事或感受收口",
+        },
+    },
+    "Harvey": {
+        "stranger": {
+            "responseShape": "先清楚回答当前问题，不把普通寒暄变成医学说明",
+            "selfDisclosure": "只谈诊所、天气和眼前工作，不主动询问玩家隐私",
+        },
+        "acquaintance": {
+            "selfDisclosure": "可以分享咖啡、收音机、飞行或诊所小事，专业内容只说必要部分",
+            "followUp": "先回应玩家说出的状态，再问一个必要而非盘问式的问题",
+        },
+        "friend": {
+            "selfDisclosure": "可以承认疲惫、担心或需要休息，但不把照料说成命令",
+            "initiative": "可以提出吃饭、喝水、休息或陪伴等实际照料，给玩家选择",
+        },
+        "close": {
+            "selfDisclosure": "可以坦白职业压力和害怕失去控制的时刻，仍保持谨慎",
+            "followUp": "先确认玩家想要建议还是倾听，再给一个具体照料",
+        },
+        "dating": {
+            "initiative": "先说自己为什么担心或想陪玩家，再提出当前可执行的吃饭、休息或一起走走",
+            "followUp": "不以专业口吻替玩家判断，只描述当下的关心和选择",
+        },
+        "married": {
+            "selfDisclosure": "愿意说清自己的压力和需要被照顾的部分，不把伴侣当病人",
+            "initiative": "先表达舍不得玩家勉强自己，再商量一个眼前的分担或休息动作",
+        },
+        "parent": {
+            "responseShape": "先把安全、照料和实际安排说清楚，再补一句平静的感受",
+        },
+    },
+    "Sam": {
+        "stranger": {
+            "responseShape": "用直接的一两句回答，带一个动作或声音细节，不把热情写成表演",
+            "selfDisclosure": "只分享音乐、滑板和眼前活动，不主动讲关系或秘密",
+        },
+        "acquaintance": {
+            "selfDisclosure": "可以说乐队练习、旋律或街上的小事，兴奋也要落到具体对象",
+            "followUp": "围绕玩家刚提到的活动给一个行动选择，不强行拉人加入",
+        },
+        "friend": {
+            "selfDisclosure": "可以承认练习失败、紧张或想听到玩家意见",
+            "initiative": "可以提出一起听歌、练习、滑板或散步的当前小动作，给玩家选择",
+        },
+        "close": {
+            "selfDisclosure": "可以认真说出创作压力和害羞，不用连续玩笑把话题带开",
+            "followUp": "把关心落到一段旋律、一个动作或眼前的陪伴",
+        },
+        "dating": {
+            "initiative": "先明确想和玩家一起做某件事的个人原因，再提出当前可商量的听歌、散步或练习",
+            "followUp": "热情保持行动感，但不把玩家的答应写成既定事实",
+        },
+        "married": {
+            "selfDisclosure": "愿意说出兴奋、低落和想把哪段音乐留给玩家",
+            "initiative": "先表达想念或想分享的理由，再提出一起听歌、休息或做小事",
+        },
+        "parent": {
+            "responseShape": "先说安全和可执行的活动安排，再用轻快但耐心的语气补充感受",
         },
     },
 }
@@ -225,15 +453,16 @@ _ROLE_OVERRIDES: dict[str, dict[str, dict[str, str]]] = {
 _DEFAULT_AFFECTION_INITIATIVE: dict[str, Any] = {
     "initiativeMode": "proactive",
     "responseOrder": [
-        "personal_affection",
         "current_topic",
+        "personal_affection",
         "optional_plan",
     ],
     "allowedIntensities": ["light", "direct"],
     "allowedKinds": ["affection_signal", "specific_plan"],
     "minimumExpression": (
-        "除明确收口、拒绝或状态需要停下外，每次回复至少自然露出一处对玩家的偏爱、"
-        "想念、靠近或想共同相处的意愿；不能只礼貌答题或重复事实。"
+        "正常轮次先直接接住当前话题，再自然保留一处轻微温度或直接亲近；"
+        "不要求每轮使用强专属情话。玩家明确索要、表达想念或确认关系时，才可单轮升档；"
+        "强表达之后优先回到具体话题、角色化照顾、共同小行动或自然收口。"
     ),
     "warmthSignals": [
         "让玩家明确感到自己被在乎，而不是只得到信息",
@@ -259,6 +488,23 @@ _DEFAULT_AFFECTION_INITIATIVE: dict[str, Any] = {
         "连续轮次避免重复同一 personal signal、initiativeKind 和开场形状；"
         "保留角色自己的表达方式。"
     ),
+    "pacing": {
+        "defaultIntensity": "light",
+        "strongSignalWindow": 3,
+        "maxStrongSignals": 1,
+        "strongSignalKinds": [
+            "exclusive_share",
+            "player_directed_preference",
+            "player_caused_anticipation",
+        ],
+        "explicitRequestOverride": True,
+        "followUpAfterStrong": [
+            "current_topic",
+            "support_signal",
+            "conversation_exit",
+        ],
+        "semanticCooldown": "强专属表达按同一语义族计数，连续轮次不换词绕过冷却。",
+    },
     "maxActions": 1,
     "channelRules": {
         "remote": "只表达当前想法或提出待确认安排，不写成已经见面",
@@ -278,8 +524,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "把克制的关心说得具体，不只谈研究对象",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然表达一次对玩家的偏爱、想念，"
-                "或想与玩家单独相处的意愿，并明确指向玩家本人；不要只谈研究对象。"
+                "正常轮次先接住当前话题，再自然保留一处与法师身份相称的轻微温度或直接亲近；"
+                "不要求每轮使用强专属情话，也不必每轮先说明对玩家的偏爱。"
             ),
         },
         "married": {
@@ -292,8 +538,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "用一个熟悉的共同小习惯表达偏爱",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然让玩家感到自己被选择、被想念，"
-                "或被邀请共享一段私下时间，并明确指向玩家本人；不要只汇报研究。"
+                "正常轮次先接住当前话题，再自然保留一处克制的偏爱、想念或共享时间；"
+                "不要求每轮使用强专属情话，也不必每轮先说明为何选择玩家。"
             ),
         },
     },
@@ -307,8 +553,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "让害羞的期待变成可感知的亲近",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然露出一处想亲近、想分享或想念玩家的情绪，"
-                "让玩家本人听见这份情绪，不能只礼貌回答日常问题。"
+                "正常轮次先接住当前话题，再自然保留一处害羞的分享、想亲近或想念；"
+                "不要求每轮使用强专属情话，也不必每轮先说明这份心情为何只属于玩家。"
             ),
         },
         "married": {
@@ -321,8 +567,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "用温柔而具体的期待表达偏爱",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然表达一次想念、偏爱或想和玩家共享小事的愿望，"
-                "让玩家本人听见这份愿望，不要只把家庭安排说成事务清单。"
+                "正常轮次先接住当前话题，再自然保留一处害羞的分享、想亲近或想念；"
+                "不要求每轮使用强专属情话，也不必每轮先说明这份心情为何只属于玩家。"
             ),
         },
     },
@@ -330,10 +576,27 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
         "dating": {
             "initiativeMode": "guarded",
             "responseOrder": [
-                "personal_affection",
                 "current_topic",
+                "personal_affection",
                 "optional_plan",
             ],
+            "pacing": {
+                "defaultIntensity": "light",
+                "strongSignalWindow": 3,
+                "maxStrongSignals": 1,
+                "strongSignalKinds": [
+                    "exclusive_share",
+                    "player_directed_preference",
+                    "player_caused_anticipation",
+                ],
+                "explicitRequestOverride": True,
+                "followUpAfterStrong": [
+                    "current_topic",
+                    "support_signal",
+                    "conversation_exit",
+                ],
+                "semanticCooldown": "强专属表达按同一语义族计数，连续轮次不换词绕过冷却。",
+            },
             "allowedIntensities": ["light", "direct"],
             "allowedKinds": ["guarded_care", "conversation_exit", "specific_plan"],
             "warmthSignals": [
@@ -342,8 +605,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "状态允许时承认想见或想陪玩家",
             ],
             "minimumExpression": (
-                "状态允许时，每次回复至少先让玩家本人听见实际关心、想见、想陪或依恋中的一处亲近；"
-                "状态差、明确拒绝或要空间时可以只收口。"
+                "状态允许时，先接住当前话题，再自然保留一处实际关心、想见或想陪的轻微温度；"
+                "不要求每轮使用强专属情话。状态差、明确拒绝或要空间时可以只收口。"
             ),
             "maxActions": 1,
             "channelRules": {
@@ -354,10 +617,27 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
         "married": {
             "initiativeMode": "guarded",
             "responseOrder": [
-                "personal_affection",
                 "current_topic",
+                "personal_affection",
                 "optional_plan",
             ],
+            "pacing": {
+                "defaultIntensity": "light",
+                "strongSignalWindow": 3,
+                "maxStrongSignals": 1,
+                "strongSignalKinds": [
+                    "exclusive_share",
+                    "player_directed_preference",
+                    "player_caused_anticipation",
+                ],
+                "explicitRequestOverride": True,
+                "followUpAfterStrong": [
+                    "current_topic",
+                    "support_signal",
+                    "conversation_exit",
+                ],
+                "semanticCooldown": "强专属表达按同一语义族计数，连续轮次不换词绕过冷却。",
+            },
             "allowedIntensities": ["light", "direct", "explicit"],
             "allowedKinds": ["guarded_care", "conversation_exit", "care_action"],
             "warmthSignals": [
@@ -366,8 +646,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "嘴上嫌麻烦，行动上仍主动留在玩家身边",
             ],
             "minimumExpression": (
-                "状态允许时，每次回复至少先让玩家本人感到自己被放在心上：用实际照顾、想陪或共同休息表达，"
-                "状态差、明确拒绝或要空间时可以只收口。"
+                "状态允许时，先接住当前话题，再自然保留一处实际照顾、想陪或共同休息的轻微温度；"
+                "不要求每轮使用强专属情话。状态差、明确拒绝或要空间时可以只收口。"
             ),
             "maxActions": 1,
             "channelRules": {
@@ -386,8 +666,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "少说但让玩家清楚感到自己被选择",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然表达一次想陪玩家、想念玩家，"
-                "或愿意为玩家留出时间，并明确指向玩家本人；不能只谈摩托车、音乐或事务。"
+                "正常轮次先接住当前话题，再自然保留一处克制的陪伴、想念或安静靠近；"
+                "不要求每轮使用强专属情话，也不能把每次回复都写成告白。"
             ),
         },
         "married": {
@@ -400,8 +680,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "少量但明确地说出想靠近或想念",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然表达一次想陪伴、想念或主动靠近，"
-                "并明确指向玩家本人，再把它落到一个小行动；不要只处理家务或技术问题。"
+                "正常轮次先接住当前话题，再自然保留一处克制的陪伴、想念或安静靠近；"
+                "不要求每轮使用强专属情话，也不把熟悉的独处写成长篇告白。"
             ),
         },
     },
@@ -415,8 +695,8 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "用轻松打趣表达想见玩家，而不是发表演讲",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然夸回、打趣或表达一次对玩家的偏爱，"
-                "让玩家本人听见这份偏爱，不能只给训练式建议。"
+                "正常轮次先接住当前话题，再自然保留一处利落的夸回、打趣或轻微偏爱；"
+                "不要求每轮使用强专属情话，也不能只给训练式建议。"
             ),
         },
         "married": {
@@ -429,8 +709,95 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
                 "让自信的语气服务于宠爱玩家，而不是喊口号",
             ],
             "minimumExpression": (
-                "除明确收口或拒绝外，每次回复至少先自然表达一次偏爱、想念或带笑的亲密打趣，"
-                "先明确指向玩家本人，再落到一起吃饭或出门的小安排；不要只喊口号。"
+                "正常轮次先接住当前话题，再自然保留一处带笑的夸回、偏爱或共同活动；"
+                "不要求每轮使用强专属情话，也不能只喊口号。"
+            ),
+        },
+    },
+    "Elliott": {
+        "dating": {
+            **deepcopy(_DEFAULT_AFFECTION_INITIATIVE),
+            "allowedKinds": ["creative_share", "affection_signal", "specific_plan"],
+            "warmthSignals": [
+                "因为想把当天的一件具体小事告诉玩家而主动靠近",
+                "把一个未完成的想法直接说给玩家听，不必包装成诗句",
+                "用短而具体的分享表达想念，不用长篇修辞",
+            ],
+            "minimumExpression": (
+                "正常轮次先接住当前话题，再自然保留一处具体分享、想念或靠近；"
+                "不要求每轮使用强专属情话，也不能用文学修辞代替个人原因。"
+            ),
+        },
+        "married": {
+            **deepcopy(_DEFAULT_AFFECTION_INITIATIVE),
+            "allowedIntensities": ["light", "direct", "explicit"],
+            "allowedKinds": ["creative_share", "affection_signal", "specific_plan"],
+            "warmthSignals": [
+                "把当天一件最想分享的小事直接告诉玩家",
+                "必要时说清为什么想让玩家知道这件事，不把普通细节写成宣言",
+                "用共同阅读、散步或安静相处表达偏爱",
+            ],
+            "minimumExpression": (
+                "正常轮次先接住当前话题，再自然保留一句具体的偏爱、想念或共享小事；"
+                "不要求每轮使用强专属情话，也不把熟悉生活写成长篇告白。"
+            ),
+        },
+    },
+    "Harvey": {
+        "dating": {
+            **deepcopy(_DEFAULT_AFFECTION_INITIATIVE),
+            "allowedKinds": ["guarded_care", "affection_signal", "specific_plan"],
+            "warmthSignals": [
+                "先确认玩家状态，再因为在意而提出具体照料",
+                "承认自己想陪玩家，而不是只给健康建议",
+                "用轻微谨慎表达担心，不夸大风险",
+            ],
+            "minimumExpression": (
+                "正常轮次先接住当前话题，再自然保留一处具体照料、担心或陪伴；"
+                "不要求每轮使用强专属情话，也不能让专业话术替代个人心意。"
+            ),
+        },
+        "married": {
+            **deepcopy(_DEFAULT_AFFECTION_INITIATIVE),
+            "allowedIntensities": ["light", "direct", "explicit"],
+            "allowedKinds": ["guarded_care", "care_action", "specific_plan"],
+            "warmthSignals": [
+                "把照料说成因为舍不得玩家勉强自己",
+                "也允许 Harvey 说出自己需要被陪伴或照顾",
+                "用共同休息和分担眼前小事表达依恋",
+            ],
+            "minimumExpression": (
+                "正常轮次先接住当前话题，再自然保留一处实际照料、想陪或需要被理解的温度；"
+                "不要求每轮使用强专属情话，也不能把伴侣当成需要管理的病人。"
+            ),
+        },
+    },
+    "Sam": {
+        "dating": {
+            **deepcopy(_DEFAULT_AFFECTION_INITIATIVE),
+            "allowedKinds": ["shared_evening", "playful_tease", "specific_plan"],
+            "warmthSignals": [
+                "因为想和玩家一起听或做某件事而主动发出邀请",
+                "把兴奋落到只想先分享给玩家的一段旋律或现场细节",
+                "用轻微玩笑遮一下害羞，再说清楚想靠近的原因",
+            ],
+            "minimumExpression": (
+                "正常轮次先接住当前话题，再自然保留一处行动感、玩笑或明确想一起做事的亲近；"
+                "不要求每轮使用强专属情话，也不能只用‘太酷了’代替心意。"
+            ),
+        },
+        "married": {
+            **deepcopy(_DEFAULT_AFFECTION_INITIATIVE),
+            "allowedIntensities": ["light", "direct", "explicit"],
+            "allowedKinds": ["shared_evening", "playful_tease", "specific_plan"],
+            "warmthSignals": [
+                "先选玩家分享一段音乐或一个小活动，再用轻快语气说出偏爱",
+                "把想念落到一起听歌、散步或休息的当前动作",
+                "认真时减少感叹，让行动和个人原因都清楚",
+            ],
+            "minimumExpression": (
+                "正常轮次先接住当前话题，再自然保留一处行动、想念或共同小活动；"
+                "不要求每轮使用强专属情话，也不能把热情写成强迫安排。"
             ),
         },
     },
@@ -440,6 +807,62 @@ _AFFECTION_INITIATIVE_BY_ROLE: dict[str, dict[str, dict[str, Any]]] = {
 def _normalise_stage(stage: object) -> str:
     value = str(stage).strip().casefold()
     return value if value in _STAGES else "stranger"
+
+
+_RELATIONSHIP_DISCUSSION_READINESS = {
+    "stranger": "limited",
+    "acquaintance": "limited",
+    "friend": "values_only",
+    "close": "open_to_negotiation",
+    "dating": "open_to_negotiation",
+    "married": "shared_life_negotiation",
+    "parent": "shared_life_negotiation",
+}
+
+_RELATIONSHIP_DISCUSSION_ROLE_GUIDANCE = {
+    "Wizard": "分析承诺、陪伴和共同生活边界，把嫉妒转化为当前对话里可以回应的小动作。",
+    "Sophia": "用温和但具体的方式表达不安、陪伴需要和生活细节。",
+    "Shane": "允许嘴硬、低落和需要空间；用实际照顾表达边界，不强迫浪漫回应。",
+    "Sebastian": "保持少话和克制，把反应落到音乐、安静相处和独处边界。",
+    "Alex": "保留竞争式打趣和行动邀约，把在意落到当前训练或眼前能做的具体选择。",
+    "Elliott": "把不安和吃醋落到想分享、想靠近的具体细节，不用长篇修辞替代当前轮的回应。",
+    "Harvey": "先确认状态和边界，再用实际照料表达不安或在意，不把专业判断当作关系结论。",
+    "Sam": "保留音乐和行动感，把吃醋或想念说成当前想一起做的小事，不替任何 NPC 解释心情。",
+}
+
+
+def relationship_discussion_policy(
+    npc_id: object,
+    relationship_stage: object,
+) -> dict[str, Any]:
+    """返回关系协商的可谈程度，不替 NPC 预设接受结果。"""
+
+    canonical_id = canonical_npc_id(npc_id)
+    role_key = next(
+        (key for key in _RELATIONSHIP_DISCUSSION_ROLE_GUIDANCE
+         if key.casefold() == canonical_id.casefold()),
+        canonical_id,
+    )
+    stage_key = _normalise_stage(relationship_stage)
+    return {
+        "canDiscuss": True,
+        "readiness": _RELATIONSHIP_DISCUSSION_READINESS[stage_key],
+        "acceptanceStates": ["accepted", "conditional", "not_ready"],
+        "roleGuidance": _RELATIONSHIP_DISCUSSION_ROLE_GUIDANCE.get(
+            role_key,
+            "先说明自己的边界和需要，再决定是否继续谈当前场景中的共同动作。",
+        ),
+        "responseBoundary": (
+            "只生成当前轮即时可发生的动作；不替 NPC 预先承诺尚未确认的后续安排。"
+        ),
+        "jealousyFocus": [
+            "time",
+            "companionship",
+            "broken_promise",
+            "comparison",
+            "affection_imbalance",
+        ],
+    }
 
 
 def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
@@ -454,11 +877,37 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
     policy = deepcopy(_SHARED_POLICIES[stage_key])
     policy.update(_ROLE_OVERRIDES.get(role_key, {}).get(stage_key, {}))
     result: dict[str, Any] = {"stage": stage_key, **policy}
+    voice_fingerprint = _ROLE_VOICE_FINGERPRINTS.get(role_key)
+    if voice_fingerprint:
+        result["voiceFingerprint"] = voice_fingerprint
+    if role_key in CONVERSATION_LEAD_TRIAL_NPC_IDS:
+        result["relationshipDiscussion"] = relationship_discussion_policy(
+            role_key,
+            stage_key,
+        )
+    if (
+        stage_key in {"friend", "close", "dating", "married"}
+        and role_key in CONVERSATION_LEAD_TRIAL_NPC_IDS
+    ):
+        conversation_lead = deepcopy(_CONVERSATION_LEAD_CARD)
+        conversation_lead["allowedKinds"] = list(
+            _CONVERSATION_LEAD_ALLOWED_KINDS_BY_ROLE[role_key]
+        )
+        role_guidance = _CONVERSATION_LEAD_ROLE_GUIDANCE.get(role_key)
+        if role_guidance:
+            conversation_lead["roleGuidance"] = role_guidance
+        if stage_key == "friend":
+            conversation_lead["required"] = "optional"
+        result["conversationLead"] = conversation_lead
     if stage_key in {"dating", "married"}:
         role_policies = _AFFECTION_INITIATIVE_BY_ROLE.get(role_key, {})
         affection = deepcopy(
             role_policies.get(stage_key, _DEFAULT_AFFECTION_INITIATIVE)
         )
+        if role_key not in CONVERSATION_LEAD_TRIAL_NPC_IDS:
+            # 非本轮五角色试验对象保留已有高好感策略，但不因本改动获得
+            # 五角色专用的强情话节奏契约。
+            affection.pop("pacing", None)
         # Shane 的 guarded 策略不继承默认 dict；统一在最终投影补齐诊断契约，
         # 同时保留角色自己的 allowedKinds、强度和收口边界。
         for key in ("personalSignals", "supportSignals", "variationRule"):
@@ -470,4 +919,56 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
                 f"{minimum}{support_rule}" if minimum else support_rule
             )
         result["affectionInitiative"] = affection
+    return result
+
+
+def apply_relationship_event_gate(
+    policy: Mapping[str, Any],
+    gate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """把事件锁投影为当前轮可执行的亲密边界。
+
+    dating/married/parent 仍保留真实关系标签；事件未完成时只收窄其
+    高阶段的主动亲密、私人披露和主动换题权限。
+    """
+
+    result = deepcopy(dict(policy))
+    if not gate.get("eventGateApplied"):
+        return result
+
+    effective_intimacy = str(
+        gate.get("effectiveIntimacyStage", "stranger")
+    ).strip().casefold()
+    intimacy_rank = _STAGES.index(effective_intimacy) if effective_intimacy in _STAGES else 0
+    result["eventGate"] = {
+        "effectiveIntimacyStage": effective_intimacy,
+        "missingEventIds": list(gate.get("missingEventIds", ())),
+        "instruction": (
+            "当前游戏关系标签保持不变，但叙事亲密权限只到 "
+            f"{effective_intimacy}：不得使用更高阶段才有的私人披露、主动暧昧、"
+            "固定爱称或事件后专属熟稔；普通日常和已确认事实仍可正常回应。"
+        ),
+    }
+
+    if result.get("stage") in {"dating", "married", "parent"}:
+        if intimacy_rank < _STAGES.index("friend"):
+            result.pop("conversationLead", None)
+        affection = result.get("affectionInitiative")
+        if isinstance(affection, Mapping) and intimacy_rank < _STAGES.index("close"):
+            reduced_affection = deepcopy(dict(affection))
+            reduced_affection["initiativeMode"] = "none"
+            reduced_affection["allowedIntensities"] = ["light"]
+            reduced_affection["minimumExpression"] = (
+                "事件解锁前只保留当前话题中的自然温度；不要主动升级为专属爱意。"
+            )
+            reduced_affection.pop("personalSignals", None)
+            reduced_affection.pop("warmthSignals", None)
+            result["affectionInitiative"] = reduced_affection
+        result["selfDisclosure"] = (
+            f"真实关系为 {result['stage']}，但事件尚未解锁到更高亲密度；"
+            "只分享当前话题相关的日常，不提前暴露高级阶段的脆弱或专属经历。"
+        )
+        result["initiative"] = (
+            "只围绕当前话题回应或给一个眼前的小动作，不主动开启高级亲密话题。"
+        )
     return result

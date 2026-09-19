@@ -1,0 +1,239 @@
+"""根据已完成的好感度事件计算可使用的叙事亲密度上限。
+
+游戏里的 friendship hearts 是数值状态，heart event 才是角色关系已经经历过的
+叙事证据。两者不一致时，回复不能直接使用最高心级的开放程度。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Iterable
+
+from .personas import canonical_npc_id
+
+
+HEART_STAGES = ("stranger", "acquaintance", "friend", "close")
+STATUS_STAGES = ("dating", "married", "parent")
+STAGE_RANK = {
+    "stranger": 0,
+    "acquaintance": 1,
+    "friend": 2,
+    "close": 3,
+    "dating": 4,
+    "married": 5,
+    "parent": 6,
+}
+
+
+@dataclass(frozen=True)
+class RelationshipEventGate:
+    """某个叙事阶段需要完成的事件链。"""
+
+    stage: str
+    required_event_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RelationshipGateResult:
+    """同时保留游戏真实关系状态和事件锁定后的亲密权限。"""
+
+    relationship_stage: str
+    heart_stage: str | None
+    effective_stage: str
+    effective_intimacy_stage: str
+    event_unlocked_stage: str | None
+    event_gate_configured: bool
+    event_gate_applied: bool
+    relationship_status_preserved: bool
+    missing_event_ids: tuple[str, ...]
+
+    def as_prompt_dict(self) -> dict[str, object]:
+        return {
+            "relationshipStage": self.relationship_stage,
+            "heartStage": self.heart_stage,
+            "effectiveStage": self.effective_stage,
+            "effectiveIntimacyStage": self.effective_intimacy_stage,
+            "eventUnlockedStage": self.event_unlocked_stage,
+            "eventGateConfigured": self.event_gate_configured,
+            "eventGateApplied": self.event_gate_applied,
+            "relationshipStatusPreserved": self.relationship_status_preserved,
+            "missingEventIds": list(self.missing_event_ids),
+        }
+
+
+# 这里只登记已从原版/SVE 事件条件核对过的节点。事件素材里存在的其他节点
+# 仍然可以作为 completedEventIds 门控素材，但不会被误当成关系阶段解锁条件。
+_EVENT_GATES: dict[str, tuple[RelationshipEventGate, ...]] = {
+    "Wizard": (
+        RelationshipEventGate("acquaintance", ("1000075",)),
+        RelationshipEventGate("friend", ("1000075", "1724096")),
+        RelationshipEventGate("close", ("1000075", "1724096", "1724097")),
+    ),
+    "Sophia": (
+        RelationshipEventGate("acquaintance", ("8185291",)),
+        RelationshipEventGate("friend", ("8185291", "8185292", "8185293")),
+        RelationshipEventGate("close", ("8185291", "8185292", "8185293", "8185295")),
+    ),
+    "Shane": (
+        RelationshipEventGate("acquaintance", ("611944",)),
+        RelationshipEventGate("friend", ("611944", "3910674", "3910975")),
+        RelationshipEventGate("close", ("611944", "3910674", "3910975", "3900074")),
+    ),
+    "Sebastian": (
+        RelationshipEventGate("acquaintance", ("2794460",)),
+        RelationshipEventGate("friend", ("2794460", "384883", "27")),
+        RelationshipEventGate("close", ("2794460", "384883", "27", "29")),
+    ),
+    "Alex": (
+        RelationshipEventGate("acquaintance", ("20",)),
+        RelationshipEventGate("friend", ("20", "2481135", "2119820")),
+        RelationshipEventGate("close", ("20", "2481135", "2119820", "288847")),
+    ),
+    "Elliott": (
+        RelationshipEventGate("acquaintance", ("39",)),
+        RelationshipEventGate("friend", ("39", "40", "423502")),
+        RelationshipEventGate("close", ("39", "40", "423502", "1848481")),
+    ),
+    "Harvey": (
+        RelationshipEventGate("acquaintance", ("56",)),
+        RelationshipEventGate("friend", ("56", "57", "58")),
+        RelationshipEventGate("close", ("56", "57", "58", "571102")),
+    ),
+}
+
+
+def _normalise_stage(value: object) -> str:
+    stage = str(value or "").strip().casefold()
+    return stage if stage in STAGE_RANK else "stranger"
+
+
+def _heart_stage(friendship_hearts: object) -> str | None:
+    if friendship_hearts is None or friendship_hearts == "":
+        return None
+    try:
+        hearts = int(friendship_hearts)
+    except (TypeError, ValueError):
+        return None
+    if hearts >= 8:
+        return "close"
+    if hearts >= 6:
+        return "friend"
+    if hearts >= 2:
+        return "acquaintance"
+    return "stranger"
+
+
+def _event_id_matches(required: str, completed: set[str]) -> bool:
+    required_key = required.strip().casefold()
+    return any(
+        value == required_key
+        or value.endswith(f":{required_key}")
+        for value in completed
+    )
+
+
+def relationship_event_gates(npc_id: object) -> tuple[RelationshipEventGate, ...]:
+    canonical_id = canonical_npc_id(npc_id)
+    return _EVENT_GATES.get(canonical_id, ())
+
+
+def resolve_relationship_gate(
+    npc_id: object,
+    *,
+    relationship_stage: object,
+    friendship_hearts: object,
+    completed_event_ids: Iterable[object] | None = None,
+) -> RelationshipGateResult:
+    """返回真实关系状态与事件解锁后的有效亲密权限。
+
+    对 dating/married/parent 不篡改关系标签，只降低其可使用的亲密权限；
+    对普通心级阶段则直接选择不超过事件上限的 stage profile。
+    """
+
+    raw_stage = _normalise_stage(relationship_stage)
+    heart_stage = _heart_stage(friendship_hearts)
+    gates = relationship_event_gates(npc_id)
+
+    # 没有 completedEventIds 只能说明调用方没有提供事件状态，不能推断为
+    # “事件全部未完成”；只有明确传入空列表时才启用事件锁。
+    if not gates or heart_stage is None or completed_event_ids is None:
+        return RelationshipGateResult(
+            relationship_stage=raw_stage,
+            heart_stage=heart_stage,
+            effective_stage=raw_stage,
+            effective_intimacy_stage=raw_stage,
+            event_unlocked_stage=None,
+            event_gate_configured=bool(gates),
+            event_gate_applied=False,
+            relationship_status_preserved=raw_stage in STATUS_STAGES,
+            missing_event_ids=(),
+        )
+
+    completed = {
+        str(value).strip().casefold()
+        for value in completed_event_ids
+        if str(value).strip()
+    }
+
+    # 数值达到二心但事件尚未发生时，仍允许普通的“二心前后”熟悉感，
+    # 但不得直接跳到更高阶段；低于二心则保持 stranger。
+    unlocked_stage = (
+        "acquaintance"
+        if STAGE_RANK[heart_stage] >= STAGE_RANK["acquaintance"]
+        else "stranger"
+    )
+    missing: tuple[str, ...] = ()
+    for gate in gates:
+        if STAGE_RANK[gate.stage] > STAGE_RANK[heart_stage]:
+            break
+        missing_for_gate = tuple(
+            event_id
+            for event_id in gate.required_event_ids
+            if not _event_id_matches(event_id, completed)
+        )
+        if missing_for_gate:
+            missing = missing_for_gate
+            break
+        unlocked_stage = gate.stage
+
+    if raw_stage in HEART_STAGES:
+        effective_stage = min(
+            (raw_stage, unlocked_stage),
+            key=lambda item: STAGE_RANK[item],
+        )
+        effective_intimacy_stage = effective_stage
+        status_preserved = False
+    else:
+        # 婚姻/恋爱是游戏事实，不因为缺事件而伪装成普通朋友；只限制
+        # 私人披露、主动亲密和高级事件式关系表达。
+        status_base = "close"
+        effective_intimacy_stage = min(
+            (status_base, heart_stage, unlocked_stage),
+            key=lambda item: STAGE_RANK[item],
+        )
+        effective_stage = raw_stage
+        status_preserved = True
+
+    if raw_stage in HEART_STAGES:
+        applied = effective_stage != raw_stage
+    else:
+        # dating/married/parent 用 close 作为最高的普通亲密基线；不能拿
+        # relationshipStage 本身和 close 比较，否则即使事件链全部完成，
+        # "married" 也会被误判成仍处于事件锁定状态。
+        unrestricted_intimacy = min(
+            ("close", heart_stage),
+            key=lambda item: STAGE_RANK[item],
+        )
+        applied = effective_intimacy_stage != unrestricted_intimacy
+
+    return RelationshipGateResult(
+        relationship_stage=raw_stage,
+        heart_stage=heart_stage,
+        effective_stage=effective_stage,
+        effective_intimacy_stage=effective_intimacy_stage,
+        event_unlocked_stage=unlocked_stage,
+        event_gate_configured=True,
+        event_gate_applied=applied,
+        relationship_status_preserved=status_preserved,
+        missing_event_ids=missing,
+    )

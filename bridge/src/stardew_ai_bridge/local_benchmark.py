@@ -124,6 +124,7 @@ DEFAULT_CASES: tuple[RasmodiaBenchmarkCase, ...] = (
         "最近的研究有什么进展吗？",
         "friend",
         friendship_hearts=6,
+        completed_event_ids=["1000075", "1724096"],
         expected_terms=(
             "研究",
             "进展",

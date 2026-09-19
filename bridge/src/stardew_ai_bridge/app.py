@@ -21,15 +21,23 @@ from .models import (
     ProviderResult,
     ProviderUsage,
 )
-from .personas import PersonaStore, canonical_npc_id
+from .personas import (
+    PersonaStore,
+    canonical_npc_id,
+    is_female_bachelor_eligible,
+)
 from .profile_index import ProfileIndexStore
 from .providers import FakeProvider, ProviderRouter
-from .prompts import ContextBuilder, PromptBuilder
-from .quality_results import load_latest_quality_run
+from .prompts import ContextBuilder, PromptBuilder, build_group_voice_cards
+from .quality_results import SAFE_SUITE_IDS, load_latest_quality_run
 from .dialogue_lab_page import (
     integrated_dialogue_lab_page,
 )
 from .dialogue_lab_session import DialogueLabSessionStore, normalize_session
+from .group_conversation import GroupConversationService
+from .group_dialogue_lab_page import group_dialogue_lab_page
+from .group_dialogue_review_page import group_dialogue_review_page
+from .models import GroupDialogueRequest, GroupDialogueResponse
 
 
 app = FastAPI(title="Stardew AI NPC Bridge")
@@ -69,6 +77,56 @@ profile_index_store = ProfileIndexStore(profile_index_path)
 context_builder = ContextBuilder(persona_store, profile_index_store)
 prompt_builder = PromptBuilder()
 response_guard = ResponseGuard()
+def _group_voice_cards(participants: list[object]) -> dict[str, dict[str, object]]:
+    """把群聊参与者映射成声线卡请求，复用单 NPC 的 persona / 索引管线。"""
+
+    return build_group_voice_cards(
+        context_builder,
+        [
+            {
+                "npcId": getattr(item, "npc_id", ""),
+                "displayName": getattr(item, "display_name", ""),
+                "sourceMods": list(getattr(item, "source_mods", ()) or ()),
+            }
+            for item in participants
+        ],
+    )
+
+
+def _group_participant_prompts(
+    participants: list[object],
+    request: object,
+) -> dict[str, list[dict[str, str]]]:
+    """为每个参与者生成与私聊同源的角色卡（走同一个 PromptBuilder）。"""
+
+    prompts: dict[str, list[dict[str, str]]] = {}
+    for item in participants:
+        npc_id = getattr(item, "npc_id", "")
+        if not npc_id:
+            continue
+        payload: dict[str, object] = {
+            "npcId": npc_id,
+            "message": getattr(request, "message", ""),
+            "sourceMods": list(getattr(item, "source_mods", ()) or ()),
+            "channel": getattr(request, "channel", "remote"),
+        }
+        game_state = getattr(item, "game_state", None) or getattr(
+            request, "game_state", None
+        )
+        if game_state is not None:
+            payload["gameState"] = game_state.model_dump(
+                by_alias=True, exclude_none=True
+            )
+        _, messages = _build_context(payload)
+        prompts[npc_id] = messages
+    return prompts
+
+
+group_conversation_service = GroupConversationService(
+    provider_router,
+    voice_card_provider=_group_voice_cards,
+    prompt_provider=_group_participant_prompts,
+)
 dialogue_lab_session_store = DialogueLabSessionStore(
     resolve_dialogue_session_path(os.environ.get("BRIDGE_DIALOGUE_SESSION_PATH"))
 )
@@ -84,8 +142,10 @@ _DIALOGUE_FIELDS = {
     "history",
     "gameState",
     "intent",
+    "compactPrompt",
     "channel",
     "itemContext",
+    "relationshipWorld",
 }
 
 
@@ -204,6 +264,24 @@ def list_npcs() -> dict[str, list[dict[str, object]]]:
                 if source_mod not in entry["sourceMods"]:
                     entry["sourceMods"].append(source_mod)
 
+    for entry in merged.values():
+        npc_id = entry.get("npcId")
+        source_mods = entry.get("sourceMods", [])
+        if not isinstance(npc_id, str) or not isinstance(source_mods, list):
+            continue
+        if not any(
+            isinstance(source_mod, str)
+            and source_mod.strip().casefold() == "female-bachelors"
+            for source_mod in source_mods
+        ):
+            continue
+        if not is_female_bachelor_eligible(npc_id):
+            continue
+        resolved_persona = persona_store.get_persona(npc_id, ["female-bachelors"])
+        display_name = resolved_persona.get("displayName")
+        if isinstance(display_name, str) and display_name.strip():
+            entry["displayName"] = display_name.strip()
+
     npcs = sorted(
         merged.values(),
         key=lambda item: (
@@ -223,8 +301,19 @@ def list_quality_cases(suite: str = "default") -> dict[str, object]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     source_by_suite = {
         "default": "character_quality_eval.DEFAULT_CASES",
+        "conversation-lead": "character_quality_eval.CONVERSATION_LEAD_CASES",
         "topic-start-intimacy": "topic_start_intimacy_cases.TOPIC_START_INTIMACY_CASES",
         "topic-start-adaptive": "topic_start_adaptive_cases.TOPIC_START_ADAPTIVE_CASES",
+        "affection-pacing": "affection_pacing_cases.AFFECTION_PACING_SUITE",
+        "relationship-world": "relationship_world_cases.RELATIONSHIP_WORLD_SUITE",
+        "deep-flirt": "deep_flirt_cases.DEEP_FLIRT_SUITE",
+        "deep-flirt-intimate": (
+            "deep_flirt_intimate_cases.DEEP_FLIRT_INTIMATE_SUITE"
+        ),
+        "topic-start-event-impact": "event_impact_cases.EVENT_IMPACT_CASES",
+        "relationship-stage-gating": (
+            "relationship_gating_cases.RELATIONSHIP_GATING_CASES"
+        ),
     }
     return {
         "schemaVersion": 1,
@@ -235,12 +324,15 @@ def list_quality_cases(suite: str = "default") -> dict[str, object]:
 
 
 @app.get("/api/quality/results")
-def list_quality_results() -> dict[str, object]:
+def list_quality_results(suite: str | None = None) -> dict[str, object]:
     """给案例浏览器读取最新脱敏评测结果，不暴露原始请求内容。"""
 
+    normalized_suite = suite.strip().casefold() if suite else None
+    if normalized_suite and normalized_suite not in SAFE_SUITE_IDS:
+        raise HTTPException(status_code=400, detail="未知质量评测套件")
     return {
         "source": "artifacts/character-quality-eval",
-        **load_latest_quality_run(quality_artifact_root),
+        **load_latest_quality_run(quality_artifact_root, normalized_suite),
     }
 
 
@@ -269,7 +361,11 @@ def get_raw_dialogue(npcId: str = "") -> dict[str, object]:
     return profile_index_store.dialogue_reference(npcId)
 
 
-def _build_context(payload: Mapping[str, object]) -> tuple[
+def _build_context(
+    payload: Mapping[str, object],
+    *,
+    compact_prompt: bool | None = None,
+) -> tuple[
     dict[str, object], list[dict[str, str]]
 ]:
     context_payload = dict(payload)
@@ -285,9 +381,19 @@ def _build_context(payload: Mapping[str, object]) -> tuple[
     player_input = payload.get("message", "")
     if is_topic_request:
         player_input = ""
+    runtime_compact = (
+        compact_prompt
+        if compact_prompt is not None
+        else payload.get("compactPrompt") is True
+    )
+    if runtime_compact:
+        # 这是给游戏端云端请求的内部标记，不进入模型上下文；质量评测的
+        # compact=True 仍沿用完整的评测卡片组合。
+        context["_runtime_compact"] = True
     prompt = prompt_builder.build(
         context,
         player_input if isinstance(player_input, str) else "",
+        compact=runtime_compact,
     )
     return context, prompt
 
@@ -334,6 +440,8 @@ def preview_context(payload: dict[str, object]) -> dict[str, object]:
     }
     if "interaction" in context:
         response["interaction"] = context["interaction"]
+    if "relationshipWorld" in context:
+        response["relationshipWorld"] = context["relationshipWorld"]
     for key in (
         "styleSamples",
         "speechEvidence",
@@ -372,10 +480,27 @@ def _validate_dialogue_request(payload: Mapping[str, object]) -> DialogueTestReq
         raise HTTPException(status_code=422, detail=detail) from exc
 
 
+def _validate_group_dialogue_request(
+    payload: Mapping[str, object],
+) -> GroupDialogueRequest:
+    try:
+        return GroupDialogueRequest.model_validate(payload)
+    except ValidationError as exc:
+        detail = [
+            {
+                "loc": error["loc"],
+                "msg": error["msg"],
+                "type": error["type"],
+            }
+            for error in exc.errors()
+        ]
+        raise HTTPException(status_code=422, detail=detail) from exc
+
+
 @app.post("/api/dialogue/test", response_model=DialogueResponse)
 def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     request = _validate_dialogue_request(payload)
-    _, prompt = _build_context(payload)
+    _, prompt = _build_context(payload, compact_prompt=request.compact_prompt)
     started_at = perf_counter()
     if (
         not provider_router.has_configured_upstream()
@@ -407,6 +532,7 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
                 update={
                     "reply": fallback_guarded.text,
                     "fallback": True,
+                    "open_loop": None,
                     "warnings": warnings,
                 }
             )
@@ -415,6 +541,7 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
                 update={
                     "reply": _SAFE_FALLBACK_REPLY,
                     "fallback": True,
+                    "open_loop": None,
                     "warnings": [
                         *warnings,
                         f"fallback_guard: {fallback_guarded.reason}",
@@ -436,4 +563,21 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         latencyMs=latency_ms,
         warnings=_limit_warnings(result.warnings),
         usage=_merge_provider_usages(item.usage for item in attempts),
+        openLoop=result.open_loop if not result.fallback else None,
     )
+
+
+@app.post("/api/dialogue/group", response_model=GroupDialogueResponse)
+def group_dialogue(payload: dict[str, object]) -> GroupDialogueResponse:
+    request = _validate_group_dialogue_request(payload)
+    return group_conversation_service.generate(request)
+
+
+@app.get("/test/group", response_class=HTMLResponse)
+def group_dialogue_lab() -> str:
+    return group_dialogue_lab_page()
+
+
+@app.get("/test/group/review", response_class=HTMLResponse)
+def group_dialogue_review(batch: str | None = None) -> str:
+    return group_dialogue_review_page(quality_artifact_root, batch=batch)
