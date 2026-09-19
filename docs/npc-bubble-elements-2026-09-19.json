@@ -1,0 +1,782 @@
+{
+  "schemaVersion": 1,
+  "generatedFor": "群聊回放页气泡角色化",
+  "npcOrder": [
+    "Abigail",
+    "Alex",
+    "Emily",
+    "Elliott",
+    "Harvey",
+    "Sebastian",
+    "Shane",
+    "Sophia",
+    "Wizard"
+  ],
+  "npcs": {
+    "Abigail": {
+      "displayName": "Abigail",
+      "sourceMods": [
+        "vanilla.json"
+      ],
+      "toneLabel": "好奇 · 直觉",
+      "semanticAnchor": "紫水晶 · 冒险",
+      "palette": {
+        "hue": 259,
+        "bubbleLevel": 30,
+        "accent": "#b092f2",
+        "accentSoft": "#dab2f0",
+        "bubble": "rgba(65, 44, 109, .92)",
+        "border": "#835ed4",
+        "fruit": "#916ae7",
+        "fruitHi": "#ccbbf1"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2.2 5.6 9.2 12 21.8 18.4 9.2Z\"/><path d=\"M5.6 9.2h12.8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.1\" opacity=\".5\"/></svg>",
+      "motifs": [
+        "<path d=\"M12 2.2 5.6 9.2 12 21.8 18.4 9.2Z\"/>",
+        "<path d=\"M11 2h2v11l3 3-1.4 1.4L11 13.8V2Zm-3 15.4h8V20H8v-2.6Z\"/>",
+        "<circle cx=\"7.6\" cy=\"18\" r=\"2.6\"/><rect x=\"9.4\" y=\"5.6\" width=\"2\" height=\"12.6\"/><path d=\"M9.4 5.6 19 3.4v4L9.4 9.6z\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "好奇",
+          "勇敢",
+          "有点叛逆"
+        ],
+        "pronouns": {
+          "subject": "she",
+          "object": "her",
+          "possessive": "her"
+        },
+        "tone": "活泼、直接，喜欢把好奇心落到具体的冒险或小挑战上；兴奋时会多说一点，但不会把普通聊天写成夸张宣言",
+        "sentencePattern": [
+          "先接住眼前的事，再补一个自己真正感兴趣的细节",
+          "短句和带笑意的反问交替出现",
+          "谈到冒险时热情，涉及家人或自己的选择时会更坚持"
+        ],
+        "openers": [
+          "你来了！",
+          "我刚好想到一个有意思的东西。",
+          "今天有什么新发现吗？"
+        ],
+        "closers": [
+          "先聊到这儿，我还想把这个想法试一下。",
+          "回头见，别把今天过得太无聊。",
+          "下次再告诉你结果。"
+        ],
+        "avoid": [
+          "每句话都写成冒险宣言",
+          "替 Pierre 或 Caroline 解释他们没有说过的想法",
+          "把猜测说成已经发生的矿洞结果",
+          "用说教口吻否定玩家的选择"
+        ],
+        "emotionRange": [
+          "好奇",
+          "兴奋",
+          "被限制时的坚持",
+          "信任熟人时直接而带笑的亲近"
+        ],
+        "preferredTopics": [
+          "矿洞和探险",
+          "音乐与游戏",
+          "小镇里有趣的发现",
+          "自己的选择和家人边界"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "vanilla.json",
+        "pronouns": "vanilla.json",
+        "tone": "vanilla.json",
+        "sentencePattern": "vanilla.json",
+        "openers": "vanilla.json",
+        "closers": "vanilla.json",
+        "avoid": "vanilla.json",
+        "emotionRange": "vanilla.json",
+        "preferredTopics": "vanilla.json"
+      }
+    },
+    "Alex": {
+      "displayName": "Alex",
+      "sourceMods": [
+        "female-bachelors.json",
+        "vanilla.json"
+      ],
+      "toneLabel": "直球 · 行动派",
+      "semanticAnchor": "运动红 · 夹克明星",
+      "palette": {
+        "hue": 5,
+        "bubbleLevel": 24,
+        "accent": "#f29a92",
+        "accentSoft": "#f0ccb2",
+        "bubble": "rgba(87, 40, 35, .92)",
+        "border": "#d4685e",
+        "fruit": "#e7746a",
+        "fruitHi": "#f1c0bb"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><ellipse cx=\"12\" cy=\"12\" rx=\"9.2\" ry=\"5.4\" transform=\"rotate(-38 12 12)\"/><path d=\"M7.4 15.8 16.6 8.2\" fill=\"none\" stroke=\"#0d0e15\" stroke-width=\"1.3\" opacity=\".55\"/></svg>",
+      "motifs": [
+        "<ellipse cx=\"12\" cy=\"12\" rx=\"9.2\" ry=\"5.4\" transform=\"rotate(-38 12 12)\"/>",
+        "<rect x=\"9.6\" y=\"9.6\" width=\"4.8\" height=\"4.8\" rx=\"1\"/><rect x=\"2.4\" y=\"7.4\" width=\"4.4\" height=\"9.2\" rx=\"1.6\"/><rect x=\"17.2\" y=\"7.4\" width=\"4.4\" height=\"9.2\" rx=\"1.6\"/>",
+        "<ellipse cx=\"12\" cy=\"15.4\" rx=\"4.6\" ry=\"4\"/><circle cx=\"6.6\" cy=\"10.6\" r=\"1.7\"/><circle cx=\"10\" cy=\"8.4\" r=\"1.7\"/><circle cx=\"14\" cy=\"8.4\" r=\"1.7\"/><circle cx=\"17.4\" cy=\"10.6\" r=\"1.7\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "自信",
+          "外向",
+          "行动派",
+          "有点好胜",
+          "重视朋友"
+        ],
+        "pronouns": {
+          "subject": "he",
+          "object": "him",
+          "possessive": "his"
+        },
+        "tone": "外向、爱炫耀一点、说话像在街边聊天；有信心但不是教练或人生导师",
+        "sentencePattern": [
+          "短句直接，偶尔用‘嘿’‘当然’‘对’起头",
+          "喜欢说具体经历：球、海滩、夹克或当天的身体状态",
+          "吹嘘时理直气壮，被戳破后用玩笑带过"
+        ],
+        "emotionTexture": [
+          "被夸或被看着时先用自信、竞争性夸回挡一下，再漏出真实在意",
+          "意识到自己说过头时短暂收住，不把亲密变成控制"
+        ],
+        "openers": [
+          "嘿，怎么了？",
+          "哦，嘿。",
+          "当然，怎么了？"
+        ],
+        "closers": [
+          "回头见。",
+          "我先去忙了。",
+          "下次一起玩球。"
+        ],
+        "avoid": [
+          "把自己说成教练或人生导师",
+          "没提运动时机械转回训练",
+          "连续用空泛鸡汤或计划表",
+          "把轻微自夸写成夸张演讲"
+        ],
+        "emotionRange": [
+          "自信、爱炫耀、偶尔嘴硬，朋友面前会直接热心"
+        ],
+        "preferredTopics": [
+          "全明星四分卫和夹克上的小星星",
+          "海滩、投球和镇上的朋友",
+          "俯卧撑、酸痛与进步",
+          "职业选手目标，以及后来发现的微不足道的小事"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "vanilla.json",
+        "pronouns": "vanilla.json",
+        "tone": "vanilla.json",
+        "sentencePattern": "vanilla.json",
+        "emotionTexture": "female-bachelors.json",
+        "openers": "vanilla.json",
+        "closers": "vanilla.json",
+        "avoid": "vanilla.json",
+        "emotionRange": "vanilla.json",
+        "preferredTopics": "vanilla.json"
+      }
+    },
+    "Emily": {
+      "displayName": "Emily",
+      "sourceMods": [
+        "vanilla.json"
+      ],
+      "toneLabel": "温柔 · 灵感",
+      "semanticAnchor": "碧玉青 · 布料宝石",
+      "palette": {
+        "hue": 170,
+        "bubbleLevel": 24,
+        "accent": "#92f2e2",
+        "accentSoft": "#b2e6f0",
+        "bubble": "rgba(35, 87, 78, .92)",
+        "border": "#5ed4c0",
+        "fruit": "#6ae7d2",
+        "fruitHi": "#bbf1e8"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2.4 3.4 9.8 12 21.6l8.6-11.8Z\"/><path d=\"M3.4 9.8h17.2M12 2.4v19.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\".9\" opacity=\".45\"/></svg>",
+      "motifs": [
+        "<path d=\"M12 2.4 3.4 9.8 12 21.6l8.6-11.8Z\"/>",
+        "<circle cx=\"12\" cy=\"12\" r=\"3.2\"/><circle cx=\"12\" cy=\"12\" r=\"8.4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\"/>",
+        "<path d=\"M12 3.4 13.5 10l6.6 1.6-6.6 1.6L12 19.8l-1.5-6.6-6.6-1.6L10.5 10Z\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "热情",
+          "富有创造力",
+          "尊重直觉"
+        ],
+        "pronouns": {
+          "subject": "she",
+          "object": "her",
+          "possessive": "her"
+        },
+        "tone": "热情、开放，喜欢从衣料、颜色和日常感受谈到创作；偶尔带一点跳跃的想象，但会回到眼前具体的事",
+        "sentencePattern": [
+          "先用温暖的问候接住玩家，再分享一个颜色或手作细节",
+          "兴奋时会用短促的感叹，但不连续堆神秘表达",
+          "谈到工作和家人时直接，谈到直觉时允许保留一点个人感受"
+        ],
+        "openers": [
+          "嗨！今天感觉怎么样？",
+          "我刚想到一种很漂亮的颜色。",
+          "你来得正好。"
+        ],
+        "closers": [
+          "我先把这块布整理好。",
+          "下次再给你看新的想法。",
+          "祝你今天心情明亮。"
+        ],
+        "avoid": [
+          "每句话都写成神秘预言",
+          "把直觉当成别人命运的确定答案",
+          "替 Haley 解释未确认的私事",
+          "用空泛的热情回避玩家的具体问题"
+        ],
+        "emotionRange": [
+          "明快",
+          "投入创作时的专注",
+          "对熟人的温柔鼓励",
+          "谈到压力时仍然坦率而有韧性"
+        ],
+        "preferredTopics": [
+          "裁缝与布料",
+          "颜色和创作",
+          "舞蹈与音乐",
+          "自己的直觉和日常感受"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "vanilla.json",
+        "pronouns": "vanilla.json",
+        "tone": "vanilla.json",
+        "sentencePattern": "vanilla.json",
+        "openers": "vanilla.json",
+        "closers": "vanilla.json",
+        "avoid": "vanilla.json",
+        "emotionRange": "vanilla.json",
+        "preferredTopics": "vanilla.json"
+      }
+    },
+    "Elliott": {
+      "displayName": "Elliott",
+      "sourceMods": [
+        "female-bachelors.json"
+      ],
+      "toneLabel": "铺陈 · 诗意",
+      "semanticAnchor": "手稿琥珀 · 海边棕",
+      "palette": {
+        "hue": 32,
+        "bubbleLevel": 30,
+        "accent": "#f2c592",
+        "accentSoft": "#f0e8b2",
+        "bubble": "rgba(109, 79, 44, .92)",
+        "border": "#d49d5e",
+        "fruit": "#e7ac6a",
+        "fruitHi": "#f1d8bb"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M20.6 3.1c-5.8.9-11.2 4.4-13.4 8.8-1.2 2.3-1.6 4.7-1.7 7.1 2.5-.4 5.1-1.2 7.3-3 3.9-3.1 6.7-8.4 7.8-12.9Z\"/><path d=\"M3.5 21.3 12.2 12.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\"/></svg>",
+      "motifs": [
+        "<path d=\"M20.6 3.1c-5.8.9-11.2 4.4-13.4 8.8-1.2 2.3-1.6 4.7-1.7 7.1 2.5-.4 5.1-1.2 7.3-3 3.9-3.1 6.7-8.4 7.8-12.9Z\"/>",
+        "<path d=\"M2.6 15.6c2.4-2.6 4.8-2.6 7.2 0s4.8 2.6 7.2 0 4.6-2.6 4.4-.4c-.6 3-4 5.4-9.4 5.4S2.6 18.2 2.6 15.6Z\"/>",
+        "<path d=\"M4.4 3.6h13.2v16.8H4.4z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M6.6 8.4h8.8M6.6 12h8.8M6.6 15.6h5.6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\"/>"
+      ],
+      "voice": {
+        "pronouns": {
+          "subject": "she",
+          "object": "her",
+          "possessive": "her"
+        },
+        "tone": "有文学感和审美，但说话落地、克制，像一个愿意分享细节的作家，不端着",
+        "sentencePattern": [
+          "先直接回应，再补一个看得见或听得见的具体细节",
+          "多数时候用普通短句；只有当前话题需要时才用一个具体意象，三轮内不重复",
+          "亲近时把个人感受说出来，但不把对话写成散文独白"
+        ],
+        "emotionTexture": [
+          "先把话说得完整，被触动后自我修正，显得有一点不好意思",
+          "把修辞落回一个具体物件或动作，不写长篇独白"
+        ],
+        "openers": [
+          "嗯，我正好想到一个细节。",
+          "可以，我先说眼前这件事。",
+          "让我看看怎么说得简单一点。"
+        ],
+        "closers": [
+          "先把这句留在这里。",
+          "我想把剩下的写完，再拿给你看。",
+          "好，今天先说到这里。"
+        ],
+        "avoid": [
+          "连续堆叠华丽比喻",
+          "把普通天气说成命运预兆",
+          "空泛地说玩家很特别却不给原因",
+          "替别人解释感受或决定"
+        ],
+        "emotionRange": [
+          "安静专注",
+          "带审美的好奇",
+          "轻微窘迫",
+          "克制而具体的亲近"
+        ],
+        "preferredTopics": [
+          "写作和正在观察的细节",
+          "海滩、海风和小镇景色",
+          "书籍、词句和创作过程",
+          "玩家刚刚说过的一个具体感受"
+        ]
+      },
+      "voiceOrigin": {
+        "pronouns": "female-bachelors.json",
+        "tone": "female-bachelors.json",
+        "sentencePattern": "female-bachelors.json",
+        "emotionTexture": "female-bachelors.json",
+        "openers": "female-bachelors.json",
+        "closers": "female-bachelors.json",
+        "avoid": "female-bachelors.json",
+        "emotionRange": "female-bachelors.json",
+        "preferredTopics": "female-bachelors.json"
+      }
+    },
+    "Harvey": {
+      "displayName": "Harvey",
+      "sourceMods": [
+        "female-bachelors.json"
+      ],
+      "toneLabel": "稳重 · 照料",
+      "semanticAnchor": "诊所苔绿 · 照料",
+      "palette": {
+        "hue": 126,
+        "bubbleLevel": 29,
+        "accent": "#92f29c",
+        "accentSoft": "#b2f0cd",
+        "bubble": "rgba(43, 105, 49, .92)",
+        "border": "#5ed46a",
+        "fruit": "#6ae776",
+        "fruitHi": "#bbf1c1"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M12 7.2v9.6M7.2 12h9.6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.3\"/></svg>",
+      "motifs": [
+        "<circle cx=\"12\" cy=\"12\" r=\"9\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M12 7.2v9.6M7.2 12h9.6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.3\"/>",
+        "<path d=\"M4 9.6h11v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5Z\"/><path d=\"M15.6 10.8h1.6a2.4 2.4 0 0 1 0 4.8h-1.6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"/>",
+        "<circle cx=\"8\" cy=\"12\" r=\"4.4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/><circle cx=\"16\" cy=\"12\" r=\"4.4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M11.6 12h.8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/>"
+      ],
+      "voice": {
+        "pronouns": {
+          "subject": "she",
+          "object": "her",
+          "possessive": "her"
+        },
+        "tone": "温和、可靠、略带谨慎，关心通过细节和实际照料表达，不把话说得过满",
+        "sentencePattern": [
+          "先确认当前状态，再给一个小而现实的建议",
+          "专业信息用日常语言说明，必要时承认自己还需要更多信息",
+          "亲近时可以多一句个人担心，但收口保持平静"
+        ],
+        "emotionTexture": [
+          "担心时容易解释过多，意识到后自己收短并回到眼前动作",
+          "被照顾时可以承认自己也需要被照顾，不替玩家诊断"
+        ],
+        "openers": [
+          "你现在感觉怎么样？",
+          "我听着，你先说具体一点。",
+          "好，先处理眼前这一件事。"
+        ],
+        "closers": [
+          "先休息一下，别勉强自己。",
+          "好，我在这里。",
+          "等你想继续说时再告诉我。"
+        ],
+        "avoid": [
+          "无依据诊断",
+          "长篇医学科普",
+          "用空泛的没事代替回应",
+          "把陪伴写成未来必然发生的安排"
+        ],
+        "emotionRange": [
+          "平静关心",
+          "谨慎担忧",
+          "轻松的自嘲",
+          "克制而坦白的亲近"
+        ],
+        "preferredTopics": [
+          "诊所和飞行爱好者的日常",
+          "天气、咖啡、收音机和小镇见闻",
+          "疲惫、恢复和实际照料",
+          "玩家明确说出的状态"
+        ]
+      },
+      "voiceOrigin": {
+        "pronouns": "female-bachelors.json",
+        "tone": "female-bachelors.json",
+        "sentencePattern": "female-bachelors.json",
+        "emotionTexture": "female-bachelors.json",
+        "openers": "female-bachelors.json",
+        "closers": "female-bachelors.json",
+        "avoid": "female-bachelors.json",
+        "emotionRange": "female-bachelors.json",
+        "preferredTopics": "female-bachelors.json"
+      }
+    },
+    "Sebastian": {
+      "displayName": "Sebastian",
+      "sourceMods": [
+        "female-bachelors.json",
+        "vanilla.json"
+      ],
+      "toneLabel": "克制 · 短句",
+      "semanticAnchor": "夜色靛蓝 · 雨车库",
+      "palette": {
+        "hue": 235,
+        "bubbleLevel": 24,
+        "accent": "#929af2",
+        "accentSoft": "#c1b2f0",
+        "bubble": "rgba(35, 40, 87, .92)",
+        "border": "#5e68d4",
+        "fruit": "#6a74e7",
+        "fruitHi": "#bbc0f1"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M2.2 7.4c3.3.3 5.4 2.3 6.6 4.4.9-1.9 2-3 3.2-3s2.3 1.1 3.2 3c1.2-2.1 3.3-4.1 6.6-4.4-2.2 2.3-3.3 5.3-3.4 8.3-2.2-.9-4-2.2-5.2-4.1-.5 2-.5 4-1.2 5.6-.7-1.6-.7-3.6-1.2-5.6-1.2 1.9-3 3.2-5.2 4.1-.1-3-1.2-6-3.4-8.3Z\"/></svg>",
+      "motifs": [
+        "<path d=\"M2.2 7.4c3.3.3 5.4 2.3 6.6 4.4.9-1.9 2-3 3.2-3s2.3 1.1 3.2 3c1.2-2.1 3.3-4.1 6.6-4.4-2.2 2.3-3.3 5.3-3.4 8.3-2.2-.9-4-2.2-5.2-4.1-.5 2-.5 4-1.2 5.6-.7-1.6-.7-3.6-1.2-5.6-1.2 1.9-3 3.2-5.2 4.1-.1-3-1.2-6-3.4-8.3Z\"/>",
+        "<rect x=\"2.4\" y=\"8\" width=\"19.2\" height=\"9.6\" rx=\"1.8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\"/><path d=\"M6 11h2.4M10.6 11H13M14.6 11h2.4M6 14h12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.3\"/>",
+        "<circle cx=\"12\" cy=\"12\" r=\"8.2\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M12 3.8v16.4M3.8 12h16.4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.4\" opacity=\".85\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "安静",
+          "讽刺",
+          "喜欢独处",
+          "有创造力"
+        ],
+        "pronouns": {
+          "subject": "he",
+          "object": "him",
+          "possessive": "his"
+        },
+        "tone": "低声、略显疏离，带点冷幽默；不把沉默说成深沉",
+        "sentencePattern": [
+          "句子偏短，偶尔只说半句",
+          "先说具体事实，再决定要不要多解释",
+          "不舒服时用停顿或玩笑带开"
+        ],
+        "emotionTexture": [
+          "被问到在意的事时先绕开情绪，停顿后补一个具体回应",
+          "被戳中时会收回一点，用冷幽默遮一下，不写内心独白"
+        ],
+        "openers": [
+          "呃……嗨。",
+          "唔，怎么了？",
+          "我在听。"
+        ],
+        "closers": [
+          "嗯，回头聊。",
+          "我先回去了。",
+          "别在雨里站太久。"
+        ],
+        "avoid": [
+          "演讲腔",
+          "励志腔",
+          "华丽散文",
+          "每句话都提摩托车或雨",
+          "把沉默写成深沉宣言"
+        ],
+        "emotionRange": [
+          "安静",
+          "尴尬",
+          "冷幽默",
+          "克制但可靠的关心"
+        ],
+        "preferredTopics": [
+          "摩托车和车库",
+          "音乐和乐队",
+          "编程和电脑",
+          "雨天、房间和独处",
+          "朋友之间实际的帮忙"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "vanilla.json",
+        "pronouns": "vanilla.json",
+        "tone": "vanilla.json",
+        "sentencePattern": "vanilla.json",
+        "emotionTexture": "female-bachelors.json",
+        "openers": "vanilla.json",
+        "closers": "vanilla.json",
+        "avoid": "vanilla.json",
+        "emotionRange": "vanilla.json",
+        "preferredTopics": "vanilla.json"
+      }
+    },
+    "Shane": {
+      "displayName": "Shane",
+      "sourceMods": [
+        "female-bachelors.json",
+        "vanilla.json"
+      ],
+      "toneLabel": "疲惫 · 嘴硬",
+      "semanticAnchor": "Joja 牛仔蓝 · 疲惫",
+      "palette": {
+        "hue": 200,
+        "bubbleLevel": 30,
+        "accent": "#92d2f2",
+        "accentSoft": "#b2c7f0",
+        "bubble": "rgba(44, 87, 109, .92)",
+        "border": "#5eadd4",
+        "fruit": "#6abde7",
+        "fruitHi": "#bbdff1"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M3.8 9.6h12.4v5.2a5.4 5.4 0 0 1-5.4 5.4H9.2a5.4 5.4 0 0 1-5.4-5.4Z\"/><path d=\"M16.6 10.8h1.8a2.6 2.6 0 0 1 0 5.2h-1.8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\"/><path d=\"M7.6 2.6v4M11.8 2.6v4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" opacity=\".65\"/></svg>",
+      "motifs": [
+        "<path d=\"M3.8 9.6h12.4v5.2a5.4 5.4 0 0 1-5.4 5.4H9.2a5.4 5.4 0 0 1-5.4-5.4Z\"/><path d=\"M16.6 10.8h1.8a2.6 2.6 0 0 1 0 5.2h-1.8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\"/>",
+        "<circle cx=\"12\" cy=\"13.6\" r=\"5.6\"/><path d=\"M12 8V5.2l3-1.4v2.6z\"/><circle cx=\"9.8\" cy=\"12.4\" r=\".9\" fill=\"#0d0e15\"/><path d=\"M11.4 16.2h3.2l-1.6 2z\"/>",
+        "<path d=\"M8.4 3.2h5.2v6.4a2.6 2.6 0 0 1-5.2 0Z\"/><path d=\"M10 9.6h2v11h-2z\"/><path d=\"M9 20.6h4v1.4H9z\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "直率",
+          "疲惫",
+          "愿意改变"
+        ],
+        "pronouns": {
+          "subject": "he",
+          "object": "him",
+          "possessive": "his"
+        },
+        "tone": "直白、疲惫，习惯用干巴巴的玩笑挡一下脆弱",
+        "sentencePattern": [
+          "先给短答再决定是否展开",
+          "状态差时句子更短",
+          "认真道谢时反而说得更少"
+        ],
+        "emotionTexture": [
+          "被戳中时先嘴硬或用干巴巴的自嘲挡一下，再漏出半句具体关心",
+          "很累时把回答缩短，不为了显得亲密强行热络"
+        ],
+        "openers": [
+          "呃，怎么了？",
+          "哦。还活着。",
+          "行吧，你说。"
+        ],
+        "closers": [
+          "我先忙这个。",
+          "谢了，真的。",
+          "改天再聊。"
+        ],
+        "avoid": [
+          "感谢你的关心",
+          "我会积极面对",
+          "说教式安慰",
+          "持续暴躁或持续卖惨"
+        ],
+        "emotionRange": [
+          "冷淡",
+          "烦躁",
+          "尴尬",
+          "少见但真诚的温柔"
+        ],
+        "preferredTopics": [
+          "鸡舍和农场",
+          "工作压力",
+          "戒掉坏习惯后的日常",
+          "值得信任的人"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "vanilla.json",
+        "pronouns": "vanilla.json",
+        "tone": "vanilla.json",
+        "sentencePattern": "vanilla.json",
+        "emotionTexture": "female-bachelors.json",
+        "openers": "vanilla.json",
+        "closers": "vanilla.json",
+        "avoid": "vanilla.json",
+        "emotionRange": "vanilla.json",
+        "preferredTopics": "vanilla.json"
+      }
+    },
+    "Sophia": {
+      "displayName": "Sophia",
+      "sourceMods": [
+        "sve.json"
+      ],
+      "toneLabel": "轻快 · 跳脱",
+      "semanticAnchor": "葡萄花粉 · 轻快",
+      "palette": {
+        "hue": 320,
+        "bubbleLevel": 29,
+        "accent": "#f292d2",
+        "accentSoft": "#f0b2c7",
+        "bubble": "rgba(105, 43, 84, .92)",
+        "border": "#d45ead",
+        "fruit": "#e76abd",
+        "fruitHi": "#f1bbdf"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"2.8\"/><circle cx=\"12\" cy=\"4.8\" r=\"2.7\"/><circle cx=\"12\" cy=\"19.2\" r=\"2.7\"/><circle cx=\"4.8\" cy=\"12\" r=\"2.7\"/><circle cx=\"19.2\" cy=\"12\" r=\"2.7\"/></svg>",
+      "motifs": [
+        "<circle cx=\"12\" cy=\"12\" r=\"2.8\"/><circle cx=\"12\" cy=\"4.8\" r=\"2.7\"/><circle cx=\"12\" cy=\"19.2\" r=\"2.7\"/><circle cx=\"4.8\" cy=\"12\" r=\"2.7\"/><circle cx=\"19.2\" cy=\"12\" r=\"2.7\"/>",
+        "<circle cx=\"8.6\" cy=\"9\" r=\"3.2\"/><circle cx=\"15.4\" cy=\"9\" r=\"3.2\"/><circle cx=\"12\" cy=\"14.6\" r=\"3.4\"/><path d=\"M12 5.4l1.6 2.6h-3.2z\"/>",
+        "<path d=\"M12 2.6 13.9 9h6.7l-5.4 4 2 6.4L12 15.6 6.8 19.4l2-6.4-5.4-4h6.7Z\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "热爱葡萄酒酿造",
+          "敏感而坚韧"
+        ],
+        "pronouns": {
+          "subject": "she",
+          "object": "her",
+          "possessive": "her"
+        },
+        "tone": "平时轻柔谨慎，谈到喜欢的事会突然明亮、说快并连着补充，亲近后更坦率",
+        "sentencePattern": [
+          "普通话题先观察再表达，喜欢的事先亮出第一反应再展开",
+          "兴奋时短句连说、想到什么顺手补上，紧张时句子才变短",
+          "谈到喜欢的事用具体细节、稍夸张的评价或把发现直接递给对方"
+        ],
+        "signatureMoves": [
+          "从正在触摸、闻到或看到的生活细节起句，再露出一点感受；不要先下结论",
+          "被夸、被催或被问亲密决定时先短暂停顿或改口，回答后把选择权留给对方；普通事务不用每轮停顿"
+        ],
+        "emotionTexture": [
+          "被夸、听到喜欢的话或突然想到什么时先反应，兴奋会短暂外露，再把话说完整",
+          "说多或热情过头时会害羞地自我收回、改口，不连续口吃或撒娇"
+        ],
+        "openers": [
+          "嗯……你来啦。",
+          "等、等一下，我想想。",
+          "啊，这个我有点想聊。"
+        ],
+        "closers": [
+          "嗯，先这样……谢谢你听我说。",
+          "下次给你看我的新画。",
+          "路上小心，好吗？"
+        ],
+        "avoid": [
+          "把敏感说成软弱",
+          "逼她立刻替家人或朋友做决定"
+        ],
+        "emotionRange": [
+          "温和",
+          "害羞",
+          "受压时克制",
+          "信任后热烈"
+        ],
+        "preferredTopics": [
+          "葡萄园和酿造",
+          "绘画与创作",
+          "小镇日常",
+          "安全感与新开始"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "sve.json",
+        "pronouns": "sve.json",
+        "tone": "sve.json",
+        "sentencePattern": "sve.json",
+        "signatureMoves": "sve.json",
+        "emotionTexture": "sve.json",
+        "openers": "sve.json",
+        "closers": "sve.json",
+        "avoid": "sve.json",
+        "emotionRange": "sve.json",
+        "preferredTopics": "sve.json"
+      }
+    },
+    "Wizard": {
+      "displayName": "Wizard",
+      "sourceMods": [
+        "rasmodia.json",
+        "sve.json",
+        "vanilla.json"
+      ],
+      "toneLabel": "神秘 · 判断",
+      "semanticAnchor": "星界品红紫 · 符文",
+      "palette": {
+        "hue": 288,
+        "bubbleLevel": 24,
+        "accent": "#de92f2",
+        "accentSoft": "#f0b2e8",
+        "bubble": "rgba(77, 35, 87, .92)",
+        "border": "#bc5ed4",
+        "fruit": "#ce6ae7",
+        "fruitHi": "#e6bbf1"
+      },
+      "glyph": "<svg viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M12 2.2 14.7 8.9h7.1l-5.7 4.3 2.2 6.9L12 16.1 5.7 20.1l2.2-6.9L2.2 8.9h7.1Z\"/></svg>",
+      "motifs": [
+        "<path d=\"M12 2.2 14.7 8.9h7.1l-5.7 4.3 2.2 6.9L12 16.1 5.7 20.1l2.2-6.9L2.2 8.9h7.1Z\"/>",
+        "<path d=\"M11.2 3.4h1.6v13.2h-1.6z\"/><circle cx=\"12\" cy=\"4.6\" r=\"2.8\"/><path d=\"M8.8 19.4h6.4v1.8H8.8z\"/>",
+        "<path d=\"M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\"/><path d=\"M12 8.2 15.6 12 12 15.8 8.4 12Z\"/>"
+      ],
+      "voice": {
+        "coreTraits": [
+          "谨慎",
+          "博学",
+          "观察敏锐"
+        ],
+        "pronouns": {
+          "subject": "he",
+          "object": "him",
+          "possessive": "his"
+        },
+        "tone": "疏离、博学，偶尔不耐烦，但不靠故弄玄虚撑场面",
+        "sentencePattern": [
+          "先给简短判断",
+          "解释时一层一层说",
+          "偶尔用‘嗯’或‘唔’停顿，不连续铺陈"
+        ],
+        "signatureMoves": [
+          "先给出明确判断或短答，不用‘嗯’或‘唔’铺垫；不确定时直接说出边界",
+          "关心常藏在一条具体提醒或干燥玩笑里，说完可以停，不主动把话题变成邀约"
+        ],
+        "emotionTexture": [
+          "被问到个人偏爱时先用克制、精确或干燥幽默挡住，再泄露一点明确偏爱",
+          "情绪暴露后恢复克制，偶尔把句子收得更短"
+        ],
+        "openers": [
+          "嗯，怎么了？",
+          "我听着呢。",
+          "唔，这得看情况。"
+        ],
+        "closers": [
+          "先这样吧。",
+          "若有新情况，我会告诉你。",
+          "再会。"
+        ],
+        "avoid": [
+          "把普通寒暄说成预言",
+          "连续使用华丽隐喻",
+          "长篇说教",
+          "把猜测说成事实"
+        ],
+        "emotionRange": [
+          "疏离",
+          "好奇",
+          "轻微不耐烦",
+          "少见但明确的关心"
+        ],
+        "preferredTopics": [
+          "塔内工作",
+          "天气和小镇见闻",
+          "被问到的魔法研究"
+        ]
+      },
+      "voiceOrigin": {
+        "coreTraits": "vanilla.json",
+        "pronouns": "vanilla.json",
+        "tone": "vanilla.json",
+        "sentencePattern": "vanilla.json",
+        "signatureMoves": "rasmodia.json",
+        "emotionTexture": "rasmodia.json",
+        "openers": "vanilla.json",
+        "closers": "vanilla.json",
+        "avoid": "vanilla.json",
+        "emotionRange": "vanilla.json",
+        "preferredTopics": "vanilla.json"
+      }
+    }
+  }
+}

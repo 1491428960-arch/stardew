@@ -1,7 +1,7 @@
 # NPC 主动引导普通对话设计规格
 
 **日期：** 2026-09-03  
-**状态：** 已获口头批准，等待书面规格审阅  
+**状态：** 已获批准，正在五角色小批次实施与验证
 **适用范围：** Bridge 普通 `chat` 回复的对话引导、质量诊断、有限重试、网页与游戏现有聊天链路
 
 ## 背景与目标
@@ -30,9 +30,9 @@
 
 - 不新增第二次模型请求，不把回答和引导拆成两个 Provider 调用。
 - 不把 `chat` 自动改成后台连续发言，不在玩家未操作时插入第二条 NPC 消息。
-- 不修改公共请求/响应 JSON 结构，不写入正式 `Mods`、正式存档、Cookie、密钥或长期角色资料。
+- 不改变顶层公共请求/响应 JSON 契约；`history[]` 项可向后兼容地增加可选 `intent` 与 `relationshipStage` provenance，不写入正式 `Mods`、正式存档、Cookie、密钥或长期角色资料。
 - 不要求陌生或初识阶段主动暧昧，不把所有角色改成持续热情人格。
-- 不推广到全 NPC；先验证 Wizard / Rasmodia、Sophia、Shane、Sebastian、Alex 的少量高关系案例。
+- 不推广到全 NPC；`conversationLead` 只向 Wizard / Rasmodia、Sophia、Shane、Sebastian、Alex 的少量高关系案例投影。Rasmodia 先归一为 Wizard，再复用 Wizard 的策略。
 
 ## 交互与生成契约
 
@@ -61,18 +61,21 @@
 | 关系阶段 | 引导要求 | 允许的退让 |
 | --- | --- | --- |
 | `stranger` / `acquaintance` | 只回答当前输入，不强制引导 | 角色可以礼貌补一句具体事实 |
-| `friend` | 视话题自然加入分享或具体追问 | 泛日常、疲惫或玩家收口时可不引导 |
-| `close` | 通常加入一个继续入口，保持角色克制 | 不强制换题，不要求亲密表达 |
-| `dating` / `married` | 回答、个人落点和继续入口自然结合 | 明确拒绝、需要空间、收口或渠道边界优先 |
+| `friend` | 五角色试验范围内视话题自然加入分享或具体追问 | 泛日常、疲惫或玩家收口时可不引导 |
+| `close` | 五角色试验范围内通常加入一个继续入口，保持角色克制 | 不强制换题，不要求亲密表达 |
+| `dating` / `married` | 五角色试验范围内让回答、个人落点和继续入口自然结合 | 明确拒绝、需要空间、收口或渠道边界优先 |
 
 `initiativeExpectation` 仍负责高阶段亲近要求；新增引导诊断只判断“是否把话题交回玩家”，不能用普通引导替代个人亲近，也不能把陪伴和具体安排自动判作爱意。
 
 ## 结构化上下文
 
-在现有 `affectionInitiative` 之外，阶段策略向 Prompt 投影短的 `conversationLead` 卡。只在 `friend`、`close`、`dating`、`married` 生效，旧阶段不改变契约：
+在现有 `affectionInitiative` 之外，阶段策略向 Prompt 投影短的 `conversationLead` 卡。它只为五个目标 canonical NPC 的 `friend`、`close`、`dating`、`married` 阶段生成，并且 `PromptBuilder` 只在 `interaction.intent == "chat"` 时投影；`topic` 和 `item` 不进入普通聊天引导链。旧阶段、非目标 NPC 与其他 intent 不改变契约。
 
 ```json
 {
+  "intent": "chat",
+  "npcId": "Sophia",
+  "initiativeMode": "proactive",
   "required": "usually",
   "allowedKinds": [
     "self_share",
@@ -91,6 +94,8 @@
   ]
 }
 ```
+
+`intent`、`npcId` 与 `initiativeMode` 是运行时 Guard 的诊断上下文，不是给模型增加额外任务。为兼容旧的手工测试卡，缺少 `intent` 的卡暂按 `chat` 处理；生产 Prompt 必须写出完整元数据。
 
 角色差异通过各自 `allowedKinds` 和行为示例体现：
 
@@ -115,6 +120,10 @@
   - `specific_plan_only`
   - `mechanical_conversation_lead`
   - `lead_exit_allowed`
+- `conversationLeadOpening`：回复中人类可读的首个引导开场，用于工件查看；不用于单独决定机械化。
+- `conversationLeadAnchors`：从本轮真实回复抽取的具体对象或角色状态，用于判断是否引入新内容；时间副词不是锚点。
+
+生产诊断器必须始终返回这 7 个字段。评分和结果投影作为消费者必须兼容旧的 5 字段诊断替身：`conversationLeadOpening` 默认空字符串，`conversationLeadAnchors` 默认空列表，不能因缺字段中断整批评测。
 
 有效入口必须同时满足“具体对象或状态”与“可让玩家继续回应”的条件。下列情况不通过：
 
@@ -124,20 +133,24 @@
 - 与 `remote` / `face_to_face` 渠道冲突；
 - Shane 明确说累、拒绝或结束时仍被强行追加问题。
 
+玩家明确收口时，本轮不要求新的继续入口，但 NPC 只有自身也实际收口、告别、拒绝或表达需要空间时才可标为 `lead_exit_allowed`。若 NPC 在玩家收口后重新抛出邀约、问题或新话题，诊断须标记 `reopens_after_player_closing`，不能借玩家收口把该回复判为合格。
+
 诊断只标记问题，不改写回复；与已有 `personalAffectionDetected` 并列输出，避免“有爱意但没有引导”与“有引导但没有爱意”混成一个分数。
 
 ## 连续轮次与 Guard
 
 ### 历史状态
 
-评测和运行时已有的有限历史中，按 NPC 记录最近一次有效 `conversationLeadKind`、归一化开场和话题锚点。该状态只从本轮实际回复推导，不把 Prompt 内部标签写回聊天记录。
+评测和运行时已有的有限历史中，按 NPC 记录最近一次有效 `conversationLeadKind`、归一化开场或问句骨架和话题锚点。该状态只从本轮实际回复推导，不把 Prompt 内部标签写回聊天记录。`conversationLeadDetected=False`、`lead_exit_allowed`、非 `chat`、低阶段和非五角色的回合不能污染下一轮比较状态。
+
+`BridgeClient` 和质量评测 runner 为同一请求写入的 user/assistant 历史项附加相同的可选 `intent`、`relationshipStage` provenance；Rasmodia 在机器 ID、资格判断和工件中归一为 `Wizard`，但保留 `displayName="Rasmodia"`。`ContextBuilder` 只把 provenance 用于上述状态推导，实际发给模型的 `conversation_history` 仍只含 `role` 与 `content`，不会泄露内部元数据。
 
 ### 机械形状
 
 相邻轮次同时满足以下条件时标记 `mechanical_conversation_lead`：
 
 1. `conversationLeadKind` 相同；
-2. 开场或问句骨架相同；
+2. 去除标点、空白、数字和量词变化后，开场或问句骨架相同；
 3. 没有新的玩家对象、角色状态或关系推进；
 4. 玩家没有明确收口。
 
@@ -150,7 +163,7 @@
 1. 当前阶段要求引导但只有 `generic_follow_up_only` 或 `missing_conversation_lead`：触发一次 `conversation_lead` 重试；
 2. 已有个人亲近但没有引导：只补引导，不重复要求爱意；
 3. 已有有效引导但旧词表未命中：不重试；
-4. `player_closing`、Shane 的 `guarded_exit_allowed`、明确拒绝或需要空间：不重试。
+4. `player_closing` 后 NPC 自身已收口、Shane 的 `guarded_exit_allowed`、明确拒绝或需要空间：不重试；重新开启话题仍按收口规则处理。
 
 总重试次数继续受现有运行时和评测预算限制。失败重试仍通过 `_retry_quality_key()` 选择整体更自然的结果。
 
@@ -174,7 +187,9 @@
 | 已有语义引导但词表没命中不重试 | `test_guard.py` | Provider 调用次数保持 0 |
 | 相邻轮次同引导形状被识别 | `test_character_quality_eval.py` | 仅重复骨架且无新锚点时有 `mechanical_conversation_lead` |
 | 玩家明确收口不触发引导重试 | `test_guard.py`、`test_character_quality_eval.py` | 有 `lead_exit_allowed`，无额外请求 |
+| 玩家收口后 NPC 又推进新话题 | `test_behavior_quality.py`、`test_character_quality_eval.py` | 标记 `reopens_after_player_closing`，不能借豁免通过 |
 | Shane 低落/拒绝/需要空间继续有效 | `test_behavior_quality.py`、`test_guard.py` | 不强制追加问题或爱意 |
+| `item`、非五角色和旧阶段不进入引导链 | `test_stage_policy.py`、`test_prompts.py`、`test_guard.py`、`test_character_quality_eval.py` | 不投影卡、不重试、不影响评测通过状态 |
 | `remote` / `face_to_face` 边界不回归 | `test_prompts.py`、`test_api.py` | 渠道约束仍在 Prompt 和 API 请求中 |
 | 现有 topic 按钮与历史契约不回归 | `smapi/tests/BridgeClientTests.cs`、`ConversationServiceTests.cs` | topic 空触发不进玩家历史；普通 chat 继续存储历史 |
 

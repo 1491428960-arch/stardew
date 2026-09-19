@@ -1,0 +1,1923 @@
+{
+ "schemaVersion": 2,
+ "scope": "存档 Wofs_412086775 的 player.friendshipData（聊天与群聊只覆盖这些 NPC）",
+ "note": "已交付的九角色色板（docs/npc-bubble-elements-2026-09-19.json）原样保留。",
+ "coverage": {
+  "rosterCount": 47,
+  "uniqueCharacters": 46
+ },
+ "rules": {
+  "hue": "九个已交付色相作锚点切段，段内按语义顺序均匀铺开；无定义的角色取最远黄金角候选",
+  "bubbleLevel": "按色相顺序贪心避让，色相相距 8° 内必然拿到不同亮度档",
+  "alias": "SVE 命名与原版命名指向同一角色时复用同一份元素定义",
+  "merge": "同一角色的多个 ID 归并为一套元素"
+ },
+ "roster": {
+  "source": "存档 Wofs_412086775 的 player.friendshipData",
+  "npcs": [
+   "Lewis",
+   "Robin",
+   "Pierre",
+   "Gus",
+   "Abigail",
+   "Harvey",
+   "Sam",
+   "Sophia",
+   "Haley",
+   "Willy",
+   "Shane",
+   "Leah",
+   "Andy",
+   "Elliott",
+   "Caroline",
+   "Demetrius",
+   "Linus",
+   "Marnie",
+   "Clint",
+   "Penny",
+   "Victor",
+   "Olivia",
+   "Vincent",
+   "Jas",
+   "Jodi",
+   "MarlonFay",
+   "Wizard",
+   "Alex",
+   "Maru",
+   "Sebastian",
+   "Evelyn",
+   "George",
+   "Pam",
+   "Emily",
+   "MermaidLantana",
+   "Claire",
+   "Martin",
+   "Dwarf",
+   "MorrisTod",
+   "GuntherSilvian",
+   "Sandy",
+   "Susan",
+   "Krobus",
+   "Kent",
+   "Henchman",
+   "Scarlett",
+   "SVE_Henchman"
+  ],
+  "aliases": {
+   "GuntherSilvian": "Gunther",
+   "MarlonFay": "Marlon",
+   "MorrisTod": "Morris",
+   "MermaidLantana": "Mermaid"
+  },
+  "mergeGroups": [
+   {
+    "members": [
+     "Henchman",
+     "SVE_Henchman"
+    ],
+    "note": "同一个随从的两个 ID，共用一套元素"
+   }
+  ]
+ },
+ "kindLibrary": {
+  "vine": {
+   "label": "藤蔓",
+   "family": "organic",
+   "description": "蜿蜒藤茎 + 叶片"
+  },
+  "grapevine": {
+   "label": "葡萄藤",
+   "family": "organic",
+   "description": "藤茎 + 葡萄叶 + 卷须"
+  },
+  "laurel": {
+   "label": "月桂枝",
+   "family": "organic",
+   "description": "细枝 + 对生叶"
+  },
+  "wheat": {
+   "label": "麦秆",
+   "family": "organic",
+   "description": "直茎 + 麦粒"
+  },
+  "leaf": {
+   "label": "阔叶枝",
+   "family": "organic",
+   "description": "大叶 + 浆果"
+  },
+  "crop": {
+   "label": "作物茎",
+   "family": "organic",
+   "description": "茎秆 + 叶片 + 果实"
+  },
+  "flower": {
+   "label": "花枝",
+   "family": "organic",
+   "description": "小花 + 花苞"
+  },
+  "crystal": {
+   "label": "矿脉",
+   "family": "hard",
+   "description": "棱柱结晶嵌在岩面"
+  },
+  "ore": {
+   "label": "金属锭",
+   "family": "hard",
+   "description": "方锭 + 铆钉"
+  },
+  "arcane": {
+   "label": "符文线",
+   "family": "hard",
+   "description": "细线 + 符文刻痕"
+  },
+  "cable": {
+   "label": "线缆",
+   "family": "hard",
+   "description": "绝缘线 + 接头"
+  },
+  "ribbon": {
+   "label": "缎带",
+   "family": "hard",
+   "description": "宽丝带 + 蝴蝶结"
+  },
+  "paper": {
+   "label": "纸卷",
+   "family": "hard",
+   "description": "卷边纸 + 折角"
+  },
+  "book": {
+   "label": "书脊",
+   "family": "hard",
+   "description": "书脊 + 书页边"
+  },
+  "wood": {
+   "label": "木栏",
+   "family": "hard",
+   "description": "木条 + 榫头"
+  },
+  "wool": {
+   "label": "毛线",
+   "family": "hard",
+   "description": "毛线股 + 针脚"
+  },
+  "fish": {
+   "label": "渔网",
+   "family": "hard",
+   "description": "网结 + 浮子"
+  },
+  "slime": {
+   "label": "黏液",
+   "family": "hard",
+   "description": "半透明块 + 滴落"
+  },
+  "stone": {
+   "label": "碎石",
+   "family": "hard",
+   "description": "方石 + 苔痕"
+  }
+ },
+ "objectLibrary": {
+  "amethyst": {
+   "label": "紫水晶簇",
+   "theme": "矿"
+  },
+  "sword": {
+   "label": "短剑",
+   "theme": "冒险"
+  },
+  "note": {
+   "label": "音符",
+   "theme": "音乐"
+  },
+  "ball": {
+   "label": "橄榄球",
+   "theme": "运动"
+  },
+  "dumbbell": {
+   "label": "哑铃",
+   "theme": "运动"
+  },
+  "paw": {
+   "label": "爪印",
+   "theme": "宠物"
+  },
+  "gem": {
+   "label": "宝石",
+   "theme": "矿物"
+  },
+  "spool": {
+   "label": "彩色线轴",
+   "theme": "手工"
+  },
+  "star_raw": {
+   "label": "星芒",
+   "theme": "装饰"
+  },
+  "quill": {
+   "label": "羽毛笔",
+   "theme": "写作"
+  },
+  "wave": {
+   "label": "海浪",
+   "theme": "海"
+  },
+  "manuscript": {
+   "label": "手稿",
+   "theme": "写作"
+  },
+  "cross": {
+   "label": "医疗十字",
+   "theme": "医护"
+  },
+  "cup": {
+   "label": "咖啡杯",
+   "theme": "饮食"
+  },
+  "glasses": {
+   "label": "眼镜",
+   "theme": "医护"
+  },
+  "bat": {
+   "label": "蝙蝠",
+   "theme": "夜行"
+  },
+  "gamepad": {
+   "label": "游戏手柄",
+   "theme": "科技"
+  },
+  "wheel": {
+   "label": "车轮",
+   "theme": "机械"
+  },
+  "chick": {
+   "label": "小鸡",
+   "theme": "牧养"
+  },
+  "bottle": {
+   "label": "酒瓶",
+   "theme": "饮食"
+  },
+  "grape": {
+   "label": "葡萄串",
+   "theme": "农务"
+  },
+  "blossom": {
+   "label": "粉花",
+   "theme": "花园"
+  },
+  "crystalball": {
+   "label": "水晶球",
+   "theme": "魔法"
+  },
+  "staff": {
+   "label": "法杖",
+   "theme": "魔法"
+  },
+  "rune": {
+   "label": "符文",
+   "theme": "魔法"
+  },
+  "teapot": {
+   "label": "茶壶",
+   "theme": "饮食"
+  },
+  "sunflower": {
+   "label": "向日葵",
+   "theme": "花园"
+  },
+  "anvil": {
+   "label": "铁砧",
+   "theme": "锻造"
+  },
+  "pickaxe": {
+   "label": "矿镐",
+   "theme": "矿业"
+  },
+  "gemstone": {
+   "label": "原石",
+   "theme": "矿业"
+  },
+  "microscope": {
+   "label": "显微镜",
+   "theme": "科学"
+  },
+  "gear": {
+   "label": "齿轮",
+   "theme": "机械"
+  },
+  "cookie": {
+   "label": "饼干",
+   "theme": "烘焙"
+  },
+  "medal": {
+   "label": "勋章",
+   "theme": "军旅"
+  },
+  "tv": {
+   "label": "电视机",
+   "theme": "居家"
+  },
+  "fossil": {
+   "label": "化石",
+   "theme": "考古"
+  },
+  "scroll": {
+   "label": "卷轴",
+   "theme": "文书"
+  },
+  "pan": {
+   "label": "平底锅",
+   "theme": "烹饪"
+  },
+  "beer": {
+   "label": "啤酒杯",
+   "theme": "饮食"
+  },
+  "camera": {
+   "label": "相机",
+   "theme": "摄影"
+  },
+  "doll": {
+   "label": "布偶",
+   "theme": "童趣"
+  },
+  "basket": {
+   "label": "菜篮",
+   "theme": "农务"
+  },
+  "popcorn": {
+   "label": "爆米花",
+   "theme": "零食"
+  },
+  "slimeball": {
+   "label": "史莱姆球",
+   "theme": "怪物"
+  },
+  "voidegg": {
+   "label": "虚空蛋",
+   "theme": "怪物"
+  },
+  "chisel": {
+   "label": "刻刀",
+   "theme": "雕刻"
+  },
+  "leaf_raw": {
+   "label": "树叶",
+   "theme": "森林"
+  },
+  "parrot": {
+   "label": "鹦鹉",
+   "theme": "丛林"
+  },
+  "shorts": {
+   "label": "紫色短裤",
+   "theme": "镇长"
+  },
+  "key": {
+   "label": "钥匙",
+   "theme": "镇长"
+  },
+  "tent": {
+   "label": "帐篷",
+   "theme": "野外"
+  },
+  "berry": {
+   "label": "野莓",
+   "theme": "野外"
+  },
+  "milk": {
+   "label": "牛奶罐",
+   "theme": "牧养"
+  },
+  "telescope": {
+   "label": "望远镜",
+   "theme": "天文"
+  },
+  "bus": {
+   "label": "巴士",
+   "theme": "交通"
+  },
+  "book": {
+   "label": "书",
+   "theme": "学问"
+  },
+  "chalk": {
+   "label": "粉笔",
+   "theme": "教学"
+  },
+  "seed": {
+   "label": "种子袋",
+   "theme": "农务"
+  },
+  "saw": {
+   "label": "锯子",
+   "theme": "木工"
+  },
+  "hammer": {
+   "label": "锤子",
+   "theme": "木工"
+  },
+  "guitar": {
+   "label": "吉他",
+   "theme": "音乐"
+  },
+  "skateboard": {
+   "label": "滑板",
+   "theme": "运动"
+  },
+  "cactus": {
+   "label": "仙人掌",
+   "theme": "沙漠"
+  },
+  "coconut": {
+   "label": "椰子",
+   "theme": "沙漠"
+  },
+  "candy": {
+   "label": "糖果",
+   "theme": "零食"
+  },
+  "rod": {
+   "label": "钓竿",
+   "theme": "钓鱼"
+  },
+  "fish_raw": {
+   "label": "鱼",
+   "theme": "钓鱼"
+  },
+  "shell": {
+   "label": "贝壳",
+   "theme": "海"
+  },
+  "yarn": {
+   "label": "毛线球",
+   "theme": "编织"
+  },
+  "pumpkin": {
+   "label": "南瓜",
+   "theme": "农务"
+  },
+  "hoe": {
+   "label": "锄头",
+   "theme": "农务"
+  },
+  "shield": {
+   "label": "盾牌",
+   "theme": "冒险"
+  },
+  "tie": {
+   "label": "领带",
+   "theme": "商务"
+  },
+  "badge": {
+   "label": "工牌",
+   "theme": "商务"
+  },
+  "wine": {
+   "label": "酒杯",
+   "theme": "饮食"
+  },
+  "jewel": {
+   "label": "珠宝",
+   "theme": "时尚"
+  },
+  "blueprint": {
+   "label": "蓝图",
+   "theme": "建造"
+  },
+  "paintbrush": {
+   "label": "画笔",
+   "theme": "绘画"
+  },
+  "easel": {
+   "label": "画架",
+   "theme": "绘画"
+  },
+  "mushroom": {
+   "label": "蘑菇",
+   "theme": "森林"
+  },
+  "acorn": {
+   "label": "橡果",
+   "theme": "森林"
+  },
+  "scissors": {
+   "label": "剪刀",
+   "theme": "手工"
+  },
+  "thread": {
+   "label": "线团",
+   "theme": "手工"
+  },
+  "lantern": {
+   "label": "提灯",
+   "theme": "矿洞"
+  },
+  "map": {
+   "label": "地图",
+   "theme": "冒险"
+  },
+  "honey": {
+   "label": "蜂蜜",
+   "theme": "农务"
+  },
+  "letter": {
+   "label": "信件",
+   "theme": "文书"
+  },
+  "pearl": {
+   "label": "珍珠",
+   "theme": "海"
+  },
+  "conch": {
+   "label": "海螺",
+   "theme": "海"
+  },
+  "cloak": {
+   "label": "斗篷",
+   "theme": "随从"
+  },
+  "crate": {
+   "label": "木箱",
+   "theme": "随从"
+  },
+  "binocular": {
+   "label": "双筒镜",
+   "theme": "观察"
+  },
+  "canteen": {
+   "label": "水壶",
+   "theme": "野外"
+  },
+  "kite": {
+   "label": "风筝",
+   "theme": "童趣"
+  },
+  "flute": {
+   "label": "长笛",
+   "theme": "音乐"
+  },
+  "dice": {
+   "label": "骰子",
+   "theme": "游戏"
+  }
+ },
+ "npcs": {
+  "Lewis": {
+   "displayName": "Lewis",
+   "tier": "core",
+   "hue": 243.0,
+   "kind": "paper",
+   "objects": [
+    "shorts",
+    "key"
+   ],
+   "glyph": "key",
+   "tone": "体面 · 镇长",
+   "rosterIds": [
+    "Lewis"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 243.0,
+    "bubbleLevel": 25,
+    "accent": "#9792f2",
+    "accentSoft": "#cab2f0",
+    "bubble": "rgba(40, 37, 91, .92)",
+    "border": "#645ed4",
+    "fruit": "#706ae7",
+    "fruitHi": "#bebbf1"
+   }
+  },
+  "Robin": {
+   "displayName": "Robin",
+   "tier": "core",
+   "hue": 25.2,
+   "kind": "wood",
+   "objects": [
+    "saw",
+    "hammer"
+   ],
+   "glyph": "hammer",
+   "tone": "爽利 · 木工",
+   "rosterIds": [
+    "Robin"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 25.2,
+    "bubbleLevel": 25,
+    "accent": "#f2ba92",
+    "accentSoft": "#f0e1b2",
+    "bubble": "rgba(91, 59, 37, .92)",
+    "border": "#d4905e",
+    "fruit": "#e79e6a",
+    "fruitHi": "#f1d2bb"
+   }
+  },
+  "Pierre": {
+   "displayName": "Pierre",
+   "tier": "core",
+   "hue": 107.2,
+   "kind": "crop",
+   "objects": [
+    "basket",
+    "seed"
+   ],
+   "glyph": "seed",
+   "tone": "精明 · 营生",
+   "rosterIds": [
+    "Pierre"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 107.2,
+    "bubbleLevel": 33,
+    "accent": "#a6f292",
+    "accentSoft": "#b2f0b9",
+    "bubble": "rgba(64, 119, 49, .92)",
+    "border": "#77d45e",
+    "fruit": "#85e76a",
+    "fruitHi": "#c7f1bb"
+   }
+  },
+  "Gus": {
+   "displayName": "Gus",
+   "tier": "core",
+   "hue": 57.1,
+   "kind": "crop",
+   "objects": [
+    "pan",
+    "beer"
+   ],
+   "glyph": "pan",
+   "tone": "热络 · 掌勺",
+   "rosterIds": [
+    "Gus"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 57.1,
+    "bubbleLevel": 33,
+    "accent": "#f2ed92",
+    "accentSoft": "#dff0b2",
+    "bubble": "rgba(119, 116, 49, .92)",
+    "border": "#d4ce5e",
+    "fruit": "#e7e16a",
+    "fruitHi": "#f1efbb"
+   }
+  },
+  "Abigail": {
+   "displayName": "Abigail",
+   "tier": "core",
+   "hue": 259,
+   "kind": "crystal",
+   "objects": [
+    "amethyst",
+    "sword"
+   ],
+   "glyph": "amethyst",
+   "tone": "好奇 · 直觉",
+   "rosterIds": [
+    "Abigail"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 259,
+    "bubbleLevel": 30,
+    "accent": "#b092f2",
+    "accentSoft": "#dab2f0",
+    "bubble": "rgba(65, 44, 109, .92)",
+    "border": "#835ed4",
+    "fruit": "#916ae7",
+    "fruitHi": "#ccbbf1"
+   }
+  },
+  "Harvey": {
+   "displayName": "Harvey",
+   "tier": "core",
+   "hue": 126,
+   "kind": "vine",
+   "objects": [
+    "cross",
+    "cup"
+   ],
+   "glyph": "cross",
+   "tone": "稳重 · 照料",
+   "rosterIds": [
+    "Harvey"
+   ],
+   "sourceMods": [
+    "female-bachelors",
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 126,
+    "bubbleLevel": 29,
+    "accent": "#92f29c",
+    "accentSoft": "#b2f0cd",
+    "bubble": "rgba(43, 105, 49, .92)",
+    "border": "#5ed46a",
+    "fruit": "#6ae776",
+    "fruitHi": "#bbf1c1"
+   }
+  },
+  "Sam": {
+   "displayName": "Sam",
+   "tier": "core",
+   "hue": 217.5,
+   "kind": "cable",
+   "objects": [
+    "guitar",
+    "skateboard"
+   ],
+   "glyph": "guitar",
+   "tone": "随性 · 音乐",
+   "rosterIds": [
+    "Sam"
+   ],
+   "sourceMods": [
+    "female-bachelors",
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 217.5,
+    "bubbleLevel": 21,
+    "accent": "#92b6f2",
+    "accentSoft": "#b2b4f0",
+    "bubble": "rgba(31, 48, 76, .92)",
+    "border": "#5e8ad4",
+    "fruit": "#6a99e7",
+    "fruitHi": "#bbcff1"
+   }
+  },
+  "Sophia": {
+   "displayName": "Sophia",
+   "tier": "core",
+   "hue": 320,
+   "kind": "grapevine",
+   "objects": [
+    "grape",
+    "blossom"
+   ],
+   "glyph": "grape",
+   "tone": "轻快 · 跳脱",
+   "rosterIds": [
+    "Sophia"
+   ],
+   "sourceMods": [
+    "SVE",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 320,
+    "bubbleLevel": 29,
+    "accent": "#f292d2",
+    "accentSoft": "#f0b2c7",
+    "bubble": "rgba(105, 43, 84, .92)",
+    "border": "#d45ead",
+    "fruit": "#e76abd",
+    "fruitHi": "#f1bbdf"
+   }
+  },
+  "Haley": {
+   "displayName": "Haley",
+   "tier": "core",
+   "hue": 69.6,
+   "kind": "ribbon",
+   "objects": [
+    "camera",
+    "sunflower"
+   ],
+   "glyph": "camera",
+   "tone": "明艳 · 爱美",
+   "rosterIds": [
+    "Haley"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 69.6,
+    "bubbleLevel": 33,
+    "accent": "#e2f292",
+    "accentSoft": "#d2f0b2",
+    "bubble": "rgba(108, 119, 49, .92)",
+    "border": "#c1d45e",
+    "fruit": "#d3e76a",
+    "fruitHi": "#e9f1bb"
+   }
+  },
+  "Willy": {
+   "displayName": "Willy",
+   "tier": "core",
+   "hue": 185.0,
+   "kind": "fish",
+   "objects": [
+    "rod",
+    "fish_raw"
+   ],
+   "glyph": "rod",
+   "tone": "老练 · 钓鱼",
+   "rosterIds": [
+    "Willy"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 185.0,
+    "bubbleLevel": 21,
+    "accent": "#92eaf2",
+    "accentSoft": "#b2d6f0",
+    "bubble": "rgba(31, 72, 76, .92)",
+    "border": "#5ecad4",
+    "fruit": "#6adce7",
+    "fruitHi": "#bbedf1"
+   }
+  },
+  "Shane": {
+   "displayName": "Shane",
+   "tier": "core",
+   "hue": 200,
+   "kind": "wheat",
+   "objects": [
+    "chick",
+    "cup"
+   ],
+   "glyph": "chick",
+   "tone": "疲惫 · 嘴硬",
+   "rosterIds": [
+    "Shane"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "female-bachelors",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 200,
+    "bubbleLevel": 30,
+    "accent": "#92d2f2",
+    "accentSoft": "#b2c7f0",
+    "bubble": "rgba(44, 87, 109, .92)",
+    "border": "#5eadd4",
+    "fruit": "#6abde7",
+    "fruitHi": "#bbdff1"
+   }
+  },
+  "Leah": {
+   "displayName": "Leah",
+   "tier": "core",
+   "hue": 113.5,
+   "kind": "leaf",
+   "objects": [
+    "chisel",
+    "easel"
+   ],
+   "glyph": "easel",
+   "tone": "自在 · 雕刻",
+   "rosterIds": [
+    "Leah"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 113.5,
+    "bubbleLevel": 21,
+    "accent": "#9cf292",
+    "accentSoft": "#b2f0c0",
+    "bubble": "rgba(36, 76, 31, .92)",
+    "border": "#6bd45e",
+    "fruit": "#77e76a",
+    "fruitHi": "#c1f1bb"
+   }
+  },
+  "Andy": {
+   "displayName": "Andy",
+   "tier": "core",
+   "hue": 44.5,
+   "kind": "crop",
+   "objects": [
+    "pumpkin",
+    "hoe"
+   ],
+   "glyph": "pumpkin",
+   "tone": "固执 · 务农",
+   "rosterIds": [
+    "Andy"
+   ],
+   "sourceMods": [
+    "SVE",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 44.5,
+    "bubbleLevel": 33,
+    "accent": "#f2d992",
+    "accentSoft": "#ecf0b2",
+    "bubble": "rgba(119, 101, 49, .92)",
+    "border": "#d4b65e",
+    "fruit": "#e7c66a",
+    "fruitHi": "#f1e3bb"
+   }
+  },
+  "Elliott": {
+   "displayName": "Elliott",
+   "tier": "core",
+   "hue": 32,
+   "kind": "paper",
+   "objects": [
+    "quill",
+    "manuscript"
+   ],
+   "glyph": "quill",
+   "tone": "铺陈 · 诗意",
+   "rosterIds": [
+    "Elliott"
+   ],
+   "sourceMods": [
+    "female-bachelors",
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 32,
+    "bubbleLevel": 30,
+    "accent": "#f2c592",
+    "accentSoft": "#f0e8b2",
+    "bubble": "rgba(109, 79, 44, .92)",
+    "border": "#d49d5e",
+    "fruit": "#e7ac6a",
+    "fruitHi": "#f1d8bb"
+   }
+  },
+  "Caroline": {
+   "displayName": "Caroline",
+   "tier": "core",
+   "hue": 100.9,
+   "kind": "flower",
+   "objects": [
+    "teapot",
+    "sunflower"
+   ],
+   "glyph": "teapot",
+   "tone": "温和 · 园艺",
+   "rosterIds": [
+    "Caroline"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 100.9,
+    "bubbleLevel": 21,
+    "accent": "#b0f292",
+    "accentSoft": "#b2f0b3",
+    "bubble": "rgba(45, 76, 31, .92)",
+    "border": "#84d45e",
+    "fruit": "#92e76a",
+    "fruitHi": "#ccf1bb"
+   }
+  },
+  "Demetrius": {
+   "displayName": "Demetrius",
+   "tier": "core",
+   "hue": 192.5,
+   "kind": "book",
+   "objects": [
+    "microscope",
+    "gear"
+   ],
+   "glyph": "microscope",
+   "tone": "严谨 · 研究",
+   "rosterIds": [
+    "Demetrius"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 192.5,
+    "bubbleLevel": 25,
+    "accent": "#92def2",
+    "accentSoft": "#b2cef0",
+    "bubble": "rgba(37, 79, 91, .92)",
+    "border": "#5ebcd4",
+    "fruit": "#6acde7",
+    "fruitHi": "#bbe6f1"
+   }
+  },
+  "Linus": {
+   "displayName": "Linus",
+   "tier": "core",
+   "hue": 119.7,
+   "kind": "leaf",
+   "objects": [
+    "tent",
+    "berry"
+   ],
+   "glyph": "tent",
+   "tone": "淡泊 · 野外",
+   "rosterIds": [
+    "Linus"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 119.7,
+    "bubbleLevel": 33,
+    "accent": "#93f292",
+    "accentSoft": "#b2f0c6",
+    "bubble": "rgba(49, 119, 49, .92)",
+    "border": "#5ed45e",
+    "fruit": "#6be76a",
+    "fruitHi": "#bcf1bb"
+   }
+  },
+  "Marnie": {
+   "displayName": "Marnie",
+   "tier": "core",
+   "hue": 63.3,
+   "kind": "wool",
+   "objects": [
+    "milk",
+    "chick"
+   ],
+   "glyph": "milk",
+   "tone": "热心 · 牧养",
+   "rosterIds": [
+    "Marnie"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 63.3,
+    "bubbleLevel": 21,
+    "accent": "#ecf292",
+    "accentSoft": "#d8f0b2",
+    "bubble": "rgba(74, 76, 31, .92)",
+    "border": "#ced45e",
+    "fruit": "#e0e76a",
+    "fruitHi": "#eef1bb"
+   }
+  },
+  "Clint": {
+   "displayName": "Clint",
+   "tier": "core",
+   "hue": 18.5,
+   "kind": "ore",
+   "objects": [
+    "anvil",
+    "pickaxe"
+   ],
+   "glyph": "anvil",
+   "tone": "沉默 · 锻造",
+   "rosterIds": [
+    "Clint"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 18.5,
+    "bubbleLevel": 21,
+    "accent": "#f2b092",
+    "accentSoft": "#f0dab2",
+    "bubble": "rgba(76, 45, 31, .92)",
+    "border": "#d4825e",
+    "fruit": "#e7906a",
+    "fruitHi": "#f1ccbb"
+   }
+  },
+  "Penny": {
+   "displayName": "Penny",
+   "tier": "core",
+   "hue": 342.5,
+   "kind": "book",
+   "objects": [
+    "book",
+    "chalk"
+   ],
+   "glyph": "book",
+   "tone": "温柔 · 教学",
+   "rosterIds": [
+    "Penny"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 342.5,
+    "bubbleLevel": 21,
+    "accent": "#f292ae",
+    "accentSoft": "#f0b4b2",
+    "bubble": "rgba(76, 31, 44, .92)",
+    "border": "#d45e80",
+    "fruit": "#e76a8e",
+    "fruitHi": "#f1bbcb"
+   }
+  },
+  "Victor": {
+   "displayName": "Victor",
+   "tier": "core",
+   "hue": 251.0,
+   "kind": "paper",
+   "objects": [
+    "blueprint",
+    "wine"
+   ],
+   "glyph": "blueprint",
+   "tone": "内敛 · 设计",
+   "rosterIds": [
+    "Victor"
+   ],
+   "sourceMods": [
+    "SVE",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 251.0,
+    "bubbleLevel": 29,
+    "accent": "#a492f2",
+    "accentSoft": "#d2b2f0",
+    "bubble": "rgba(54, 43, 105, .92)",
+    "border": "#745ed4",
+    "fruit": "#816ae7",
+    "fruitHi": "#c5bbf1"
+   }
+  },
+  "Olivia": {
+   "displayName": "Olivia",
+   "tier": "core",
+   "hue": 309.3,
+   "kind": "ribbon",
+   "objects": [
+    "wine",
+    "jewel"
+   ],
+   "glyph": "jewel",
+   "tone": "矜贵 · 品味",
+   "rosterIds": [
+    "Olivia"
+   ],
+   "sourceMods": [
+    "SVE",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 309.3,
+    "bubbleLevel": 33,
+    "accent": "#f292e3",
+    "accentSoft": "#f0b2d2",
+    "bubble": "rgba(119, 49, 109, .92)",
+    "border": "#d45ec2",
+    "fruit": "#e76ad3",
+    "fruitHi": "#f1bbe9"
+   }
+  },
+  "Vincent": {
+   "displayName": "Vincent",
+   "tier": "core",
+   "hue": 327.5,
+   "kind": "flower",
+   "objects": [
+    "candy",
+    "kite"
+   ],
+   "glyph": "candy",
+   "tone": "活泼 · 童言",
+   "rosterIds": [
+    "Vincent"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 327.5,
+    "bubbleLevel": 21,
+    "accent": "#f292c6",
+    "accentSoft": "#f0b2bf",
+    "bubble": "rgba(76, 31, 55, .92)",
+    "border": "#d45e9e",
+    "fruit": "#e76aae",
+    "fruitHi": "#f1bbd8"
+   }
+  },
+  "Jas": {
+   "displayName": "Jas",
+   "tier": "core",
+   "hue": 298.7,
+   "kind": "flower",
+   "objects": [
+    "doll",
+    "blossom"
+   ],
+   "glyph": "doll",
+   "tone": "安静 · 童真",
+   "rosterIds": [
+    "Jas"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 298.7,
+    "bubbleLevel": 29,
+    "accent": "#ef92f2",
+    "accentSoft": "#f0b2dd",
+    "bubble": "rgba(104, 43, 105, .92)",
+    "border": "#d25ed4",
+    "fruit": "#e46ae7",
+    "fruitHi": "#f0bbf1"
+   }
+  },
+  "Jodi": {
+   "displayName": "Jodi",
+   "tier": "core",
+   "hue": 357.5,
+   "kind": "crop",
+   "objects": [
+    "pan",
+    "basket"
+   ],
+   "glyph": "basket",
+   "tone": "操持 · 家常",
+   "rosterIds": [
+    "Jodi"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 357.5,
+    "bubbleLevel": 29,
+    "accent": "#f29296",
+    "accentSoft": "#f0c4b2",
+    "bubble": "rgba(105, 43, 45, .92)",
+    "border": "#d45e63",
+    "fruit": "#e76a6f",
+    "fruitHi": "#f1bbbe"
+   }
+  },
+  "Marlon": {
+   "displayName": "Marlon",
+   "tier": "core",
+   "hue": 148.0,
+   "kind": "ore",
+   "objects": [
+    "sword",
+    "map"
+   ],
+   "glyph": "map",
+   "tone": "硬派 · 探险",
+   "rosterIds": [
+    "MarlonFay"
+   ],
+   "sourceMods": [
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 148.0,
+    "bubbleLevel": 25,
+    "accent": "#92f2bf",
+    "accentSoft": "#b2f0e4",
+    "bubble": "rgba(37, 91, 62, .92)",
+    "border": "#5ed495",
+    "fruit": "#6ae7a4",
+    "fruitHi": "#bbf1d4"
+   }
+  },
+  "Wizard": {
+   "displayName": "Wizard",
+   "tier": "core",
+   "hue": 288,
+   "kind": "arcane",
+   "objects": [
+    "crystalball",
+    "staff"
+   ],
+   "glyph": "crystalball",
+   "tone": "神秘 · 判断",
+   "rosterIds": [
+    "Wizard"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "Romanceable Rasmodius",
+    "SVE",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 288,
+    "bubbleLevel": 24,
+    "accent": "#de92f2",
+    "accentSoft": "#f0b2e8",
+    "bubble": "rgba(77, 35, 87, .92)",
+    "border": "#bc5ed4",
+    "fruit": "#ce6ae7",
+    "fruitHi": "#e6bbf1"
+   }
+  },
+  "Alex": {
+   "displayName": "Alex",
+   "tier": "core",
+   "hue": 5,
+   "kind": "laurel",
+   "objects": [
+    "ball",
+    "dumbbell"
+   ],
+   "glyph": "ball",
+   "tone": "直球 · 行动派",
+   "rosterIds": [
+    "Alex"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "female-bachelors",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 5,
+    "bubbleLevel": 24,
+    "accent": "#f29a92",
+    "accentSoft": "#f0ccb2",
+    "bubble": "rgba(87, 40, 35, .92)",
+    "border": "#d4685e",
+    "fruit": "#e7746a",
+    "fruitHi": "#f1c0bb"
+   }
+  },
+  "Maru": {
+   "displayName": "Maru",
+   "tier": "core",
+   "hue": 211.7,
+   "kind": "cable",
+   "objects": [
+    "telescope",
+    "gear"
+   ],
+   "glyph": "telescope",
+   "tone": "灵巧 · 发明",
+   "rosterIds": [
+    "Maru"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 211.7,
+    "bubbleLevel": 33,
+    "accent": "#92bff2",
+    "accentSoft": "#b2bbf0",
+    "bubble": "rgba(49, 82, 119, .92)",
+    "border": "#5e96d4",
+    "fruit": "#6aa5e7",
+    "fruitHi": "#bbd5f1"
+   }
+  },
+  "Sebastian": {
+   "displayName": "Sebastian",
+   "tier": "core",
+   "hue": 235,
+   "kind": "cable",
+   "objects": [
+    "bat",
+    "gamepad"
+   ],
+   "glyph": "bat",
+   "tone": "克制 · 短句",
+   "rosterIds": [
+    "Sebastian"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "female-bachelors",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 235,
+    "bubbleLevel": 24,
+    "accent": "#929af2",
+    "accentSoft": "#c1b2f0",
+    "bubble": "rgba(35, 40, 87, .92)",
+    "border": "#5e68d4",
+    "fruit": "#6a74e7",
+    "fruitHi": "#bbc0f1"
+   }
+  },
+  "Evelyn": {
+   "displayName": "Evelyn",
+   "tier": "core",
+   "hue": 350.0,
+   "kind": "wool",
+   "objects": [
+    "cookie",
+    "blossom"
+   ],
+   "glyph": "cookie",
+   "tone": "慈祥 · 烘焙",
+   "rosterIds": [
+    "Evelyn"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 350.0,
+    "bubbleLevel": 33,
+    "accent": "#f292a2",
+    "accentSoft": "#f0bcb2",
+    "bubble": "rgba(119, 49, 61, .92)",
+    "border": "#d45e72",
+    "fruit": "#e76a7f",
+    "fruitHi": "#f1bbc4"
+   }
+  },
+  "George": {
+   "displayName": "George",
+   "tier": "core",
+   "hue": 137.0,
+   "kind": "wood",
+   "objects": [
+    "tv",
+    "medal"
+   ],
+   "glyph": "medal",
+   "tone": "固执 · 老兵",
+   "rosterIds": [
+    "George"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 137.0,
+    "bubbleLevel": 21,
+    "accent": "#92f2ad",
+    "accentSoft": "#b2f0d8",
+    "bubble": "rgba(31, 76, 44, .92)",
+    "border": "#5ed47f",
+    "fruit": "#6ae78d",
+    "fruitHi": "#bbf1cb"
+   }
+  },
+  "Pam": {
+   "displayName": "Pam",
+   "tier": "core",
+   "hue": 38.3,
+   "kind": "cable",
+   "objects": [
+    "bus",
+    "beer"
+   ],
+   "glyph": "bus",
+   "tone": "豪爽 · 直来直去",
+   "rosterIds": [
+    "Pam"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 38.3,
+    "bubbleLevel": 21,
+    "accent": "#f2cf92",
+    "accentSoft": "#f0efb2",
+    "bubble": "rgba(76, 60, 31, .92)",
+    "border": "#d4a95e",
+    "fruit": "#e7ba6a",
+    "fruitHi": "#f1debb"
+   }
+  },
+  "Emily": {
+   "displayName": "Emily",
+   "tier": "core",
+   "hue": 170,
+   "kind": "ribbon",
+   "objects": [
+    "gem",
+    "spool"
+   ],
+   "glyph": "gem",
+   "tone": "温柔 · 灵感",
+   "rosterIds": [
+    "Emily"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 170,
+    "bubbleLevel": 24,
+    "accent": "#92f2e2",
+    "accentSoft": "#b2e6f0",
+    "bubble": "rgba(35, 87, 78, .92)",
+    "border": "#5ed4c0",
+    "fruit": "#6ae7d2",
+    "fruitHi": "#bbf1e8"
+   }
+  },
+  "Mermaid": {
+   "displayName": "Mermaid",
+   "tier": "core",
+   "hue": 177.5,
+   "kind": "fish",
+   "objects": [
+    "pearl",
+    "conch"
+   ],
+   "glyph": "pearl",
+   "tone": "悠远 · 海",
+   "rosterIds": [
+    "MermaidLantana"
+   ],
+   "sourceMods": [],
+   "palette": {
+    "hue": 177.5,
+    "bubbleLevel": 33,
+    "accent": "#92f2ee",
+    "accentSoft": "#b2def0",
+    "bubble": "rgba(49, 119, 117, .92)",
+    "border": "#5ed4cf",
+    "fruit": "#6ae7e2",
+    "fruitHi": "#bbf1ef"
+   }
+  },
+  "Claire": {
+   "displayName": "Claire",
+   "tier": "core",
+   "hue": 11.8,
+   "kind": "crop",
+   "objects": [
+    "cup",
+    "letter"
+   ],
+   "glyph": "cup",
+   "tone": "疲惫 · 打工",
+   "rosterIds": [
+    "Claire"
+   ],
+   "sourceMods": [
+    "SVE",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 11.8,
+    "bubbleLevel": 33,
+    "accent": "#f2a592",
+    "accentSoft": "#f0d3b2",
+    "bubble": "rgba(119, 63, 49, .92)",
+    "border": "#d4755e",
+    "fruit": "#e7826a",
+    "fruitHi": "#f1c6bb"
+   }
+  },
+  "Martin": {
+   "displayName": "Martin",
+   "tier": "core",
+   "hue": 88.4,
+   "kind": "paper",
+   "objects": [
+    "badge",
+    "letter"
+   ],
+   "glyph": "badge",
+   "tone": "青涩 · 打工",
+   "rosterIds": [
+    "Martin"
+   ],
+   "sourceMods": [
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 88.4,
+    "bubbleLevel": 21,
+    "accent": "#c4f292",
+    "accentSoft": "#bef0b2",
+    "bubble": "rgba(55, 76, 31, .92)",
+    "border": "#9cd45e",
+    "fruit": "#ace76a",
+    "fruitHi": "#d8f1bb"
+   }
+  },
+  "Dwarf": {
+   "displayName": "Dwarf",
+   "tier": "core",
+   "hue": 50.8,
+   "kind": "stone",
+   "objects": [
+    "gemstone",
+    "pickaxe"
+   ],
+   "glyph": "gemstone",
+   "tone": "直率 · 交易",
+   "rosterIds": [
+    "Dwarf"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 50.8,
+    "bubbleLevel": 21,
+    "accent": "#f2e392",
+    "accentSoft": "#e5f0b2",
+    "bubble": "rgba(76, 69, 31, .92)",
+    "border": "#d4c25e",
+    "fruit": "#e7d46a",
+    "fruitHi": "#f1e9bb"
+   }
+  },
+  "Morris": {
+   "displayName": "Morris",
+   "tier": "core",
+   "hue": 205.8,
+   "kind": "paper",
+   "objects": [
+    "tie",
+    "badge"
+   ],
+   "glyph": "tie",
+   "tone": "圆滑 · 商务",
+   "rosterIds": [
+    "MorrisTod"
+   ],
+   "sourceMods": [
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 205.8,
+    "bubbleLevel": 21,
+    "accent": "#92c8f2",
+    "accentSoft": "#b2c1f0",
+    "bubble": "rgba(31, 57, 76, .92)",
+    "border": "#5ea1d4",
+    "fruit": "#6ab1e7",
+    "fruitHi": "#bbdaf1"
+   }
+  },
+  "Gunther": {
+   "displayName": "Gunther",
+   "tier": "core",
+   "hue": 75.9,
+   "kind": "book",
+   "objects": [
+    "fossil",
+    "scroll"
+   ],
+   "glyph": "fossil",
+   "tone": "博学 · 收藏",
+   "rosterIds": [
+    "GuntherSilvian"
+   ],
+   "sourceMods": [
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 75.9,
+    "bubbleLevel": 21,
+    "accent": "#d8f292",
+    "accentSoft": "#cbf0b2",
+    "bubble": "rgba(64, 76, 31, .92)",
+    "border": "#b5d45e",
+    "fruit": "#c6e76a",
+    "fruitHi": "#e3f1bb"
+   }
+  },
+  "Sandy": {
+   "displayName": "Sandy",
+   "tier": "core",
+   "hue": 82.1,
+   "kind": "flower",
+   "objects": [
+    "cactus",
+    "coconut"
+   ],
+   "glyph": "cactus",
+   "tone": "慵懒 · 沙漠",
+   "rosterIds": [
+    "Sandy"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 82.1,
+    "bubbleLevel": 33,
+    "accent": "#cef292",
+    "accentSoft": "#c5f0b2",
+    "bubble": "rgba(93, 119, 49, .92)",
+    "border": "#a9d45e",
+    "fruit": "#b9e76a",
+    "fruitHi": "#ddf1bb"
+   }
+  },
+  "Susan": {
+   "displayName": "Susan",
+   "tier": "core",
+   "hue": 94.7,
+   "kind": "crop",
+   "objects": [
+    "honey",
+    "basket"
+   ],
+   "glyph": "honey",
+   "tone": "干练 · 经营",
+   "rosterIds": [
+    "Susan"
+   ],
+   "sourceMods": [
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 94.7,
+    "bubbleLevel": 33,
+    "accent": "#baf292",
+    "accentSoft": "#b7f0b2",
+    "bubble": "rgba(79, 119, 49, .92)",
+    "border": "#90d45e",
+    "fruit": "#9fe76a",
+    "fruitHi": "#d2f1bb"
+   }
+  },
+  "Krobus": {
+   "displayName": "Krobus",
+   "tier": "core",
+   "hue": 273.5,
+   "kind": "slime",
+   "objects": [
+    "voidegg",
+    "slimeball"
+   ],
+   "glyph": "voidegg",
+   "tone": "谨慎 · 暗影",
+   "rosterIds": [
+    "Krobus"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP",
+    "Nom0ri.RomRas"
+   ],
+   "palette": {
+    "hue": 273.5,
+    "bubbleLevel": 21,
+    "accent": "#c792f2",
+    "accentSoft": "#eab2f0",
+    "bubble": "rgba(56, 31, 76, .92)",
+    "border": "#a05ed4",
+    "fruit": "#b06ae7",
+    "fruitHi": "#d9bbf1"
+   }
+  },
+  "Kent": {
+   "displayName": "Kent",
+   "tier": "core",
+   "hue": 159.0,
+   "kind": "wood",
+   "objects": [
+    "medal",
+    "popcorn"
+   ],
+   "glyph": "popcorn",
+   "tone": "沉重 · 军旅",
+   "rosterIds": [
+    "Kent"
+   ],
+   "sourceMods": [
+    "vanilla",
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 159.0,
+    "bubbleLevel": 29,
+    "accent": "#92f2d0",
+    "accentSoft": "#b2f0ef",
+    "bubble": "rgba(43, 105, 83, .92)",
+    "border": "#5ed4ab",
+    "fruit": "#6ae7bb",
+    "fruitHi": "#bbf1de"
+   }
+  },
+  "Henchman": {
+   "displayName": "Henchman",
+   "tier": "core",
+   "hue": 229.2,
+   "kind": "ore",
+   "objects": [
+    "crate",
+    "cloak"
+   ],
+   "glyph": "crate",
+   "tone": "寡言 · 随从",
+   "rosterIds": [
+    "Henchman",
+    "SVE_Henchman"
+   ],
+   "sourceMods": [],
+   "palette": {
+    "hue": 229.2,
+    "bubbleLevel": 33,
+    "accent": "#92a3f2",
+    "accentSoft": "#bbb2f0",
+    "bubble": "rgba(49, 62, 119, .92)",
+    "border": "#5e73d4",
+    "fruit": "#6a80e7",
+    "fruitHi": "#bbc5f1"
+   }
+  },
+  "Scarlett": {
+   "displayName": "Scarlett",
+   "tier": "core",
+   "hue": 335.0,
+   "kind": "ribbon",
+   "objects": [
+    "scissors",
+    "thread"
+   ],
+   "glyph": "scissors",
+   "tone": "利落 · 裁缝",
+   "rosterIds": [
+    "Scarlett"
+   ],
+   "sourceMods": [
+    "FlashShifter.StardewValleyExpandedCP"
+   ],
+   "palette": {
+    "hue": 335.0,
+    "bubbleLevel": 33,
+    "accent": "#f292ba",
+    "accentSoft": "#f0b2b7",
+    "bubble": "rgba(119, 49, 78, .92)",
+    "border": "#d45e8f",
+    "fruit": "#e76a9e",
+    "fruitHi": "#f1bbd2"
+   }
+  }
+ }
+}
