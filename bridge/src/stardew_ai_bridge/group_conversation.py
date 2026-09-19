@@ -352,6 +352,11 @@ def _normalize_addressed_to(
     return normalized
 
 
+# 提示词里告诉模型「memory 可选：只挑 1～2 条」（见 _group_scene_instruction），
+# 而这里是**容忍上限**：模型偶尔多给一条（3 条）也接受并落库，超过才截断。
+# 两者**不是同一个约束**——1～2 是期望值，3 是防御边界，所以刻意不相等。
+# 另外注意：三层里**只有这里**做数量截断；SMAPI 的 GroupMemoryRules.Plan
+# 只做去空/trim/去重，不限制条数（2026-09-20 跨层扫描时确认）。
 _MAX_MEMORY_HIGHLIGHTS = 3
 
 # 群聊「开场」时玩家尚未发言。DialogueTestRequest 要求 message 非空，而群聊实际
