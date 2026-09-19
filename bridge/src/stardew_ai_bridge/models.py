@@ -458,7 +458,11 @@ class GroupDialogueRequest(ApiModel):
             if item.speaker_type == "npc" and item.speaker_id.casefold() not in participant_set:
                 raise ValueError("历史中的 NPC 发言人必须属于参与者")
 
-        if not self.message:
+        # 消息为空**只有在历史也为空时**才是合法的「开场」：刚开一场群聊、
+        # 玩家一句话都没说，由 NPC 自己起头（2026-09-20 用户反馈：
+        # “预设的群聊由 NPC 开始话题吧，不然起不到引导玩家的作用”）。
+        # 已经聊过还发空消息依然拒绝——那是无意义的请求，不是开场。
+        if not self.message and self.history:
             raise ValueError("多人对话消息不能为空")
         return self
 

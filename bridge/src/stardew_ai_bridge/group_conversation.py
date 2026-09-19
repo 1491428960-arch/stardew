@@ -353,6 +353,10 @@ def _normalize_addressed_to(
 
 
 _MAX_MEMORY_HIGHLIGHTS = 3
+
+# 群聊「开场」时玩家尚未发言。DialogueTestRequest 要求 message 非空，而群聊实际
+# 用显式构造的 messages 送模型，所以这里只需要一个不会进入 prompt 的占位。
+_OPENING_MESSAGE_PLACEHOLDER = "(群聊开场：玩家尚未发言)"
 _MEMORY_HIGHLIGHT_LENGTH = 160
 
 # 公开回合的硬上限，与 models.GroupDialogueRequest.turn_count 的 le=4 保持一致。
@@ -610,7 +614,10 @@ class GroupConversationService:
         provider_request = DialogueTestRequest.model_validate(
             {
                 "npcId": participant.npc_id,
-                "message": request.message,
+                # 开场（玩家还没说话）时 request.message 为空，而 DialogueTestRequest
+                # 要求文本非空。这个字段在群聊里只是载体——真正送进模型的是下面显式
+                # 构造的 messages，所以用内部占位即可，不会进入 prompt。
+                "message": request.message or _OPENING_MESSAGE_PLACEHOLDER,
                 "provider": request.provider,
                 "displayName": participant.display_name,
                 "sourceMods": participant.source_mods,

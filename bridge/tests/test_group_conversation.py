@@ -112,10 +112,29 @@ def test_group_request_accepts_invitation_context() -> None:
     assert "讨论方向" in request.invitation_guidance
 
 
-def test_group_request_rejects_empty_message_for_every_strategy() -> None:
+def test_group_request_rejects_an_empty_message_once_there_is_history() -> None:
+    """开场（历史为空）允许空消息；**已经聊过**还发空消息依然拒绝。
+
+    2026-09-20 起「空消息 + 空历史」是合法的**开场**语义：刚开一场群聊、
+    玩家一句话都没说，由 NPC 自己起头（用户反馈“不然起不到引导玩家的作用”）。
+    """
     for strategy in ("fanout", "turn_based", "multi_turn"):
         with pytest.raises(ValidationError, match="消息不能为空"):
-            _group_request(strategy, message="")
+            _group_request(
+                strategy,
+                message="",
+                history=[
+                    {"speakerType": "player", "speakerId": "player", "content": "你们好啊"}
+                ],
+            )
+
+
+def test_group_request_accepts_an_empty_message_as_an_opening() -> None:
+    for strategy in ("fanout", "turn_based", "multi_turn"):
+        request = _group_request(strategy, message="")
+
+        assert request.message == ""
+        assert request.history == []
 
 
 @pytest.mark.parametrize(
