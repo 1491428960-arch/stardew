@@ -80,6 +80,26 @@ public static class GroupDialogueSessionRules
         };
     }
 
+    /// <summary>
+    /// 刚开一场群聊（还没有任何公开历史）时，应当由 NPC 先起头。
+    ///
+    /// 玩家接受邀约后一句话都没说，若仍要求玩家先开口，邀约就起不到引导作用
+    /// （2026-09-20 用户反馈）。Bridge 侧已支持「空玩家消息 ⇒ 开场」的语义。
+    ///
+    /// <paramref name="openingAlreadyRequested"/> 由调用方持有，用于保证整场只自动开场一次；
+    /// <see cref="GroupDialogueSession.CanRetry"/> 为真表示上一次请求失败过，
+    /// 此时**不能**再自动发——否则会变成无限重试，把重试交给玩家。
+    /// </summary>
+    public static bool ShouldOpenWithNpc(
+        GroupDialogueSession session,
+        bool openingAlreadyRequested)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return !openingAlreadyRequested
+               && !session.CanRetry
+               && session.PublicHistory.Count == 0;
+    }
+
     public static bool IsValidTurn(
         BridgeGroupTurn? turn,
         IReadOnlySet<string> participantIds)

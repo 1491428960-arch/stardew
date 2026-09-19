@@ -31,12 +31,28 @@ dotnet build smapi\StardewAI.NPC.csproj -p:GamePath="D:\sbeam\steamapps\common\S
 
 ## 2. 备份（可回滚的前提）
 
+> ⚠️ **备份必须放到 `Mods\` 之外**。SMAPI 会扫描 `Mods\` 下所有含 `manifest.json` 的子目录，
+> 把备份放在里面会被当成“**同一个 UniqueID 的第二份副本**”，SMAPI 会**拒绝加载全部副本**：
+> `Failed: you have multiple copies of this mod installed`。
+> （2026-09-20 实测：正是因为备份放在了 `Mods\StardewAI.NPC.bak-<stamp>`，F8/F9 完全无反应。）
+> 另外 `Mods\Stardrop Installed Mods\` 是 Stardrop 的 mod 仓库，**也在 `Mods\` 下**，
+> 里面若有同名副本同样要处理（给它加 `.` 前缀让 SMAPI 忽略，`.` 开头的目录会被跳过）。
+
 ```powershell
 $game = 'D:\sbeam\steamapps\common\Stardew Valley'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmm'
-# 2a) 备份正式 Mod 目录
-Copy-Item "$game\Mods\StardewAI.NPC" "$game\Mods\StardewAI.NPC.bak-$stamp" -Recurse
-# 2b) 备份正式存档（换成你实际在玩的存档名）
+# 2a) 备份正式 Mod 目录 —— 存到 Mods\ 之外！
+$backupRoot = 'E:\workspace\data\stardew-mod-backup'
+New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+Copy-Item "$game\Mods\StardewAI.NPC" "$backupRoot\StardewAI.NPC.bak-$stamp" -Recurse
+# 2b) 确认没有同名副本（扫到的每一份都会阻止加载）
+Get-ChildItem "$game\Mods" -Directory -Recurse -Depth 1 |
+    Where-Object { Test-Path (Join-Path $_.FullName 'manifest.json') } |
+    ForEach-Object {
+        $m = Get-Content (Join-Path $_.FullName 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($m.UniqueID -eq 'OpenAI.StardewAI.NPC') { "  发现副本：$($_.FullName)" }
+    }
+# 2c) 备份正式存档（换成你实际在玩的存档名）
 $save = "$env:APPDATA\StardewValley\Saves\<你的存档名>"
 Copy-Item $save "$save.bak-$stamp" -Recurse
 ```
@@ -69,9 +85,9 @@ Copy-Item "$src\StardewAI.NPC.deps.json" "$game\Mods\StardewAI.NPC\" -Force
 
 ```powershell
 $game = 'D:\sbeam\steamapps\common\Stardew Valley'
-# 恢复 Mod（把 <stamp> 换成备份时的时间戳）
+# 恢复 Mod（备份在 Mods\ 外面）
 Remove-Item "$game\Mods\StardewAI.NPC" -Recurse -Force
-Rename-Item "$game\Mods\StardewAI.NPC.bak-<stamp>" 'StardewAI.NPC'
+Copy-Item "E:\workspace\data\stardew-mod-backup\StardewAI.NPC.bak-<stamp>" "$game\Mods\StardewAI.NPC" -Recurse
 # 存档回滚（会丢掉部署后写入的记忆/邀约，请先确认）
 Remove-Item "$env:APPDATA\StardewValley\Saves\<你的存档名>" -Recurse -Force
 Rename-Item "$env:APPDATA\StardewValley\Saves\<你的存档名>.bak-<stamp>" '<你的存档名>'

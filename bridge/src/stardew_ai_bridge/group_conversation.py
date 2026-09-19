@@ -61,10 +61,25 @@ def _group_scene_instruction(
     roster_ids: list[str],
     strategy: str,
     turn_count: int | None,
+    is_opening: bool = False,
 ) -> str:
+    """群聊场景指令。
+
+    ``is_opening`` 表示**玩家一句话都还没说**（接受邀约后正是这个状态）：
+    此时不能让模型“接玩家”，而要它自己起个头，且**不得假定玩家说过任何话**。
+    """
     others = [item for item in roster_ids if item.casefold() != active_npc_id.casefold()]
     other_rule = (
         "不能替 " + "、".join(others) + " 发言。" if others else "不能替其他 NPC 发言。"
+    )
+    # 开场（玩家一句话都还没说）时不能让模型“接玩家”，而要它自己起个头。
+    first_speaker_rule = (
+        "玩家还没有说话，请由名单里最自然的那个人先起个头"
+        "（可以提起邀约里的由头，也可以说说自己的近况），"
+        "之后由内容和角色决定谁接；"
+        "不要假定玩家说过任何话，也不要替玩家发言；"
+        if is_opening
+        else "第一个发言的人先接玩家，之后由内容和角色决定谁接；"
     )
     if strategy == "multi_turn":
         limit = turn_count or (len(roster_ids) if roster_ids else 1)
@@ -76,8 +91,9 @@ def _group_scene_instruction(
             "这些回合不需要推进话题；允许打岔、突然说起别的事、说到一半停住，"
             "也可以有人整场不说话；不要每条都以总结、感悟或小道理收尾，"
             "也不要写“我先说……你呢？”这种对称发言模板。"
-            "谁说话：第一个发言的人先接玩家，之后由内容和角色决定谁接；"
-            "有人想接别人的话就自然接，不必每条都严丝合缝地对上，"
+            "谁说话："
+            + first_speaker_rule
+            + "有人想接别人的话就自然接，不必每条都严丝合缝地对上，"
             "几个人各给一条建议、各说各的近况都很正常；"
             "但不要让一个人把话说完：名单里每个人都应有机会开口，"
             "两个人里不要只有一个人说话，三个人里也不要只出现一个人。"
@@ -174,6 +190,8 @@ def build_group_messages(
                         roster_ids=roster_ids,
                         strategy=strategy,
                         turn_count=turn_count,
+                        # 玩家消息为空（或纯空白）⇒ 这是开场：NPC 自己起话题。
+                        is_opening=not player_message.strip(),
                     ),
                     "participants": [
                         {
@@ -190,7 +208,7 @@ def build_group_messages(
             ),
         }
     )
-    if player_message:
+    if player_message.strip():
         messages.append({"role": "user", "content": player_message})
     return messages
 
@@ -280,7 +298,16 @@ def build_group_prompt(
             "不能修改关系、好感度、库存或 NPC 日程。" + _SPEECH_HYGIENE_RULE
             + _GROUP_NATURAL_CONTRACT
         )
-    return [
+    if not player_message.strip():
+        instruction += (
+            "玩家还没有说话：请根据公开历史、各自角色气质与邀约里的由头，"
+            "让最自然的那个人先起个头；不要假定玩家说过任何话，也不要替玩家发言。"
+        )
+
+    # 玩家消息为空（或纯空白）⇒ 这是开场：NPC 自己起话题，且不得假定玩家说过话。
+    # 此前这里是**无条件**追加 user 消息，于是开场时会塞进一条空消息，
+    # 而指令却在要求“接玩家”—— 模型只能凭空猜（2026-09-20 修复）。
+    messages: list[dict[str, str]] = [
         {
             "role": "system",
             "name": "group_conversation",
@@ -297,8 +324,10 @@ def build_group_prompt(
                 ensure_ascii=False,
             ),
         },
-        {"role": "user", "content": player_message},
     ]
+    if player_message.strip():
+        messages.append({"role": "user", "content": player_message})
+    return messages
 
 
 def _normalize_addressed_to(

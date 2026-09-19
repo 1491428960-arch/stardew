@@ -24,6 +24,8 @@ public sealed class GroupDialogueMenu : IClickableMenu
     private string? pendingPlayerMessage;
     private bool sending;
     private bool closed;
+    // 整场只自动开场一次；由 GroupDialogueSessionRules.ShouldOpenWithNpc 判定时机。
+    private bool openingRequested;
 
     public GroupDialogueMenu(
         BridgeClient? bridgeClient,
@@ -130,6 +132,14 @@ public sealed class GroupDialogueMenu : IClickableMenu
             return;
         }
 
+        // 刚开一场群聊时由 NPC 先起头：玩家接受邀约后还没说话，
+        // 若等玩家先开口，邀约就起不到引导作用（2026-09-20 用户反馈）。
+        if (GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingRequested))
+        {
+            openingRequested = true;
+            _ = SendCurrentAsync(opening: true);
+        }
+
         PumpPendingRequest();
         base.update(time);
     }
@@ -196,7 +206,7 @@ public sealed class GroupDialogueMenu : IClickableMenu
         base.cleanupBeforeExit();
     }
 
-    private Task SendCurrentAsync(bool retry = false)
+    private Task SendCurrentAsync(bool retry = false, bool opening = false)
     {
         if (sending || closed || bridgeClient is null)
         {
@@ -208,7 +218,8 @@ public sealed class GroupDialogueMenu : IClickableMenu
         }
 
         var message = inputBox.Text.Trim();
-        if (!retry && message.Length == 0)
+        // opening：玩家一句话都没说，由 NPC 起头——Bridge 侧把空消息当作开场语义。
+        if (!retry && !opening && message.Length == 0)
         {
             hint = "先写点什么吧。";
             return Task.CompletedTask;
@@ -216,7 +227,7 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
         inputBox.Text = string.Empty;
         sending = true;
-        if (!retry)
+        if (!retry && !opening)
         {
             pendingPlayerMessage = message;
         }
@@ -245,7 +256,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
         LastRequestStateCount = participantsWithState
             .Count(item => item.GameState is not null);
         var request = new GroupDialogueRequest(
-            retry ? "请继续回应刚才的群聊话题。" : message,
+            opening
+                ? string.Empty
+                : retry
+                    ? "请继续回应刚才的群聊话题。"
+                    : message,
             participantsWithState,
             string.IsNullOrWhiteSpace(session.Invitation.Topic) ? null : session.Invitation.Topic,
             string.IsNullOrWhiteSpace(session.Invitation.Guidance) ? null : session.Invitation.Guidance,

@@ -4,6 +4,8 @@ import asyncio
 from collections.abc import Mapping
 import inspect
 import json
+import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from time import perf_counter
@@ -15,6 +17,25 @@ from pydantic import ValidationError
 from .config import BridgeSettings, ProviderSettings
 from .models import DialogueTestRequest, OpenLoopSignal, ProviderResult, ProviderUsage
 from .vertex_auth import AccessTokenSource, AdcAccessTokenSource, VertexAuthError
+
+
+log = logging.getLogger(__name__)
+
+# 日志里常见的密钥形态。httpx 的异常消息常带完整 URL，而 URL 的查询串、
+# userinfo 段与 Authorization 头都可能含 key——诊断信息要留下，密钥不能进日志。
+_SECRET_KEY_VALUE = re.compile(
+    r"(?i)\b(api[_-]?key|apikey|access[_-]?token|token|password|secret|key)=([^&\s\"']+)"
+)
+_SECRET_BEARER = re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-]+)")
+_SECRET_USERINFO = re.compile(r"(?i)(//)([^/\s:@]+):([^/\s@]+)@")
+
+
+def _redact_secrets(text: str) -> str:
+    """把文本里的密钥形态打码，其余上下文原样保留——诊断要看的正是这些上下文。"""
+
+    text = _SECRET_KEY_VALUE.sub(lambda match: f"{match.group(1)}=***", text)
+    text = _SECRET_BEARER.sub(lambda match: f"{match.group(1)} ***", text)
+    return _SECRET_USERINFO.sub(lambda match: f"{match.group(1)}***:***@", text)
 
 
 class ProviderError(RuntimeError):
@@ -889,7 +910,20 @@ class ProviderRouter:
 
     @staticmethod
     def _warning(provider: Provider, error: Exception) -> str:
-        del error
+        """候选失败时的一致处理：**响应泛化，日志可诊断**。
+
+        响应里只回 ``<name> provider failed``——上游细节不进游戏端；
+        但服务端日志必须留下候选名、异常类型与消息，否则一旦上游开始不稳定，
+        只能看到“延迟变高 + warningCount 上升”而无法定位
+        （2026-09-20 真机验证时遇到过一次 ``latencyMs=3976; warningCount=2``，
+        当时因为这里 `del error` 而查不出是哪两个候选失败）。
+        """
+        log.warning(
+            "provider 候选失败：name=%s type=%s message=%s",
+            provider.name,
+            type(error).__name__,
+            _redact_secrets(str(error)),
+        )
         return f"{provider.name} provider failed"
 
     @staticmethod
