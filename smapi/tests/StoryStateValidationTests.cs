@@ -53,6 +53,72 @@ public sealed class StoryStateValidationTests
         Assert.Contains(errors, error => error.Contains("importance", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void Relationship_records_reject_missing_identity_and_invalid_enums()
+    {
+        var viewErrors = StoryStateValidation.Validate(new RelationshipViewRecord
+        {
+            OwnerNpcId = "",
+            SubjectNpcId = "Sophia",
+            RelationType = "dating",
+            Visibility = "maybe",
+            Source = "rumor",
+        });
+        var mediationErrors = StoryStateValidation.Validate(new RelationshipMediationRecord
+        {
+            NpcId = "Alex",
+            Status = "resolved",
+            Outcome = "maybe",
+        });
+        var jealousyErrors = StoryStateValidation.Validate(new RelationshipJealousyRecord
+        {
+            NpcId = "Alex",
+            Active = true,
+            Trigger = "time",
+            Intensity = "extreme",
+        });
+
+        Assert.Contains(viewErrors, error => error.Contains("ownerNpcId", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(viewErrors, error => error.Contains("visibility", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(mediationErrors, error => error.Contains("outcome", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(jealousyErrors, error => error.Contains("intensity", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Open_loop_requires_current_npc_identity_and_safe_channels()
+    {
+        var errors = StoryStateValidation.Validate(new OpenLoopRecord
+        {
+            LoopId = "loop-1",
+            NpcId = "Wizard",
+            Topic = "符文",
+            OriginChannel = "face_to_face",
+            NextChannel = "remote",
+            Status = "open",
+            ShortSummary = "核对符文数据",
+            CreatedOn = "Spring 14",
+        });
+
+        Assert.Contains(errors, error => error.Contains("originChannel", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, error => error.Contains("nextChannel", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Open_loop_rejects_missing_required_fields_and_unknown_status()
+    {
+        var errors = StoryStateValidation.Validate(new OpenLoopRecord
+        {
+            Status = "unknown",
+        });
+
+        Assert.Contains(errors, error => error.Contains("loopId", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, error => error.Contains("npcId", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, error => error.Contains("topic", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, error => error.Contains("shortSummary", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, error => error.Contains("createdOn", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, error => error.Contains("status", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static MemoryRecord ValidMemory() => new()
     {
         MemoryId = "memory-1",

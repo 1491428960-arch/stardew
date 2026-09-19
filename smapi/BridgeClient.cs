@@ -17,6 +17,9 @@ public sealed class BridgeDialogueRequest
     [JsonPropertyName("intent")]
     public string Intent { get; init; } = ConversationIntent.Chat;
 
+    [JsonPropertyName("compactPrompt")]
+    public bool CompactPrompt { get; init; } = true;
+
     [JsonPropertyName("itemContext")]
     public ItemConversationContext? ItemContext { get; init; }
 
@@ -35,6 +38,13 @@ public sealed class BridgeDialogueRequest
     [JsonPropertyName("history")]
     public IReadOnlyList<BridgeDialogueHistoryItem> History { get; init; } =
         Array.Empty<BridgeDialogueHistoryItem>();
+
+    [JsonPropertyName("relationshipWorld")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RelationshipWorldSnapshot? RelationshipWorld { get; init; }
+
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = ConversationChannel.Remote;
 }
 
 public sealed class BridgeDialogueHistoryItem
@@ -44,6 +54,14 @@ public sealed class BridgeDialogueHistoryItem
 
     [JsonPropertyName("content")]
     public string Content { get; init; } = string.Empty;
+
+    [JsonPropertyName("intent")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Intent { get; init; }
+
+    [JsonPropertyName("relationshipStage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RelationshipStage { get; init; }
 }
 
 public sealed class BridgeDialogueResponse
@@ -63,6 +81,10 @@ public sealed class BridgeDialogueResponse
     [JsonPropertyName("warnings")]
     public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
 
+    [JsonPropertyName("openLoop")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OpenLoopSignal? OpenLoop { get; init; }
+
     public static BridgeDialogueResponse Offline(string warning)
     {
         return new BridgeDialogueResponse
@@ -75,10 +97,130 @@ public sealed class BridgeDialogueResponse
     }
 }
 
+public sealed class BridgeGroupTurn
+{
+    [JsonPropertyName("speakerNpcId")]
+    public string SpeakerNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("content")]
+    public string Content { get; init; } = string.Empty;
+
+    [JsonPropertyName("addressedTo")]
+    public IReadOnlyList<string> AddressedTo { get; init; } = Array.Empty<string>();
+}
+
+public sealed class BridgeGroupDialogueResponse
+{
+    [JsonPropertyName("strategy")]
+    public string Strategy { get; init; } = "turn_based";
+
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = ConversationChannel.Remote;
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = string.Empty;
+
+    [JsonPropertyName("fallback")]
+    public bool Fallback { get; init; }
+
+    [JsonPropertyName("turns")]
+    public IReadOnlyList<BridgeGroupTurn> Turns { get; init; } = Array.Empty<BridgeGroupTurn>();
+
+    [JsonPropertyName("providerCalls")]
+    public int ProviderCalls { get; init; }
+
+    [JsonPropertyName("providerErrors")]
+    public IReadOnlyList<string> ProviderErrors { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("fallbackCount")]
+    public int FallbackCount { get; init; }
+
+    [JsonPropertyName("latencyMs")]
+    public int LatencyMs { get; init; }
+
+    [JsonPropertyName("warnings")]
+    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("usage")]
+    public BridgeProviderUsage? Usage { get; init; }
+
+    /// <summary>Bridge 从群聊里挑出的、值得长期记住的事实或约定（闲聊不会出现在这里）。</summary>
+    [JsonPropertyName("memoryHighlights")]
+    public IReadOnlyList<string> MemoryHighlights { get; init; } = Array.Empty<string>();
+
+    public static BridgeGroupDialogueResponse Offline(string warning)
+    {
+        return new BridgeGroupDialogueResponse
+        {
+            Provider = "offline",
+            Fallback = true,
+            Turns = Array.Empty<BridgeGroupTurn>(),
+            Warnings = new[] { warning },
+        };
+    }
+}
+
+public sealed class BridgeProviderUsage
+{
+    [JsonPropertyName("inputTokens")]
+    public int? InputTokens { get; init; }
+
+    [JsonPropertyName("outputTokens")]
+    public int? OutputTokens { get; init; }
+
+    [JsonPropertyName("totalTokens")]
+    public int? TotalTokens { get; init; }
+}
+
+internal sealed class BridgeGroupDialogueHttpRequest
+{
+    [JsonPropertyName("message")]
+    public string Message { get; init; } = string.Empty;
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = "auto";
+
+    [JsonPropertyName("strategy")]
+    public string Strategy { get; init; } = "turn_based";
+
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = ConversationChannel.Remote;
+
+    [JsonPropertyName("participants")]
+    public IReadOnlyList<GroupDialogueParticipant> Participants { get; init; } =
+        Array.Empty<GroupDialogueParticipant>();
+
+    [JsonPropertyName("activeSpeakerNpcId")]
+    public string ActiveSpeakerNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("history")]
+    public IReadOnlyList<GroupDialogueHistoryEntry> History { get; init; } =
+        Array.Empty<GroupDialogueHistoryEntry>();
+
+    [JsonPropertyName("invitationTopic")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? InvitationTopic { get; init; }
+
+    [JsonPropertyName("invitationGuidance")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? InvitationGuidance { get; init; }
+
+    [JsonPropertyName("gameState")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public NpcGameState? GameState { get; init; }
+
+    [JsonPropertyName("recentFacts")]
+    public IReadOnlyList<string> RecentFacts { get; init; } = Array.Empty<string>();
+
+    [JsonPropertyName("relationshipWorld")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public RelationshipWorldSnapshot? RelationshipWorld { get; init; }
+}
+
 public sealed class BridgeClient : IDisposable, IConversationTransport
 {
     public static readonly Uri DefaultEndpoint = new("http://127.0.0.1:5678");
-    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(15);
+    public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
     private const int MaxHistoryItems = 6;
     private const int MaxHistoryContentLength = 240;
     private const int MaxMessageLength = 2000;
@@ -92,6 +234,10 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     private readonly HttpClient httpClient;
     private readonly bool ownsHttpClient;
     private readonly Uri dialogueEndpoint;
+    private readonly Uri groupDialogueEndpoint;
+    private readonly Action<string>? diagnosticLogger;
+    // 线上群聊策略由配置决定：默认自然接话流（multi_turn），turn_based 为回退选项。
+    private readonly string groupStrategy = ModConfig.MultiTurnGroupStrategy;
     private readonly object memoryLock = new();
     private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> historyByNpc = new();
     private readonly Dictionary<string, NpcGameState> previousStateByNpc = new();
@@ -99,18 +245,23 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     public BridgeClient(
         HttpClient? httpClient = null,
         Uri? endpoint = null,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        Action<string>? diagnosticLogger = null,
+        string? groupStrategy = null)
     {
         var baseEndpoint = endpoint ?? DefaultEndpoint;
         ValidateEndpoint(baseEndpoint);
 
         this.httpClient = httpClient ?? new HttpClient();
         ownsHttpClient = httpClient is null;
+        this.diagnosticLogger = diagnosticLogger;
+        this.groupStrategy = ModConfig.NormalizeGroupStrategy(groupStrategy);
         this.httpClient.Timeout = timeout ?? DefaultTimeout;
         var normalizedBaseEndpoint = new Uri(
             baseEndpoint.AbsoluteUri.TrimEnd('/') + "/",
             UriKind.Absolute);
         dialogueEndpoint = new Uri(normalizedBaseEndpoint, "api/dialogue/test");
+        groupDialogueEndpoint = new Uri(normalizedBaseEndpoint, "api/dialogue/group");
     }
 
     public async Task<BridgeDialogueResponse> SendAsync(
@@ -120,7 +271,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         CancellationToken cancellationToken = default,
         IReadOnlyList<string>? memoryFacts = null,
         string intent = ConversationIntent.Chat,
-        ItemConversationContext? itemContext = null)
+        ItemConversationContext? itemContext = null,
+        RelationshipWorldSnapshot? relationshipWorld = null,
+        string channel = ConversationChannel.Remote)
     {
         if (string.IsNullOrWhiteSpace(npcId))
         {
@@ -130,6 +283,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         var normalizedIntent = string.IsNullOrWhiteSpace(intent)
             ? ConversationIntent.Chat
             : intent;
+        var normalizedChannel = string.Equals(channel, ConversationChannel.FaceToFace, StringComparison.Ordinal)
+            ? ConversationChannel.FaceToFace
+            : ConversationChannel.Remote;
         if (string.IsNullOrWhiteSpace(message) && normalizedIntent != ConversationIntent.Topic)
         {
             throw new ArgumentException("消息不能为空。", nameof(message));
@@ -149,10 +305,14 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                     NpcId = npcId,
                     Message = boundedMessage,
                     Intent = normalizedIntent,
+                    Channel = normalizedChannel,
                     ItemContext = itemContext,
                     DisplayName = npcGameState?.DisplayName,
                     SourceMods = npcGameState?.SourceMods ?? Array.Empty<string>(),
                     GameState = gameState,
+                    RelationshipWorld = relationshipWorld is null
+                        ? null
+                        : FilterRelationshipWorld(npcId, relationshipWorld),
                     RecentFacts = MergeRecentFacts(
                         BuildRecentFacts(
                             previousStateByNpc.GetValueOrDefault(npcId),
@@ -190,27 +350,326 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 result = BridgeDialogueResponse.Offline("bridge: topic prompt echo");
             }
 
+            LogSafeResponseMetadata(result);
             RememberResult(npcId, boundedMessage, normalizedIntent, result, npcGameState);
             return result;
         }
         catch (TaskCanceledException)
         {
             var result = BridgeDialogueResponse.Offline("bridge: timeout");
+            LogSafeResponseMetadata(result);
             RememberResult(npcId, boundedMessage, normalizedIntent, result, gameState as NpcGameState);
             return result;
         }
         catch (HttpRequestException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: offline ({exception.Message})");
+            LogSafeResponseMetadata(result);
             RememberResult(npcId, boundedMessage, normalizedIntent, result, gameState as NpcGameState);
             return result;
         }
         catch (JsonException exception)
         {
             var result = BridgeDialogueResponse.Offline($"bridge: invalid JSON ({exception.Message})");
+            LogSafeResponseMetadata(result);
             RememberResult(npcId, boundedMessage, normalizedIntent, result, gameState as NpcGameState);
             return result;
         }
+    }
+
+    public async Task<BridgeGroupDialogueResponse> SendGroupAsync(
+        GroupDialogueRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var participants = request.Participants ?? Array.Empty<GroupDialogueParticipant>();
+        if (participants.Count is < 2 or > 3)
+        {
+            return BridgeGroupDialogueResponse.Offline("bridge: participant count invalid");
+        }
+
+        var participantIds = participants
+            .Select(item => item.NpcId?.Trim() ?? string.Empty)
+            .ToArray();
+        if (participantIds.Any(string.IsNullOrWhiteSpace) ||
+            participantIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != participantIds.Length)
+        {
+            return BridgeGroupDialogueResponse.Offline("bridge: participant list invalid");
+        }
+
+        var activeSpeakerNpcId = string.IsNullOrWhiteSpace(request.ActiveSpeakerNpcId)
+            ? participantIds[0]
+            : request.ActiveSpeakerNpcId.Trim();
+        if (!participantIds.Contains(activeSpeakerNpcId, StringComparer.OrdinalIgnoreCase))
+        {
+            return BridgeGroupDialogueResponse.Offline("bridge: active speaker invalid");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Message))
+        {
+            return BridgeGroupDialogueResponse.Offline("bridge: message empty");
+        }
+
+        var boundedHistory = (request.History ?? Array.Empty<GroupDialogueHistoryEntry>())
+            .Take(MaxHistoryItems)
+            .Select(item => new GroupDialogueHistoryEntry(
+                item.SpeakerType,
+                item.SpeakerId,
+                Truncate(item.Content ?? string.Empty, MaxHistoryContentLength),
+                (item.AddressedTo ?? Array.Empty<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Take(participants.Count)
+                    .Select(value => Truncate(value.Trim(), 100))
+                    .ToArray()))
+            .ToArray();
+        var bridgeRequest = new BridgeGroupDialogueHttpRequest
+        {
+            Message = Truncate(request.Message.Trim(), MaxMessageLength),
+            Provider = string.IsNullOrWhiteSpace(request.Provider) ? "auto" : request.Provider.Trim(),
+            Strategy = groupStrategy,
+            Channel = ConversationChannel.Remote,
+            Participants = participants
+                .Select(item => new GroupDialogueParticipant(
+                    item.NpcId.Trim(),
+                    Truncate(item.DisplayName?.Trim() ?? item.NpcId.Trim(), 100),
+                    item.GameState))
+                .ToArray(),
+            ActiveSpeakerNpcId = activeSpeakerNpcId,
+            History = boundedHistory,
+            InvitationTopic = TruncateNullable(request.InvitationTopic, 240),
+            InvitationGuidance = TruncateNullable(request.InvitationGuidance, 500),
+            GameState = request.GameState,
+            RecentFacts = (request.RecentFacts ?? Array.Empty<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Take(MaxRecentFactItems)
+                .Select(value => Truncate(value.Trim(), MaxRecentFactLength))
+                .ToArray(),
+            RelationshipWorld = request.RelationshipWorld,
+        };
+
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                groupDialogueEndpoint,
+                bridgeRequest,
+                cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                var failed = BridgeGroupDialogueResponse.Offline(
+                    $"bridge: HTTP {(int)response.StatusCode} {response.ReasonPhrase}".Trim());
+                LogSafeGroupResponseMetadata(failed);
+                return failed;
+            }
+
+            var parsed = await response.Content.ReadFromJsonAsync<BridgeGroupDialogueResponse>(
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            var result = ValidateGroupResponse(parsed, participantIds, groupStrategy);
+            LogSafeGroupResponseMetadata(result);
+            RememberGroupTurn(participants, request.Message, result);
+            return result;
+        }
+        catch (TaskCanceledException)
+        {
+            var result = BridgeGroupDialogueResponse.Offline("bridge: timeout");
+            LogSafeGroupResponseMetadata(result);
+            return result;
+        }
+        catch (HttpRequestException)
+        {
+            var result = BridgeGroupDialogueResponse.Offline("bridge: offline");
+            LogSafeGroupResponseMetadata(result);
+            return result;
+        }
+        catch (JsonException)
+        {
+            var result = BridgeGroupDialogueResponse.Offline("bridge: invalid JSON");
+            LogSafeGroupResponseMetadata(result);
+            return result;
+        }
+    }
+
+    private void LogSafeGroupResponseMetadata(BridgeGroupDialogueResponse result)
+    {
+        diagnosticLogger?.Invoke(
+            $"[StardewAI.Bridge] group response provider={result.Provider}; " +
+            $"fallback={result.Fallback.ToString().ToLowerInvariant()}; " +
+            $"latencyMs={result.LatencyMs}; turnCount={result.Turns.Count}; " +
+            $"warningCount={result.Warnings.Count}");
+    }
+
+    /// <summary>
+    /// 只读诊断入口：某位 NPC 内存层对话历史的条数（不含进存档的长期记忆）。
+    /// 供视觉测试核对“一次群聊只占一条”的合并写法。
+    /// </summary>
+    internal int VisualTestHistoryCount(string npcId)
+    {
+        var normalized = npcId?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return 0;
+        }
+
+        lock (memoryLock)
+        {
+            return historyByNpc
+                .Where(pair => string.Equals(pair.Key, normalized, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Value.Count)
+                .FirstOrDefault();
+        }
+    }
+
+    /// <summary>
+    /// 群聊结束后，把每个参与者自己说过的内容**合并成一条**写进它自己的记忆。
+    /// 只记本人发言：别人的话不进这一份记忆；一次群聊最多占一条，
+    /// 免得随口聊的把私聊记忆挤出 6 条窗口。
+    /// </summary>
+    private void RememberGroupTurn(
+        IReadOnlyList<GroupDialogueParticipant> participants,
+        string playerMessage,
+        BridgeGroupDialogueResponse result)
+    {
+        if (result.Fallback || result.Turns.Count == 0)
+        {
+            return;
+        }
+
+        lock (memoryLock)
+        {
+            foreach (var participant in participants)
+            {
+                var npcId = participant.NpcId?.Trim();
+                if (string.IsNullOrWhiteSpace(npcId))
+                {
+                    continue;
+                }
+
+                var spoken = result.Turns
+                    .Where(turn => string.Equals(
+                        turn.SpeakerNpcId?.Trim(),
+                        npcId,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(turn => (turn.Content ?? string.Empty).Trim())
+                    .Where(text => text.Length > 0)
+                    .ToArray();
+                if (spoken.Length == 0)
+                {
+                    continue;
+                }
+
+                if (!historyByNpc.TryGetValue(npcId, out var history))
+                {
+                    history = new List<BridgeDialogueHistoryItem>();
+                    historyByNpc[npcId] = history;
+                }
+
+                var stage = participant.GameState is null
+                    ? null
+                    : RelationshipStageRules.ResolveKey(participant.GameState);
+                var joined = string.Join(" ", spoken);
+                var summary = string.IsNullOrWhiteSpace(playerMessage)
+                    ? $"群里我说：“{joined}”"
+                    : $"群里玩家说：“{playerMessage.Trim()}”；我回应：“{joined}”";
+                history.Add(new BridgeDialogueHistoryItem
+                {
+                    Role = "assistant",
+                    Content = Truncate(summary, MaxHistoryContentLength),
+                    RelationshipStage = stage,
+                });
+
+                if (history.Count > MaxHistoryItems)
+                {
+                    history.RemoveRange(0, history.Count - MaxHistoryItems);
+                }
+            }
+        }
+    }
+
+    private static BridgeGroupDialogueResponse ValidateGroupResponse(
+        BridgeGroupDialogueResponse? response,
+        IReadOnlyList<string> participantIds,
+        string expectedStrategy)
+    {
+        if (response is null)
+        {
+            return BridgeGroupDialogueResponse.Offline("bridge: response missing");
+        }
+
+        if (response.Fallback)
+        {
+            return SafeGroupFailure(response, "bridge: provider fallback");
+        }
+
+        if (!string.Equals(response.Channel, ConversationChannel.Remote, StringComparison.Ordinal) ||
+            !string.Equals(response.Strategy, expectedStrategy, StringComparison.Ordinal))
+        {
+            return SafeGroupFailure(response, "bridge: response mode invalid");
+        }
+
+        var turns = response.Turns ?? Array.Empty<BridgeGroupTurn>();
+        if (turns.Count == 0 || turns.Any(turn =>
+                string.IsNullOrWhiteSpace(turn.SpeakerNpcId) ||
+                !participantIds.Contains(turn.SpeakerNpcId, StringComparer.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(turn.Content)))
+        {
+            return SafeGroupFailure(response, "bridge: response speaker invalid");
+        }
+
+        return new BridgeGroupDialogueResponse
+        {
+            Strategy = expectedStrategy,
+            Channel = ConversationChannel.Remote,
+            Provider = response.Provider,
+            Fallback = false,
+            Turns = turns
+                .Select(turn => new BridgeGroupTurn
+                {
+                    SpeakerNpcId = turn.SpeakerNpcId.Trim(),
+                    Content = turn.Content.Trim(),
+                    AddressedTo = (turn.AddressedTo ?? Array.Empty<string>())
+                        .Where(value => participantIds.Contains(value, StringComparer.OrdinalIgnoreCase))
+                        .Take(3)
+                        .ToArray(),
+                })
+                .ToArray(),
+            ProviderCalls = response.ProviderCalls,
+            ProviderErrors = Array.Empty<string>(),
+            FallbackCount = response.FallbackCount,
+            LatencyMs = response.LatencyMs,
+            Warnings = response.Warnings ?? Array.Empty<string>(),
+            Usage = response.Usage,
+        };
+    }
+
+    private static BridgeGroupDialogueResponse SafeGroupFailure(
+        BridgeGroupDialogueResponse response,
+        string warning)
+    {
+        return new BridgeGroupDialogueResponse
+        {
+            Strategy = "turn_based",
+            Channel = ConversationChannel.Remote,
+            Provider = string.IsNullOrWhiteSpace(response.Provider) ? "unknown" : response.Provider,
+            Fallback = true,
+            ProviderCalls = response.ProviderCalls,
+            FallbackCount = Math.Max(1, response.FallbackCount),
+            LatencyMs = response.LatencyMs,
+            Warnings = new[] { warning },
+            Usage = response.Usage,
+        };
+    }
+
+    private static string? TruncateNullable(string? value, int maxLength)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : Truncate(value.Trim(), maxLength);
+    }
+
+    private void LogSafeResponseMetadata(BridgeDialogueResponse result)
+    {
+        diagnosticLogger?.Invoke(
+            $"[StardewAI.Bridge] response provider={result.Provider}; " +
+            $"fallback={result.Fallback.ToString().ToLowerInvariant()}; " +
+            $"latencyMs={result.LatencyMs}; warningCount={result.Warnings.Count}");
     }
 
     async Task<BridgeDialogueResponse> IConversationTransport.SendAsync(
@@ -224,7 +683,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             cancellationToken,
             request.RecentFacts,
             request.Intent,
-            request.ItemContext).ConfigureAwait(false);
+            request.ItemContext,
+            request.RelationshipWorld,
+            request.Channel).ConfigureAwait(false);
     }
 
     public void Dispose()
@@ -256,6 +717,10 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             return;
         }
 
+        var relationshipStage = currentState is null
+            ? null
+            : RelationshipStageRules.ResolveKey(currentState);
+
         lock (memoryLock)
         {
             if (!historyByNpc.TryGetValue(npcId, out var history))
@@ -270,12 +735,16 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 {
                     Role = "user",
                     Content = Truncate(message, MaxHistoryContentLength),
+                    Intent = intent,
+                    RelationshipStage = relationshipStage,
                 });
             }
             history.Add(new BridgeDialogueHistoryItem
             {
                 Role = "assistant",
                 Content = Truncate(result.Reply, MaxHistoryContentLength),
+                Intent = intent,
+                RelationshipStage = relationshipStage,
             });
             if (history.Count > MaxHistoryItems)
             {
@@ -352,6 +821,38 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         facts.Add(Truncate(
             $"剧情事件从“{previousText}”变为“{currentText}”",
             MaxRecentFactLength));
+    }
+
+    private static RelationshipWorldSnapshot FilterRelationshipWorld(
+        string npcId,
+        RelationshipWorldSnapshot relationshipWorld)
+    {
+        var currentNpcViews = relationshipWorld.Views
+            .Where(view => string.Equals(view.OwnerNpcId, npcId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var currentNpcRelationships = relationshipWorld.ObjectiveRelationships
+            .Where(relationship =>
+                string.Equals(relationship.FromNpcId, "player", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(relationship.ToNpcId, npcId, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        return relationshipWorld with
+        {
+            ObjectiveRelationships = currentNpcRelationships,
+            Views = currentNpcViews,
+            Mediation = relationshipWorld.Mediation is not null &&
+                string.Equals(relationshipWorld.Mediation.NpcId, npcId, StringComparison.OrdinalIgnoreCase)
+                ? relationshipWorld.Mediation
+                : null,
+            Jealousy = relationshipWorld.Jealousy is not null &&
+                string.Equals(relationshipWorld.Jealousy.NpcId, npcId, StringComparison.OrdinalIgnoreCase)
+                ? relationshipWorld.Jealousy
+                : null,
+            OpenLoops = relationshipWorld.OpenLoops
+                .Where(openLoop =>
+                    string.Equals(openLoop.NpcId, npcId, StringComparison.OrdinalIgnoreCase) &&
+                    (openLoop.Status == "open" || openLoop.Status == "in_progress"))
+                .ToArray(),
+        };
     }
 
     private static void AddStringChange(

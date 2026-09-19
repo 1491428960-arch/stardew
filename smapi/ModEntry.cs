@@ -1,11 +1,13 @@
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using System.Reflection;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Locations;
+using StardewValley.Menus;
 using StardewNpc = StardewValley.NPC;
 
 namespace StardewAI.NPC;
@@ -16,22 +18,34 @@ public sealed class ModEntry : Mod
     private BridgeClient? bridgeClient;
     private ConversationService? conversationService;
     private KeybindList dialogueKey = new(SButton.F8);
+    private KeybindList groupDialogueKey = new(SButton.F9);
     private readonly StoryStateStore storyStateStore = new();
+    private readonly ShareFriendshipLedger shareFriendshipLedger = new();
     private readonly EventAuditObserver eventAuditObserver = new();
     private HouseAccessController? houseAccessController;
     private FaceToFaceConversationCoordinator? faceToFaceCoordinator;
     private VisualTestHarness? visualTestHarness;
     private StardewNpc? testNpc;
     private FrameRateSampler? frameRateSampler;
+    private GroupDialogueCoordinator? groupDialogueCoordinator;
 
     public override void Entry(IModHelper helper)
     {
         config = helper.ReadConfig<ModConfig>().Normalize();
         ApplyConfig();
+        groupDialogueCoordinator = new GroupDialogueCoordinator(
+            storyStateStore,
+            new GroupInvitationGenerator(GroupInvitationTemplates.All),
+            GetKnownGroupParticipants,
+            () => Game1.Date.TotalDays,
+            () => $"{Game1.currentSeason} {Game1.dayOfMonth}",
+            TryOpenGroupHub,
+            CloseGroupMenu);
         faceToFaceCoordinator = new FaceToFaceConversationCoordinator(
             conversationService,
             storyStateStore,
-            speaker => RuntimeDialogueSampler.Observe(Monitor, speaker));
+            speaker => RuntimeDialogueSampler.Observe(Monitor, speaker),
+            shareFriendshipLedger);
         houseAccessController = new HouseAccessController(
             Monitor,
             GetHouseAccessOptions);
@@ -41,9 +55,12 @@ public sealed class ModEntry : Mod
             Monitor,
             () => conversationService,
             ResolveVisualTestNpc,
-            storyStateStore);
+            storyStateStore,
+            TryOpenGroupHubForVisualTest,
+            () => bridgeClient);
         GameStateCollector.ConfigureModRegistry(new SmapiModRegistryStatus(helper.ModRegistry));
         helper.Events.Input.ButtonPressed += OnButtonPressed;
+        helper.Events.GameLoop.UpdateTicked += faceToFaceCoordinator.OnUpdateTicked;
         helper.Events.Player.Warped += OnPlayerWarped;
         helper.Events.Display.MenuChanged += faceToFaceCoordinator.OnMenuChanged;
         if (config.EnablePerformanceDiagnostics)
@@ -63,12 +80,13 @@ public sealed class ModEntry : Mod
         helper.Events.GameLoop.Saved += OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
         Monitor.Log(
-            $"AI NPC 原型已加载。按 {dialogueKey} 与当前地点有好感度记录的 NPC 对话。",
+            $"AI NPC 原型已加载。按 {dialogueKey} 与当前地点 NPC 进行单人对话，按 {groupDialogueKey} 打开线上多人对话。",
             LogLevel.Info);
     }
 
     private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
     {
+        shareFriendshipLedger.Reset();
         eventAuditObserver.Reset();
         houseAccessController?.ResetMapCache();
         houseAccessController?.Apply();
@@ -130,10 +148,15 @@ public sealed class ModEntry : Mod
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
         faceToFaceCoordinator?.ResetRepeatTarget();
+        if (Context.IsWorldReady)
+        {
+            groupDialogueCoordinator?.OnDayStarted();
+        }
     }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
     {
+        shareFriendshipLedger.Reset();
         eventAuditObserver.Reset();
         houseAccessController?.ResetMapCache();
         houseAccessController?.Dispose();
@@ -146,6 +169,7 @@ public sealed class ModEntry : Mod
         {
             Game1.activeClickableMenu.exitThisMenuNoSound();
         }
+        groupDialogueCoordinator?.CloseIfOpen();
 
         RemoveTestNpc();
 
@@ -153,6 +177,7 @@ public sealed class ModEntry : Mod
         conversationService?.Dispose();
         conversationService = null;
         faceToFaceCoordinator?.UpdateService(null);
+        groupDialogueCoordinator?.CloseIfOpen();
         bridgeClient?.Dispose();
         bridgeClient = null;
         storyStateStore.Reset();
@@ -171,6 +196,8 @@ public sealed class ModEntry : Mod
         {
             return;
         }
+
+        faceToFaceCoordinator?.ResetRepeatTarget();
 
         // FarmHouse can finish loading after SaveLoaded on some custom farm
         // maps. Retry when the player actually enters it so the test NPC is
@@ -416,6 +443,15 @@ public sealed class ModEntry : Mod
             ModConfig.MaxBridgeTimeoutSeconds,
             1,
             fieldId: "BridgeTimeoutSeconds");
+        api.AddTextOption(
+            ModManifest,
+            () => config.GroupDialogueStrategy,
+            value => config.GroupDialogueStrategy = value,
+            () => "Group dialogue strategy",
+            () => "multi_turn 为自然接话流（名单里多人可依次发言，默认）；turn_based 只让当前发言人回一句。",
+            new[] { ModConfig.MultiTurnGroupStrategy, ModConfig.TurnBasedGroupStrategy },
+            value => value == ModConfig.TurnBasedGroupStrategy ? "一人一轮（回退）" : "自然接话流（默认）",
+            fieldId: "GroupDialogueStrategy");
     }
 
     private void ResetConfig()
@@ -438,17 +474,129 @@ public sealed class ModEntry : Mod
         conversationService?.Dispose();
         conversationService = null;
         dialogueKey = config.DialogueKey;
+        groupDialogueKey = config.GroupDialogueKey;
+        groupDialogueCoordinator?.CloseIfOpen();
         bridgeClient?.Dispose();
         bridgeClient = config.EnableDialogue
             ? new BridgeClient(
                 endpoint: new Uri(config.BridgeEndpoint),
-                timeout: TimeSpan.FromSeconds(config.BridgeTimeoutSeconds))
+                timeout: TimeSpan.FromSeconds(config.BridgeTimeoutSeconds),
+                diagnosticLogger: message => Monitor.Log(message, LogLevel.Trace),
+                groupStrategy: config.GroupDialogueStrategy)
             : null;
         if (bridgeClient is not null)
         {
             conversationService = new ConversationService(bridgeClient, storyStateStore);
         }
         faceToFaceCoordinator?.UpdateService(conversationService);
+    }
+
+    private bool TryOpenGroupHub()
+    {
+        if (!DialogueEntryRules.CanOpenGroup(
+                config.EnableDialogue,
+                Context.IsWorldReady,
+                Game1.activeClickableMenu is not null,
+                bridgeClient is not null))
+        {
+            return false;
+        }
+
+        return OpenGroupHubMenu();
+    }
+
+    private bool TryOpenGroupHubForVisualTest()
+    {
+        // VisualTestHarness loads a save directly through SaveGame.Load, so
+        // SMAPI's normal SaveLoaded/Context.IsWorldReady flag is not raised.
+        // The harness invokes this only after the same game-mode/player/location
+        // readiness check used to open its other real menus.
+        var gameReady = VisualTestHarnessRules.IsGameReady(
+            Game1.gameMode,
+            Game1.player is not null,
+            Game1.currentLocation is not null);
+        if (Game1.activeClickableMenu is TitleMenu titleMenu)
+        {
+            // Direct SaveGame.Load leaves the title menu attached even after
+            // gameMode reaches 3. Normal F9 input never needs this cleanup;
+            // it is only the visual harness's load-path residue.
+            titleMenu.exitThisMenuNoSound();
+            Game1.activeClickableMenu = null;
+        }
+        Monitor.Log(
+            $"视觉测试 F9 入口门槛：enabled={config.EnableDialogue}; gameReady={gameReady}; " +
+            $"activeMenu={Game1.activeClickableMenu?.GetType().Name ?? "null"}; " +
+            $"bridgeClient={(bridgeClient is null ? "null" : "ok")}",
+            LogLevel.Trace);
+        if (!DialogueEntryRules.CanOpenGroup(
+                config.EnableDialogue,
+                gameReady,
+                Game1.activeClickableMenu is not null,
+                bridgeClient is not null))
+        {
+            return false;
+        }
+
+        return OpenGroupHubMenu();
+    }
+
+    private bool OpenGroupHubMenu()
+    {
+        Game1.activeClickableMenu = new GroupDialogueHubMenu(
+            storyStateStore,
+            bridgeClient,
+            GetKnownGroupParticipants,
+            CloseGroupMenu);
+        return true;
+    }
+
+    private void CloseGroupMenu()
+    {
+        if (Game1.activeClickableMenu is GroupDialogueHubMenu or
+            GroupParticipantMenu or
+            GroupDialogueMenu)
+        {
+            Game1.activeClickableMenu.exitThisMenuNoSound();
+        }
+    }
+
+    private IReadOnlyList<GroupParticipantCandidate> GetKnownGroupParticipants()
+    {
+        if (Game1.player is null)
+        {
+            return Array.Empty<GroupParticipantCandidate>();
+        }
+
+        var friendshipData = ReadMember(Game1.player, "friendshipData");
+        var known = KnownNpcResolver.Resolve(
+            FriendshipDataAccessor.Keys(friendshipData),
+            npcId =>
+            {
+                var npc = Game1.getCharacterFromName(npcId);
+                return npc is null ? null : new KnownNpc(npc.Name, npc.displayName);
+            });
+        return known
+            .Select(npc => new GroupParticipantCandidate(npc.NpcId, npc.DisplayName, true))
+            .ToArray();
+    }
+
+    private static object? ReadMember(object source, string memberName)
+    {
+        try
+        {
+            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var property = source.GetType().GetProperty(memberName, flags);
+            if (property is not null)
+            {
+                return property.GetValue(source);
+            }
+
+            return source.GetType().GetField(memberName, flags)?.GetValue(source);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private HouseAccessOptions GetHouseAccessOptions()
@@ -477,9 +625,26 @@ public sealed class ModEntry : Mod
         }
 
         if (e.Button.IsActionButton() &&
+            faceToFaceCoordinator?.TryConsumePendingKiss(e.Cursor.GrabTile) == true)
+        {
+            Helper.Input.Suppress(e.Button);
+            return;
+        }
+
+        if (e.Button.IsActionButton() &&
             faceToFaceCoordinator?.TryOpenRepeatChat(e.Cursor.GrabTile) == true)
         {
             Helper.Input.Suppress(e.Button);
+            return;
+        }
+
+        if (groupDialogueKey.JustPressed())
+        {
+            if (groupDialogueCoordinator?.TryOpen() == true)
+            {
+                Helper.Input.Suppress(e.Button);
+            }
+
             return;
         }
 
@@ -501,11 +666,11 @@ public sealed class ModEntry : Mod
             return;
         }
 
-        Game1.activeClickableMenu = new ChatInputMenu(
-            target,
-            conversationService!,
-            storyStateStore,
-            () => Monitor.Log("AI 聊天已结束。", LogLevel.Trace));
+        if (faceToFaceCoordinator is null ||
+            !faceToFaceCoordinator.TryOpenChat(target))
+        {
+            return;
+        }
     }
 
     private static StardewNpc? ResolveFriendshipTarget(Vector2 interactionTile)
@@ -522,7 +687,8 @@ public sealed class ModEntry : Mod
                 Npc = npc,
                 Candidate = new NpcTargetCandidate(
                     npc.Name,
-                    HasFriendshipRecord(npc.Name),
+                    HasFriendshipRecord(npc.Name) ||
+                        TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord(npc.Name),
                     ReferenceEquals(npc.currentLocation, location),
                     Vector2.Distance(Game1.player.Position, npc.Position) / Game1.tileSize,
                     FaceToFaceStateRules.InteractionTargetsRememberedNpc(

@@ -16,7 +16,14 @@ public sealed record VisualTestManifest(
     float UiScale,
     float Zoom,
     string ScreenshotFile,
-    string CaptureSource = "backbuffer")
+    string CaptureSource = "backbuffer",
+    int? GroupResponseTurns = null,
+    int? GroupMemoryCount = null,
+    int? GroupMemoryNpcCount = null,
+    string? GroupInvitationStatus = null,
+    int? GroupRequestStateCount = null,
+    int? GroupMemoryLayerCount = null,
+    int? GroupMemoryLayerGainCount = null)
 {
     public string ToJson()
     {
@@ -38,6 +45,13 @@ public sealed record VisualTestManifest(
             zoom = Zoom,
             screenshotFile = ScreenshotFile,
             captureSource = CaptureSource,
+            groupResponseTurns = GroupResponseTurns,
+            groupMemoryCount = GroupMemoryCount,
+            groupMemoryNpcCount = GroupMemoryNpcCount,
+            groupInvitationStatus = GroupInvitationStatus,
+            groupRequestStateCount = GroupRequestStateCount,
+            groupMemoryLayerCount = GroupMemoryLayerCount,
+            groupMemoryLayerGainCount = GroupMemoryLayerGainCount,
         };
 
         return JsonSerializer.Serialize(payload);

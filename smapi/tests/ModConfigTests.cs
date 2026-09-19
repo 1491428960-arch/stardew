@@ -18,7 +18,55 @@ public sealed class ModConfigTests
         Assert.True(config.EnableDialogue);
         Assert.False(config.EnablePerformanceDiagnostics);
         Assert.Equal("http://127.0.0.1:5678", config.BridgeEndpoint);
-        Assert.Equal(15, config.BridgeTimeoutSeconds);
+        Assert.Equal(60, config.BridgeTimeoutSeconds);
+    }
+
+    [Fact]
+    public void Default_group_dialogue_key_is_F9()
+    {
+        var config = new ModConfig();
+
+        Assert.Equal(SButton.F9, config.GroupDialogueKey.Keybinds.Single().Buttons.Single());
+    }
+
+    [Fact]
+    public void Group_dialogue_strategy_defaults_to_multi_turn()
+    {
+        var config = new ModConfig();
+
+        Assert.Equal("multi_turn", config.GroupDialogueStrategy);
+        Assert.Equal("multi_turn", config.Normalize().GroupDialogueStrategy);
+    }
+
+    [Theory]
+    [InlineData("turn_based", "turn_based")]
+    [InlineData("TURN_BASED", "turn_based")]
+    [InlineData("multi_turn", "multi_turn")]
+    [InlineData("fanout", "multi_turn")]
+    [InlineData("", "multi_turn")]
+    [InlineData("   ", "multi_turn")]
+    public void Group_dialogue_strategy_normalizes_to_a_supported_value(
+        string value,
+        string expected)
+    {
+        var config = new ModConfig { GroupDialogueStrategy = value };
+
+        Assert.Equal(expected, config.Normalize().GroupDialogueStrategy);
+    }
+
+    [Fact]
+    public void Group_dialogue_key_cannot_share_the_single_dialogue_key()
+    {
+        var config = new ModConfig
+        {
+            DialogueKey = KeybindList.Parse("F9"),
+            GroupDialogueKey = KeybindList.Parse("F9"),
+        };
+
+        var normalized = config.Normalize();
+
+        Assert.Equal(SButton.F9, normalized.DialogueKey.Keybinds.Single().Buttons.Single());
+        Assert.Equal(SButton.F10, normalized.GroupDialogueKey.Keybinds.Single().Buttons.Single());
     }
 
     [Fact]
@@ -53,7 +101,7 @@ public sealed class ModConfigTests
         var normalized = config.Normalize();
 
         Assert.Equal("http://127.0.0.1:5678", normalized.BridgeEndpoint);
-        Assert.Equal(15, normalized.BridgeTimeoutSeconds);
+        Assert.Equal(60, normalized.BridgeTimeoutSeconds);
     }
 
     [Fact]
@@ -81,7 +129,7 @@ public sealed class ModConfigTests
         Assert.False(config.EnableDialogue);
         Assert.Equal(60, config.BridgeTimeoutSeconds);
         Assert.True(reset.EnableDialogue);
-        Assert.Equal(15, reset.BridgeTimeoutSeconds);
+        Assert.Equal(60, reset.BridgeTimeoutSeconds);
         Assert.True(reset.EnableHouseAccess);
         Assert.True(reset.AllowMixedBuildingAccess);
     }

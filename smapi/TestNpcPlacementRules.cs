@@ -23,6 +23,11 @@ public static class TestNpcPlacementRules
 {
     public const string InternalName = "StardewAI_NPC_Test";
 
+    public static bool IsDialogueTargetWithoutFriendshipRecord(string? npcId)
+    {
+        return string.Equals(npcId, InternalName, StringComparison.Ordinal);
+    }
+
     public static bool IsUsableBedSpot(Point playerBedSpot)
     {
         // FarmHouse.GetPlayerBedSpot returns (0, 0) while some custom maps

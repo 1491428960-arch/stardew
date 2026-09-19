@@ -38,6 +38,174 @@ public sealed class ConversationServiceTests
     }
 
     [Fact]
+    public async Task Chat_sends_group_highlights_as_recent_facts_for_that_npc_only()
+    {
+        var transport = new FakeTransport();
+        var store = new StoryStateStore();
+        // 群聊里玩家当着 Rasmodia 说的约定会写进她的长期记忆。
+        store.RecordMemoryHighlight("Rasmodia", "玩家下周要交一份报告。", "Spring 14");
+        // 别人在群里听到的事不该出现在她的请求里。
+        store.RecordMemoryHighlight("Abigail", "不该出现在 Rasmodia 的请求里", "Spring 14");
+        var service = new ConversationService(transport, store);
+
+        await service.SendAsync(
+            TestNpcState(),
+            "你还记得我说过什么吗？",
+            CancellationToken.None);
+
+        var facts = transport.LastRequest!.RecentFacts ?? Array.Empty<string>();
+        Assert.Contains(facts, fact => fact.Contains("报告"));
+        Assert.DoesNotContain(facts, fact => fact.Contains("不该出现"));
+    }
+
+    [Fact]
+    public async Task SuccessfulChat_sends_the_current_npcs_relationship_snapshot_only()
+    {
+        var transport = new FakeTransport();
+        var store = new StoryStateStore();
+        store.Replace(StoryStateEnvelope.Empty with
+        {
+            Relationships = new[]
+            {
+                new RelationshipEdgeRecord
+                {
+                    FromNpcId = "player",
+                    ToNpcId = "Sophia",
+                    RelationType = "dating",
+                },
+                new RelationshipEdgeRecord
+                {
+                    FromNpcId = "player",
+                    ToNpcId = "Alex",
+                    RelationType = "married",
+                    PublicEventId = "wedding:alex",
+                },
+            },
+            RelationshipViews = new[]
+            {
+                new RelationshipViewRecord
+                {
+                    OwnerNpcId = "Sophia",
+                    SubjectNpcId = "Alex",
+                    RelationType = "married",
+                    Visibility = "known",
+                    Source = "wedding",
+                },
+                new RelationshipViewRecord
+                {
+                    OwnerNpcId = "Alex",
+                    SubjectNpcId = "Sophia",
+                    RelationType = "dating",
+                    Visibility = "known",
+                    Source = "player_statement",
+                },
+            },
+        });
+        var service = new ConversationService(transport, store);
+        var sophiaState = new NpcGameState
+        {
+            NpcId = "Sophia",
+            DisplayName = "Sophia",
+            Date = "Spring 1",
+            Location = "Vineyard",
+            Friendship = 750,
+            FriendshipHearts = 3,
+        };
+
+        await service.SendAsync(sophiaState, "你好", CancellationToken.None);
+
+        var snapshot = transport.LastRequest!.RelationshipWorld!;
+        Assert.All(snapshot.Views, view => Assert.Equal("Sophia", view.OwnerNpcId));
+        Assert.DoesNotContain(snapshot.ObjectiveRelationships, relation => relation.ToNpcId == "Alex");
+    }
+
+    [Fact]
+    public async Task Successful_chat_sends_channel_and_applies_open_loop_signal()
+    {
+        var transport = new FakeTransport
+        {
+            Response = new BridgeDialogueResponse
+            {
+                Reply = "那我们下次当面继续。",
+                Provider = "fake",
+                OpenLoop = new OpenLoopSignal
+                {
+                    Action = "open",
+                    LoopId = "rasmodia:rune:Spring-1",
+                    Topic = "rune_review",
+                    ShortSummary = "线上留下了核对符文数据的话题",
+                },
+            },
+        };
+        var store = new StoryStateStore();
+        var service = new ConversationService(transport, store);
+
+        await service.SendAsync(
+            TestNpcState(),
+            "这件事我们下次继续。",
+            CancellationToken.None,
+            channel: ConversationChannel.Remote);
+
+        Assert.Equal(ConversationChannel.Remote, transport.LastRequest!.Channel);
+        Assert.Equal("open", Assert.Single(store.State.OpenLoops).Status);
+    }
+
+    [Fact]
+    public async Task Face_to_face_resolution_is_applied_but_fallback_signal_is_ignored()
+    {
+        var store = new StoryStateStore();
+        var npcState = TestNpcState();
+        store.ApplyOpenLoopSignal(npcState, ConversationChannel.Remote, new OpenLoopSignal
+        {
+            Action = "open",
+            LoopId = "rasmodia:rune:Spring-1",
+            Topic = "rune_review",
+            ShortSummary = "线上留下了核对符文数据的话题",
+        });
+        var transport = new FakeTransport
+        {
+            Response = new BridgeDialogueResponse
+            {
+                Reply = "我们说开了。",
+                Provider = "fake",
+                OpenLoop = new OpenLoopSignal
+                {
+                    Action = "resolve",
+                    LoopId = "rasmodia:rune:Spring-1",
+                },
+            },
+        };
+        var service = new ConversationService(transport, store);
+
+        await service.SendAsync(
+            npcState,
+            "现在当面聊聊吧。",
+            CancellationToken.None,
+            channel: ConversationChannel.FaceToFace);
+        Assert.Equal("resolved", Assert.Single(store.State.OpenLoops).Status);
+
+        transport.Response = new BridgeDialogueResponse
+        {
+            Reply = "失败回复不应改变状态。",
+            Provider = "offline",
+            Fallback = true,
+            OpenLoop = new OpenLoopSignal
+            {
+                Action = "open",
+                LoopId = "rasmodia:new",
+                Topic = "new",
+                ShortSummary = "不应写入",
+            },
+        };
+        await service.SendAsync(
+            npcState,
+            "失败回复不应改变状态。",
+            CancellationToken.None,
+            channel: ConversationChannel.FaceToFace);
+        Assert.Equal("resolved", Assert.Single(store.State.OpenLoops).Status);
+    }
+
+    [Fact]
     public async Task SendingSecondMessageWhileFirstIsPendingIsRejected()
     {
         var transport = new BlockingTransport();

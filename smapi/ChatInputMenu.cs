@@ -26,13 +26,15 @@ public class ChatInputMenu : IClickableMenu
     private readonly StardewNpc npc;
     private readonly ConversationService conversationService;
     private readonly StoryStateStore storyStateStore;
-    private readonly Action onClosed;
+    private readonly Action<bool> onClosed;
     private readonly int? friendshipHeartsOverride;
+    private readonly string conversationChannel;
     private readonly CancellationTokenSource cancellationSource = new();
     private readonly List<ChatDisplayMessage> messages = new();
     private readonly KeyboardSubscriberLease<IKeyboardSubscriber> keyboardSubscriberLease;
     private readonly TextBox inputBox;
     private readonly TaskResultPump<ConversationTurnResult> pendingRequest = new();
+    private readonly ShareFriendshipLedger shareFriendshipLedger;
     private ChatLayout layout;
     private Rectangle scrollBarTrack = Rectangle.Empty;
     private Rectangle scrollBarThumb = Rectangle.Empty;
@@ -42,15 +44,19 @@ public class ChatInputMenu : IClickableMenu
     private int scrollStartIndex;
     private bool sending;
     private bool closed;
+    private bool hasValuableRelationshipRepair;
+    private string? pendingPlayerMessage;
     private bool followLatest = true;
 
     public ChatInputMenu(
         StardewNpc npc,
         ConversationService conversationService,
         StoryStateStore storyStateStore,
-        Action onClosed,
+        Action<bool> onClosed,
         IReadOnlyList<ChatDisplayMessage>? initialMessages = null,
-        int? friendshipHeartsOverride = null)
+        int? friendshipHeartsOverride = null,
+        string conversationChannel = ConversationChannel.Remote,
+        ShareFriendshipLedger? shareFriendshipLedger = null)
         : base(0, 0, 1, 1)
     {
         this.npc = npc ?? throw new ArgumentNullException(nameof(npc));
@@ -58,8 +64,15 @@ public class ChatInputMenu : IClickableMenu
             throw new ArgumentNullException(nameof(conversationService));
         this.storyStateStore = storyStateStore ??
             throw new ArgumentNullException(nameof(storyStateStore));
-        this.onClosed = onClosed;
+        this.shareFriendshipLedger = shareFriendshipLedger ?? new ShareFriendshipLedger();
+        this.onClosed = onClosed ?? throw new ArgumentNullException(nameof(onClosed));
         this.friendshipHeartsOverride = friendshipHeartsOverride;
+        this.conversationChannel = string.Equals(
+            conversationChannel,
+            ConversationChannel.FaceToFace,
+            StringComparison.Ordinal)
+            ? ConversationChannel.FaceToFace
+            : ConversationChannel.Remote;
 
         if (initialMessages is { Count: > 0 })
         {
@@ -248,7 +261,8 @@ public class ChatInputMenu : IClickableMenu
             layout.Panel.Width,
             layout.Panel.Height,
             speaker: false,
-            drawOnlyBox: true);
+            drawOnlyBox: true,
+            ignoreTitleSafe: true);
         DrawHeader(b);
         DrawMessages(b);
         DrawFooter(b);
@@ -265,7 +279,7 @@ public class ChatInputMenu : IClickableMenu
         closed = true;
         CleanupKeyboardSubscriber();
         cancellationSource.Cancel();
-        onClosed?.Invoke();
+        onClosed(hasValuableRelationshipRepair);
         exitThisMenu();
     }
 
@@ -305,6 +319,9 @@ public class ChatInputMenu : IClickableMenu
     {
         sending = true;
         uiHint = "正在思考……";
+        pendingPlayerMessage = intent == ConversationIntent.Chat
+            ? message
+            : null;
 
         try
         {
@@ -312,12 +329,14 @@ public class ChatInputMenu : IClickableMenu
             var request = intent == ConversationIntent.Topic
                 ? conversationService.RequestTopicAsync(
                     state,
-                    cancellationSource.Token)
+                    cancellationSource.Token,
+                    conversationChannel)
                 : conversationService.SendAsync(
                     state,
                     message ?? string.Empty,
                     cancellationSource.Token,
-                    itemContext);
+                    itemContext,
+                    conversationChannel);
             pendingRequest.Start(request);
         }
         catch (Exception exception)
@@ -350,6 +369,7 @@ public class ChatInputMenu : IClickableMenu
 
     private void ApplyRequestError(Exception exception)
     {
+        pendingPlayerMessage = null;
         if (closed)
         {
             return;
@@ -371,6 +391,15 @@ public class ChatInputMenu : IClickableMenu
         {
             return;
         }
+
+        if (ChatSessionRules.IsValuableRelationshipRepair(
+                result,
+                pendingPlayerMessage,
+                storyStateStore.RelationshipSnapshotFor(npc.Name)))
+        {
+            hasValuableRelationshipRepair = true;
+        }
+        pendingPlayerMessage = null;
 
         var reply = result.Fallback
             ? "暂时联系不上她，可以稍后重试。"
@@ -419,8 +448,18 @@ public class ChatInputMenu : IClickableMenu
             return;
         }
 
+        var friendshipAwarded = 0;
+        if (selection.Action == ItemInteractionAction.Share &&
+            !TryCommitShare(selection, out friendshipAwarded))
+        {
+            uiHint = "这件物品现在无法分享，背包里可能已经没有了。";
+            return;
+        }
+
         AddItemMessage(selection);
-        _ = SendItemAsync(selection);
+        _ = SendItemAsync(
+            selection,
+            selection.Action == ItemInteractionAction.Share ? friendshipAwarded : null);
     }
 
     private void OfferGiftConfirmation(ItemConversationSelection selection)
@@ -481,7 +520,9 @@ public class ChatInputMenu : IClickableMenu
             $"（{action}了 {selection.Snapshot.DisplayName}）"));
     }
 
-    private async Task SendItemAsync(ItemConversationSelection selection)
+    private async Task SendItemAsync(
+        ItemConversationSelection selection,
+        int? friendshipAwarded = null)
     {
         var message = selection.Action switch
         {
@@ -493,7 +534,29 @@ public class ChatInputMenu : IClickableMenu
         await SendAsync(
             message,
             ConversationIntent.Item,
-            selection.ToConversationContext()).ConfigureAwait(true);
+            selection.ToConversationContext(friendshipAwarded)).ConfigureAwait(true);
+    }
+
+    private bool TryCommitShare(
+        ItemConversationSelection selection,
+        out int friendshipAwarded)
+    {
+        friendshipAwarded = 0;
+        var preview = ItemInteractionRules.CreatePreview(
+            selection.Snapshot,
+            selection.Action);
+        if (!preview.ConsumesItem ||
+            !VanillaGiftHandler.TryConsumeOne(selection.Item, Game1.player))
+        {
+            return false;
+        }
+
+        friendshipAwarded = VanillaGiftHandler.TryAwardShareFriendship(
+            npc,
+            Game1.player,
+            shareFriendshipLedger,
+            Game1.Date.TotalDays);
+        return true;
     }
 
     private string NormalizeReply(string reply)

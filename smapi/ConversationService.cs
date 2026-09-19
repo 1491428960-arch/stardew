@@ -19,7 +19,8 @@ public sealed class ConversationService : IDisposable
         NpcGameState state,
         string message,
         CancellationToken cancellationToken,
-        ItemConversationContext? itemContext = null)
+        ItemConversationContext? itemContext = null,
+        string channel = ConversationChannel.Remote)
     {
         ArgumentNullException.ThrowIfNull(state);
         ThrowIfDisposed();
@@ -38,12 +39,18 @@ public sealed class ConversationService : IDisposable
                     itemContext is null ? ConversationIntent.Chat : ConversationIntent.Item,
                     state,
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),
-                    itemContext),
+                    itemContext,
+                    storyStateStore.RelationshipSnapshotFor(state.NpcId ?? string.Empty),
+                    NormalizeChannel(channel)),
                 cancellationToken).ConfigureAwait(false);
             var recorded = !response.Fallback;
             if (recorded)
             {
                 storyStateStore.RecordConversation(state, message, response.Reply, usedFallback: false);
+                if (response.OpenLoop is not null)
+                {
+                    storyStateStore.ApplyOpenLoopSignal(state, NormalizeChannel(channel), response.OpenLoop);
+                }
             }
 
             return new ConversationTurnResult(response, recorded);
@@ -56,7 +63,8 @@ public sealed class ConversationService : IDisposable
 
     public async Task<ConversationTurnResult> RequestTopicAsync(
         NpcGameState state,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string channel = ConversationChannel.Remote)
     {
         ArgumentNullException.ThrowIfNull(state);
         ThrowIfDisposed();
@@ -71,8 +79,15 @@ public sealed class ConversationService : IDisposable
                     ConversationIntent.Topic,
                     state,
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),
-                    null),
+                    null,
+                    storyStateStore.RelationshipSnapshotFor(state.NpcId ?? string.Empty),
+                    NormalizeChannel(channel)),
                 cancellationToken).ConfigureAwait(false);
+            if (!response.Fallback && response.OpenLoop is not null)
+            {
+                storyStateStore.ApplyOpenLoopSignal(state, NormalizeChannel(channel), response.OpenLoop);
+            }
+
             return new ConversationTurnResult(response, Recorded: false);
         }
         finally
@@ -110,5 +125,12 @@ public sealed class ConversationService : IDisposable
         {
             throw new ObjectDisposedException(nameof(ConversationService));
         }
+    }
+
+    private static string NormalizeChannel(string? channel)
+    {
+        return string.Equals(channel, ConversationChannel.FaceToFace, StringComparison.Ordinal)
+            ? ConversationChannel.FaceToFace
+            : ConversationChannel.Remote;
     }
 }

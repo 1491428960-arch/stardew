@@ -31,7 +31,7 @@ public sealed class DialogueMenu : ChatInputMenu
             npc,
             dependencies.Service,
             dependencies.Store,
-            onClosed: static () => { })
+            onClosed: static _ => { })
     {
     }
 

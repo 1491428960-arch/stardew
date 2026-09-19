@@ -87,7 +87,7 @@ public sealed class InventoryItemPicker : IClickableMenu
                 return;
             }
 
-            if (shareButton.Contains(x, y))
+            if (shareButton.Contains(x, y) && CanShare(selectedItem))
             {
                 SelectAction(ItemInteractionAction.Share);
                 return;
@@ -126,7 +126,8 @@ public sealed class InventoryItemPicker : IClickableMenu
             panel.Width,
             panel.Height,
             speaker: false,
-            drawOnlyBox: true);
+            drawOnlyBox: true,
+            ignoreTitleSafe: true);
         b.DrawString(
             Game1.dialogueFont,
             $"选择要和 {npc.displayName} 互动的物品",
@@ -144,7 +145,7 @@ public sealed class InventoryItemPicker : IClickableMenu
         }
 
         DrawButton(b, displayButton, "展示", selectedItem is not null);
-        DrawButton(b, shareButton, "分享", selectedItem is not null);
+        DrawButton(b, shareButton, "分享", selectedItem is not null && CanShare(selectedItem));
         DrawButton(b, giftButton, "赠送", selectedItem is not null && CanGift(selectedItem));
         DrawButton(b, cancelButton, "取消", true);
         drawMouse(b);
@@ -162,6 +163,11 @@ public sealed class InventoryItemPicker : IClickableMenu
             npc.CanReceiveGifts();
     }
 
+    private static bool CanShare(Item item)
+    {
+        return ItemInteractionRules.CanShare(ItemInteractionRules.Classify(item));
+    }
+
     private void SelectAction(ItemInteractionAction action)
     {
         if (selectedItem is null)
@@ -169,11 +175,19 @@ public sealed class InventoryItemPicker : IClickableMenu
             return;
         }
 
+        var snapshot = ItemSnapshot.FromItem(selectedItem);
+        var specialInteraction = action == ItemInteractionAction.Share
+            ? ItemInteractionRules.ResolveSpecialInteraction(
+                npc.Name,
+                snapshot.Kind,
+                Random.Shared.NextDouble())
+            : ItemSpecialInteraction.None;
         onSelected(new ItemConversationSelection(
             selectedItem,
-            ItemSnapshot.FromItem(selectedItem),
+            snapshot,
             action,
-            ItemInteractionRules.ReadGiftTaste(npc, selectedItem)));
+            ItemInteractionRules.ReadGiftTaste(npc, selectedItem),
+            specialInteraction));
     }
 
     private static void DrawButton(SpriteBatch b, Rectangle bounds, string label, bool enabled)

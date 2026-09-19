@@ -8,6 +8,8 @@ public enum FaceToFaceState
     VanillaDialogueOpen,
     AwaitingContinuationChoice,
     Composing,
+    AwaitingKiss,
+    Kissing,
 }
 
 public sealed record FaceToFaceConversationState(
@@ -23,7 +25,9 @@ public static class FaceToFaceStateRules
         // The continuation question is rendered by the same DialogueBox type
         // as vanilla NPC speech. Do not let that question restart the vanilla
         // dialogue state before its answer callback runs.
-        return state.State != FaceToFaceState.AwaitingContinuationChoice;
+        return state.State is not FaceToFaceState.AwaitingContinuationChoice and
+            not FaceToFaceState.AwaitingKiss and
+            not FaceToFaceState.Kissing;
     }
 
     public static bool CanStartRepeatChat(
@@ -106,6 +110,33 @@ public static class FaceToFaceStateRules
             },
             _ => state,
         };
+    }
+
+    public static FaceToFaceConversationState ArmKissAfterReply(
+        FaceToFaceConversationState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.State == FaceToFaceState.Composing && state.NpcId is not null
+            ? state with { State = FaceToFaceState.AwaitingKiss }
+            : state;
+    }
+
+    public static FaceToFaceConversationState BeginKiss(
+        FaceToFaceConversationState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.State == FaceToFaceState.AwaitingKiss
+            ? state with { State = FaceToFaceState.Kissing }
+            : state;
+    }
+
+    public static FaceToFaceConversationState CompleteKiss(
+        FaceToFaceConversationState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.State == FaceToFaceState.Kissing
+            ? new FaceToFaceConversationState(FaceToFaceState.Idle, null)
+            : state;
     }
 
     public static FaceToFaceConversationState ChooseContinuation(

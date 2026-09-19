@@ -2,7 +2,7 @@
   "Name": "Stardew AI NPC",
   "Author": "OpenAI",
   "Version": "0.1.0",
-  "Description": "Local AI dialogue prototype for one NPC.",
+  "Description": "AI-driven NPC dialogue: one-on-one chat (F8), face-to-face follow-ups, and online group conversations (F9), grounded in per-character voice profiles and long-term memory.",
   "UniqueID": "OpenAI.StardewAI.NPC",
   "EntryDll": "StardewAI.NPC.dll",
   "MinimumApiVersion": "4.0.0",

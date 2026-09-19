@@ -46,6 +46,20 @@ public sealed class VisualTestHarnessRulesTests
     }
 
     [Fact]
+    public void EnabledEnvironmentAcceptsExplicitGroupHubAction()
+    {
+        var options = VisualTestHarnessRules.Parse(
+            new Dictionary<string, string?>
+            {
+                ["STARDEW_AI_NPC_VISUAL_TEST"] = "1",
+                ["STARDEW_AI_NPC_VISUAL_OUTPUT"] = "artifacts/visual-tests/run",
+                ["STARDEW_AI_NPC_VISUAL_ACTION"] = "group-hub",
+            });
+
+        Assert.Equal("group-hub", options.ActionId);
+    }
+
+    [Fact]
     public void UnknownVisualActionFailsClosed()
     {
         Assert.Throws<ArgumentException>(() => VisualTestHarnessRules.Parse(
@@ -85,6 +99,161 @@ public sealed class VisualTestHarnessRulesTests
             menuReady: true,
             actionTriggered: false,
             activeMenuFrames: 3));
+    }
+
+    [Fact]
+    public void GroupHubActionWaitsForStableMenuBeforeTriggering()
+    {
+        Assert.False(VisualTestHarnessRules.CanTriggerGroupHubAction(
+            actionId: "group-hub",
+            menuReady: false,
+            actionTriggered: false,
+            activeMenuFrames: 3));
+        Assert.False(VisualTestHarnessRules.CanTriggerGroupHubAction(
+            actionId: "group-hub",
+            menuReady: true,
+            actionTriggered: true,
+            activeMenuFrames: 3));
+        Assert.False(VisualTestHarnessRules.CanTriggerGroupHubAction(
+            actionId: "group-hub",
+            menuReady: true,
+            actionTriggered: false,
+            activeMenuFrames: 2));
+        Assert.True(VisualTestHarnessRules.CanTriggerGroupHubAction(
+            actionId: "group-hub",
+            menuReady: true,
+            actionTriggered: false,
+            activeMenuFrames: 3));
+        Assert.False(VisualTestHarnessRules.CanTriggerGroupHubAction(
+            actionId: "capture",
+            menuReady: true,
+            actionTriggered: false,
+            activeMenuFrames: 3));
+    }
+
+    [Fact]
+    public void GroupHubScenarioInvitationUsesTheExistingStoryStateSchema()
+    {
+        var invitation = VisualTestHarnessRules.CreateGroupHubInvitation(12);
+
+        Assert.Empty(StoryStateValidation.Validate(invitation));
+        Assert.Equal("story", invitation.Source);
+        Assert.Equal(19, invitation.ExpiresTotalDays);
+    }
+
+    [Fact]
+    public void EnabledEnvironmentAcceptsExplicitGroupMessageAction()
+    {
+        var options = VisualTestHarnessRules.Parse(
+            new Dictionary<string, string?>
+            {
+                ["STARDEW_AI_NPC_VISUAL_TEST"] = "1",
+                ["STARDEW_AI_NPC_VISUAL_OUTPUT"] = "artifacts/visual-tests/run",
+                ["STARDEW_AI_NPC_VISUAL_ACTION"] = "group-message",
+            });
+
+        Assert.Equal("group-message", options.ActionId);
+    }
+
+    [Fact]
+    public void EnabledEnvironmentAcceptsExplicitGroupSendAction()
+    {
+        var options = VisualTestHarnessRules.Parse(
+            new Dictionary<string, string?>
+            {
+                ["STARDEW_AI_NPC_VISUAL_TEST"] = "1",
+                ["STARDEW_AI_NPC_VISUAL_OUTPUT"] = "artifacts/visual-tests/run",
+                ["STARDEW_AI_NPC_VISUAL_ACTION"] = "group-send",
+            });
+
+        Assert.Equal("group-send", options.ActionId);
+        Assert.False(string.IsNullOrWhiteSpace(VisualTestHarnessRules.GroupSendPlayerMessage));
+    }
+
+    [Fact]
+    public void EnabledEnvironmentAcceptsGroupFlowActions()
+    {
+        foreach (var action in new[] { "group-accept", "group-free" })
+        {
+            var options = VisualTestHarnessRules.Parse(
+                new Dictionary<string, string?>
+                {
+                    ["STARDEW_AI_NPC_VISUAL_TEST"] = "1",
+                    ["STARDEW_AI_NPC_VISUAL_OUTPUT"] = "artifacts/visual-tests/run",
+                    ["STARDEW_AI_NPC_VISUAL_ACTION"] = action,
+                });
+
+            Assert.Equal(action, options.ActionId);
+        }
+    }
+
+    [Fact]
+    public void GroupFlowInvitationCanBeAcceptedThroughTheStoryStore()
+    {
+        // F9 全流程场景依赖“点击接受后 TrySetGroupInvitationStatus 能找到这张卡”。
+        // 真机上曾因为测试邀约写在 SaveLoaded 之前、被存档状态覆盖而失败。
+        var store = new StoryStateStore();
+        var invitation = VisualTestHarnessRules.CreateGroupHubInvitation(12);
+        store.Replace(store.State with
+        {
+            GroupDialogueInvitations = new[] { invitation },
+        });
+
+        Assert.True(store.TrySetGroupInvitationStatus(
+            invitation.InvitationId,
+            GroupInvitationStatus.Accepted));
+        Assert.Equal(
+            GroupInvitationStatus.Accepted,
+            store.State.GroupDialogueInvitations.Single().Status);
+    }
+
+    [Fact]
+    public void GroupSendScenarioUsesAThreePersonRosterMatchingItsInvitation()
+    {
+        var participants = VisualTestHarnessRules.CreateGroupSendParticipants();
+        var invitation = VisualTestHarnessRules.CreateGroupSendInvitation(12);
+
+        // 两人场在回合上限为 2 时必然都开口，三人场才看得出“每个人都有机会说话”。
+        Assert.Equal(3, participants.Count);
+        Assert.Equal(
+            invitation.Participants,
+            participants.Select(item => item.NpcId));
+        Assert.Empty(StoryStateValidation.Validate(invitation));
+        Assert.NotEqual(
+            VisualTestHarnessRules.CreateGroupHubInvitation(12).InvitationId,
+            invitation.InvitationId);
+    }
+
+    [Fact]
+    public void GroupMessageScenarioProducesUsableTurnsAndOneHighlight()
+    {
+        var participants = VisualTestHarnessRules.CreateGroupMessageParticipants();
+        var response = VisualTestHarnessRules.CreateGroupMessageResponse();
+        var invitation = VisualTestHarnessRules.CreateGroupHubInvitation(12);
+
+        Assert.Equal(2, participants.Count);
+        Assert.Equal(
+            invitation.Participants,
+            participants.Select(item => item.NpcId));
+        Assert.False(response.Fallback);
+        Assert.Single(response.MemoryHighlights);
+
+        var participantIds = participants
+            .Select(item => item.NpcId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Assert.NotEmpty(response.Turns);
+        Assert.All(
+            response.Turns,
+            turn => Assert.True(GroupDialogueSessionRules.IsValidTurn(turn, participantIds)));
+
+        var session = GroupDialogueSessionRules.ApplyResult(
+            GroupDialogueSessionRules.Create(invitation),
+            response.Turns,
+            response.Fallback);
+
+        Assert.Equal(GroupInvitationStatus.Completed, session.Invitation.Status);
+        Assert.Equal(response.Turns.Count, session.PublicHistory.Count);
+        Assert.False(session.CanRetry);
     }
 
     [Fact]

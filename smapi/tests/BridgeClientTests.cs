@@ -9,6 +9,12 @@ namespace StardewAI.NPC.Tests;
 public sealed class BridgeClientTests
 {
     [Fact]
+    public void Default_timeout_leaves_room_for_bridge_cloud_deadline()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(60), BridgeClient.DefaultTimeout);
+    }
+
+    [Fact]
     public async Task SendAsync_posts_required_json_and_parses_success_response()
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
@@ -34,6 +40,334 @@ public sealed class BridgeClientTests
         Assert.Equal("Rasmodia", requestJson.RootElement.GetProperty("npcId").GetString());
         Assert.Equal("你好", requestJson.RootElement.GetProperty("message").GetString());
         Assert.Equal("chat", requestJson.RootElement.GetProperty("intent").GetString());
+    }
+
+    [Fact]
+    public async Task SendGroupAsync_posts_remote_turn_based_request_and_parses_turns()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"strategy\":\"turn_based\",\"channel\":\"remote\",\"provider\":\"fake\",\"fallback\":false,\"turns\":[{\"speakerNpcId\":\"Abigail\",\"content\":\"我有点想知道。\"}],\"providerCalls\":1,\"providerErrors\":[],\"fallbackCount\":0,\"latencyMs\":12}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var client = new BridgeClient(
+            new HttpClient(handler),
+            new Uri("http://127.0.0.1:5678"),
+            groupStrategy: "turn_based");
+
+        var response = await client.SendGroupAsync(
+            new GroupDialogueRequest(
+                "你们怎么看？",
+                new[]
+                {
+                    new GroupDialogueParticipant("Abigail", "Abigail"),
+                    new GroupDialogueParticipant("Emily", "Emily"),
+                 },
+                 "奇怪的矿石",
+                 "只作为讨论方向。",
+                 Array.Empty<GroupDialogueHistoryEntry>(),
+                 GameState: new NpcGameState
+                 {
+                     NpcId = "Abigail",
+                     CompletedEventIds = new[] { "384882" },
+                 }));
+
+        Assert.Equal("/api/dialogue/group", handler.Request!.RequestUri!.AbsolutePath);
+        Assert.Equal("Abigail", Assert.Single(response.Turns).SpeakerNpcId);
+        using var request = JsonDocument.Parse(handler.RequestBodies.Single());
+        Assert.Equal("remote", request.RootElement.GetProperty("channel").GetString());
+        Assert.Equal("turn_based", request.RootElement.GetProperty("strategy").GetString());
+        Assert.Equal(
+            "384882",
+            request.RootElement.GetProperty("gameState")
+                .GetProperty("completedEventIds")[0]
+                .GetString());
+        Assert.Equal("invitationTopic", request.RootElement.EnumerateObject()
+            .Single(property => property.Name == "invitationTopic").Name);
+    }
+
+    [Fact]
+    public async Task SendGroupAsync_rejects_unknown_speaker_without_exposing_content()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"strategy\":\"turn_based\",\"channel\":\"remote\",\"provider\":\"cloud\",\"fallback\":false,\"turns\":[{\"speakerNpcId\":\"Lewis\",\"content\":\"越界文本\"}],\"providerCalls\":1,\"providerErrors\":[],\"fallbackCount\":0,\"latencyMs\":1}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var client = new BridgeClient(new HttpClient(handler));
+
+        var response = await client.SendGroupAsync(
+            new GroupDialogueRequest(
+                "你们怎么看？",
+                new[]
+                {
+                    new GroupDialogueParticipant("Abigail", "Abigail"),
+                    new GroupDialogueParticipant("Emily", "Emily"),
+                },
+                null,
+                null,
+                Array.Empty<GroupDialogueHistoryEntry>()));
+
+        Assert.True(response.Fallback);
+        Assert.Empty(response.Turns);
+        Assert.DoesNotContain("越界文本", response.Warnings);
+    }
+
+    [Fact]
+    public async Task SendGroupAsync_defaults_to_multi_turn_and_parses_every_turn()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"strategy\":\"multi_turn\",\"channel\":\"remote\",\"provider\":\"cloud\",\"fallback\":false,\"turns\":[{\"speakerNpcId\":\"Abigail\",\"content\":\"我最近在翻旧书。\",\"addressedTo\":[\"Emily\"]},{\"speakerNpcId\":\"Emily\",\"content\":\"那我可以帮你做书套。\"}],\"providerCalls\":1,\"providerErrors\":[],\"fallbackCount\":0,\"latencyMs\":21}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var client = new BridgeClient(
+            new HttpClient(handler), new Uri("http://127.0.0.1:5678"));
+
+        var response = await client.SendGroupAsync(
+            new GroupDialogueRequest(
+                "你们最近都在忙什么？",
+                new[]
+                {
+                    new GroupDialogueParticipant("Abigail", "Abigail"),
+                    new GroupDialogueParticipant("Emily", "Emily"),
+                },
+                null,
+                null,
+                Array.Empty<GroupDialogueHistoryEntry>()));
+
+        using var request = JsonDocument.Parse(handler.RequestBodies.Single());
+        Assert.Equal("multi_turn", request.RootElement.GetProperty("strategy").GetString());
+        Assert.False(response.Fallback);
+        Assert.Equal(
+            new[] { "Abigail", "Emily" },
+            response.Turns.Select(turn => turn.SpeakerNpcId).ToArray());
+    }
+
+    [Fact]
+    public async Task SendGroupAsync_rejects_response_strategy_that_differs_from_request()
+    {
+        // 请求 multi_turn 却收到 turn_based：不能当成功处理，否则游戏会以为
+        // 自己拿到的是自然接话流。
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"strategy\":\"turn_based\",\"channel\":\"remote\",\"provider\":\"cloud\",\"fallback\":false,\"turns\":[{\"speakerNpcId\":\"Abigail\",\"content\":\"只有一句。\"}],\"providerCalls\":1,\"providerErrors\":[],\"fallbackCount\":0,\"latencyMs\":21}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var client = new BridgeClient(
+            new HttpClient(handler), new Uri("http://127.0.0.1:5678"));
+
+        var response = await client.SendGroupAsync(
+            new GroupDialogueRequest(
+                "你们最近都在忙什么？",
+                new[]
+                {
+                    new GroupDialogueParticipant("Abigail", "Abigail"),
+                    new GroupDialogueParticipant("Emily", "Emily"),
+                },
+                null,
+                null,
+                Array.Empty<GroupDialogueHistoryEntry>()));
+
+        Assert.True(response.Fallback);
+        Assert.Empty(response.Turns);
+        Assert.Contains("bridge: response mode invalid", response.Warnings);
+    }
+
+    [Fact]
+    public async Task SendAsync_marks_game_requests_for_compact_prompt()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"cloud\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        await client.SendAsync(
+            "Wizard",
+            "你好",
+            new NpcGameState { NpcId = "Wizard", DisplayName = "Rasmodia" });
+
+        using var requestJson = JsonDocument.Parse(handler.RequestBodies.Single());
+        Assert.True(requestJson.RootElement.GetProperty("compactPrompt").GetBoolean());
+    }
+
+    [Fact]
+    public async Task SendAsync_logs_safe_response_metadata_without_reply_content()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"不要写入日志的回复\",\"provider\":\"cloud\",\"fallback\":false,\"latencyMs\":37,\"warnings\":[]}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        var logs = new List<string>();
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(
+            httpClient,
+            new Uri("http://127.0.0.1:5678"),
+            diagnosticLogger: logs.Add);
+
+        await client.SendAsync("Rasmodia", "你好");
+
+        var log = Assert.Single(logs);
+        Assert.Contains("provider=cloud", log);
+        Assert.Contains("fallback=false", log);
+        Assert.Contains("latencyMs=37", log);
+        Assert.Contains("warningCount=0", log);
+        Assert.DoesNotContain("不要写入日志的回复", log);
+    }
+
+    [Fact]
+    public async Task SendAsync_posts_channel_and_parses_open_loop_signal()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"下次当面继续。\",\"provider\":\"fake\",\"fallback\":false,\"openLoop\":{\"action\":\"open\",\"loopId\":\"wizard:rune:Spring-14\",\"topic\":\"rune_review\",\"shortSummary\":\"线上留下了核对符文数据的话题\"}}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        var result = await client.SendAsync(
+            "Wizard",
+            "这件事下次继续。",
+            channel: ConversationChannel.Remote);
+
+        Assert.Equal("open", result.OpenLoop!.Action);
+        using var requestJson = JsonDocument.Parse(handler.RequestBodies.Single());
+        Assert.Equal("remote", requestJson.RootElement.GetProperty("channel").GetString());
+    }
+
+    [Fact]
+    public async Task SendAsync_sends_only_the_current_npcs_relationship_snapshot()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"fake\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var snapshot = new RelationshipWorldSnapshot(
+            "Sophia",
+            new[]
+            {
+                new RelationshipEdgeRecord
+                {
+                    FromNpcId = "player",
+                    ToNpcId = "Sophia",
+                    RelationType = "dating",
+                },
+                new RelationshipEdgeRecord
+                {
+                    FromNpcId = "player",
+                    ToNpcId = "Alex",
+                    RelationType = "married",
+                    PublicEventId = "wedding:alex",
+                },
+            },
+            new[]
+            {
+                new RelationshipViewRecord
+                {
+                    OwnerNpcId = "Sophia",
+                    SubjectNpcId = "Alex",
+                    RelationType = "married",
+                    Visibility = "known",
+                    Source = "wedding",
+                },
+                new RelationshipViewRecord
+                {
+                    OwnerNpcId = "Alex",
+                    SubjectNpcId = "Sophia",
+                    RelationType = "dating",
+                    Visibility = "known",
+                    Source = "player_statement",
+                },
+            },
+            new RelationshipMediationRecord { NpcId = "Sophia", Status = "active" },
+            new RelationshipJealousyRecord { NpcId = "Sophia", Active = true, Trigger = "time", Intensity = "light" });
+
+        await client.SendAsync("Sophia", "我们聊聊吧。", relationshipWorld: snapshot);
+
+        using var request = JsonDocument.Parse(handler.RequestBodies.Single());
+        var world = request.RootElement.GetProperty("relationshipWorld");
+        Assert.DoesNotContain(
+            world.GetProperty("objectiveRelationships").EnumerateArray(),
+            item => item.GetProperty("toNpcId").GetString() == "Alex");
+        Assert.All(
+            world.GetProperty("views").EnumerateArray(),
+            item => Assert.Equal("Sophia", item.GetProperty("ownerNpcId").GetString()));
+        Assert.Equal("Sophia", world.GetProperty("mediation").GetProperty("npcId").GetString());
+        Assert.True(world.GetProperty("jealousy").GetProperty("active").GetBoolean());
+    }
+
+    [Fact]
+    public async Task SendAsync_filters_open_loops_to_current_npc_and_active_status()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"fake\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var snapshot = new RelationshipWorldSnapshot(
+            "Sophia",
+            Array.Empty<RelationshipEdgeRecord>(),
+            Array.Empty<RelationshipViewRecord>(),
+            null,
+            null)
+        {
+            OpenLoops = new[]
+            {
+                new OpenLoopRecord
+                {
+                    LoopId = "sophia:one", NpcId = "Sophia", Topic = "topic",
+                    OriginChannel = "remote", NextChannel = "face_to_face", Status = "open",
+                    ShortSummary = "继续聊", CreatedOn = "Spring 1",
+                },
+                new OpenLoopRecord
+                {
+                    LoopId = "alex:one", NpcId = "Alex", Topic = "topic",
+                    OriginChannel = "remote", NextChannel = "face_to_face", Status = "open",
+                    ShortSummary = "不应泄露", CreatedOn = "Spring 1",
+                },
+                new OpenLoopRecord
+                {
+                    LoopId = "sophia:done", NpcId = "Sophia", Topic = "topic",
+                    OriginChannel = "remote", NextChannel = "face_to_face", Status = "resolved",
+                    ShortSummary = "已完成", CreatedOn = "Spring 1",
+                },
+            },
+        };
+
+        await client.SendAsync("Sophia", "继续吧。", relationshipWorld: snapshot);
+
+        using var request = JsonDocument.Parse(handler.RequestBodies.Single());
+        var loops = request.RootElement.GetProperty("relationshipWorld")
+            .GetProperty("openLoops").EnumerateArray().ToArray();
+        Assert.Equal("sophia:one", Assert.Single(loops).GetProperty("loopId").GetString());
     }
 
     [Fact]
@@ -282,6 +616,39 @@ public sealed class BridgeClientTests
             item => item.GetProperty("content").GetString()!.Contains("请主动"));
         Assert.Empty(secondRequest.RootElement.GetProperty("message").GetString() ?? string.Empty);
         Assert.Equal("topic", secondRequest.RootElement.GetProperty("intent").GetString());
+    }
+
+    [Fact]
+    public async Task SendAsync_history_keeps_intent_and_relationship_stage_provenance()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"reply\":\"收到\",\"provider\":\"fake\",\"fallback\":false}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+        var highState = new NpcGameState { NpcId = "Sophia", FriendshipHearts = 8 };
+        var lowState = new NpcGameState { NpcId = "Sophia", FriendshipHearts = 3 };
+
+        await client.SendAsync("Sophia", string.Empty, highState, intent: ConversationIntent.Topic);
+        await client.SendAsync("Sophia", "我带了葡萄酒。", highState, intent: ConversationIntent.Item);
+        await client.SendAsync("Sophia", "今天忙吗？", lowState);
+        await client.SendAsync("Sophia", "现在聊聊吧。", highState);
+
+        using var request = JsonDocument.Parse(handler.RequestBodies[3]);
+        var history = request.RootElement.GetProperty("history").EnumerateArray().ToArray();
+
+        Assert.Equal("topic", history[0].GetProperty("intent").GetString());
+        Assert.Equal("close", history[0].GetProperty("relationshipStage").GetString());
+        Assert.Equal("item", history[1].GetProperty("intent").GetString());
+        Assert.Equal("item", history[2].GetProperty("intent").GetString());
+        Assert.Equal("chat", history[3].GetProperty("intent").GetString());
+        Assert.Equal("acquaintance", history[3].GetProperty("relationshipStage").GetString());
+        Assert.Equal("chat", history[4].GetProperty("intent").GetString());
+        Assert.Equal("acquaintance", history[4].GetProperty("relationshipStage").GetString());
     }
 
     [Fact]

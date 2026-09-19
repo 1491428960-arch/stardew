@@ -66,4 +66,17 @@ public sealed class TestNpcPlacementRulesTests
         Assert.True(lifecycle.RecreateAfterSave);
         Assert.True(lifecycle.ResetRepeatTargetBeforeSave);
     }
+
+    [Theory]
+    [InlineData("StardewAI_NPC_Test", true)]
+    [InlineData("Rasmodia", false)]
+    [InlineData("", false)]
+    public void Only_the_runtime_test_npc_can_bypass_a_friendship_record_for_dialogue(
+        string npcId,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord(npcId));
+    }
 }

@@ -32,4 +32,24 @@ public sealed class DialogueEntryRulesTests
             hasMenu: false,
             hasConversationService: true));
     }
+
+    [Fact]
+    public void Group_entry_is_blocked_when_any_menu_is_open()
+    {
+        Assert.False(DialogueEntryRules.CanOpenGroup(
+            enabled: true,
+            worldReady: true,
+            hasMenu: true,
+            hasBridgeClient: true));
+    }
+
+    [Fact]
+    public void Group_entry_does_not_require_npc_in_current_location()
+    {
+        Assert.True(DialogueEntryRules.CanOpenGroup(
+            enabled: true,
+            worldReady: true,
+            hasMenu: false,
+            hasBridgeClient: true));
+    }
 }

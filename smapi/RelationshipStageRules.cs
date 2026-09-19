@@ -31,4 +31,18 @@ public static class RelationshipStageRules
             _ => "初识",
         };
     }
+
+    public static string ResolveKey(NpcGameState state)
+    {
+        return Resolve(state) switch
+        {
+            "育儿" => "parent",
+            "婚后" => "married",
+            "恋爱" => "dating",
+            "亲近" => "close",
+            "朋友" => "friend",
+            "熟悉" => "acquaintance",
+            _ => "stranger",
+        };
+    }
 }

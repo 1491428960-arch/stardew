@@ -110,6 +110,95 @@ public static class FriendshipDataAccessor
         }
     }
 
+    public static IReadOnlyList<string> Keys(object? data)
+    {
+        if (data is null || data is string)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (data is IDictionary dictionary)
+        {
+            return NormalizeKeys(dictionary.Keys);
+        }
+
+        var keysProperty = data.GetType().GetProperty("Keys", InstanceFlags);
+        if (keysProperty is not null)
+        {
+            try
+            {
+                return NormalizeKeys(keysProperty.GetValue(data));
+            }
+            catch
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        if (data is IEnumerable values)
+        {
+            var keys = new List<string>();
+            foreach (var item in values)
+            {
+                var key = ReadKeyMember(item);
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    AddUniqueKey(keys, key);
+                }
+            }
+
+            return keys;
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static IReadOnlyList<string> NormalizeKeys(object? values)
+    {
+        if (values is not IEnumerable enumerable || values is string)
+        {
+            return Array.Empty<string>();
+        }
+
+        var keys = new List<string>();
+        foreach (var value in enumerable)
+        {
+            var key = value?.ToString()?.Trim();
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                AddUniqueKey(keys, key);
+            }
+        }
+
+        return keys;
+    }
+
+    private static string? ReadKeyMember(object? item)
+    {
+        if (item is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var property = item.GetType().GetProperty("Key", InstanceFlags);
+            return property?.GetValue(item)?.ToString()?.Trim();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void AddUniqueKey(ICollection<string> keys, string key)
+    {
+        if (!keys.Contains(key, StringComparer.OrdinalIgnoreCase))
+        {
+            keys.Add(key);
+        }
+    }
+
     private static MethodInfo? FindMethod(
         Type type,
         string name,

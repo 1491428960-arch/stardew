@@ -14,23 +14,29 @@ public sealed class FaceToFaceConversationCoordinator
 {
     private readonly StoryStateStore storyStateStore;
     private readonly Action<StardewNpc?>? runtimeDialogueObserver;
+    private readonly ShareFriendshipLedger shareFriendshipLedger;
+    private readonly NpcKissAnimationController kissAnimationController = new();
     private ConversationService? conversationService;
     private StardewNpc? npc;
     private FaceToFaceConversationState state =
         new(FaceToFaceState.Idle, null);
     private StardewNpc? lastChatNpc;
     private int? lastChatDay;
+    private StardewNpc? kissNpc;
+    private int? kissDay;
     private bool disposed;
 
     public FaceToFaceConversationCoordinator(
         ConversationService? conversationService,
         StoryStateStore storyStateStore,
-        Action<StardewNpc?>? runtimeDialogueObserver = null)
+        Action<StardewNpc?>? runtimeDialogueObserver = null,
+        ShareFriendshipLedger? shareFriendshipLedger = null)
     {
         this.conversationService = conversationService;
         this.storyStateStore = storyStateStore ??
             throw new ArgumentNullException(nameof(storyStateStore));
         this.runtimeDialogueObserver = runtimeDialogueObserver;
+        this.shareFriendshipLedger = shareFriendshipLedger ?? new ShareFriendshipLedger();
     }
 
     public FaceToFaceConversationState State => state;
@@ -39,10 +45,76 @@ public sealed class FaceToFaceConversationCoordinator
     {
         lastChatNpc = null;
         lastChatDay = null;
+        kissAnimationController.Reset();
+        kissNpc = null;
+        kissDay = null;
+        if (state.State is FaceToFaceState.AwaitingKiss or FaceToFaceState.Kissing)
+        {
+            state = new FaceToFaceConversationState(FaceToFaceState.Idle, null);
+            npc = null;
+        }
+    }
+
+    public bool TryOpenChat(StardewNpc target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (disposed || conversationService is null ||
+            kissNpc is not null || state.State == FaceToFaceState.Kissing)
+        {
+            return false;
+        }
+
+        npc = target;
+        state = new FaceToFaceConversationState(
+            FaceToFaceState.Composing,
+            target.Name);
+        OpenChatMenu(target);
+        return true;
+    }
+
+    public bool TryConsumePendingKiss(Vector2 interactionTile)
+    {
+        if (state.State == FaceToFaceState.Kissing)
+        {
+            return true;
+        }
+
+        var candidate = kissNpc;
+        if (candidate is null ||
+            !FaceToFaceStateRules.InteractionTargetsRememberedNpc(
+                candidate.GetBoundingBox(),
+                interactionTile,
+                Game1.tileSize))
+        {
+            return false;
+        }
+
+        // A pending kiss has priority over repeat chat. Keep it armed when
+        // the original action cannot run yet, so a later right-click can
+        // retry after the player is nearby and free to act.
+        if (!CanTriggerPendingKiss(candidate))
+        {
+            return true;
+        }
+
+        if (!kissAnimationController.TryStart(candidate, OnKissCompleted))
+        {
+            return true;
+        }
+
+        kissNpc = null;
+        kissDay = null;
+        state = FaceToFaceStateRules.BeginKiss(state);
+        return true;
     }
 
     public bool TryOpenRepeatChat(Vector2 interactionTile)
     {
+        if (kissNpc is not null || state.State == FaceToFaceState.Kissing)
+        {
+            return false;
+        }
+
         var candidate = lastChatNpc;
         var sameLocation = candidate is not null &&
             ReferenceEquals(candidate.currentLocation, Game1.currentLocation);
@@ -72,12 +144,20 @@ public sealed class FaceToFaceConversationCoordinator
         state = new FaceToFaceConversationState(
             FaceToFaceState.Composing,
             candidate!.Name);
-        Game1.activeClickableMenu = new ChatInputMenu(
-            candidate,
-            conversationService,
-            storyStateStore,
-            OnChatClosed);
+        OpenChatMenu(candidate);
         return true;
+    }
+
+    public void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (disposed || state.State != FaceToFaceState.Kissing)
+        {
+            return;
+        }
+
+        kissAnimationController.Update(Game1.currentGameTime);
     }
 
     public void UpdateService(ConversationService? service)
@@ -140,10 +220,13 @@ public sealed class FaceToFaceConversationCoordinator
 
     public void Reset()
     {
+        kissAnimationController.Reset();
         state = new FaceToFaceConversationState(FaceToFaceState.Idle, null);
         npc = null;
         lastChatNpc = null;
         lastChatDay = null;
+        kissNpc = null;
+        kissDay = null;
     }
 
     public void Dispose()
@@ -222,11 +305,21 @@ public sealed class FaceToFaceConversationCoordinator
             speaker,
             conversationService,
             storyStateStore,
-            OnChatClosed);
+            OnChatClosed,
+            conversationChannel: ConversationChannel.FaceToFace,
+            shareFriendshipLedger: shareFriendshipLedger);
     }
 
-    private void OnChatClosed()
+    private void OnChatClosed(bool valuableRelationshipRepair)
     {
+        if (valuableRelationshipRepair && npc is not null && CanArmKiss(npc))
+        {
+            state = FaceToFaceStateRules.ArmKissAfterReply(state);
+            kissNpc = npc;
+            kissDay = Game1.Date.TotalDays;
+            return;
+        }
+
         state = FaceToFaceStateRules.ObserveDialogueClosed(state);
         if (state.State == FaceToFaceState.AwaitingContinuationChoice && npc is not null)
         {
@@ -236,6 +329,70 @@ public sealed class FaceToFaceConversationCoordinator
         {
             npc = null;
         }
+    }
+
+    private bool CanArmKiss(StardewNpc speaker)
+    {
+        var gameState = GameStateCollector.Collect(speaker);
+        var customRelationshipType = storyStateStore.State.Relationships
+            .Where(relationship =>
+                string.Equals(relationship.FromNpcId, "player", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(relationship.ToNpcId, speaker.Name, StringComparison.OrdinalIgnoreCase))
+            .Select(relationship => relationship.RelationType)
+            .FirstOrDefault();
+        return KissInteractionRules.CanArmAfterReply(
+            effectiveReply: true,
+            RelationshipStageRules.ResolveKey(gameState),
+            customRelationshipType);
+    }
+
+    private bool CanTriggerPendingKiss(StardewNpc candidate)
+    {
+        var player = Game1.player;
+        return KissInteractionRules.CanTriggerKiss(
+            worldReady: Context.IsWorldReady,
+            menuOpen: Game1.activeClickableMenu is not null,
+            sameDay: FaceToFaceStateRules.IsSameGameDay(
+                kissDay,
+                Game1.Date.TotalDays),
+            sameLocation: ReferenceEquals(
+                candidate.currentLocation,
+                Game1.currentLocation),
+            npcNearby: IsNearby(candidate),
+            eventUp: Game1.eventUp,
+            festival: Game1.isFestival(),
+            playerCanMove: player?.CanMove == true,
+            usingTool: player?.UsingTool == true,
+            ridingHorse: player?.isRidingHorse() == true,
+            sitting: player?.IsSitting() == true);
+    }
+
+    private void OnKissCompleted(StardewNpc kissedNpc)
+    {
+        if (disposed || state.State != FaceToFaceState.Kissing)
+        {
+            return;
+        }
+
+        state = FaceToFaceStateRules.CompleteKiss(state);
+        npc = null;
+        RememberRepeatTarget(kissedNpc);
+    }
+
+    private void OpenChatMenu(StardewNpc target)
+    {
+        if (conversationService is null)
+        {
+            return;
+        }
+
+        Game1.activeClickableMenu = new ChatInputMenu(
+            target,
+            conversationService,
+            storyStateStore,
+            OnChatClosed,
+            conversationChannel: ConversationChannel.FaceToFace,
+            shareFriendshipLedger: shareFriendshipLedger);
     }
 
     private void RememberRepeatTarget(StardewNpc speaker)

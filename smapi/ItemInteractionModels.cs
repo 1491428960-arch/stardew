@@ -11,11 +11,26 @@ public enum ItemInteractionAction
     Gift,
 }
 
+public enum ItemInteractionKind
+{
+    Other,
+    Food,
+    Mineral,
+    Artifact,
+}
+
+public enum ItemSpecialInteraction
+{
+    None,
+    MineralTasting,
+}
+
 public sealed record ItemSnapshot(
     string ItemId,
     string DisplayName,
     string Category,
-    int Quality)
+    int Quality,
+    ItemInteractionKind Kind = ItemInteractionKind.Other)
 {
     public static ItemSnapshot FromItem(Item item)
     {
@@ -26,7 +41,8 @@ public sealed record ItemSnapshot(
                 : item.QualifiedItemId,
             item.DisplayName,
             item.Category.ToString(CultureInfo.InvariantCulture),
-            item.Quality);
+            item.Quality,
+            ItemInteractionRules.Classify(item));
     }
 }
 
@@ -39,28 +55,125 @@ public sealed record ItemConversationSelection(
     Item Item,
     ItemSnapshot Snapshot,
     ItemInteractionAction Action,
-    int GiftTaste)
+    int GiftTaste,
+    ItemSpecialInteraction SpecialInteraction = ItemSpecialInteraction.None)
 {
-    public ItemConversationContext ToConversationContext()
+    public ItemConversationContext ToConversationContext(int? friendshipAwarded = null)
     {
+        var preview = ItemInteractionRules.CreatePreview(Snapshot, Action);
         return new ItemConversationContext(
             Snapshot.ItemId,
             Snapshot.DisplayName,
             Snapshot.Category,
             Snapshot.Quality,
             Action.ToString().ToLowerInvariant(),
-            GiftTaste);
+            GiftTaste,
+            Snapshot.Kind,
+            preview.ConsumesItem,
+            friendshipAwarded ?? (preview.Action == ItemInteractionAction.Share
+                ? ItemInteractionRules.ShareFriendshipPoints
+                : 0),
+            SpecialInteraction);
     }
 }
 
 public static class ItemInteractionRules
 {
+    public const int ShareFriendshipPoints = 5;
+    private const double AbigailMineralTastingChance = 0.20;
+
     public static ItemInteractionPreview CreatePreview(
         ItemSnapshot item,
         ItemInteractionAction action)
     {
         ArgumentNullException.ThrowIfNull(item);
-        return new ItemInteractionPreview(item, action, ConsumesItem: false);
+        return new ItemInteractionPreview(
+            item,
+            action,
+            ConsumesItem: action == ItemInteractionAction.Share && CanShare(item.Kind));
+    }
+
+    public static ItemInteractionKind Classify(string? category)
+    {
+        var normalized = category?.Trim() ?? string.Empty;
+        if (normalized is "-7" or "food" or "cooking" or "食物" or "饮料" or "烹饪")
+        {
+            return ItemInteractionKind.Food;
+        }
+
+        if (normalized is "-2" or "-12" or "mineral" or "minerals" or "ore" or
+            "gem" or "geode" or "矿石" or "宝石" or "晶球")
+        {
+            return ItemInteractionKind.Mineral;
+        }
+
+        if (normalized is "artifact" or "museum" or "collectible" or "文物" or "收藏品")
+        {
+            return ItemInteractionKind.Artifact;
+        }
+
+        return ItemInteractionKind.Other;
+    }
+
+    public static ItemInteractionKind Classify(Item item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        if (ReadIntProperty(item, "Edibility") >= 0)
+        {
+            return ItemInteractionKind.Food;
+        }
+
+        if (HasContextTag(item, "mineral") ||
+            HasContextTag(item, "ore") ||
+            HasContextTag(item, "gem") ||
+            HasContextTag(item, "geode"))
+        {
+            return ItemInteractionKind.Mineral;
+        }
+
+        if (HasContextTag(item, "artifact") || HasContextTag(item, "museum"))
+        {
+            return ItemInteractionKind.Artifact;
+        }
+
+        return Classify(item.Category.ToString(CultureInfo.InvariantCulture));
+    }
+
+    public static bool CanShare(ItemInteractionKind kind)
+    {
+        return kind is ItemInteractionKind.Food or
+            ItemInteractionKind.Mineral or
+            ItemInteractionKind.Artifact;
+    }
+
+    public static ItemSpecialInteraction ResolveSpecialInteraction(
+        string? npcId,
+        ItemInteractionKind kind,
+        double roll)
+    {
+        if (roll < 0 || roll > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(roll));
+        }
+
+        if (kind != ItemInteractionKind.Mineral || string.IsNullOrWhiteSpace(npcId))
+        {
+            return ItemSpecialInteraction.None;
+        }
+
+        if (string.Equals(npcId.Trim(), "Dwarf", StringComparison.OrdinalIgnoreCase))
+        {
+            return ItemSpecialInteraction.MineralTasting;
+        }
+
+        if (string.Equals(npcId.Trim(), "Abigail", StringComparison.OrdinalIgnoreCase) &&
+            roll < AbigailMineralTastingChance)
+        {
+            return ItemSpecialInteraction.MineralTasting;
+        }
+
+        return ItemSpecialInteraction.None;
     }
 
     public static bool ShouldInvokeVanillaGift(
@@ -76,5 +189,31 @@ public static class ItemInteractionRules
         ArgumentNullException.ThrowIfNull(npc);
         ArgumentNullException.ThrowIfNull(item);
         return npc.getGiftTasteForThisItem(item);
+    }
+
+    private static int ReadIntProperty(Item item, string name)
+    {
+        try
+        {
+            var property = item.GetType().GetProperty(name);
+            return property?.GetValue(item) is int value ? value : int.MinValue;
+        }
+        catch
+        {
+            return int.MinValue;
+        }
+    }
+
+    private static bool HasContextTag(Item item, string tag)
+    {
+        try
+        {
+            var method = item.GetType().GetMethod("HasContextTag", new[] { typeof(string) });
+            return method?.Invoke(item, new object?[] { tag }) is true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

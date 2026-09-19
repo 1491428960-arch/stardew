@@ -9,6 +9,27 @@ public static class ConversationIntent
     public const string Item = "item";
 }
 
+public static class ConversationChannel
+{
+    public const string Remote = "remote";
+    public const string FaceToFace = "face_to_face";
+}
+
+public sealed record OpenLoopSignal
+{
+    [JsonPropertyName("action")]
+    public string Action { get; init; } = string.Empty;
+
+    [JsonPropertyName("loopId")]
+    public string LoopId { get; init; } = string.Empty;
+
+    [JsonPropertyName("topic")]
+    public string? Topic { get; init; }
+
+    [JsonPropertyName("shortSummary")]
+    public string? ShortSummary { get; init; }
+}
+
 public sealed class ItemConversationContext
 {
     public ItemConversationContext(
@@ -17,7 +38,11 @@ public sealed class ItemConversationContext
         string category,
         int quality,
         string action,
-        int giftTaste)
+        int giftTaste,
+        ItemInteractionKind itemKind = ItemInteractionKind.Other,
+        bool consumesItem = false,
+        int friendshipAwarded = 0,
+        ItemSpecialInteraction specialInteraction = ItemSpecialInteraction.None)
     {
         ItemId = itemId;
         DisplayName = displayName;
@@ -25,6 +50,10 @@ public sealed class ItemConversationContext
         Quality = quality;
         Action = action;
         GiftTaste = giftTaste;
+        ItemKind = itemKind.ToString().ToLowerInvariant();
+        ConsumesItem = consumesItem;
+        FriendshipAwarded = friendshipAwarded;
+        SpecialInteraction = specialInteraction.ToString().ToLowerInvariant();
     }
 
     [JsonPropertyName("itemId")]
@@ -44,6 +73,18 @@ public sealed class ItemConversationContext
 
     [JsonPropertyName("giftTaste")]
     public int GiftTaste { get; }
+
+    [JsonPropertyName("itemKind")]
+    public string ItemKind { get; }
+
+    [JsonPropertyName("consumesItem")]
+    public bool ConsumesItem { get; }
+
+    [JsonPropertyName("friendshipAwarded")]
+    public int FriendshipAwarded { get; }
+
+    [JsonPropertyName("specialInteraction")]
+    public string SpecialInteraction { get; }
 }
 
 public sealed record ConversationRequest(
@@ -52,7 +93,9 @@ public sealed record ConversationRequest(
     string Intent,
     NpcGameState? GameState,
     IReadOnlyList<string> RecentFacts,
-    ItemConversationContext? ItemContext);
+    ItemConversationContext? ItemContext,
+    RelationshipWorldSnapshot? RelationshipWorld,
+    string Channel = ConversationChannel.Remote);
 
 public sealed record ConversationTurnResult(BridgeDialogueResponse Response, bool Recorded)
 {
@@ -60,3 +103,20 @@ public sealed record ConversationTurnResult(BridgeDialogueResponse Response, boo
 
     public bool Fallback => Response.Fallback;
 }
+
+public sealed record GroupDialogueParticipant(
+    [property: JsonPropertyName("npcId")] string NpcId,
+    [property: JsonPropertyName("displayName")] string DisplayName,
+    [property: JsonPropertyName("gameState")] NpcGameState? GameState = null);
+
+public sealed record GroupDialogueRequest(
+    string Message,
+    IReadOnlyList<GroupDialogueParticipant> Participants,
+    string? InvitationTopic,
+    string? InvitationGuidance,
+    IReadOnlyList<GroupDialogueHistoryEntry> History,
+    string? ActiveSpeakerNpcId = null,
+    NpcGameState? GameState = null,
+    IReadOnlyList<string>? RecentFacts = null,
+    RelationshipWorldSnapshot? RelationshipWorld = null,
+    string Provider = "auto");

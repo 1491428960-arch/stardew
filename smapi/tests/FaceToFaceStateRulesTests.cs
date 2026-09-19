@@ -122,4 +122,34 @@ public sealed class FaceToFaceStateRulesTests
             expected,
             FaceToFaceStateRules.IsSameGameDay(rememberedDay, currentDay));
     }
+
+    [Fact]
+    public void Valuable_relationship_repair_arms_a_kiss_then_completion_returns_to_repeat_chat_state()
+    {
+        var state = new FaceToFaceConversationState(
+            FaceToFaceState.Composing,
+            "Sophia");
+
+        state = FaceToFaceStateRules.ArmKissAfterReply(state);
+        Assert.Equal(FaceToFaceState.AwaitingKiss, state.State);
+        Assert.Equal("Sophia", state.NpcId);
+
+        state = FaceToFaceStateRules.BeginKiss(state);
+        Assert.Equal(FaceToFaceState.Kissing, state.State);
+
+        state = FaceToFaceStateRules.CompleteKiss(state);
+        Assert.Equal(FaceToFaceState.Idle, state.State);
+        Assert.Null(state.NpcId);
+    }
+
+    [Fact]
+    public void Kiss_state_does_not_observe_or_offer_vanilla_dialogue()
+    {
+        var state = new FaceToFaceConversationState(
+            FaceToFaceState.AwaitingKiss,
+            "Sophia");
+
+        Assert.False(FaceToFaceStateRules.ShouldObserveDialogueOpened(state));
+        Assert.Equal(state, FaceToFaceStateRules.ObserveDialogueClosed(state));
+    }
 }

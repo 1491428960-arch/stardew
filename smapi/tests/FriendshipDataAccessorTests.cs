@@ -41,6 +41,16 @@ public sealed class FriendshipDataAccessorTests
         Assert.False(FriendshipDataAccessor.TryGetValue(null, "Willy", out _));
     }
 
+    [Fact]
+    public void Reads_friendship_keys_from_a_keys_property_without_exposing_values()
+    {
+        var data = new KeysPropertyShape("Abigail", "Emily");
+
+        var keys = FriendshipDataAccessor.Keys(data);
+
+        Assert.Equal(new[] { "Abigail", "Emily" }, keys);
+    }
+
     private sealed class GenericDictionaryShape
     {
         private readonly Dictionary<string, object?> values = new(StringComparer.Ordinal);
@@ -53,5 +63,15 @@ public sealed class FriendshipDataAccessorTests
         public object? this[string key] => values[key];
 
         public void Set(string key, object? value) => values[key] = value;
+    }
+
+    private sealed class KeysPropertyShape
+    {
+        public KeysPropertyShape(params string[] keys)
+        {
+            Keys = keys;
+        }
+
+        public IReadOnlyList<string> Keys { get; }
     }
 }

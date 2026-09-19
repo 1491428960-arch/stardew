@@ -100,6 +100,102 @@ public sealed record RelationshipEdgeRecord
 
     [JsonPropertyName("updatedOn")]
     public string UpdatedOn { get; init; } = string.Empty;
+
+    [JsonPropertyName("startedOn")]
+    public string? StartedOn { get; init; }
+
+    [JsonPropertyName("publicEventId")]
+    public string? PublicEventId { get; init; }
+
+    [JsonPropertyName("publicOn")]
+    public string? PublicOn { get; init; }
+}
+
+public sealed record RelationshipViewRecord
+{
+    [JsonPropertyName("ownerNpcId")]
+    public string OwnerNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("subjectNpcId")]
+    public string SubjectNpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("relationType")]
+    public string RelationType { get; init; } = string.Empty;
+
+    [JsonPropertyName("visibility")]
+    public string Visibility { get; init; } = string.Empty;
+
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = string.Empty;
+
+    [JsonPropertyName("observedOn")]
+    public string? ObservedOn { get; init; }
+
+    [JsonPropertyName("evidence")]
+    public string? Evidence { get; init; }
+}
+
+public sealed record RelationshipMediationRecord
+{
+    [JsonPropertyName("npcId")]
+    public string NpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "none";
+
+    [JsonPropertyName("outcome")]
+    public string? Outcome { get; init; }
+
+    [JsonPropertyName("nextStep")]
+    public string? NextStep { get; init; }
+}
+
+public sealed record RelationshipJealousyRecord
+{
+    [JsonPropertyName("npcId")]
+    public string NpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("active")]
+    public bool Active { get; init; }
+
+    [JsonPropertyName("trigger")]
+    public string? Trigger { get; init; }
+
+    [JsonPropertyName("intensity")]
+    public string? Intensity { get; init; }
+
+    [JsonPropertyName("need")]
+    public string? Need { get; init; }
+
+    [JsonPropertyName("lastResolvedTrigger")]
+    public string? LastResolvedTrigger { get; init; }
+}
+
+public sealed record OpenLoopRecord
+{
+    [JsonPropertyName("loopId")]
+    public string LoopId { get; init; } = string.Empty;
+
+    [JsonPropertyName("npcId")]
+    public string NpcId { get; init; } = string.Empty;
+
+    [JsonPropertyName("topic")]
+    public string Topic { get; init; } = string.Empty;
+
+    [JsonPropertyName("originChannel")]
+    public string OriginChannel { get; init; } = string.Empty;
+
+    [JsonPropertyName("nextChannel")]
+    public string NextChannel { get; init; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; init; } = "open";
+
+    [JsonPropertyName("shortSummary")]
+    public string ShortSummary { get; init; } = string.Empty;
+
+    [JsonPropertyName("createdOn")]
+    public string CreatedOn { get; init; } = string.Empty;
 }
 
 public sealed record InteractionProgress
@@ -223,6 +319,22 @@ public sealed record StoryStateEnvelope
 
     [JsonPropertyName("relationships")]
     public IReadOnlyList<RelationshipEdgeRecord> Relationships { get; init; } = Array.Empty<RelationshipEdgeRecord>();
+
+    [JsonPropertyName("relationshipViews")]
+    public IReadOnlyList<RelationshipViewRecord> RelationshipViews { get; init; } = Array.Empty<RelationshipViewRecord>();
+
+    [JsonPropertyName("mediations")]
+    public IReadOnlyList<RelationshipMediationRecord> Mediations { get; init; } = Array.Empty<RelationshipMediationRecord>();
+
+    [JsonPropertyName("jealousies")]
+    public IReadOnlyList<RelationshipJealousyRecord> Jealousies { get; init; } = Array.Empty<RelationshipJealousyRecord>();
+
+    [JsonPropertyName("openLoops")]
+    public IReadOnlyList<OpenLoopRecord> OpenLoops { get; init; } = Array.Empty<OpenLoopRecord>();
+
+    [JsonPropertyName("groupDialogueInvitations")]
+    public IReadOnlyList<GroupDialogueInvitationRecord> GroupDialogueInvitations { get; init; } =
+        Array.Empty<GroupDialogueInvitationRecord>();
 
     [JsonPropertyName("interactionProgresses")]
     public IReadOnlyList<InteractionProgress> InteractionProgresses { get; init; } = Array.Empty<InteractionProgress>();

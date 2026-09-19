@@ -105,6 +105,19 @@ public static class ConversationStateRules
 
     private static string Truncate(string value, int maxLength)
     {
-        return value.Length <= maxLength ? value : value[..maxLength];
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        // 不要把 UTF-16 代理对切成两半：孤立的代理项会被序列化成替换字符，
+        // 让写进存档的记忆文本出现乱码。
+        var length = maxLength;
+        if (char.IsHighSurrogate(value[length - 1]))
+        {
+            length -= 1;
+        }
+
+        return value[..length];
     }
 }
