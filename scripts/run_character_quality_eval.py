@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -20,14 +21,20 @@ from stardew_ai_bridge.character_quality_eval import (  # noqa: E402
     DEFAULT_CASES,
     QUALITY_SUITE_IDS,
     CharacterQualityCase,
+    CharacterQualityTurn,
     diagnose_affection_initiative,
     quality_cases_for_suite,
+    score_affection_pacing,
     score_affection_variation,
+    score_conversation_lead_variation,
     score_dialogue_progression,
     score_character_reply,
     score_generated_player_input,
     _turn_intent,
+    _turn_for_plan_scoring,
+    quality_case_display_name,
     validate_quality_cases,
+    relationship_turn_metadata,
 )
 from stardew_ai_bridge.artifact_paths import stable_artifact_path  # noqa: E402
 from stardew_ai_bridge.config import ProviderSettings, load_local_env  # noqa: E402
@@ -38,6 +45,11 @@ from stardew_ai_bridge.models import (  # noqa: E402
 )
 from stardew_ai_bridge.profile_index import ProfileIndexStore  # noqa: E402
 from stardew_ai_bridge.prompts import ContextBuilder, PromptBuilder  # noqa: E402
+from stardew_ai_bridge.personas import canonical_npc_id  # noqa: E402
+from stardew_ai_bridge.relationship_world import (  # noqa: E402
+    project_relationship_context,
+    project_relationship_request,
+)
 from stardew_ai_bridge.providers import (  # noqa: E402
     FakeProvider,
     OllamaNativeProvider,
@@ -56,12 +68,131 @@ from stardew_ai_bridge.guard import ResponseGuard, retry_for_format_noise  # noq
 
 
 DEFAULT_PROFILE_INDEX = (
-    ROOT / "data" / "generated" / "vanilla-sve-rasmodia-profile-index-zh-CN.json"
+    ROOT
+    / "data"
+    / "generated"
+    / "vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json"
 )
 DEFAULT_ENDPOINT = "http://127.0.0.1:11435/api/chat"
 DEFAULT_MODEL = "qwen3.5:9b"
-DEFAULT_CLOUD_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-DEFAULT_CLOUD_MODEL = "gpt-5.6-terra"
+DEFAULT_CLOUD_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+)
+DEFAULT_CLOUD_MODEL = "gemini-3.7-flash"
+
+
+_TURN_PLAN_MODES = {
+    "answer_only",
+    "answer_plus_detail",
+    "answer_plus_lead",
+    "answer_plus_warmth",
+    "boundary_close",
+    "explicit_intimacy",
+}
+_TURN_PLAN_INTENSITIES = {"none", "light", "direct", "explicit"}
+_TURN_PLAN_CLOSE_MARKERS = (
+    "先不说了",
+    "先休息",
+    "先这样",
+    "下次再聊",
+    "改天再聊",
+    "我先走了",
+    "不想聊",
+    "没心情",
+    "别逼我",
+)
+_TURN_PLAN_INTIMACY_MARKERS = (
+    "更亲密",
+    "亲密一点",
+    "接吻",
+    "亲一下",
+    "抱我",
+    "摸我",
+    "想和你睡",
+    "一起睡",
+    "发生关系",
+    "脱掉",
+)
+_TURN_PLAN_LEAD_KINDS = {
+    "specific_plan",
+    "companionship",
+    "creative_share",
+    "playful_tease",
+    "shared_evening",
+    "care_action",
+}
+
+
+def _turn_plan(
+    case: CharacterQualityCase,
+    turn: object | None,
+    *,
+    message: str,
+    intent: str | None,
+) -> dict[str, object]:
+    """为评测回合生成唯一目标，并保持与 PromptBuilder 的字段契约一致。
+
+    评测脚本需要把该目标同时放进 ``qualityContext`` 和结果记录。这里不把
+    ``evaluation_focus`` 等仅供评测者阅读的字段传给模型，只保留模式和关系
+    强度，避免把评分意图泄漏到对白提示中。
+    """
+
+    explicit_mode = getattr(turn, "turn_plan_mode", "")
+    if not isinstance(explicit_mode, str):
+        explicit_mode = ""
+    mode = explicit_mode.strip().casefold()
+
+    effective_intent = intent or getattr(turn, "intent", None) or case.intent
+    if not isinstance(effective_intent, str):
+        effective_intent = case.intent
+    effective_intent = effective_intent.strip().casefold()
+    expectation = getattr(turn, "initiative_expectation", "none")
+    if not isinstance(expectation, str):
+        expectation = "none"
+    expectation = expectation.strip().casefold()
+    initiative_kind = getattr(turn, "initiative_kind", "none")
+    if not isinstance(initiative_kind, str):
+        initiative_kind = "none"
+    initiative_kind = initiative_kind.strip().casefold()
+    intensity = case.flirt_intensity.strip().casefold()
+    player_text = message.strip()
+    natural_adaptive_topic = (
+        case.follow_up_mode == "adaptive" and case.intent == "topic"
+    )
+
+    if mode not in _TURN_PLAN_MODES:
+        # 收口优先级最高：即使案例仍带有亲密关系字段，也不能因评分契约
+        # 把玩家明确结束的话题重新升级。
+        if initiative_kind == "conversation_exit" or any(
+            marker in player_text for marker in _TURN_PLAN_CLOSE_MARKERS
+        ):
+            mode = "boundary_close"
+        elif (
+            any(marker in player_text for marker in _TURN_PLAN_INTIMACY_MARKERS)
+            and intensity == "explicit"
+            and case.adult_consensual is True
+            and _case_romance_eligible(case) is not False
+        ):
+            mode = "explicit_intimacy"
+        elif effective_intent == "topic":
+            mode = "answer_only" if natural_adaptive_topic else "answer_plus_lead"
+        elif expectation == "proactive" and initiative_kind in _TURN_PLAN_LEAD_KINDS:
+            mode = "answer_plus_lead"
+        elif expectation == "proactive" and initiative_kind == "affection_signal":
+            mode = "answer_plus_warmth"
+        elif expectation == "guarded":
+            mode = "answer_only"
+        elif expectation == "responsive" or initiative_kind == "none":
+            mode = "answer_only" if natural_adaptive_topic else (
+                "answer_plus_detail" if player_text else "answer_only"
+            )
+        else:
+            mode = "answer_only"
+
+    plan: dict[str, object] = {"mode": mode}
+    if intensity in _TURN_PLAN_INTENSITIES:
+        plan["intensity"] = intensity
+    return plan
 
 
 def _relationship_hearts(stage: str) -> int:
@@ -76,6 +207,22 @@ def _relationship_hearts(stage: str) -> int:
     }.get(stage, 0)
 
 
+def _canonical_case_npc_id(case: CharacterQualityCase) -> str:
+    return canonical_npc_id(case.npc_id)
+
+
+def _case_romance_eligible(case: CharacterQualityCase) -> bool:
+    if case.romance_eligible is not None:
+        return case.romance_eligible
+    return _canonical_case_npc_id(case) in {
+        "Wizard",
+        "Sophia",
+        "Shane",
+        "Sebastian",
+        "Alex",
+    }
+
+
 def _resolve_index(value: ProfileIndexStore | Path | str) -> ProfileIndexStore:
     if isinstance(value, ProfileIndexStore):
         return value
@@ -86,7 +233,7 @@ def _build_request(
     case: CharacterQualityCase,
     *,
     message: str | None = None,
-    history: list[dict[str, str]] | None = None,
+    history: list[dict[str, object]] | None = None,
     intent: str | None = None,
 ) -> DialogueTestRequest:
     game_state = dict(case.game_state)
@@ -94,9 +241,15 @@ def _build_request(
     game_state["sourceMods"] = list(case.source_mods)
     if case.completed_event_ids:
         game_state["completedEventIds"] = list(case.completed_event_ids)
+    relationship_world = None
+    if case.relationship_world is not None:
+        relationship_world = project_relationship_request(
+            _canonical_case_npc_id(case),
+            case.relationship_world,
+        )
     return DialogueTestRequest(
-        npcId=case.npc_id,
-        displayName=case.display_name,
+        npcId=_canonical_case_npc_id(case),
+        displayName=quality_case_display_name(case),
         sourceMods=list(case.source_mods),
         recentFacts=[case.story_progress] if case.story_progress else [],
         history=[dict(item) for item in (case.history if history is None else history)],
@@ -104,6 +257,7 @@ def _build_request(
         intent=case.intent if intent is None else intent,
         channel=case.channel,
         gameState=game_state,
+        relationshipWorld=relationship_world,
     )
 
 
@@ -112,7 +266,7 @@ def _build_context(
     case: CharacterQualityCase,
     *,
     message: str | None = None,
-    history: list[dict[str, str]] | None = None,
+    history: list[dict[str, object]] | None = None,
     turn: object | None = None,
     intent: str | None = None,
 ) -> dict[str, Any]:
@@ -127,13 +281,33 @@ def _build_context(
         "flirtIntensity": case.flirt_intensity,
         "adultConsensual": case.adult_consensual,
         "romanceEligible": (
-            case.romance_eligible
-            if case.romance_eligible is not None
-            else case.npc_id in {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
+            _case_romance_eligible(case)
         ),
         "relationshipContext": case.relationship_context or case.story_progress,
         "genderPresentation": case.gender_presentation,
     }
+    relationship_gating_case = case.case_id.startswith("relationship-gate-")
+    if (
+        case.case_id.startswith("deep-flirt-")
+        or relationship_gating_case
+        or (
+            case.follow_up_mode == "adaptive"
+            and case.intent == "topic"
+        )
+    ):
+        # deep-flirt、关系事件锁和 NPC 主动找话题的 adaptive 输入都按自然对白处理；
+        # 关系事件锁只比较权限前后，不能让旧评测腔或硬性回显规则改变角色声线。
+        # 其他套件保持旧契约，避免改变既有评测边界。
+        quality_context["naturalMode"] = True
+        if (
+            case.follow_up_mode == "adaptive"
+            and case.intent == "topic"
+            and _canonical_case_npc_id(case).casefold() == "elliott"
+        ) or (
+            relationship_gating_case
+            and _canonical_case_npc_id(case).casefold() == "elliott"
+        ):
+            quality_context["styleCalibration"] = "elliott_original_rhythm"
     if case.topic_seed:
         quality_context["topicSeed"] = case.topic_seed
     if case.topic_keywords:
@@ -146,10 +320,18 @@ def _build_context(
         quality_context["initiativeExpectation"] = initiative_expectation
     if isinstance(initiative_kind, str):
         quality_context["initiativeKind"] = initiative_kind
-    return builder.build(
-        {
-            "npcId": case.npc_id,
-            "displayName": case.display_name,
+    relationship_focus = getattr(turn, "relationship_focus", "")
+    if isinstance(relationship_focus, str) and relationship_focus.strip():
+        quality_context["relationshipFocus"] = relationship_focus.strip().casefold()
+    quality_context["turnPlan"] = _turn_plan(
+        case,
+        turn,
+        message=case.message if message is None else message,
+        intent=case.intent if intent is None else intent,
+    )
+    payload: dict[str, object] = {
+            "npcId": _canonical_case_npc_id(case),
+            "displayName": quality_case_display_name(case),
             "sourceMods": list(case.source_mods),
             "recentFacts": [case.story_progress] if case.story_progress else [],
             "message": case.message if message is None else message,
@@ -159,7 +341,9 @@ def _build_context(
             "history": [dict(item) for item in (case.history if history is None else history)],
             "gameState": game_state,
         }
-    )
+    if case.relationship_world is not None:
+        payload["relationshipWorld"] = case.relationship_world
+    return builder.build(payload)
 
 
 def _safe_record(record: dict[str, object]) -> dict[str, object]:
@@ -253,38 +437,57 @@ def _player_simulator_messages(
     history: list[dict[str, str]],
     turn_number: int,
 ) -> list[dict[str, str]]:
+    display_name = quality_case_display_name(case)
     transcript = "\n".join(
         f"{item.get('role', 'unknown')}: {str(item.get('content', ''))[:500]}"
         for item in history[-6:]
     )
     style = case.player_simulation_style or "自然回应上一条 NPC 回复"
+    expression_card = case.player_expression_card
     intimacy_boundary = (
         "这是高亲密关系案例，可以回应亲密信号，但不要凭空添加未发生的动作。"
         if case.flirt_intensity != "none"
         else "这是普通熟人或朋友对照案例，只保持日常聊天，不调情、不升级关系。"
     )
+    card_instruction = ""
+    if expression_card is not None:
+        card_instruction = (
+            "玩家表达卡（只用来保持口吻，不要逐条复述）："
+            f"关系姿态：{expression_card.relationship_stance}；"
+            f"说话习惯：{expression_card.language_texture}；"
+            f"遇到状况时：{expression_card.helping_impulse}；"
+            f"距离感：{expression_card.distance_pattern}；"
+            f"自我修正：{expression_card.self_correction}。"
+        )
     return [
         {
             "role": "system",
             "name": "player_simulator",
             "content": (
-                "你是对话质量测试中的真实玩家，不是 NPC，也不是评审。"
-                "只输出一句玩家会发送的简体中文消息，不要解释，不要加引号。"
-                "从上一条 NPC 回复中自然接住一个具体对象、动作、情绪或安排，"
-                "用真实反应、认可、轻微追问或亲密回应继续聊；不要复述 NPC 原句，"
-                "不要使用‘你刚才提到的……后来怎么样了’这类测试模板，也不能只摘抄一个词。"
-                "不能用和上一条语义无关的泛泛寒暄填充。"
-                "最多 60 个汉字，最多保留一个追问点。"
-                "不要复述测试目标，不要提到测试、评分、关键词、模型或提示词，"
-                "不要替 NPC 说话，也不要凭空添加上一条回复没有依据的事实。"
-                f"{intimacy_boundary}本次是第 {turn_number} 轮续聊，玩家反应方式：{style}。"
+                "你就是玩家本人，像熟人随口接话，也像熟人随手回一句，不是 NPC，也不是旁观者。"
+                "只发一条简体中文消息，一条消息就够；不解释，不加引号。"
+                "看最近一条 NPC 回复，抓住一个点说自己的第一反应；"
+                "选最顺的一种说法就好：短答、半句、轻轻打趣或一个自然问题，必要时把话头留给 NPC。"
+                "不要复述 NPC 原句，不要把 NPC 的整句话搬回来，不能只摘抄一个词，也不要使用‘你刚才提到的……后来怎么样了’这种固定句式。"
+                "不要替 NPC 补事实，不要凭空安排时间、见面或下一步；除非上一条明确需要确认，否则不要连续问两个问题，也不要连续追问。"
+                "消息短一点，大多数时候一小句，只有确实需要才补第二句，最多 60 个汉字；"
+                "不要写成告白、情书或小诗。"
+                "像手机上临时想到就发的一小句普通话，落在一个具体反应；"
+                "不用追求机灵、暧昧或文采，也不要把感受总结完整。"
+                "对方说到作品、句子或景色时，文学分享时优先用日常口语接话；不要分析文学手法，"
+                "不要复述对方完整比喻，不要接着写景或改写意象，无论 NPC 多文学，玩家都用普通口语。"
+                "遇到比喻、句子或作品，不要替它下结论；先问具体内容或说第一反应。"
+                "不要把一句话总结成‘什么都说了’或‘更有分量’，不要写成文学评论或普遍道理。"
+                "允许‘嗯’‘那行’‘好吧’这类口头停顿，别为了完整而补解释性收束。"
+                "不要出现规则、任务、评分、模型或提示词等旁观者用语。"
+                f"{intimacy_boundary}{card_instruction}玩家这次的说话感觉：{style}。"
             ),
         },
         {
             "role": "user",
             "name": "npc_reply",
             "content": (
-                f"NPC（{case.display_name}）刚才的回复：\n{previous_reply[:1600]}\n\n"
+                f"NPC（{display_name}）刚才的回复：\n{previous_reply[:1600]}\n\n"
                 f"已有对话记录：\n{transcript or '无'}\n\n"
                 "只根据最近一条 NPC 回复生成下一句玩家消息；不要根据案例标题或预期词猜话题，"
                 "不要把最近一条回复整句搬进玩家消息。"
@@ -390,6 +593,8 @@ def run_evaluation(
     all_usages: list[ProviderUsage | None] = []
     usage_returned_turns = 0
     player_input_usage_returned = 0
+    relationship_focus_counts: dict[str, int] = {}
+    relationship_tag_counts: dict[str, int] = {}
     budget_tracker = EvaluationBudgetTracker(evaluation_budget)
 
     def reserve_request(kind: str) -> None:
@@ -500,6 +705,12 @@ def run_evaluation(
                         {
                             "turnId": turn.turn_id,
                             "intent": current_intent,
+                            "turnPlan": _turn_plan(
+                                case,
+                                turn,
+                                message=actual_message,
+                                intent=current_intent,
+                            ),
                             "playerInput": "",
                             "playerInputSource": player_input_source,
                             "playerInputError": player_input_error,
@@ -511,6 +722,30 @@ def run_evaluation(
                     # 自适应链路一旦断裂，后续轮次没有可靠的“上一条回复”，
                     # 直接结束当前案例，避免把级联失败误算成 NPC 输出失败。
                     break
+            turn_plan = _turn_plan(
+                case,
+                turn,
+                message=actual_message,
+                intent=current_intent,
+            )
+            # 评分必须消费与 Prompt、Guard 完全相同的回合计划；否则生成侧
+            # 已允许自然接话，评分侧仍会按旧的主动亲密规则判失败。
+            scoring_turn = turn
+            turn_plan_mode = turn_plan.get("mode")
+            if (
+                isinstance(turn_plan_mode, str)
+                and isinstance(turn, CharacterQualityTurn)
+                and (
+                    turn_plan_mode != "answer_plus_detail"
+                    or turn.initiative_expectation != "none"
+                    or turn.initiative_kind != "none"
+                    or current_intent == "topic"
+                )
+            ):
+                scoring_turn = replace(
+                    turn,
+                    turn_plan_mode=turn_plan_mode,
+                )
             context = _build_context(
                 context_builder,
                 case,
@@ -548,16 +783,28 @@ def run_evaluation(
                 break
             except Exception as exc:  # noqa: BLE001 - 单轮失败不阻断其他轮次
                 failed_turns += 1
+                relationship_fields = (
+                    relationship_turn_metadata(case)
+                    if normalized_suite == "relationship-world"
+                    else {}
+                )
                 turn_records.append(
                     {
                         "turnId": turn.turn_id,
                         "intent": current_intent,
+                        "turnPlan": turn_plan,
                         "playerInput": actual_message,
                         "playerInputSource": player_input_source,
                         "playerInputQuality": player_input_quality,
                         "playerInputProvider": player_input_provider,
                         "playerInputLatencyMs": player_input_latency_ms,
                         "playerInputUsage": player_input_usage,
+                        **relationship_fields,
+                        **(
+                            {"relationshipTags": ["provider_error"]}
+                            if normalized_suite == "relationship-world"
+                            else {}
+                        ),
                         "error": type(exc).__name__,
                         "elapsedMs": int((perf_counter() - turn_started_at) * 1000),
                     }
@@ -590,7 +837,7 @@ def run_evaluation(
             score = score_character_reply(
                 case,
                 result.reply,
-                turn=turn,
+                turn=scoring_turn,
                 history=conversation_history,
                 player_input=actual_message,
             )
@@ -608,10 +855,30 @@ def run_evaluation(
             )
             initiative_diagnostic = diagnose_affection_initiative(
                 case,
-                turn,
+                _turn_for_plan_scoring(scoring_turn, actual_message),
                 result.reply,
                 player_input=actual_message,
             )
+            relationship_fields = (
+                relationship_turn_metadata(case)
+                if normalized_suite == "relationship-world"
+                else {}
+            )
+            relationship_tags = [
+                str(tag)
+                for tag in score.get("relationshipTags", [])
+                if isinstance(tag, str)
+            ]
+            if normalized_suite == "relationship-world":
+                focus = turn.relationship_focus
+                if focus:
+                    relationship_focus_counts[focus] = (
+                        relationship_focus_counts.get(focus, 0) + 1
+                    )
+                for tag in relationship_tags:
+                    relationship_tag_counts[tag] = (
+                        relationship_tag_counts.get(tag, 0) + 1
+                    )
             if initiative_diagnostic["mechanicalRestatement"] is True:
                 mechanical_restatement_count += 1
             if case.topic_seed:
@@ -635,6 +902,7 @@ def run_evaluation(
                 {
                     "turnId": turn.turn_id,
                     "intent": current_intent,
+                    "turnPlan": turn_plan,
                     "playerInput": actual_message,
                     "playerInputSource": player_input_source,
                     "playerInputQuality": player_input_quality,
@@ -673,14 +941,45 @@ def run_evaluation(
                     ],
                     "affectionEvidence": initiative_diagnostic["affectionEvidence"],
                     "affectionShape": initiative_diagnostic["affectionShape"],
-                }
-            )
+                    "affectionIntensity": initiative_diagnostic[
+                        "affectionIntensity"
+                    ],
+                    "strongAffectionDetected": initiative_diagnostic[
+                        "strongAffectionDetected"
+                    ],
+                    "affectionSemanticFamilies": initiative_diagnostic[
+                        "affectionSemanticFamilies"
+                    ],
+                    "explicitRequest": initiative_diagnostic["explicitRequest"],
+                    "answeredCurrentTopic": score.get("answeredCurrentTopic"),
+                    "conversationLeadDetected": score.get("conversationLeadDetected"),
+                    "conversationLeadKind": score.get("conversationLeadKind"),
+                    "conversationLeadEvidence": score.get("conversationLeadEvidence", []),
+                     "conversationLeadTags": score.get("conversationLeadTags", []),
+                     **relationship_fields,
+                     **(
+                         {"relationshipTags": relationship_tags}
+                         if normalized_suite == "relationship-world"
+                         else {}
+                     ),
+                 }
+             )
             if actual_message:
                 conversation_history.append(
-                    {"role": "user", "content": actual_message}
+                    {
+                        "role": "user",
+                        "content": actual_message,
+                        "intent": current_intent,
+                        "relationshipStage": case.relationship_stage,
+                    }
                 )
             conversation_history.append(
-                {"role": "assistant", "content": result.reply}
+                {
+                    "role": "assistant",
+                    "content": result.reply,
+                    "intent": current_intent,
+                    "relationshipStage": case.relationship_stage,
+                }
             )
             if budget_tracker.stop_reason is not None:
                 break
@@ -703,6 +1002,30 @@ def run_evaluation(
             ],
             case_turns,
             turn_records,
+        )
+        conversation_lead_variation_scores = score_conversation_lead_variation(
+            [
+                record.get("reply", "") if isinstance(record, dict) else ""
+                for record in turn_records
+            ],
+            case_turns,
+            [
+                record.get("score", {}) if isinstance(record, dict) else {}
+                for record in turn_records
+            ],
+            case=case,
+        )
+        affection_pacing_scores = score_affection_pacing(
+            [
+                record.get("reply", "") if isinstance(record, dict) else ""
+                for record in turn_records
+            ],
+            case_turns,
+            [
+                record if isinstance(record, dict) else {}
+                for record in turn_records
+            ],
+            case=case,
         )
         progression_tags: set[str] = set()
         novel_expected_terms: list[str] = []
@@ -754,6 +1077,56 @@ def run_evaluation(
             })
             score["passed"] = False
 
+        for index, variation in enumerate(conversation_lead_variation_scores):
+            if index >= len(turn_records):
+                continue
+            turn_record = turn_records[index]
+            if "reply" not in turn_record or not isinstance(variation, dict):
+                continue
+            turn_record["conversationLeadVariation"] = variation
+            variation_tags = {
+                str(tag) for tag in variation.get("tags", []) if isinstance(tag, str)
+            }
+            progression_tags.update(variation_tags)
+            score = turn_record.get("score")
+            if not isinstance(score, dict) or variation.get("mechanical") is not True:
+                continue
+            score["tags"] = sorted({
+                *(str(tag) for tag in score.get("tags", [])),
+                *variation_tags,
+            })
+            score["passed"] = False
+
+        affection_pacing_tags: set[str] = set()
+        for index, pacing in enumerate(affection_pacing_scores):
+            if index >= len(turn_records) or not isinstance(pacing, dict):
+                continue
+            turn_record = turn_records[index]
+            if "reply" not in turn_record:
+                continue
+            turn_record["affectionPacing"] = pacing
+            pacing_tags = {
+                str(tag)
+                for tag in pacing.get("tags", [])
+                if isinstance(tag, str)
+            }
+            affection_pacing_tags.update(pacing_tags)
+            score = turn_record.get("score")
+            if not isinstance(score, dict):
+                continue
+            if pacing_tags.intersection(
+                {
+                    "strong_affection_over_budget",
+                    "repeated_strong_affection_family",
+                }
+            ):
+                score["tags"] = sorted({
+                    *(str(tag) for tag in score.get("tags", [])),
+                    *pacing_tags,
+                })
+                score["passed"] = False
+        progression_tags.update(affection_pacing_tags)
+
         progression_record: dict[str, object] = {
             "passed": bool(turn_records)
             and len(turn_records) == len(case_turns)
@@ -763,6 +1136,10 @@ def run_evaluation(
                 and (
                     index >= len(affection_variation_scores)
                     or affection_variation_scores[index].get("mechanical") is not True
+                )
+                and (
+                    index >= len(conversation_lead_variation_scores)
+                    or conversation_lead_variation_scores[index].get("mechanical") is not True
                 )
                 and "reply" in turn_records[index]
                 for index, progression in enumerate(progression_scores)
@@ -806,29 +1183,67 @@ def run_evaluation(
             if isinstance(item, dict)
             and item.get("mechanicalRestatement") is True
         )
+        affection_pacing_record: dict[str, object] = {
+            "eligibleTurns": sum(
+                not bool(item.get("skipped"))
+                for item in affection_pacing_scores
+                if isinstance(item, dict)
+            ),
+            "skippedTurns": sum(
+                bool(item.get("skipped"))
+                for item in affection_pacing_scores
+                if isinstance(item, dict)
+            ),
+            "strongAffectionTurns": sum(
+                bool(item.get("strongAffection"))
+                for item in affection_pacing_scores
+                if isinstance(item, dict)
+            ),
+            "overBudgetCount": sum(
+                bool(item.get("overBudget"))
+                for item in affection_pacing_scores
+                if isinstance(item, dict)
+            ),
+            "repeatedStrongFamilyCount": sum(
+                "repeated_strong_affection_family" in item.get("tags", [])
+                for item in affection_pacing_scores
+                if isinstance(item, dict)
+            ),
+            "tags": sorted(affection_pacing_tags),
+            "passed": not bool(
+                affection_pacing_tags.intersection(
+                    {
+                        "strong_affection_over_budget",
+                        "repeated_strong_affection_family",
+                    }
+                )
+            ),
+        }
         case_record: dict[str, object] = {
             "caseId": case.case_id,
             "caseNumber": case_numbers.get(case.case_id),
             "suite": normalized_suite,
             "profileKey": case.profile_key,
-            "npcId": case.npc_id,
-            "displayName": case.display_name,
+            "npcId": _canonical_case_npc_id(case),
+            "displayName": quality_case_display_name(case),
             "channel": case.channel,
             "friendshipHearts": (
                 dict(case.game_state).get("friendshipHearts", case.friendship_hearts)
             ),
             "flirtIntensity": case.flirt_intensity,
             "adultConsensual": case.adult_consensual,
-            "romanceEligible": (
-                case.romance_eligible
-                if case.romance_eligible is not None
-                else case.npc_id in {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
-            ),
+            "romanceEligible": _case_romance_eligible(case),
             "relationshipContext": case.relationship_context or case.story_progress,
             "relationshipStage": case.relationship_stage,
             "gameState": dict(case.game_state),
             "storyProgress": case.story_progress,
             "completedEventIds": list(case.completed_event_ids),
+            "eventPairId": case.event_pair_id,
+            "eventId": case.event_id,
+            "eventCondition": case.event_condition,
+            "eventSummary": case.event_summary,
+            "eventSourceStatus": case.event_source_status,
+            "eventEvidence": list(case.event_evidence),
             "genderPresentation": case.gender_presentation,
             "topicSeed": case.topic_seed,
             "topicKeywords": list(case.topic_keywords),
@@ -840,6 +1255,7 @@ def run_evaluation(
             "failedTurnCount": failed_turn_count,
             "casePassed": case_passed,
             "progression": progression_record,
+            "affectionPacing": affection_pacing_record,
             "turns": turn_records,
             "initiativeExpectation": (
                 first_initiative.get("initiativeExpectation", "none")
@@ -884,6 +1300,31 @@ def run_evaluation(
                 if first_initiative
                 else ""
             ),
+            "answeredCurrentTopic": (
+                first_result.get("answeredCurrentTopic", False)
+                if first_result
+                else False
+            ),
+            "conversationLeadDetected": (
+                first_result.get("conversationLeadDetected", False)
+                if first_result
+                else False
+            ),
+            "conversationLeadKind": (
+                first_result.get("conversationLeadKind", "")
+                if first_result
+                else ""
+            ),
+            "conversationLeadEvidence": (
+                first_result.get("conversationLeadEvidence", [])
+                if first_result
+                else []
+            ),
+            "conversationLeadTags": (
+                first_result.get("conversationLeadTags", [])
+                if first_result
+                else []
+            ),
             "elapsedMs": int((perf_counter() - case_started_at) * 1000),
         }
         if first_result is not None:
@@ -914,6 +1355,48 @@ def run_evaluation(
         "usageReturnedTurns": usage_returned_turns,
         "missingUsageTurns": successful_turns - usage_returned_turns,
     }
+    affection_pacing_summary: dict[str, object] = {
+        "eligibleTurns": sum(
+            int(record.get("affectionPacing", {}).get("eligibleTurns", 0))
+            for record in records
+            if isinstance(record.get("affectionPacing"), dict)
+        ),
+        "skippedTurns": sum(
+            int(record.get("affectionPacing", {}).get("skippedTurns", 0))
+            for record in records
+            if isinstance(record.get("affectionPacing"), dict)
+        ),
+        "strongAffectionTurns": sum(
+            int(record.get("affectionPacing", {}).get("strongAffectionTurns", 0))
+            for record in records
+            if isinstance(record.get("affectionPacing"), dict)
+        ),
+        "overBudgetCount": sum(
+            int(record.get("affectionPacing", {}).get("overBudgetCount", 0))
+            for record in records
+            if isinstance(record.get("affectionPacing"), dict)
+        ),
+        "repeatedStrongFamilyCount": sum(
+            int(record.get("affectionPacing", {}).get("repeatedStrongFamilyCount", 0))
+            for record in records
+            if isinstance(record.get("affectionPacing"), dict)
+        ),
+        "tags": sorted({
+            str(tag)
+            for record in records
+            for tag in record.get("affectionPacing", {}).get("tags", [])
+            if isinstance(record.get("affectionPacing"), dict)
+            and isinstance(tag, str)
+        }),
+    }
+    relationship_summary: dict[str, object] | None = None
+    if normalized_suite == "relationship-world":
+        relationship_summary = {
+            "focusedTurnCount": sum(relationship_focus_counts.values()),
+            "focusCounts": dict(sorted(relationship_focus_counts.items())),
+            "tagCounts": dict(sorted(relationship_tag_counts.items())),
+            "tags": sorted(relationship_tag_counts),
+        }
     resolved_input_price = _resolve_price(
         input_price_per_million,
         "BRIDGE_CLOUD_INPUT_PRICE_PER_MILLION",
@@ -947,6 +1430,7 @@ def run_evaluation(
         "playerInputUsageReturned": player_input_usage_returned,
         "npcRetryCount": npc_retry_count,
         "playerInputRetryCount": player_input_retry_count,
+        "affectionPacing": affection_pacing_summary,
         "budget": evaluation_budget.as_dict(),
         "budgetStopReason": budget_tracker.stop_reason,
         "passed": sum(
@@ -1001,6 +1485,8 @@ def run_evaluation(
         "elapsedMs": int((perf_counter() - started_at) * 1000),
         "profileIndex": stable_artifact_path(index_store.index_path, root=ROOT),
     }
+    if relationship_summary is not None:
+        summary["relationshipDiagnostics"] = relationship_summary
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     _write_jsonl(destination / "results.jsonl", records)
@@ -1080,6 +1566,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("local", "cloud", "fake"),
         default="local",
     )
+    parser.add_argument(
+        "--confirm-cloud",
+        action="store_true",
+        help="确认消耗云端 Token；不传且 --provider cloud 时只打印计划（dry-run）",
+    )
     parser.add_argument("--input-price-per-million", type=float, default=None)
     parser.add_argument("--output-price-per-million", type=float, default=None)
     parser.add_argument("--suite", choices=QUALITY_SUITE_IDS, default="default")
@@ -1103,6 +1594,26 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
     args = _parse_args(argv)
+    if args.provider == "cloud" and not args.confirm_cloud:
+        # 成本护栏（与 run_group_dialogue_cloud_batch.py 同一约定）：云端是本项目最贵的入口，
+        # 不传 --confirm-cloud 时只输出计划并退出，绝不静默联网消耗 Token。
+        print(
+            json.dumps(
+                {
+                    "dryRun": True,
+                    "provider": "cloud",
+                    "suite": args.suite,
+                    "limit": args.limit,
+                    "maxRequests": args.max_requests,
+                    "maxTotalTokens": args.max_total_tokens,
+                    "outputDir": str(args.output_dir),
+                    "note": "未发起任何云端请求；确认后加 --confirm-cloud 重跑。",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        return 0
     default_budget = (
         EvaluationBudget.economical() if args.economical else EvaluationBudget()
     )

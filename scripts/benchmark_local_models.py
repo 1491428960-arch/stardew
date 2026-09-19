@@ -14,7 +14,10 @@ import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFERRED_PROFILE_INDEX = (
-    ROOT / "data" / "generated" / "vanilla-sve-rasmodia-profile-index-zh-CN.json"
+    ROOT
+    / "data"
+    / "generated"
+    / "vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json"
 )
 LEGACY_PROFILE_INDEX = ROOT / "data" / "generated" / "profile-index.json"
 SRC = ROOT / "bridge" / "src"

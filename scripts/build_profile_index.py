@@ -39,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
         help="已解包的 vanilla Dialogue JSON 根目录",
     )
     parser.add_argument(
+        "--vanilla-events-root",
+        type=Path,
+        help="已解包的 vanilla Data/Events JSON 根目录",
+    )
+    parser.add_argument(
         "--vanilla-locale",
         help="原版对白语言后缀，例如 zh-CN；未指定时保留所有语言文件",
     )
@@ -87,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         args.mod_root,
         corpus_paths=args.corpus,
         vanilla_root=args.vanilla_root,
+        vanilla_events_root=args.vanilla_events_root,
         vanilla_locale=args.vanilla_locale,
         runtime_sample_paths=args.runtime_samples,
     )

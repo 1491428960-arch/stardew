@@ -70,6 +70,8 @@ powershell.exe -NoProfile -Command "$out = $env:STARDEW_AI_NPC_VISUAL_OUTPUT; Ne
     Assert-True ($visualScriptText -match '\[int\]\$BackBufferHeight') '视觉启动器提供高度参数'
     Assert-True ($visualScriptText -match 'STARDEW_AI_NPC_VISUAL_BACKBUFFER_WIDTH') '视觉启动器传递宽度环境变量'
     Assert-True ($visualScriptText -match 'STARDEW_AI_NPC_VISUAL_BACKBUFFER_HEIGHT') '视觉启动器传递高度环境变量'
+    Assert-True ($visualScriptText -match 'group-message') '视觉启动器接受群聊端到端动作'
+    Assert-True ($visualScriptText -match 'group-send') '视觉启动器接受群聊真实发送动作'
 
     $common = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath,

@@ -43,7 +43,7 @@ function Set-LocalProviderDefaults {
         $env:BRIDGE_DIALOGUE_SESSION_PATH = Join-Path $env:TEMP 'StardewAI.NPC\dialogue-lab-session.json'
     }
     if ([string]::IsNullOrWhiteSpace($env:BRIDGE_PROFILE_INDEX)) {
-        $preferredProfileIndex = Join-Path $projectRoot 'data\generated\vanilla-sve-rasmodia-profile-index-zh-CN.next-proactive-affection.json'
+        $preferredProfileIndex = Join-Path $projectRoot 'data\generated\vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json'
         if (Test-Path -LiteralPath $preferredProfileIndex -PathType Leaf) {
             $env:BRIDGE_PROFILE_INDEX = $preferredProfileIndex
         }
