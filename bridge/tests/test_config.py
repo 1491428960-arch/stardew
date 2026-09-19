@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from stardew_ai_bridge.config import load_local_env
+from stardew_ai_bridge.config import BridgeSettings, load_local_env
 
 
 def test_load_local_env_reads_cloud_settings_without_overriding_process_env(
@@ -18,6 +18,7 @@ def test_load_local_env_reads_cloud_settings_without_overriding_process_env(
                 "BRIDGE_CLOUD_MODEL= gpt-5.6-terra ",
                 "BRIDGE_CLOUD_API_KEY=local-test-key",
                 "BRIDGE_CLOUD_ENABLED=false",
+                "BRIDGE_CLOUD_ONLY=true",
                 "UNRELATED_SECRET=must-not-load",
             )
         ),
@@ -27,6 +28,7 @@ def test_load_local_env_reads_cloud_settings_without_overriding_process_env(
     monkeypatch.delenv("BRIDGE_CLOUD_MODEL", raising=False)
     monkeypatch.delenv("BRIDGE_CLOUD_API_KEY", raising=False)
     monkeypatch.delenv("BRIDGE_CLOUD_ENABLED", raising=False)
+    monkeypatch.delenv("BRIDGE_CLOUD_ONLY", raising=False)
 
     load_local_env(env_path)
 
@@ -37,8 +39,17 @@ def test_load_local_env_reads_cloud_settings_without_overriding_process_env(
     assert os.getenv("BRIDGE_CLOUD_MODEL") == "gpt-5.6-terra"
     assert os.getenv("BRIDGE_CLOUD_API_KEY") == "local-test-key"
     assert os.getenv("BRIDGE_CLOUD_ENABLED") == "false"
+    assert os.getenv("BRIDGE_CLOUD_ONLY") == "true"
     assert os.getenv("UNRELATED_SECRET") is None
 
     monkeypatch.setenv("BRIDGE_CLOUD_MODEL", "explicit-model")
     load_local_env(env_path)
     assert os.getenv("BRIDGE_CLOUD_MODEL") == "explicit-model"
+
+
+def test_cloud_default_timeout_leaves_room_for_slow_relay_responses(monkeypatch) -> None:
+    monkeypatch.delenv("BRIDGE_CLOUD_TIMEOUT", raising=False)
+
+    settings = BridgeSettings.from_env()
+
+    assert settings.cloud.timeout == 45.0

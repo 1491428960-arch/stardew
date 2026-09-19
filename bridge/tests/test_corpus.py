@@ -409,6 +409,134 @@ def test_extract_dialogue_accepts_content_patcher_comma_target() -> None:
     assert records[0]["npcId"] == "JunaRoommate"
 
 
+def test_extract_event_dialogue_keeps_speaker_lines_and_event_provenance() -> None:
+    records, warnings = extract_content_patcher_dialogue(
+        {
+            "Changes": [
+                {
+                    "Action": "EditData",
+                    "Target": "Data/Events/town",
+                    "Entries": {
+                        "8185290_Medicine/f Sophia 1200": (
+                            "none/-500 -500/farmer 1 1 0 Sophia 2 2 0/"
+                            "speak farmer \"玩家不应进入。\"/"
+                            "speak Sophia \"{{i18n:Sophia.Event.01}}\"/"
+                            "textAboveHead Sophia \"{{i18n:Sophia.Event.02}}\"/"
+                            "end dialogue Sophia \"{{i18n:Sophia.Event.03}}\"/"
+                            "message \"{{i18n:Sophia.Event.04}}\"/emote Sophia 16"
+                        )
+                    },
+                }
+            ]
+        },
+        source_mod="FlashShifter.StardewValleyExpandedCP",
+        source_path="code/NPCs/SophiaEvents.json",
+        i18n_catalogs={
+            "default": {
+                "Sophia.Event.01": "我记得那天的风。",
+                "Sophia.Event.02": "别走神啦。",
+                "Sophia.Event.03": "现在想起来还是有点不好意思。",
+                "Sophia.Event.04": "不应当被提取。",
+            }
+        },
+    )
+
+    assert warnings == []
+    assert [record["npcId"] for record in records] == ["Sophia", "Sophia", "Sophia"]
+    assert [record["eventLineIndex"] for record in records] == [2, 3, 4]
+    assert all(record["evidenceKind"] == "event_dialogue" for record in records)
+    assert all(record["eventId"] == "8185290" for record in records)
+    assert all(record["sourceKey"] == "8185290_Medicine/f Sophia 1200" for record in records)
+    assert records[0]["resolvedText"] == "我记得那天的风。"
+    assert records[1]["resolvedText"] == "别走神啦。"
+    assert records[2]["resolvedText"] == "现在想起来还是有点不好意思。"
+    assert all("玩家不应进入" not in record["text"] for record in records)
+
+
+def test_build_corpus_extracts_event_dialogue_from_content_patcher_data_events(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "mod"
+    _write_json(root / "manifest.json", {"UniqueID": "Example.Mod"})
+    _write_json(
+        root / "i18n" / "default.json",
+        {"Alex.Event.01": "我不会忘记那场比赛。"},
+    )
+    _write_json(
+        root / "Events.json",
+        {
+            "Changes": [
+                {
+                    "Action": "EditData",
+                    "Target": "data/events/sport",
+                    "Entries": {
+                        "7000001/f Alex 1800": (
+                            "none/speak Alex \"{{i18n:Alex.Event.01}}\"/"
+                            "end dialogue Alex \"比赛结束了。\""
+                        )
+                    },
+                }
+            ]
+        },
+    )
+
+    corpus = build_dialogue_corpus(mod_roots=[root])
+
+    assert corpus["warnings"] == []
+    assert len(corpus["records"]) == 2
+    assert {record["evidenceKind"] for record in corpus["records"]} == {
+        "event_dialogue"
+    }
+    assert {record["eventId"] for record in corpus["records"]} == {"7000001"}
+    assert {record.get("resolvedText") for record in corpus["records"]} == {
+        "我不会忘记那场比赛。",
+        None,
+    }
+
+
+def test_build_corpus_extracts_vanilla_events_with_participants_and_conditions(
+    tmp_path: Path,
+) -> None:
+    events_root = tmp_path / "Content" / "Data" / "Events"
+    _write_json(
+        events_root / "Mountain.zh-CN.json",
+        {
+            "384882/f Sebastian 2500/o Abigail/t 2000 2400": (
+                "nightTime/-1000 -1000/farmer 18 35 0 Sebastian -100 -100 0/"
+                "speak Sebastian \"嘿，@。上来……我想给你看样东西。\"/"
+                "speak farmer \"玩家不应进入语料。\"/"
+                "end dialogue Sebastian \"你是唯一一个被我带到这里的人。\""
+            )
+        },
+    )
+
+    corpus = build_dialogue_corpus(
+        vanilla_events_root=events_root,
+        vanilla_locale="zh-CN",
+    )
+
+    assert corpus["warnings"] == []
+    records = corpus["records"]
+    assert len(records) == 2
+    assert {record["npcId"] for record in records} == {"Sebastian"}
+    assert {record["eventId"] for record in records} == {"384882"}
+    assert all(record["evidenceKind"] == "event_dialogue" for record in records)
+    assert all(
+        record["participants"] == ["Sebastian", "Abigail"] for record in records
+    )
+    assert all(record["conditions"] == {"eventId": "384882"} for record in records)
+    assert all(
+        record["eventConditions"]["raw"]
+        == "384882/f Sebastian 2500/o Abigail/t 2000 2400"
+        for record in records
+    )
+    assert all(
+        record["sourcePath"] == "Data/Events/Mountain.zh-CN.json"
+        for record in records
+    )
+    assert all("玩家不应进入" not in record["text"] for record in records)
+
+
 def test_build_corpus_strips_locale_suffix_from_vanilla_npc_id(
     tmp_path: Path,
 ) -> None:

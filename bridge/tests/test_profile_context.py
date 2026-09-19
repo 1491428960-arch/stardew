@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from stardew_ai_bridge.personas import PersonaStore
 from stardew_ai_bridge.profile_index import ProfileIndexBuilder, ProfileIndexStore
 from stardew_ai_bridge.prompts import ContextBuilder, PromptBuilder
@@ -152,6 +154,121 @@ def test_persona_and_index_share_rasmodia_source_aliases_and_prioritize_overlay(
     )
 
     assert [item["sampleId"] for item in evidence] == ["romras-daily", "vanilla-daily"]
+
+
+def test_female_overlay_keeps_vanilla_evidence_with_mod_dialogue(
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / "profile-index.json"
+    records = [
+        {
+            "sampleId": "vanilla-shane",
+            "npcId": "Shane",
+            "sourceMod": "vanilla",
+            "sourceKey": "Mon",
+            "text": "他今天还得照看鸡舍。",
+            "evidenceKind": "dialogue",
+            "conditions": {"relationshipStage": "friend"},
+        },
+        {
+            "sampleId": "female-shane",
+            "npcId": "Shane",
+            "sourceMod": "Invatorzen.idcsm",
+            "sourceKey": "Mon",
+            "text": "她今天还得照看鸡舍。",
+            "evidenceKind": "dialogue",
+            "conditions": {"relationshipStage": "friend"},
+        },
+    ]
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {
+                    "Shane": {
+                        "npcId": "Shane",
+                        "displayName": "Shane",
+                        "sourceMods": ["vanilla", "female-bachelors"],
+                        "overlays": {
+                            "female-bachelors": {
+                                "displayName": "珊恩",
+                                "aliases": ["Shane"],
+                                "pronouns": {"subject": "she"},
+                            }
+                        },
+                    }
+                },
+                "styleSamples": records,
+                "speechEvidence": records,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    store = ProfileIndexStore(index_path)
+
+    assert [
+        item["sampleId"]
+        for item in store.speech_evidence(
+            "Shane",
+            ["vanilla", "female-bachelors"],
+            relationship_stage="friend",
+            limit=6,
+        )
+    ] == ["female-shane", "vanilla-shane"]
+    assert [
+        item["sampleId"]
+        for item in store.style_samples(
+            "Shane",
+            ["vanilla", "female-bachelors"],
+            relationship_stage="friend",
+            limit=6,
+        )
+    ] == ["female-shane", "vanilla-shane"]
+
+
+def test_female_overlay_keeps_vanilla_evidence_without_female_mod_dialogue(
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / "profile-index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {
+                    "Shane": {
+                        "npcId": "Shane",
+                        "displayName": "Shane",
+                        "sourceMods": ["vanilla", "female-bachelors"],
+                        "overlays": {"female-bachelors": {"displayName": "珊恩"}},
+                    }
+                },
+                "styleSamples": [],
+                "speechEvidence": [
+                    {
+                        "sampleId": "vanilla-only",
+                        "npcId": "Shane",
+                        "sourceMod": "vanilla",
+                        "sourceKey": "Mon",
+                        "text": "原版对白仍可作为参考。",
+                        "evidenceKind": "dialogue",
+                        "conditions": {"relationshipStage": "friend"},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = ProfileIndexStore(index_path).speech_evidence(
+        "Shane",
+        ["vanilla", "female-bachelors"],
+        relationship_stage="friend",
+    )
+
+    assert [item["sampleId"] for item in evidence] == ["vanilla-only"]
 
 
 def test_rasmodia_original_evidence_reaches_final_prompt_with_display_alias(
@@ -462,6 +579,70 @@ def test_topic_context_keeps_same_stage_affection_reference_across_channels(
     )
 
 
+@pytest.mark.parametrize(
+    ("npc_id", "source_mods", "player_input", "example_id"),
+    [
+        (
+            "Wizard",
+            ["Romanceable Rasmodius"],
+            "你今天还在塔里忙吗？",
+            "wizard:voice-distinctiveness:01",
+        ),
+        (
+            "Sophia",
+            ["Stardew Valley Expanded"],
+            "今天酒窖忙吗？",
+            "sophia:voice-distinctiveness:01",
+        ),
+        (
+            "Shane",
+            ["female-bachelors"],
+            "你今天吃东西了吗？",
+            "shane:voice-distinctiveness:01",
+        ),
+        (
+            "Sebastian",
+            ["female-bachelors"],
+            "你今天在忙什么？",
+            "sebastian:voice-distinctiveness:01",
+        ),
+        (
+            "Alex",
+            ["female-bachelors"],
+            "你今天怎么样？",
+            "alex:voice-distinctiveness:01",
+        ),
+    ],
+)
+def test_context_projects_the_role_voice_distinctiveness_example(
+    tmp_path: Path,
+    npc_id: str,
+    source_mods: list[str],
+    player_input: str,
+    example_id: str,
+) -> None:
+    persona_dir = Path(__file__).resolve().parents[2] / "data" / "personas"
+    index_path = tmp_path / f"{npc_id}-voice-index.json"
+    ProfileIndexBuilder.write(ProfileIndexBuilder(persona_dir).build(), index_path)
+
+    context = ContextBuilder(
+        PersonaStore(persona_dir),
+        ProfileIndexStore(index_path),
+    ).build(
+        npc_id,
+        source_mods=source_mods,
+        relationshipStage="dating",
+        channel="face_to_face",
+        message=player_input,
+    )
+
+    assert any(
+        item.get("exampleId") == example_id
+        and item.get("sourceType") in {"handcrafted_example", "human_approved"}
+        for item in context.get("behaviorExamples", [])
+    )
+
+
 def test_context_exposes_story_state_and_gender_presentation() -> None:
     context = ContextBuilder(
         PersonaStore(Path(__file__).parents[2] / "data" / "personas")
@@ -500,6 +681,57 @@ def test_context_marks_index_event_completed_when_runtime_flag_matches(
     )
 
     assert context["storyEvents"][0]["status"] == "completed"
+
+
+def test_context_only_exposes_completed_event_dialogue_as_speech_evidence(
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / "profile-index.json"
+    event = {
+        "sampleId": "sve:event-line-1",
+        "npcId": "Sophia",
+        "sourceMod": "SVE",
+        "sourcePath": "code/NPCs/SophiaEvents.json",
+        "sourceKey": "8185290/f Sophia 1200",
+        "eventId": "8185290",
+        "eventLineIndex": 1,
+        "text": "我还记得那天的风。",
+        "evidenceKind": "event_dialogue",
+    }
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {},
+                "styleSamples": [event],
+                "speechEvidence": [event],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    builder = ContextBuilder(
+        PersonaStore(Path(__file__).parents[2] / "data" / "personas"),
+        ProfileIndexStore(index_path),
+    )
+
+    before = builder.build(
+        {
+            "npcId": "Sophia",
+            "sourceMods": ["SVE"],
+            "gameState": {"completedEventIds": []},
+        }
+    )
+    after = builder.build(
+        {
+            "npcId": "Sophia",
+            "sourceMods": ["SVE"],
+            "gameState": {"completedEventIds": ["SVE:8185290"]},
+        }
+    )
+
+    assert "speechEvidence" not in before
+    assert after["speechEvidence"][0]["eventId"] == "8185290"
 
 
 def test_context_without_index_keeps_legacy_shape() -> None:

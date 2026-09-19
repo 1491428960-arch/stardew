@@ -182,14 +182,23 @@ def test_scenario_catalog_uses_five_profiles_and_one_wizard_identity() -> None:
     assert wizard_ids == {"Wizard"}
 
 
-def test_repository_behavior_examples_cover_high_affection_for_all_five_roles() -> None:
+def test_repository_behavior_examples_cover_high_affection_for_all_eight_roles() -> None:
     payload = json.loads(
         (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
             encoding="utf-8"
         )
     )
     examples = payload["examples"]
-    major_npcs = {"Wizard", "Sophia", "Shane", "Sebastian", "Alex"}
+    major_npcs = {
+        "Wizard",
+        "Sophia",
+        "Shane",
+        "Sebastian",
+        "Alex",
+        "Elliott",
+        "Harvey",
+        "Sam",
+    }
 
     for npc_id in major_npcs:
         high_stage = [
@@ -204,7 +213,7 @@ def test_repository_behavior_examples_cover_high_affection_for_all_five_roles() 
             "married",
         }, npc_id
 
-    for npc_id in {"Shane", "Sebastian", "Alex"}:
+    for npc_id in {"Shane", "Sebastian", "Alex", "Elliott", "Harvey", "Sam"}:
         overlay_examples = [
             example
             for example in examples
@@ -217,6 +226,208 @@ def test_repository_behavior_examples_cover_high_affection_for_all_five_roles() 
             "female-bachelors" in example.get("sourceMods", [])
             for example in overlay_examples
         ), npc_id
+
+
+def test_repository_behavior_examples_cover_the_first_normal_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Abigail", "Emily", "Haley", "Leah"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+
+
+def test_repository_behavior_examples_cover_the_second_normal_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Penny", "Maru", "Jodi", "Robin"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+        assert all(
+            not any(marker in example["npcReply"] for marker in ("未来", "预约", "排期", "日程"))
+            for example in role_examples
+        )
+
+
+def test_repository_behavior_examples_cover_the_third_normal_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Clint", "Demetrius", "Evelyn", "George"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+        assert all(
+            not any(marker in example["npcReply"] for marker in ("未来", "预约", "排期", "日程"))
+            for example in role_examples
+        )
+
+
+def test_repository_behavior_examples_cover_the_fourth_normal_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Gus", "Kent", "Lewis", "Pam"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+        assert all(
+            not any(marker in example["npcReply"] for marker in ("未来", "预约", "排期", "日程"))
+            for example in role_examples
+        )
+
+
+def test_repository_behavior_examples_cover_the_fifth_normal_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Pierre", "Sandy", "Willy", "Dwarf"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+        assert all(
+            not any(marker in example["npcReply"] for marker in ("未来", "预约", "排期", "日程"))
+            for example in role_examples
+        )
+
+
+def test_repository_behavior_examples_cover_the_sixth_normal_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Krobus", "Jas", "Vincent"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+        assert all(
+            not any(marker in example["npcReply"] for marker in ("未来", "预约", "排期", "日程"))
+            for example in role_examples
+        )
+
+
+def test_repository_behavior_examples_cover_the_special_vanilla_batch() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+    new_roles = {"Leo", "Gunther", "Marlon", "Birdie"}
+
+    for npc_id in new_roles:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(
+            example.get("sourceType") == "handcrafted_example"
+            for example in role_examples
+        )
+        assert all("female-bachelors" not in example.get("sourceMods", []) for example in role_examples)
+        assert all(example.get("playerInput") and example.get("npcReply") for example in role_examples)
+        assert all(
+            not any(marker in example["npcReply"] for marker in ("未来", "预约", "排期", "日程"))
+            for example in role_examples
+        )
+
+
+def test_existing_normal_vanilla_roles_have_handcrafted_behavior_examples() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = payload["examples"]
+
+    for npc_id in {"Caroline", "Marnie", "Linus"}:
+        role_examples = [
+            example for example in examples if example.get("npcId") == npc_id
+        ]
+        assert len(role_examples) >= 2, npc_id
+        assert all(example.get("sourceMods") == ["vanilla"] for example in role_examples)
+        assert all(example.get("sourceType") == "handcrafted_example" for example in role_examples)
 
 
 def test_high_stage_behavior_examples_make_affection_explicit_without_recap_template() -> None:
@@ -257,6 +468,88 @@ def test_high_stage_behavior_examples_make_affection_explicit_without_recap_temp
         not any(marker in example["npcReply"] for marker in recap_markers)
         for example in high_stage
     )
+
+
+def test_repository_contains_one_short_voice_distinctiveness_example_per_role() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = {example["exampleId"]: example for example in payload["examples"]}
+    expected = {
+        "wizard:voice-distinctiveness:01": ("Wizard", "简短判断"),
+        "sophia:voice-distinctiveness:01": ("Sophia", "具体细节"),
+        "shane:voice-distinctiveness:01": ("Shane", "自嘲"),
+        "sebastian:voice-distinctiveness:01": ("Sebastian", "冷幽默"),
+        "alex:voice-distinctiveness:01": ("Alex", "轻微挑战"),
+        "elliott:voice-distinctiveness:01": ("Elliott", "具体物件"),
+        "harvey:voice-distinctiveness:01": ("Harvey", "实际照料"),
+        "sam:voice-distinctiveness:01": ("Sam", "音乐行动"),
+        "victor:voice-distinctiveness:01": ("Victor", "工程细节"),
+        "olivia:voice-distinctiveness:01": ("Olivia", "生活判断"),
+        "andy:voice-distinctiveness:01": ("Andy", "务实行动"),
+        "lance:voice-distinctiveness:01": ("Lance", "冒险见闻"),
+        "claire:voice-distinctiveness:01": ("Claire", "谨慎新生"),
+        "morris:voice-distinctiveness:01": ("Morris", "经营结果"),
+    }
+
+    assert set(expected) <= set(examples)
+    for example_id, (npc_id, _voice_move) in expected.items():
+        example = examples[example_id]
+        assert example["npcId"] == npc_id
+        assert example["sourceType"] in {"handcrafted_example", "human_approved"}
+        assert example["playerInput"]
+        assert example["npcReply"]
+        assert example["topicKeywords"]
+        assert len(example["npcReply"]) <= 60
+        assert not any(marker in example["npcReply"] for marker in ("未来", "排期", "预约"))
+
+
+def test_normal_sve_batch_behavior_examples_keep_normal_source_and_gender() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = {
+        example["npcId"]: example
+        for example in payload["examples"]
+        if example.get("exampleId", "").endswith(":voice-distinctiveness:01")
+        and example.get("npcId") in {"Victor", "Olivia", "Andy"}
+    }
+
+    assert set(examples) == {"Victor", "Olivia", "Andy"}
+    for example in examples.values():
+        assert example["sourceMods"] == ["SVE"]
+        assert example["sourceType"] == "handcrafted_example"
+        assert set(example["relationshipStages"]) <= {"acquaintance", "friend", "close"}
+        assert "female-bachelors" not in example["sourceMods"]
+        assert example["npcReply"]
+        assert not any(marker in example["npcReply"] for marker in ("未来", "排期", "预约"))
+
+
+def test_second_normal_sve_batch_behavior_examples_keep_normal_source_and_gender() -> None:
+    payload = json.loads(
+        (ROOT / "data" / "personas" / "behavior-examples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    examples = {
+        example["npcId"]: example
+        for example in payload["examples"]
+        if example.get("exampleId", "").endswith(":voice-distinctiveness:01")
+        and example.get("npcId") in {"Lance", "Claire", "Morris"}
+    }
+
+    assert set(examples) == {"Lance", "Claire", "Morris"}
+    for example in examples.values():
+        assert example["sourceMods"] == ["SVE"]
+        assert example["sourceType"] == "handcrafted_example"
+        assert set(example["relationshipStages"]) <= {"acquaintance", "friend", "close"}
+        assert "female-bachelors" not in example["sourceMods"]
+        assert example["npcReply"]
+        assert not any(marker in example["npcReply"] for marker in ("未来", "排期", "预约"))
 
 
 def test_quality_scenarios_cover_high_stage_multiturn_story_metadata() -> None:

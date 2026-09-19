@@ -6,7 +6,7 @@ from stardew_ai_bridge.evidence import (
     is_model_evidence_record,
     is_stable_voice_evidence_record,
 )
-from stardew_ai_bridge.speech import derive_speech_profile
+from stardew_ai_bridge.speech import derive_speech_profile, select_stage_voice_anchors
 
 
 def test_derive_speech_profile_reports_markers_and_capped_evidence() -> None:
@@ -305,3 +305,175 @@ def test_friendship_gated_weekday_dialogue_is_not_a_stage_neutral_voice_anchor(
     }
 
     assert not is_stable_voice_evidence_record(record)
+
+
+def test_sophia_voice_energy_selects_stage_fit_calm_and_expressive_anchors() -> None:
+    samples = [
+        {
+            "sampleId": "stranger",
+            "sourceMod": "SVE",
+            "sourceKey": "Mon",
+            "conditions": {"relationshipStage": "stranger"},
+            "text": "嗯……你好。",
+        },
+        {
+            "sampleId": "married-calm",
+            "sourceMod": "SVE",
+            "sourceKey": "Rain",
+            "conditions": {"relationshipStage": "married"},
+            "text": "今天酒窖里很安静。",
+        },
+        {
+            "sampleId": "married-hot",
+            "sourceMod": "SVE",
+            "sourceKey": "Good_0",
+            "conditions": {"relationshipStage": "married"},
+            "text": "嘿，小傻瓜！再靠近一点……！！！爱你哟！",
+        },
+    ]
+
+    selected = select_stage_voice_anchors(
+        samples, npc_id="Sophia", relationship_stage="married", max_count=2
+    )
+
+    assert [item["sampleId"] for item in selected] == [
+        "married-hot",
+        "married-calm",
+    ]
+    assert selected[0]["voiceEnergy"] == "high"
+    assert selected[1]["voiceEnergy"] == "low"
+    assert selected[0]["energySignals"]["excitementMarkers"] >= 1
+    assert selected[0]["energySignals"]["exclamationMarkers"] >= 2
+
+
+def test_sophia_stage_anchors_put_multiple_high_energy_samples_first_when_available() -> None:
+    """自然 Sophia 不能让低能量样本占住前面的原文示例窗口。"""
+
+    samples = [
+        {
+            "sampleId": "married-calm",
+            "sourceMod": "SVE",
+            "sourceKey": "Outdoor_0",
+            "conditions": {"relationshipStage": "married"},
+            "text": "我喜欢这里的新鲜空气。",
+        },
+        {
+            "sampleId": "married-hot-1",
+            "sourceMod": "SVE",
+            "sourceKey": "Outdoor_4",
+            "conditions": {"relationshipStage": "married"},
+            "text": "嘿，小傻瓜！今天有什么有趣的事吗？哦哦哦，听起来很重要！",
+        },
+        {
+            "sampleId": "married-hot-2",
+            "sourceMod": "SVE",
+            "sourceKey": "Good_8",
+            "conditions": {"relationshipStage": "married"},
+            "text": "耶！你终于起来了！早餐想吃点什么吗？",
+        },
+    ]
+
+    selected = select_stage_voice_anchors(
+        samples, npc_id="Sophia", relationship_stage="married", max_count=2
+    )
+
+    assert [item["sampleId"] for item in selected] == [
+        "married-hot-1",
+        "married-hot-2",
+    ]
+    assert all(item["voiceEnergy"] == "high" for item in selected)
+
+
+def test_sophia_dating_anchors_fall_back_to_nearby_stage_without_global_low_energy() -> None:
+    """没有 dating 原文时，dating 应借用 close/friend 的活泼日常，而不是全局陌生期对白。"""
+
+    samples = [
+        {
+            "sampleId": "stranger-calm",
+            "sourceMod": "SVE",
+            "sourceKey": "Mon",
+            "conditions": {"relationshipStage": "stranger"},
+            "text": "嗯……你好。",
+        },
+        {
+            "sampleId": "friend-bright",
+            "sourceMod": "SVE",
+            "sourceKey": "Good_4",
+            "conditions": {"relationshipStage": "friend"},
+            "text": "耶，葡萄终于变甜了呀！我刚才还在等这一刻。",
+        },
+        {
+            "sampleId": "close-bright",
+            "sourceMod": "SVE",
+            "sourceKey": "Outdoor_4",
+            "conditions": {"relationshipStage": "close"},
+            "text": "嘿！你也闻到了吗？这股甜味今天特别明显。",
+        },
+    ]
+
+    selected = select_stage_voice_anchors(
+        samples, npc_id="Sophia", relationship_stage="dating", max_count=3
+    )
+
+    assert selected
+    assert {item["sampleId"] for item in selected} >= {
+        "friend-bright",
+        "close-bright",
+    }
+    assert all(item["sampleId"] != "stranger-calm" for item in selected)
+    assert any(item["voiceEnergy"] == "high" for item in selected)
+
+
+def test_sophia_dating_anchors_prefer_stage_samples_over_unconditional_intro() -> None:
+    """dating 有阶段原文时，不能被无阶段的介绍句抢走锚点窗口。"""
+
+    samples = [
+        {
+            "sampleId": "unconditional-intro",
+            "sourceMod": "SVE",
+            "sourceKey": "Introduction",
+            "text": "呀！有陌生人！等、等一下。",
+        },
+        {
+            "sampleId": "close-lively",
+            "sourceMod": "SVE",
+            "sourceKey": "Mon10",
+            "conditions": {"relationshipStage": "close"},
+            "text": "我想找个时间去爬山！我们也可以去野餐！",
+        },
+    ]
+
+    selected = select_stage_voice_anchors(
+        samples, npc_id="Sophia", relationship_stage="dating", max_count=2
+    )
+
+    assert selected
+    assert selected[0]["sampleId"] == "close-lively"
+    assert all(item["sampleId"] != "unconditional-intro" for item in selected)
+
+
+def test_non_sophia_stage_anchors_prefer_current_relationship_voice() -> None:
+    """原文贴合不能只对 Sophia 生效，其他角色也要按当前阶段取样。"""
+
+    samples = [
+        {
+            "sampleId": "stranger-intro",
+            "sourceMod": "vanilla",
+            "sourceKey": "Mon",
+            "conditions": {"relationshipStage": "stranger"},
+            "text": "我不认识你。你为什么要和我说话？",
+        },
+        {
+            "sampleId": "close-shane",
+            "sourceMod": "vanilla",
+            "sourceKey": "Mon10",
+            "conditions": {"relationshipStage": "close"},
+            "text": "我只是想确认你没把自己累垮。就这样。",
+        },
+    ]
+
+    selected = select_stage_voice_anchors(
+        samples, npc_id="Shane", relationship_stage="close", max_count=2
+    )
+
+    assert [item["sampleId"] for item in selected] == ["close-shane"]

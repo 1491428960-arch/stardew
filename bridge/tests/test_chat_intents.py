@@ -70,3 +70,35 @@ def test_item_intent_keeps_item_context_in_preview_and_prompt(
         },
     )
     assert response.status_code == 200
+
+
+def test_item_share_projects_game_side_consumption_and_friendship_award(
+    client: TestClient,
+) -> None:
+    preview = client.post(
+        "/api/context/preview",
+        json={
+            "npcId": "Dwarf",
+            "message": "和你分享这个石英。",
+            "intent": "item",
+            "itemContext": {
+                "itemId": "(O)80",
+                "displayName": "石英",
+                "category": "矿石",
+                "quality": 0,
+                "action": "share",
+                "giftTaste": 2,
+                "itemKind": "mineral",
+                "consumesItem": True,
+                "friendshipAwarded": 5,
+                "specialInteraction": "mineral_tasting",
+            },
+        },
+    )
+
+    assert preview.status_code == 200
+    item_context = preview.json()["interaction"]["itemContext"]
+    assert item_context["itemKind"] == "mineral"
+    assert item_context["consumesItem"] is True
+    assert item_context["friendshipAwarded"] == 5
+    assert item_context["specialInteraction"] == "mineral_tasting"

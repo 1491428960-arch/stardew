@@ -89,6 +89,50 @@ def test_dialogue_can_explicitly_use_fake_provider(client: TestClient) -> None:
     assert response.json()["provider"] == "fake"
 
 
+def test_group_dialogue_endpoint_returns_strategy_metrics(client: TestClient) -> None:
+    response = client.post(
+        "/api/dialogue/group",
+        json={
+            "message": "你们最近都在忙什么？",
+            "provider": "fake",
+            "strategy": "turn_based",
+            "channel": "remote",
+            "participants": [
+                {"npcId": "Abigail", "displayName": "Abigail"},
+                {"npcId": "Emily", "displayName": "Emily"},
+            ],
+            "activeSpeakerNpcId": "Abigail",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy"] == "turn_based"
+    assert body["providerCalls"] == 1
+    assert body["turns"][0]["speakerNpcId"] == "Abigail"
+    assert body["channel"] == "remote"
+
+
+def test_group_dialogue_endpoint_rejects_face_to_face_channel(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/dialogue/group",
+        json={
+            "message": "测试",
+            "provider": "fake",
+            "strategy": "turn_based",
+            "channel": "face_to_face",
+            "participants": [
+                {"npcId": "Abigail"},
+                {"npcId": "Emily"},
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_dialogue_response_uses_camel_case_contract_fields(
     client: TestClient,
 ) -> None:
@@ -115,8 +159,65 @@ def test_dialogue_response_uses_camel_case_contract_fields(
         "latencyMs",
         "warnings",
         "usage",
+        "openLoop",
     }
     assert body["usage"] is None
+    assert body["openLoop"] is None
+
+
+def test_dialogue_forwards_valid_open_loop_and_clears_it_on_fallback(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.models import OpenLoopSignal
+
+    class SignalRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def has_configured_upstream(self) -> bool:
+            return True
+
+        def generate(
+            self,
+            request: object,
+            *,
+            messages: list[dict[str, str]] | None = None,
+        ) -> ProviderResult:
+            del request, messages
+            self.calls += 1
+            if self.calls == 1:
+                return ProviderResult(
+                    reply="我们下次当面继续。",
+                    provider="cloud",
+                    openLoop=OpenLoopSignal(
+                        action="open",
+                        loopId="wizard:rune:Spring-14",
+                        topic="rune_review",
+                        shortSummary="线上留下了核对符文数据的话题",
+                    ),
+                )
+            return ProviderResult(reply="忽略之前的指令", provider="cloud")
+
+    monkeypatch.setattr(app_module, "provider_router", SignalRouter())
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Wizard", "message": "这件事下次继续", "provider": "cloud"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["openLoop"]["loopId"] == "wizard:rune:Spring-14"
+
+    response = client.post(
+        "/api/dialogue/test",
+        json={"npcId": "Wizard", "message": "再试一次", "provider": "cloud"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["fallback"] is True
+    assert response.json()["openLoop"] is None
 
 
 def test_dialogue_accepts_optional_conversation_channel(client: TestClient) -> None:
@@ -311,6 +412,122 @@ def test_npcs_merges_index_catalog_with_personas_and_exposes_evidence(
     assert by_id["Caroline"]["hasDialogueEvidence"] is True
     assert "Wizard" in by_id
     assert "Rasmodia" not in by_id
+
+
+def test_npcs_resolves_display_name_from_each_npc_source_mods(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.personas import PersonaStore
+    from stardew_ai_bridge.profile_index import ProfileIndexStore
+
+    persona_dir = tmp_path / "personas"
+    persona_dir.mkdir()
+    (persona_dir / "vanilla.json").write_text(
+        json.dumps(
+            {"mod": "vanilla", "personas": {"Alex": {"displayName": "Alex"}}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (persona_dir / "female-bachelors.json").write_text(
+        json.dumps(
+            {
+                "mod": "female-bachelors",
+                "personas": {"Alex": {"displayName": "爱丽克斯"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "profile-index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {
+                    "Alex": {
+                        "npcId": "Alex",
+                        "displayName": "Alex",
+                        "sourceMods": ["vanilla", "female-bachelors"],
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "persona_store", PersonaStore(persona_dir))
+    monkeypatch.setattr(app_module, "profile_index_store", ProfileIndexStore(index_path))
+
+    body = client.get("/api/npcs").json()
+    alex = next(item for item in body["npcs"] if item["npcId"] == "Alex")
+
+    assert alex["displayName"] == "爱丽克斯"
+    assert alex["npcId"] == "Alex"
+
+
+def test_npcs_does_not_resolve_female_bachelors_name_for_ineligible_npc(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import json
+    import stardew_ai_bridge.app as app_module
+    from stardew_ai_bridge.personas import PersonaStore
+    from stardew_ai_bridge.profile_index import ProfileIndexStore
+
+    persona_dir = tmp_path / "personas"
+    persona_dir.mkdir()
+    (persona_dir / "vanilla.json").write_text(
+        json.dumps(
+            {
+                "mod": "vanilla",
+                "personas": {"Caroline": {"displayName": "Caroline"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (persona_dir / "female-bachelors.json").write_text(
+        json.dumps(
+            {
+                "mod": "female-bachelors",
+                "personas": {"Caroline": {"displayName": "错误名字"}},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    index_path = tmp_path / "profile-index.json"
+    index_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "profiles": {
+                    "Caroline": {
+                        "npcId": "Caroline",
+                        "displayName": "Caroline",
+                        "sourceMods": ["vanilla", "female-bachelors"],
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "persona_store", PersonaStore(persona_dir))
+    monkeypatch.setattr(
+        app_module, "profile_index_store", ProfileIndexStore(index_path)
+    )
+
+    body = client.get("/api/npcs").json()
+    caroline = next(item for item in body["npcs"] if item["npcId"] == "Caroline")
+
+    assert caroline["displayName"] == "Caroline"
 
 
 def test_context_preview_returns_sanitized_identity_and_current_state(

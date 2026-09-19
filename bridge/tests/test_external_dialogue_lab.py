@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import re
 import subprocess
+import os
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -124,6 +128,232 @@ def test_existing_chat_lab_remains_available_under_chat_route() -> None:
     assert 'id="send"' in response.text
 
 
+def test_group_dialogue_lab_exposes_three_online_strategies() -> None:
+    response = TestClient(app).get("/test/group")
+
+    assert response.status_code == 200
+    html = response.text
+    for marker in (
+        'id="group-participants"',
+        'value="fanout"',
+        'value="turn_based"',
+        'value="multi_turn"',
+        'value="remote"',
+        "/api/dialogue/group",
+        "providerCalls",
+        "fallbackCount",
+    ):
+        assert marker in html
+
+
+def test_group_dialogue_review_renders_generated_cloud_batch() -> None:
+    response = TestClient(app).get("/test/group/review")
+
+    assert response.status_code == 200
+    html = response.text
+    for marker in (
+        "线上群聊 · 云端样本回放",
+        'id="group-review-data"',
+        "20260918-group-dialogue-cloud-v3-fanout-cases",
+        "fanout",
+        "多人回应",
+        "allParticipantsReplied",
+        "自然接话流（可插话）",
+        "npc-message",
+        "speaker-tone",
+        "Sophia",
+        "协议通过",
+        "角色观察",
+    ):
+        assert marker in html
+
+
+def test_group_dialogue_review_supports_explicit_batch_selection() -> None:
+    client = TestClient(app)
+
+    default_html = client.get("/test/group/review").text
+    assert 'href="/test/group/review?batch=' in default_html
+
+    # 显式请求仍返回指定批次；非法值回落到最新批次而不是报错。
+    explicit = client.get(
+        "/test/group/review",
+        params={"batch": "20260918-group-dialogue-cloud-v3-fanout-cases"},
+    )
+    assert explicit.status_code == 200
+    assert "20260918-group-dialogue-cloud-v3-fanout-cases" in explicit.text
+
+    unknown = client.get("/test/group/review", params={"batch": "nope"})
+    assert unknown.status_code == 200
+    assert "?batch=" in unknown.text
+
+
+def test_group_dialogue_lab_exposes_multi_turn_count_control() -> None:
+    html = TestClient(app).get("/test/group").text
+
+    assert 'id="group-turn-count"' in html
+    assert "最多回合数" in html
+    assert "turnCount" in html
+
+
+def test_group_dialogue_lab_script_keeps_error_join_escaped() -> None:
+    html = TestClient(app).get("/test/group").text
+
+    assert 'body.providerErrors.join("\\n")' in html
+    assert 'body.providerErrors.join("\n")' not in html
+
+
+def test_group_dialogue_review_discovers_new_batches_without_code_change(tmp_path: Path) -> None:
+    from stardew_ai_bridge.group_dialogue_review_page import group_dialogue_review_page
+
+    new_batch = tmp_path / "20260919-group-dialogue-cloud-v5-addressed-continuation"
+    new_batch.mkdir()
+    (new_batch / "cases.json").write_text("[]", encoding="utf-8")
+
+    html = group_dialogue_review_page(tmp_path)
+
+    assert "?batch=20260919-group-dialogue-cloud-v5-addressed-continuation" in html
+    # 没有 ?batch= 时显示最新的那个批次（按 cases.json 写入时间，而不是目录名排序）
+    payload = json.loads(
+        re.search(
+            r'<script id="group-review-data" type="application/json">(.*?)</script>',
+            html,
+            re.DOTALL,
+        ).group(1)
+    )
+    assert payload["batchName"] == "20260919-group-dialogue-cloud-v5-addressed-continuation"
+
+
+def test_group_dialogue_review_ignores_batches_outside_the_group_dialogue_prefix(tmp_path: Path) -> None:
+    from stardew_ai_bridge.group_dialogue_review_page import group_dialogue_review_page
+
+    other_batch = tmp_path / "20260919-topic-start-adaptive-other-suite"
+    other_batch.mkdir()
+    (other_batch / "cases.json").write_text("[]", encoding="utf-8")
+
+    html = group_dialogue_review_page(tmp_path)
+
+    assert "20260919-topic-start-adaptive-other-suite" not in html
+
+
+def test_group_dialogue_review_renders_pixel_character_glyphs() -> None:
+    html = TestClient(app).get("/test/group/review").text
+
+    for marker in (
+        "SPEAKER_GLYPHS",
+        "avatar-glyph",
+        "speaker-dot",
+    ):
+        assert marker in html
+    # 每个已知 NPC 都要有自己的内联图形定义（不依赖外部图片）；
+    # SVG 尖括号在页面里是 \u003c 转义，避免提前闭合 script 标签。
+    glyphs = json.loads(re.search(r"const SPEAKER_GLYPHS = (.*);", html).group(1))
+    assert len(glyphs) == 46
+    assert all('<svg ' in glyph and 'aria-hidden="true"' in glyph for glyph in glyphs.values())
+    assert "SPEAKER_MOTIFS" not in html
+    assert all('shape-rendering="crispEdges"' in glyph for glyph in glyphs.values())
+    for npc_id in ("Abigail", "Elliott", "Sophia", "Wizard", "Shane"):
+        assert npc_id in html
+
+
+def test_group_dialogue_review_uses_approved_palette_and_primary_motifs() -> None:
+    from stardew_ai_bridge.group_dialogue_review_page import group_dialogue_review_page
+
+    root = Path(__file__).resolve().parents[2]
+    spec = json.loads((root / "docs/npc-bubble-elements-2026-09-19.json").read_text(encoding="utf-8"))
+    html = group_dialogue_review_page(root / "artifacts/character-quality-eval")
+    # Execute the emitted constants so this also catches stale hand-written JS data.
+    declarations = "\n".join(
+        re.search(rf"const {name} = .*?;", html, re.DOTALL).group(0)
+        for name in ("NPC_STYLES", "SPEAKER_GLYPHS")
+    )
+    result = subprocess.run(
+        ["node"], input=declarations + ";process.stdout.write(JSON.stringify({NPC_STYLES,SPEAKER_GLYPHS}))",
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+    emitted = json.loads(result.stdout)
+    assert set(spec["npcOrder"]) <= set(emitted["NPC_STYLES"])
+    assert len(emitted["NPC_STYLES"]) == 46
+    for npc, expected in spec["npcs"].items():
+        style = emitted["NPC_STYLES"][npc]
+        for key in ("accent", "accentSoft", "bubble", "border"):
+            assert style[key] == expected["palette"][key], (npc, key)
+        assert style["tone"] == expected["toneLabel"]
+    from stardew_ai_bridge.npc_bubble_elements import NPC_BUBBLE_ELEMENTS
+
+    for npc, elements in NPC_BUBBLE_ELEMENTS.items():
+        assert elements["motifs"][0] in emitted["SPEAKER_GLYPHS"][npc]
+
+
+def test_group_dialogue_review_decoration_keeps_player_and_text_separate() -> None:
+    html = TestClient(app).get("/test/group/review").text
+    assert "SPEAKER_MOTIFS" not in html
+    assert ".bubble-ring" not in html
+    assert "border-image" not in html
+    # 角色物件形成独立装饰层，旧藤蔓算法与平铺边框不再使用。
+    assert "bubble-vine" not in html
+    assert "VINE_COLORS" not in html
+    assert "vineSvg" not in html
+    assert "border-color: var(--border" in html
+    for role in ("sebastian", "sophia", "elliott", "wizard"):
+        assert f".message.role-{role} .bubble" not in html
+    # The original text remains a distinct layout box, never SVG text or innerHTML.
+    assert 'el("span", "bubble-text", turn.content || "")' in html
+    assert 'data-bubble-design="character-frames-v2"' in html
+    assert 'const ornament = ornamentFor(speakerId)' in html
+    assert 'if (ornament)' in html
+    assert 'frame.setAttribute("aria-hidden", "true")' in html
+    assert 'frameObserver.disconnect()' in html
+    assert 'frameObserver.observe(bubble)' in html
+
+
+def test_group_dialogue_review_character_frames_use_the_single_element_library() -> None:
+    from stardew_ai_bridge.npc_bubble_elements import NPC_BUBBLE_ELEMENTS
+
+    html = TestClient(app).get("/test/group/review").text
+    match = re.search(r"const CHARACTER_ORNAMENTS = (.*);", html)
+    assert match, "页面还没有消费角色环绕装饰库"
+    emitted = json.loads(match.group(1))
+    assert set(emitted) == set(NPC_BUBBLE_ELEMENTS)
+    for npc, item in NPC_BUBBLE_ELEMENTS.items():
+        assert emitted[npc] == json.loads(json.dumps(item["ornament"]))
+    assert "Object.hasOwn(CHARACTER_ORNAMENTS, canonicalNpcId(npcId))" in html
+    assert ".bubble-frame" in html and "pointer-events: none" in html
+
+
+def test_character_frame_renderer_adapts_to_bubble_size_without_tiling() -> None:
+    from xml.etree import ElementTree
+
+    html = TestClient(app).get("/test/group/review").text
+    assert "function characterFrameSvg(" in html, "缺少自适应角色装饰绘制器"
+    declaration = re.search(r"const CHARACTER_ORNAMENTS = .*?;", html).group(0)
+    function = "function characterFrameSvg(width, height, ornament) " + _function_body(html, "characterFrameSvg")
+    script = declaration + function + ";process.stdout.write(JSON.stringify(Object.values(CHARACTER_ORNAMENTS).flatMap(o => [[164,94],[300,116],[700,260]].map(([w,h]) => characterFrameSvg(w,h,o)))));"
+    result = subprocess.run(["node"], input=script, capture_output=True, text=True, encoding="utf-8", check=True)
+    frames = json.loads(result.stdout)
+    assert len(frames) == 46 * 3
+    for i, svg in enumerate(frames):
+        root = ElementTree.fromstring(svg)
+        width, height = ((164,94), (300,116), (700,260))[i % 3]
+        assert root.attrib["viewBox"] == f"0 0 {width + 28} {height + 28}"
+        assert root.attrib["shape-rendering"] == "crispEdges"
+        assert len([n for n in root.iter() if "data-object" in n.attrib]) >= 2
+        assert {n.attrib["data-side"] for n in root.iter() if "data-side" in n.attrib} == {"top", "right", "bottom", "left"}
+        assert not any(n.tag.rsplit("}",1)[-1] in {"pattern", "image", "text", "script"} for n in root.iter())
+        assert "NaN" not in svg and "undefined" not in svg
+
+
+def test_character_frames_have_stable_asymmetric_compositions() -> None:
+    html = TestClient(app).get("/test/group/review").text
+    declaration = re.search(r"const CHARACTER_ORNAMENTS = .*?;", html).group(0)
+    function = "function characterFrameSvg(width, height, ornament) " + _function_body(html, "characterFrameSvg")
+    script = declaration + function + ";process.stdout.write(JSON.stringify([0,1,2,0].map(v=>characterFrameSvg(360,120,CHARACTER_ORNAMENTS.Sophia,v))));"
+    result = subprocess.run(["node"], input=script, capture_output=True, text=True, encoding="utf-8", check=True)
+    frames = json.loads(result.stdout)
+    assert frames[0] == frames[3], "重绘不能随机跳动"
+    assert len(set(frames[:3])) == 3, "不同回合不应复制同一构图"
+    assert 'bubble.dataset.frameVariant' in html
+
+
 def test_chat_lab_topic_button_does_not_render_internal_topic_prompt_as_player_bubble() -> None:
     html = _chat_html()
 
@@ -146,6 +376,8 @@ def test_shared_ui_dialogue_lab_pages_share_the_same_workspace_shell() -> None:
         assert 'href="/test"' in html
         assert 'href="/test/chat"' in html
         assert 'href="/raw"' in html
+        assert 'href="/test/group"' in html
+        assert "多人实验" in html
         assert 'aria-current="page"' in html
         assert "--ui-shell-version: 4;" in html
         nav = re.search(r'<nav class="workspace-nav".*?</nav>', html, flags=re.DOTALL)
@@ -304,6 +536,20 @@ def test_quality_case_browser_exposes_case_navigation_and_detail_rendering() -> 
         assert marker in html
 
 
+def test_quality_case_browser_exposes_event_impact_side_by_side_contract() -> None:
+    html = TestClient(app).get("/test").text
+
+    for marker in (
+        "event-impact-comparison",
+        "事件前 · 未完成事件",
+        "事件后 · 已完成事件",
+        "eventEvidence",
+        "unresolved_i18n",
+        "renderEventImpactComparison",
+    ):
+        assert marker in html
+
+
 def test_quality_case_browser_follows_latest_suite_with_url_override() -> None:
     html = TestClient(app).get("/test").text
     load_cases_body = _function_body(html, "loadQualityCases")
@@ -370,14 +616,139 @@ def test_quality_cases_endpoint_can_select_topic_start_intimacy_suite() -> None:
     payload = response.json()
     assert payload["schemaVersion"] == 1
     assert payload["suite"] == "topic-start-intimacy"
-    assert len(payload["cases"]) == 32
-    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 33))
+    assert len(payload["cases"]) == 50
+    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 51))
     assert all(item["intent"] == "topic" for item in payload["cases"])
     assert all(item["playerInput"] == "" for item in payload["cases"])
     assert all(item["topicSeed"] for item in payload["cases"])
     assert all(item["topicKeywords"] for item in payload["cases"])
     assert all(
         [turn["intent"] for turn in item["turns"]] == ["topic", "chat", "chat"]
+        for item in payload["cases"]
+    )
+
+
+def test_quality_cases_endpoint_can_select_event_impact_suite() -> None:
+    response = TestClient(app).get(
+        "/api/quality/cases?suite=topic-start-event-impact"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["suite"] == "topic-start-event-impact"
+    assert payload["source"] == "event_impact_cases.EVENT_IMPACT_CASES"
+    assert len(payload["cases"]) == 14
+    assert {item["eventCondition"] for item in payload["cases"]} == {"before", "after"}
+    assert all(item["followUpMode"] == "fixed" for item in payload["cases"])
+    assert all(item["eventEvidence"] for item in payload["cases"])
+    assert all(len(item["turns"]) == 3 for item in payload["cases"])
+    sophia = next(
+        item for item in payload["cases"] if item["eventPairId"] == "sophia-8185290"
+    )
+    assert sophia["eventSourceStatus"] == "unresolved_i18n"
+
+
+def test_quality_cases_endpoint_can_select_conversation_lead_suite() -> None:
+    response = TestClient(app).get("/api/quality/cases?suite=conversation-lead")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schemaVersion"] == 1
+    assert payload["suite"] == "conversation-lead"
+    assert payload["source"] == "character_quality_eval.CONVERSATION_LEAD_CASES"
+    assert [item["caseId"] for item in payload["cases"]] == [
+        "wizard-married-evening",
+        "sophia-married-cellar",
+        "shane-dating-boundary",
+        "sebastian-married-music",
+        "alex-married-evening",
+        "elliott-married-studio",
+        "harvey-married-clinic",
+        "sam-married-band",
+    ]
+    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 9))
+
+
+def test_quality_cases_endpoint_can_select_affection_pacing_suite() -> None:
+    response = TestClient(app).get("/api/quality/cases?suite=affection-pacing")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schemaVersion"] == 1
+    assert payload["suite"] == "affection-pacing"
+    assert payload["source"] == "affection_pacing_cases.AFFECTION_PACING_SUITE"
+    assert len(payload["cases"]) == 32
+    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 33))
+    assert all(len(item["turns"]) == 3 for item in payload["cases"])
+
+
+def test_quality_cases_endpoint_can_select_relationship_world_suite() -> None:
+    response = TestClient(app).get("/api/quality/cases?suite=relationship-world")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schemaVersion"] == 1
+    assert payload["suite"] == "relationship-world"
+    assert payload["source"] == "relationship_world_cases.RELATIONSHIP_WORLD_SUITE"
+    assert len(payload["cases"]) == 32
+    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 33))
+    assert all("objectiveRelationships" not in item for item in payload["cases"])
+    assert all("relationshipWorld" not in item for item in payload["cases"])
+
+
+def test_quality_cases_endpoint_can_select_deep_flirt_suite() -> None:
+    response = TestClient(app).get("/api/quality/cases?suite=deep-flirt")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schemaVersion"] == 1
+    assert payload["suite"] == "deep-flirt"
+    assert payload["source"] == "deep_flirt_cases.DEEP_FLIRT_SUITE"
+    assert [item["caseNumber"] for item in payload["cases"]] == list(range(1, 9))
+    assert [item["caseId"] for item in payload["cases"]] == [
+        "deep-flirt-wizard-married",
+        "deep-flirt-sophia-married",
+        "deep-flirt-shane-dating",
+        "deep-flirt-sebastian-married",
+        "deep-flirt-alex-married",
+        "deep-flirt-elliott-married",
+        "deep-flirt-harvey-married",
+        "deep-flirt-sam-married",
+    ]
+    assert all(item["channel"] == "face_to_face" for item in payload["cases"])
+    assert all(item["adultConsensual"] is True for item in payload["cases"])
+    assert all(item["romanceEligible"] is True for item in payload["cases"])
+    assert all(item["turnCount"] == 3 for item in payload["cases"])
+    assert all(len(item["turns"]) == 3 for item in payload["cases"])
+    assert all(
+        [turn["playerInputMode"] for turn in item["turns"]]
+        == ["fixed", "fixed", "fixed"]
+        for item in payload["cases"]
+    )
+
+
+def test_quality_cases_endpoint_can_select_deep_flirt_intimate_suite() -> None:
+    response = TestClient(app).get(
+        "/api/quality/cases?suite=deep-flirt-intimate"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schemaVersion"] == 1
+    assert payload["suite"] == "deep-flirt-intimate"
+    assert payload["source"] == (
+        "deep_flirt_intimate_cases.DEEP_FLIRT_INTIMATE_SUITE"
+    )
+    assert len(payload["cases"]) == 8
+    assert all(item["turnCount"] == 5 for item in payload["cases"])
+    assert all(len(item["turns"]) == 5 for item in payload["cases"])
+    assert all(item["adultConsensual"] is True for item in payload["cases"])
+    assert all(item["romanceEligible"] is True for item in payload["cases"])
+    assert all(
+        any(
+            marker in "\n".join(turn["playerInput"] for turn in item["turns"])
+            for marker in ("亲", "吻")
+        )
         for item in payload["cases"]
     )
 
@@ -393,7 +764,7 @@ def test_quality_cases_endpoint_can_select_reply_driven_adaptive_suite() -> None
     assert payload["source"] == (
         "topic_start_adaptive_cases.TOPIC_START_ADAPTIVE_CASES"
     )
-    assert len(payload["cases"]) == 32
+    assert len(payload["cases"]) == 50
     assert all(item["followUpMode"] == "adaptive" for item in payload["cases"])
     assert all(
         [turn["playerInputMode"] for turn in item["turns"]]
@@ -435,11 +806,89 @@ def test_quality_results_endpoint_exposes_latest_sanitized_generated_batch(
     assert payload["schemaVersion"] == 1
     assert payload["batchId"] == run_dir.name
     assert payload["summary"]["passed"] == 0
+    assert payload["runStatus"] == "valid"
+    assert payload["runStatusReasons"] == []
     assert payload["results"][0]["reply"] == "塔里的灰尘还没积够层数。"
     serialized = response.text
     assert "敏感 prompt" not in serialized
     assert "apiKey" not in serialized
     assert "secret" not in serialized
+
+
+def test_quality_results_endpoint_can_select_requested_suite(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    relationship_run = tmp_path / "20260906-relationship-world"
+    relationship_run.mkdir()
+    (relationship_run / "summary.json").write_text(
+        '{"schemaVersion":1,"suite":"relationship-world",'
+        '"caseCount":1,"successful":1,"errors":0}',
+        encoding="utf-8",
+    )
+    (relationship_run / "results.jsonl").write_text(
+        '{"caseId":"relationship-wizard-jealousy-recovery",'
+        '"suite":"relationship-world","reply":"关系结果"}\n',
+        encoding="utf-8",
+    )
+    default_run = tmp_path / "20260907-default"
+    default_run.mkdir()
+    (default_run / "summary.json").write_text(
+        '{"schemaVersion":1,"suite":"default",'
+        '"caseCount":1,"successful":1,"errors":0}',
+        encoding="utf-8",
+    )
+    (default_run / "results.jsonl").write_text(
+        '{"caseId":"wizard-daily","suite":"default",'
+        '"reply":"默认结果"}\n',
+        encoding="utf-8",
+    )
+    os.utime(relationship_run, (1, 1))
+    os.utime(default_run, (2, 2))
+    monkeypatch.setattr(app_module, "quality_artifact_root", tmp_path, raising=False)
+
+    response = TestClient(app).get(
+        "/api/quality/results?suite=relationship-world"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["batchId"] == relationship_run.name
+    assert payload["summary"]["suite"] == "relationship-world"
+    assert payload["results"][0]["caseId"] == (
+        "relationship-wizard-jealousy-recovery"
+    )
+
+
+def test_quality_results_endpoint_can_select_deep_flirt_suite(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "20260914-deep-flirt-smoke-v1"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(
+        '{"schemaVersion":2,"suite":"deep-flirt",'
+        '"caseCount":1,"successful":1,"errors":0,'
+        '"turnCount":3,"successfulTurns":3}',
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        '{"caseId":"deep-flirt-wizard-married","suite":"deep-flirt",'
+        '"turns":[{"turnId":"turn-1","reply":"第一轮"},'
+        '{"turnId":"turn-2","reply":"第二轮"},'
+        '{"turnId":"turn-3","reply":"第三轮"}]}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "quality_artifact_root", tmp_path, raising=False)
+
+    response = TestClient(app).get("/api/quality/results?suite=deep-flirt")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["batchId"] == run_dir.name
+    assert payload["summary"]["suite"] == "deep-flirt"
+    assert payload["runStatus"] == "valid"
+    assert payload["results"][0]["caseId"] == "deep-flirt-wizard-married"
 
 
 def test_quality_results_preserve_safe_style_quality_labels_only(
@@ -529,6 +978,17 @@ def test_case_browser_loads_and_renders_real_quality_results() -> None:
         assert marker in html
 
 
+def test_case_browser_aggregates_initiative_detection_across_all_turns() -> None:
+    html = TestClient(app).get("/test").text
+    body = _function_body(html, "affectionInitiativeData")
+
+    assert re.search(
+        r"result\.initiativeDetected === true\s*\|\|\s*"
+        r"turns\.some\(\(turn\) => turn\?\.initiativeDetected === true\)",
+        body,
+    )
+
+
 def test_case_browser_separates_npc_pass_rate_from_adaptive_player_input_quality() -> None:
     html = TestClient(app).get("/test").text
     render_batch_body = _function_body(html, "renderBatchSummary")
@@ -542,6 +1002,40 @@ def test_case_browser_separates_npc_pass_rate_from_adaptive_player_input_quality
         "playerInputQualityTags",
     ):
         assert marker in render_batch_body
+
+
+def test_case_browser_renders_fixed_player_expression_card_without_internal_rules() -> None:
+    html = TestClient(app).get("/test?suite=deep-flirt").text
+    render_body = _function_body(html, "renderAdaptiveInputSummary")
+
+    for marker in (
+        "玩家表达倾向",
+        "playerExpressionCard",
+        "relationshipStance",
+        "languageTexture",
+        "flirtProgression",
+        "boundaryStyle",
+        "selfCorrection",
+        "不是 NPC 的运行时提示",
+    ):
+        assert marker in render_body or marker in html
+    assert "forbiddenTendencies" not in render_body
+
+
+def test_case_browser_marks_invalid_quality_batches_as_diagnostic_only() -> None:
+    html = TestClient(app).get("/test").text
+    render_batch_body = _function_body(html, "renderBatchSummary")
+
+    for marker in (
+        "diagnostic_invalid",
+        "runStatusReasons",
+        "仅诊断，不代表角色质量",
+        "provider_error",
+        "fallback",
+        "missing_reply",
+        "truncated_output",
+    ):
+        assert marker in render_batch_body or marker in html
 
 
 def test_case_browser_renders_multiturn_transcript_and_usage_summary() -> None:
@@ -558,6 +1052,124 @@ def test_case_browser_renders_multiturn_transcript_and_usage_summary() -> None:
         "missingUsageTurns",
         "estimatedCost",
         "用量未返回",
+    ):
+        assert marker in html
+
+
+def test_case_browser_renders_historical_guard_warnings_and_batch_coverage() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+    batch_body = _function_body(html, "renderBatchSummary")
+
+    for marker in (
+        "turn.warnings",
+        "transcript-turn-warning",
+        "输出质量校验",
+        "诊断详情",
+    ):
+        assert marker in html
+    for marker in (
+        "coverage",
+        "结果覆盖",
+        "未生成",
+    ):
+        assert marker in batch_body or marker in html
+
+
+def test_case_browser_separates_quality_retry_history_from_final_score_and_hard_guard() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+    transcript_body = _function_body(html, "renderCaseTranscript")
+
+    for marker in (
+        "formatTurnWarnings",
+        "retryCount",
+        "formatTurnWarnings(warnings, turn.score, turn.retryCount, turn.initiativeExpectation)",
+        "质量重试失败",
+        "质量重试未执行",
+        "响应 Guard",
+        "最终通过",
+        "最终仍需复核",
+        "诊断详情",
+    ):
+        assert marker in transcript_body or marker in html
+    assert "Guard 重试（${warnings.length}）" not in transcript_body
+
+
+def test_case_browser_deduplicates_and_explains_quality_diagnostics() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+    transcript_body = _function_body(html, "formatTurnWarnings")
+
+    for marker in (
+        "uniqueWarningEntries",
+        "qualityDiagnosticLabel",
+        "缺少主动亲密信号",
+        "输出质量校验",
+        "查看诊断详情（已翻译）",
+        "appendDiagnosticDetails",
+        "（${entry.count} 次）",
+    ):
+        assert marker in transcript_body or marker in html
+
+
+def test_case_browser_does_not_render_raw_warning_codes_in_expanded_details() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+    details_body = _function_body(html, "appendDiagnosticDetails")
+
+    assert "appendDiagnosticDetails(" in html
+    assert "qualityDiagnosticSummary(warnings, initiativeExpectation)" in details_body
+    assert "查看诊断详情（已翻译）" in details_body
+    assert "rawDiagnosticSummary(warnings)" not in details_body
+    assert "textContent = rawDiagnosticSummary" not in details_body
+
+
+def test_case_browser_explains_legacy_affection_retry_by_turn_contract() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+    transcript_body = _function_body(html, "formatTurnWarnings")
+
+    for marker in (
+        "initiativeExpectation",
+        "旧批次",
+        "当前回合无需主动亲密",
+        "formatTurnWarnings(warnings, turn.score, turn.retryCount, turn.initiativeExpectation)",
+    ):
+        assert marker in transcript_body or marker in html
+
+
+def test_case_browser_humanizes_hard_guard_and_provider_diagnostics() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+    transcript_body = _function_body(html, "formatTurnWarnings")
+
+    assert "qualityDiagnosticSummary(hardGuards, initiativeExpectation)" in transcript_body
+    assert "qualityDiagnosticSummary(providerDiagnostics, initiativeExpectation)" in transcript_body
+    assert "rawDiagnosticSummary(hardGuards)" not in transcript_body
+    assert "rawDiagnosticSummary(providerDiagnostics)" not in transcript_body
+
+
+def test_chat_browser_humanizes_runtime_warning_codes() -> None:
+    html = TestClient(app).get("/test/chat").text
+
+    for marker in (
+        "formatChatWarnings",
+        "质量重试",
+        "质量重试失败",
+        "质量重试未执行",
+        "Provider 诊断",
+        "missing_proactive_affection: \"缺少主动亲密信号\"",
+    ):
+        assert marker in html
+    assert "data.warnings.join(\"；\")" not in html
+
+
+def test_case_browser_translates_visible_quality_tags_to_human_readable_labels() -> None:
+    html = TestClient(app).get("/test?suite=relationship-world").text
+
+    for marker in (
+        "function diagnosticTagLabel(tag)",
+        'missing_personal_affection: "缺少个人亲密表达"',
+        'missing_topic_evidence: "缺少当前话题证据"',
+        'missing_conversation_lead: "缺少主动对话推进"',
+        'jealousy_recovery_missing: "未完成嫉妒恢复"',
+        "score.tags.map(diagnosticTagLabel)",
+        "pill.textContent = diagnosticTagLabel(tag)",
     ):
         assert marker in html
 
@@ -659,6 +1271,21 @@ def test_case_browser_exposes_composite_review_controls() -> None:
         assert marker in html
 
 
+def test_case_browser_defaults_to_actual_replies_and_exposes_all_definitions_toggle() -> None:
+    """默认列表只让人工先看到有真实 NPC 回复的案例，定义目录仍可显式展开。"""
+    html = TestClient(app).get("/test").text
+
+    for marker in (
+        'id="show-all-definitions"',
+        "显示全部定义",
+        "state.showAllDefinitions",
+        "function hasActualReply(",
+        "hasActualReply(item)",
+        "仅显示已生成回复",
+    ):
+        assert marker in html
+
+
 def test_case_browser_persists_case_list_view_state_in_url() -> None:
     html = TestClient(app).get("/test").text
 
@@ -737,14 +1364,21 @@ def test_external_lab_exposes_explicit_cloud_provider_mode() -> None:
     html = _chat_html()
 
     assert 'value="cloud"' in html
-    assert '<option value="cloud" selected>云端（显式，当前配置）</option>' in html
+    assert '<option value="cloud" selected>Gemini 云端（正式运行，默认）</option>' in html
 
 
 def test_external_lab_defaults_to_explicit_cloud_provider() -> None:
     html = _chat_html()
 
-    assert '<option value="cloud" selected>云端（显式，当前配置）</option>' in html
-    assert '<option value="auto">自动（本地 → 云端 → 兜底）</option>' in html
+    assert '<option value="cloud" selected>Gemini 云端（正式运行，默认）</option>' in html
+    assert '<option value="auto">自动（正式：仅 Gemini，失败安全兜底）</option>' in html
+    assert '<option value="local">Qwen 本地（手动 A/B / 回滚）</option>' in html
+
+
+def test_external_lab_explains_gemini_default_and_manual_qwen_rollback() -> None:
+    html = _chat_html()
+
+    assert "中转站波动不会静默切回 Qwen" in html
 
 
 def test_external_lab_sends_explicit_provider_selection() -> None:
@@ -1007,12 +1641,35 @@ def test_external_lab_shortcuts_use_independent_source_presets() -> None:
         "Parrot.RomRas",
         "FlashShifter.SVECode",
         "Invatorzen.idcsm",
+        "female-bachelors",
         "female.bachelors.beach",
-        "vanilla",
     ):
         assert source_mod in html
     assert "setRuntimeSourceDefaults" not in html
     assert "sourceMods:profile.sourceMods" in html
+
+
+def test_external_lab_uses_feminine_display_names_without_changing_canonical_ids() -> None:
+    chat_html = _chat_html()
+    case_html = TestClient(app).get("/test").text
+    raw_html = TestClient(app).get("/raw").text
+
+    for display_name, npc_id in (
+        ("珊恩", "Shane"),
+        ("塞布瑞娜", "Sebastian"),
+        ("爱丽克斯", "Alex"),
+    ):
+        assert f'npcId:"{npc_id}",label:"{display_name} / {npc_id}",displayName:"{display_name}"' in chat_html
+        assert f'{npc_id}:"{display_name} / {npc_id}"' in case_html
+        assert f'{npc_id}:"{display_name} / {npc_id}"' in raw_html
+
+    chat_load_npcs = _function_body(chat_html, "loadNpcs")
+    raw_load_npcs = raw_html
+    assert "const profile=evaluationProfileForNpc(npc.npcId);" in chat_load_npcs
+    assert "const displayName=profile?.displayName||npc.displayName||npc.npcId" in chat_load_npcs
+    assert "const label=EVALUATION_LABELS[npc.npcId]||npc.displayName||npc.npcId" in raw_load_npcs
+    assert 'sourceMods:["female-bachelors","Invatorzen.idcsm","female.bachelors.beach","female.bachelors.winter"]' in chat_html
+    assert 'npcId:"Alex",label:"爱丽克斯 / Alex",displayName:"爱丽克斯"' in chat_html
 
 
 def test_external_lab_canonicalizes_legacy_rasmodia_messages_to_wizard() -> None:
@@ -1107,6 +1764,15 @@ def test_external_lab_refreshes_raw_dialogue_when_switching_npc() -> None:
     assert "function renderQuickButtons(" in html
     assert "function loadNpcs(" in html
     assert "loadRawDialogue(select.value)" in html
+
+
+def test_integrated_raw_dialogue_follows_case_selected_npc() -> None:
+    html = TestClient(app).get("/test").text
+
+    assert 'window.addEventListener("dialogue-lab:case-selected"' in html
+    assert "loadRawDialogue(event.detail?.npcId)" in html
+    assert 'view: searchParams.get("view") || ""' in html
+    assert 'initialCaseViewState.view === "raw"' in html
 
 
 def test_external_lab_raw_dialogue_does_not_enter_generation_payload() -> None:

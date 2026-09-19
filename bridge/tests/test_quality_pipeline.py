@@ -197,3 +197,68 @@ def test_pipeline_review_instruction_lists_fixed_dimensions_and_score_range() ->
     assert "0～2" in instruction
     assert "hardErrors" in instruction
     assert "tags" in instruction
+
+
+def test_pipeline_rejects_when_the_revision_itself_is_invalid() -> None:
+    # 首审不通过 → 修订一次；修订输出非法时该候选直接进拒绝列表，不再复审。
+    generator = ScriptedGenerator(
+        [
+            draft_json("感谢你的关心。综合来看，鸡舍运营情况总体良好。", "draft-1"),
+            review_json("too_formal"),
+            "不是 JSON",
+        ]
+    )
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    assert run.approved == []
+    assert run.revision_count == 0
+    assert run.review_count == 1
+    assert [item["exampleId"] for item in run.rejections] == ["draft-1"]
+    assert run.rejections[0]["reasons"]
+
+
+def test_pipeline_rejects_when_the_revision_cannot_be_reviewed() -> None:
+    generator = ScriptedGenerator(
+        [
+            draft_json("感谢你的关心。综合来看，鸡舍运营情况总体良好。", "draft-1"),
+            review_json("too_formal"),
+            revised_json("还行。没着火，就算顺利。", "draft-1"),
+            "不是 JSON",
+        ]
+    )
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    assert run.approved == []
+    # 修订本身是合法的，所以它进了 revised；但复审读不出来，不能批准。
+    assert run.revision_count == 1
+    assert [item["exampleId"] for item in run.rejections] == ["draft-1"]
+
+
+def test_pipeline_rejects_when_the_revised_text_still_fails_review() -> None:
+    generator = ScriptedGenerator(
+        [
+            draft_json("感谢你的关心。综合来看，鸡舍运营情况总体良好。", "draft-1"),
+            review_json("too_formal"),
+            revised_json("还是不对劲的一句话。", "draft-1"),
+            # 用与首审相同的失败 tag：并非任意 tag 都会让 review_passes 判负。
+            review_json("too_formal"),
+        ]
+    )
+
+    run = CharacterQualityPipeline(generator).run(
+        scenario=SCENARIO,
+        candidate_count=1,
+    )
+
+    assert run.approved == []
+    assert run.revision_count == 1
+    assert run.review_count == 2
+    assert [item["exampleId"] for item in run.rejections] == ["draft-1"]

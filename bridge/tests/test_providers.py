@@ -18,6 +18,7 @@ from stardew_ai_bridge.providers import (
     OllamaNativeProvider,
     OpenAICompatibleProvider,
     Provider,
+    ProviderError,
     ProviderRouter,
     _default_provider_messages,
 )
@@ -301,6 +302,7 @@ def test_router_uses_explicit_cloud_provider_without_calling_local() -> None:
         cloud_provider=cloud,
         fallback_provider=fallback,
         cloud_enabled=False,
+        cloud_only=True,
     )
     request = DialogueTestRequest(
         npcId="Rasmodia",
@@ -314,6 +316,58 @@ def test_router_uses_explicit_cloud_provider_without_calling_local() -> None:
     assert result.provider == "cloud"
     assert result.fallback is False
     assert result.warnings == []
+
+
+def test_cloud_only_auto_route_uses_only_gemini_candidate() -> None:
+    local = StubProvider("local", reply="不应调用 Qwen")
+    cloud = StubProvider("cloud", reply="Gemini 回复")
+    router = ProviderRouter(
+        local_provider=local,
+        cloud_provider=cloud,
+        cloud_enabled=True,
+        cloud_only=True,
+    )
+
+    candidates = router._candidates("auto")
+
+    assert candidates == [cloud]
+
+
+def test_cloud_only_gemini_failure_uses_fallback_without_calling_local() -> None:
+    local = StubProvider("local", error=AssertionError("cloud-only 不应调用 Qwen"))
+    cloud = StubProvider("cloud", error=RuntimeError("Gemini 429"))
+    fallback = StubProvider("fallback", reply="安全兜底")
+    router = ProviderRouter(
+        local_provider=local,
+        cloud_provider=cloud,
+        fallback_provider=fallback,
+        cloud_enabled=True,
+        cloud_only=True,
+    )
+
+    result = router.generate(REQUEST)
+
+    assert result.provider == "fallback"
+    assert result.reply == "安全兜底"
+    assert result.fallback is True
+    assert result.warnings == ["cloud provider failed"]
+
+
+def test_cloud_only_keeps_explicit_local_as_manual_ab_path() -> None:
+    local = StubProvider("local", reply="Qwen A/B 回复")
+    cloud = StubProvider("cloud", error=AssertionError("显式 local 不应调用 Gemini"))
+    router = ProviderRouter(
+        local_provider=local,
+        cloud_provider=cloud,
+        cloud_enabled=True,
+        cloud_only=True,
+    )
+
+    result = router.generate(REQUEST.model_copy(update={"provider": "local"}))
+
+    assert result.provider == "local"
+    assert result.reply == "Qwen A/B 回复"
+    assert result.fallback is False
 
 
 def test_settings_keep_cloud_available_for_explicit_request_when_auto_disabled() -> None:
@@ -387,6 +441,7 @@ def test_bridge_settings_read_provider_configuration_from_environment(
     monkeypatch.setenv("BRIDGE_LOCAL_API_MODE", "ollama")
     monkeypatch.setenv("BRIDGE_LOCAL_TIMEOUT", "1.5")
     monkeypatch.setenv("BRIDGE_CLOUD_ENABLED", "true")
+    monkeypatch.setenv("BRIDGE_CLOUD_ONLY", "true")
     monkeypatch.setenv("BRIDGE_CLOUD_URL", "https://cloud.invalid/v1/chat/completions")
     monkeypatch.setenv("BRIDGE_CLOUD_MODEL", "cloud-model")
     monkeypatch.setenv("BRIDGE_CLOUD_API_KEY", "secret-key")
@@ -398,6 +453,7 @@ def test_bridge_settings_read_provider_configuration_from_environment(
     assert settings.local.api_mode == "ollama"
     assert settings.local.timeout == 1.5
     assert settings.cloud_enabled is True
+    assert settings.cloud_only is True
     assert settings.cloud.url == "https://cloud.invalid/v1/chat/completions"
     assert settings.cloud.model == "cloud-model"
     assert settings.cloud.api_key == "secret-key"
@@ -436,7 +492,13 @@ def test_openai_compatible_provider_uses_async_http_without_exposing_api_key() -
         received["body"] = request.read()
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": "本地模型回复"}}]},
+            headers={"content-type": "text/event-stream"},
+            content=(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"本地\"}}]}\n\n"
+                "data: {\"choices\":[{\"delta\":{\"content\":\"模型回复\"}}],"
+                "\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n"
+                "data: [DONE]\n\n"
+            ).encode("utf-8"),
         )
 
     from stardew_ai_bridge.config import ProviderSettings
@@ -457,9 +519,195 @@ def test_openai_compatible_provider_uses_async_http_without_exposing_api_key() -
     assert result.reply == "本地模型回复"
     assert result.provider == "local"
     assert result.fallback is False
+    assert result.usage is not None
+    assert result.usage.total_tokens == 5
     assert "secret-key" not in repr(result)
     assert received["authorization"] == "Bearer secret-key"
     assert b"secret-key" not in received["body"]
+    request_payload = json.loads(received["body"])
+    assert request_payload["stream"] is True
+    assert request_payload["max_tokens"] == 160
+
+
+def test_multi_turn_group_requests_get_a_larger_output_budget() -> None:
+    from stardew_ai_bridge import providers as providers_module
+
+    single = DialogueTestRequest(npcId="Rasmodia", message="你好")
+    group = DialogueTestRequest(
+        npcId="Shane",
+        message="我最近总是睡不好。",
+        groupStrategy="multi_turn",
+        groupParticipantIds=["Shane", "Harvey"],
+        groupTurnCount=3,
+    )
+
+    assert providers_module._max_tokens_for(single) == 160
+    # multi_turn 一次要写 3～4 条对白：只断言 `> 160` 时改成 161 也能通过，
+    # 而那样第二条就会被截断——这正是 09-19 之前回合数长期只有 1～3 的根因。
+    assert providers_module._max_tokens_for(group) >= 900
+
+
+def test_openai_compatible_provider_sends_raised_budget_for_group_multi_turn() -> None:
+    received: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        received["body"] = request.read()
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"choices":[{"delta":{"content":"{}"}}]}\n\n'
+                "data: [DONE]\n\n"
+            ).encode("utf-8"),
+        )
+
+    provider = OpenAICompatibleProvider(
+        ProviderSettings(
+            name="cloud",
+            url="https://cloud.invalid/v1/chat/completions",
+            model="cloud-model",
+            api_key="secret-key",
+            timeout=2.0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    provider.generate(
+        DialogueTestRequest(
+            npcId="Shane",
+            message="我最近总是睡不好。",
+            groupStrategy="multi_turn",
+            groupParticipantIds=["Shane", "Harvey"],
+            groupTurnCount=3,
+        )
+    )
+
+    payload = json.loads(received["body"])
+    # 与 _max_tokens_for 的口径一致：multi_turn 的预算必须真的够写多条对白。
+    assert payload["max_tokens"] >= 900
+
+
+def test_openai_compatible_provider_rejects_truncated_stream() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'
+                'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+                "data: [DONE]\n\n"
+            ).encode("utf-8"),
+        )
+
+    provider = OpenAICompatibleProvider(
+        ProviderSettings(
+            name="cloud",
+            url="https://relay.invalid/v1/chat/completions",
+            model="gemini-3.7-flash",
+            timeout=2.0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderError, match="finish_reason=length"):
+        provider.generate(REQUEST)
+
+
+def test_openai_compatible_provider_rejects_embedded_sse_error_without_leaking_body() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"error":{"message":"sensitive upstream detail",'
+                '"type":"upstream_error","code":"rate_limit"}}\n\n'
+            ).encode("utf-8"),
+        )
+
+    provider = OpenAICompatibleProvider(
+        ProviderSettings(
+            name="cloud",
+            url="https://relay.invalid/v1/chat/completions",
+            model="gemini-3.7-flash",
+            timeout=2.0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(ProviderError, match="embedded provider error") as exc_info:
+        provider.generate(REQUEST)
+
+    assert "sensitive upstream detail" not in str(exc_info.value)
+
+
+def test_openai_compatible_provider_parses_valid_open_loop_metadata() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "下次当面继续。"}}],
+                "openLoop": {
+                    "action": "open",
+                    "loopId": "wizard:rune:Spring-14",
+                    "topic": "rune_review",
+                    "shortSummary": "线上留下了核对符文数据的话题",
+                },
+            },
+        )
+
+    provider = OpenAICompatibleProvider(
+        ProviderSettings(
+            name="cloud",
+            url="https://cloud.invalid/v1/chat/completions",
+            model="cloud-model",
+            timeout=2.0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = provider.generate(REQUEST)
+
+    assert result.open_loop is not None
+    assert result.open_loop.action == "open"
+    assert result.warnings == []
+
+
+def test_ollama_native_provider_discards_invalid_open_loop_metadata() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            json={
+                "message": {"role": "assistant", "content": "普通回复。"},
+                "openLoop": {
+                    "action": "open",
+                    "loopId": "wizard:rune:Spring-14",
+                    "topic": "rune_review",
+                    "shortSummary": "核对符文",
+                    "location": "WizardTower",
+                },
+            },
+        )
+
+    provider = OllamaNativeProvider(
+        ProviderSettings(
+            name="local",
+            url="http://127.0.0.1:11434/api/chat",
+            model="qwen3.5:9b",
+            timeout=2.0,
+            api_mode="ollama",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = provider.generate(REQUEST)
+
+    assert result.reply == "普通回复。"
+    assert result.open_loop is None
+    assert any("openLoop" in warning for warning in result.warnings)
 
 
 def test_openai_compatible_provider_posts_app_built_messages_unchanged() -> None:

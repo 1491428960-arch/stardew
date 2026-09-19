@@ -53,6 +53,17 @@ def test_request_accepts_nested_game_state_and_legacy_context_fields() -> None:
     assert request.history[0]["content"] == "上次见面时我问过天气。"
 
 
+def test_request_accepts_game_client_compact_prompt_flag() -> None:
+    request = DialogueTestRequest.model_validate(
+        {
+            **ROOT_PAYLOAD,
+            "compactPrompt": True,
+        }
+    )
+
+    assert request.compact_prompt is True
+
+
 def test_context_builder_merges_nested_state_and_legacy_top_level_fields() -> None:
     context = ContextBuilder(
         PersonaStore(Path(__file__).parents[2] / "data" / "personas")
@@ -161,6 +172,92 @@ def test_dialogue_passes_app_built_messages_to_provider_router(
     assert "legacy-mod" in rendered
     assert "玩家带来了紫色蘑菇" in rendered
     assert "上次见面时我问过天气。" in rendered
+
+
+def test_dialogue_uses_compact_prompt_when_game_client_requests_it(
+    monkeypatch: Any,
+) -> None:
+    app_module = importlib.import_module("stardew_ai_bridge.app")
+    router = RecordingRouter()
+
+    class RecordingPromptBuilder:
+        compact: bool | None = None
+        runtime_compact: bool | None = None
+
+        def build(
+            self,
+            context: dict[str, Any],
+            player_input: str,
+            *,
+            compact: bool = False,
+        ) -> list[dict[str, str]]:
+            del player_input
+            self.compact = compact
+            self.runtime_compact = context.get("_runtime_compact") is True
+            return [{"role": "system", "content": "captured prompt"}]
+
+    prompt_builder = RecordingPromptBuilder()
+    monkeypatch.setattr(app_module, "provider_router", router)
+    monkeypatch.setattr(app_module, "prompt_builder", prompt_builder)
+
+    response = TestClient(app_module.app).post(
+        "/api/dialogue/test",
+        json={
+            **ROOT_PAYLOAD,
+            "provider": "cloud",
+            "compactPrompt": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert prompt_builder.compact is True
+    assert prompt_builder.runtime_compact is True
+
+
+def test_compact_prompt_omits_structured_game_state_message_for_cloud_relay() -> None:
+    context = ContextBuilder().build(ROOT_PAYLOAD)
+    context["_runtime_compact"] = True
+
+    messages = PromptBuilder().build(
+        context,
+        ROOT_PAYLOAD["message"],
+        compact=True,
+    )
+
+    assert all(message.get("name") != "game_state" for message in messages)
+
+
+def test_regular_compact_prompt_keeps_game_state_for_quality_evaluation() -> None:
+    context = ContextBuilder().build(ROOT_PAYLOAD)
+
+    messages = PromptBuilder().build(
+        context,
+        ROOT_PAYLOAD["message"],
+        compact=True,
+    )
+
+    assert any(message.get("name") == "game_state" for message in messages)
+
+
+def test_runtime_compact_prompt_omits_large_interaction_cards_for_cloud_relay() -> None:
+    context = ContextBuilder().build(
+        {
+            **ROOT_PAYLOAD,
+            "channel": "remote",
+            "compactPrompt": True,
+        }
+    )
+    context["_runtime_compact"] = True
+
+    messages = PromptBuilder().build(
+        context,
+        ROOT_PAYLOAD["message"],
+        compact=True,
+    )
+    names = {message.get("name") for message in messages}
+
+    assert "interaction" not in names
+    assert "conversation_lead" not in names
 
 
 def test_topic_dialogue_does_not_pass_internal_topic_prompt_as_player_input(

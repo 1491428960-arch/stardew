@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import importlib.util
 import json
 from pathlib import Path
@@ -198,6 +199,183 @@ def test_eval_runs_three_turns_and_carries_real_replies_forward(
     assert summary["usage"]["totalTokens"] == 84
 
 
+def test_eval_canonicalizes_rasmodia_for_requests_context_and_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+    captured_npc_ids: list[str] = []
+
+    class CapturingProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del messages
+            captured_npc_ids.append(request.npc_id)
+            return ProviderResult(
+                reply="塔里的读数稳定了。你想先看哪一组？",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", CapturingProvider)
+    case = replace(
+        case_by_id("wizard-married-evening"),
+        npc_id="Rasmodia",
+        display_name="Rasmodia",
+        romance_eligible=None,
+    )
+
+    context = module._build_context(module.ContextBuilder(), case)
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    assert context["npcIdentity"]["npcId"] == "Wizard"
+    assert context["npcIdentity"]["displayName"] == "Rasmodia"
+    assert context["qualityContext"]["romanceEligible"] is True
+    assert captured_npc_ids
+    assert all(npc_id == "Wizard" for npc_id in captured_npc_ids)
+    assert record["npcId"] == "Wizard"
+    assert record["displayName"] == "Rasmodia"
+    assert record["romanceEligible"] is True
+
+
+def test_deep_flirt_eval_enables_natural_mode_without_changing_default_cases() -> None:
+    module = _load_eval_module()
+
+    deep_flirt_case = next(
+        case
+        for case in module.quality_cases_for_suite("deep-flirt")
+        if case.case_id == "deep-flirt-wizard-married"
+    )
+    deep_flirt_context = module._build_context(
+        module.ContextBuilder(),
+        deep_flirt_case,
+    )
+    default_context = module._build_context(
+        module.ContextBuilder(),
+        case_by_id("wizard-married-evening"),
+    )
+
+    assert deep_flirt_context["qualityContext"]["naturalMode"] is True
+    assert "naturalMode" not in default_context["qualityContext"]
+
+
+def test_relationship_gating_eval_uses_natural_role_calibration() -> None:
+    """事件前后只比较关系权限，不能让旧评测腔污染角色对白。"""
+
+    module = _load_eval_module()
+    cases = module.quality_cases_for_suite("relationship-stage-gating")
+
+    elliott = next(
+        case for case in cases if case.case_id == "relationship-gate-elliott-after"
+    )
+    elliott_context = module._build_context(module.ContextBuilder(), elliott)
+    assert elliott_context["qualityContext"]["naturalMode"] is True
+    assert (
+        elliott_context["qualityContext"]["styleCalibration"]
+        == "elliott_original_rhythm"
+    )
+
+    non_elliott = next(case for case in cases if case.npc_id != "Elliott")
+    non_elliott_context = module._build_context(
+        module.ContextBuilder(), non_elliott
+    )
+    assert non_elliott_context["qualityContext"]["naturalMode"] is True
+
+
+
+def test_eval_carries_turn_intent_and_stage_provenance_into_history(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+    captured_histories: list[list[dict[str, object]]] = []
+
+    class CapturingProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del messages
+            captured_histories.append([dict(item) for item in request.history])
+            return ProviderResult(
+                reply="我记下了。",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", CapturingProvider)
+    monkeypatch.setattr(
+        module,
+        "retry_for_format_noise",
+        lambda result, messages, generate: result,
+    )
+    case = CharacterQualityCase(
+        case_id="history-provenance",
+        profile_key="wizard",
+        npc_id="Wizard",
+        display_name="Rasmodia",
+        source_mods=("Romanceable Rasmodius",),
+        relationship_stage="dating",
+        channel="remote",
+        message="",
+        friendship_hearts=10,
+        relationship_context="Wizard 正在和玩家继续一段确认中的恋爱关系。",
+        turns=(
+            CharacterQualityTurn("turn-1", "先聊聊塔里的读数。", intent="chat"),
+            CharacterQualityTurn("turn-2", "切到研究话题。", intent="topic"),
+            CharacterQualityTurn("turn-3", "给你一枚物品。", intent="item"),
+        ),
+    )
+
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+    )
+
+    assert captured_histories[1][-2:] == [
+        {
+            "role": "user",
+            "content": "先聊聊塔里的读数。",
+            "intent": "chat",
+            "relationshipStage": "dating",
+        },
+        {
+            "role": "assistant",
+            "content": "我记下了。",
+            "intent": "chat",
+            "relationshipStage": "dating",
+        },
+    ]
+    assert captured_histories[2][-2:] == [
+        {
+            "role": "user",
+            "content": "切到研究话题。",
+            "intent": "topic",
+            "relationshipStage": "dating",
+        },
+        {
+            "role": "assistant",
+            "content": "我记下了。",
+            "intent": "topic",
+            "relationshipStage": "dating",
+        },
+    ]
+
+
 def test_eval_can_select_cloud_provider_from_environment(
     monkeypatch,
     tmp_path: Path,
@@ -241,6 +419,39 @@ def test_eval_can_select_cloud_provider_from_environment(
     assert settings.url == "https://api.openai.com/v1/chat/completions"
     assert settings.model == "gpt-5.6-terra"
     assert settings.api_key == "test-key"
+
+
+def test_eval_cloud_provider_defaults_to_google_gemini_endpoint_and_model(
+    monkeypatch,
+) -> None:
+    module = _load_eval_module()
+    captured: dict[str, object] = {}
+
+    class CapturingProvider:
+        def __init__(self, settings) -> None:
+            captured["settings"] = settings
+
+    for name in (
+        "BRIDGE_CLOUD_URL",
+        "BRIDGE_CLOUD_BASE_URL",
+        "BRIDGE_CLOUD_MODEL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(module, "OpenAICompatibleProvider", CapturingProvider)
+
+    module._build_provider(
+        "cloud",
+        endpoint=None,
+        model=None,
+        timeout=None,
+    )
+
+    settings = captured["settings"]
+    assert (
+        settings.url
+        == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    )
+    assert settings.model == "gemini-3.7-flash"
 
 
 def test_eval_cli_output_does_not_store_prompt_or_provider_secrets(
@@ -423,11 +634,11 @@ def test_eval_retries_format_noise_like_bridge(
             if len(calls) == 1:
                 reply = "**第三组稳定了。**"
             elif len(calls) == 2:
-                reply = "第三组稳定了，第二组还得重测。"
+                reply = "第三组稳定了，第二组还得重测。你想先看第二组还是第三组的记录？"
             elif len(calls) == 3:
-                reply = "第3轮第二组已处理。"
+                reply = "第二组先重测输入。你想先核对记录还是参数？"
             else:
-                reply = "第4轮记录已处理。"
+                reply = "记录看完了，结论我已经写下。你想先看哪一条？"
             return ProviderResult(
                 reply=reply,
                 provider="local",
@@ -446,7 +657,7 @@ def test_eval_retries_format_noise_like_bridge(
     assert summary["successful"] == 1
     assert len(calls) == 4
     assert calls[1][-1]["name"] == "format_retry"
-    assert record["reply"] == "第三组稳定了，第二组还得重测。"
+    assert record["reply"] == "第三组稳定了，第二组还得重测。你想先看第二组还是第三组的记录？"
     assert "response_format_retry: markdown" in record["warnings"]
 
 
@@ -583,14 +794,28 @@ def test_eval_topic_case_sends_empty_topic_without_polluting_player_history(
     assert captured_requests[1].history[-1] == {
         "role": "assistant",
         "content": "第1轮主动内容",
+        "intent": "topic",
+        "relationshipStage": "dating",
     }
     assert captured_requests[2].history[-2:] == [
-        {"role": "user", "content": case.dialogue_turns()[1].message},
-        {"role": "assistant", "content": "第2轮主动内容"},
+        {
+            "role": "user",
+            "content": case.dialogue_turns()[1].message,
+            "intent": "chat",
+            "relationshipStage": "dating",
+        },
+        {
+            "role": "assistant",
+            "content": "第2轮主动内容",
+            "intent": "chat",
+            "relationshipStage": "dating",
+        },
     ]
     assert captured_requests[2].history[-1] == {
         "role": "assistant",
         "content": "第2轮主动内容",
+        "intent": "chat",
+        "relationshipStage": "dating",
     }
     assert any(
         item.get("name") == "topic_response_contract"
@@ -613,8 +838,13 @@ def test_eval_topic_case_sends_empty_topic_without_polluting_player_history(
     assert any('"topicKeywords"' in item["content"] for item in captured_messages[0])
     assert any('"continuationMode"' in item["content"] for item in captured_messages[0])
     record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    assert [turn["turnPlan"]["mode"] for turn in record["turns"]] == [
+        "answer_plus_lead",
+        "answer_plus_lead",
+        "answer_plus_lead",
+    ]
     assert all(
-        "missing_proactive_affection" in turn["score"]["tags"]
+        "missing_proactive_affection" not in turn["score"]["tags"]
         for turn in record["turns"]
     )
     assert record["casePassed"] is False
@@ -686,6 +916,70 @@ def test_eval_adaptive_topic_case_generates_player_turns_after_each_npc_reply(
     assert captured[3][1][0]["name"] == "player_simulator"
 
 
+def test_adaptive_topic_scoring_uses_turn_plan_for_affection_diagnostic(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """普通找话题回合不应被旧的 proactive 诊断重新标成亲密失败。"""
+
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+
+    class PlainAdaptiveProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del request, messages
+            return ProviderResult(
+                reply="桌上的记录还在，我先把最后一页看完。",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", PlainAdaptiveProvider)
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-wizard-married-study"
+    )
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+        suite="topic-start-adaptive",
+        budget=module.EvaluationBudget(
+            max_cases=1,
+            max_requests=6,
+            max_npc_retries=1,
+            max_player_retries=0,
+            compact_prompt=True,
+            dynamic_player_input=False,
+        ),
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    assert [turn["turnPlan"]["mode"] for turn in record["turns"]] == [
+        "answer_only",
+        "answer_only",
+        "answer_only",
+    ]
+    assert all(
+        "missing_proactive_affection" not in turn["score"]["tags"]
+        for turn in record["turns"]
+    )
+    assert all(
+        "response_affection_retry: missing_proactive_affection"
+        not in turn["warnings"]
+        for turn in record["turns"]
+    )
+
+
 def test_player_simulator_prompt_is_reply_anchored_and_respects_control_boundary() -> None:
     if topic_start_adaptive_cases is None:
         raise AssertionError("topic-start-adaptive 案例套件尚未实现")
@@ -710,10 +1004,205 @@ def test_player_simulator_prompt_is_reply_anchored_and_respects_control_boundary
 
     assert "不能只摘抄一个词" in target_prompt
     assert "不要复述 NPC 原句" in target_prompt
-    assert "不要使用‘你刚才提到的……后来怎么样了’这类测试模板" in target_prompt
+    assert "不要使用‘你刚才提到的……后来怎么样了’这种固定句式" in target_prompt
     assert "最多 60 个汉字" in target_prompt
     assert "高亲密关系" in target_prompt
     assert "不调情、不升级关系" in control_prompt
+
+
+def test_adaptive_player_simulator_uses_one_plain_reaction_without_literary_analysis() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    target = topic_start_adaptive_cases()[0]
+    prompt = module._player_simulator_messages(
+        target,
+        previous_reply="今晚的月光很亮，我还在整理记录。",
+        history=[{"role": "assistant", "content": "今晚的月光很亮，我还在整理记录。"}],
+        turn_number=2,
+    )[0]["content"]
+
+    assert "像熟人随口接话" in prompt
+    assert "不要分析文学手法" in prompt
+    assert "不要连续问两个问题" in prompt
+    assert "不要复述对方完整比喻" in prompt
+    assert "无论 NPC 多文学，玩家都用普通口语" in prompt
+    assert "不要接着写景或改写意象" in prompt
+
+
+def test_adaptive_elliott_follow_ups_drop_inherited_affection_kinds() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+
+    assert [turn.initiative_kind for turn in case.dialogue_turns()[1:]] == [
+        "none",
+        "none",
+    ]
+
+
+def test_adaptive_player_prompt_prefers_plain_reaction_to_literary_analysis() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+    prompt = module._player_simulator_messages(
+        case,
+        previous_reply="月光落在纸边，我还在改最后一句。",
+        history=[{"role": "assistant", "content": "月光落在纸边，我还在改最后一句。"}],
+        turn_number=2,
+    )[0]["content"]
+
+    assert "文学分享时优先用日常口语接话" in prompt
+
+
+def test_adaptive_player_prompt_does_not_turn_a_concrete_line_into_a_literary_verdict() -> None:
+    """玩家模拟不能把 NPC 的一句具体话改写成评测式文学结论。"""
+
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-reading"
+    )
+    prompt = module._player_simulator_messages(
+        case,
+        previous_reply="我只记得那一行，船在雾里偏了方向，后来才看见灯塔。",
+        history=[
+            {
+                "role": "assistant",
+                "content": "我只记得那一行，船在雾里偏了方向，后来才看见灯塔。",
+            }
+        ],
+        turn_number=2,
+    )[0]["content"]
+
+    assert "先问具体内容或说第一反应" in prompt
+    assert "不要把一句话总结成‘什么都说了’或‘更有分量’" in prompt
+    assert "不要写成文学评论或普遍道理" in prompt
+
+
+def test_adaptive_cases_use_a_player_card_that_leaves_initiative_to_npc() -> None:
+    """自适应测试例应有稳定的玩家口吻，而不是把评测步骤写进对白。"""
+
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    target = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+    card = target.player_expression_card
+    assert card is not None
+    assert "渴望被爱" in card.relationship_stance
+    assert "不配得感" in card.relationship_stance
+    assert "说得太满" in card.self_correction
+    assert "把选择留给" in card.distance_pattern or "话头" in card.distance_pattern
+
+
+def test_adaptive_topic_opener_does_not_inherit_intimacy_opening_contract() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    target = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+    first_turn = target.dialogue_turns()[0]
+
+    assert first_turn.initiative_expectation == "none"
+    assert first_turn.initiative_kind == "none"
+    assert first_turn.turn_plan_mode == "answer_only"
+    assert "亲密邀约" not in first_turn.evaluation_focus
+
+
+def test_adaptive_player_prompt_exposes_card_and_discourages_scripted_flirt() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+    prompt = module._player_simulator_messages(
+        case,
+        previous_reply="信还在窗台上晾着，墨水没干。",
+        history=[{"role": "assistant", "content": "信还在窗台上晾着，墨水没干。"}],
+        turn_number=2,
+    )[0]["content"]
+
+    assert "玩家表达卡" in prompt
+    assert "渴望被爱" in prompt
+    assert "把话头留给 NPC" in prompt
+    assert "不要写成告白、情书或小诗" in prompt
+    assert "半句" in prompt
+    assert "帮忙" in prompt
+
+
+def test_adaptive_player_prompt_uses_one_choice_free_reaction_instead_of_a_menu() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+    prompt = module._player_simulator_messages(
+        case,
+        previous_reply="信还在窗台上晾着，墨水没干。",
+        history=[{"role": "assistant", "content": "信还在窗台上晾着，墨水没干。"}],
+        turn_number=2,
+    )[0]["content"]
+
+    assert "抓住一个点说自己的第一反应" in prompt
+    assert "可以回应、轻轻打趣或问一个小问题，也可以只回半句" not in prompt
+
+
+def test_adaptive_player_prompt_prefers_unpolished_phone_chat_over_ai_like_lines() -> None:
+    if topic_start_adaptive_cases is None:
+        raise AssertionError("topic-start-adaptive 案例套件尚未实现")
+
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in topic_start_adaptive_cases()
+        if item.case_id == "adaptive-topic-elliott-married-letter"
+    )
+    prompt = module._player_simulator_messages(
+        case,
+        previous_reply="写的时候我就知道它不太驯服，但删掉它，整封信就少了点真话。",
+        history=[
+            {
+                "role": "assistant",
+                "content": "写的时候我就知道它不太驯服，但删掉它，整封信就少了点真话。",
+            }
+        ],
+        turn_number=3,
+    )[0]["content"]
+
+    assert "像手机上临时想到就发的一小句普通话" in prompt
+    assert "不用追求机灵、暧昧或文采" in prompt
+    assert "不要把感受总结完整" in prompt
 
 
 def test_fake_player_input_uses_a_concrete_anchor_from_previous_reply() -> None:
@@ -946,6 +1435,93 @@ def test_eval_uses_detected_initiative_kind_for_affection_variation(
     assert second_turn["affectionVariation"]["mechanical"] is True
 
 
+def test_eval_marks_repeated_conversation_lead_as_failed_quality(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+
+    class RepeatedConversationLeadProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del request
+            player_input = next(
+                (
+                    item.get("content", "")
+                    for item in reversed(messages)
+                    if item.get("name") == "player_input"
+                ),
+                "",
+            )
+            reply = (
+                "新歌还是不错。你想先听完整的还是副歌？"
+                if "听起来怎么样" in player_input
+                else "新歌听起来不错。你想先听完整的还是副歌？"
+            )
+            return ProviderResult(
+                reply=reply,
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", RepeatedConversationLeadProvider)
+    monkeypatch.setattr(
+        module,
+        "retry_for_format_noise",
+        lambda result, messages, generate: result,
+    )
+    case = CharacterQualityCase(
+        case_id="conversation-lead-sophia-dating",
+        profile_key="sophia",
+        npc_id="Sophia",
+        display_name="Sophia",
+        source_mods=("Stardew Valley Expanded",),
+        relationship_stage="dating",
+        channel="remote",
+        message="",
+        friendship_hearts=10,
+        flirt_intensity="direct",
+        adult_consensual=True,
+        romance_eligible=True,
+        relationship_context="已确认恋爱关系，Sophia 想和玩家聊聊新歌。",
+        turns=(
+            CharacterQualityTurn(
+                "turn-1",
+                "新歌还不错吗？",
+                expected_terms=("歌",),
+            ),
+            CharacterQualityTurn(
+                "turn-2",
+                "新歌听起来怎么样？",
+                expected_terms=("歌",),
+            ),
+        ),
+    )
+
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    second_turn = record["turns"][1]
+    assert second_turn["conversationLeadVariation"]["mechanical"] is True
+    assert (
+        "mechanical_conversation_lead"
+        in second_turn["conversationLeadVariation"]["tags"]
+    )
+    assert second_turn["score"]["passed"] is False
+    assert "mechanical_conversation_lead" in second_turn["score"]["tags"]
+    assert "mechanical_conversation_lead" in record["progression"]["tags"]
+    assert record["casePassed"] is False
+
+
 def test_eval_adaptive_player_input_failure_is_reported_without_fake_npc_reply(
     monkeypatch,
     tmp_path: Path,
@@ -1004,6 +1580,181 @@ def test_eval_cli_parses_topic_suite_and_limit() -> None:
     assert args.limit == 3
 
 
+def test_eval_cli_defaults_to_the_resolved_profile_index_with_sophia_voice_data() -> None:
+    module = _load_eval_module()
+
+    args = module._parse_args([])
+
+    assert args.profile_index.name == (
+        "vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json"
+    )
+    voice_card = ProfileIndexStore(args.profile_index).voice_card(
+        "Sophia",
+        relationship_stage="married",
+    )
+    assert voice_card["voiceAnchors"]
+
+
+def test_eval_cli_parses_conversation_lead_suite() -> None:
+    module = _load_eval_module()
+
+    args = module._parse_args(["--suite", "conversation-lead"])
+
+    assert args.suite == "conversation-lead"
+
+
+def test_eval_cli_parses_affection_pacing_suite() -> None:
+    module = _load_eval_module()
+
+    args = module._parse_args(["--suite", "affection-pacing"])
+
+    assert args.suite == "affection-pacing"
+
+
+def test_eval_cli_parses_relationship_world_suite() -> None:
+    module = _load_eval_module()
+
+    args = module._parse_args(["--suite", "relationship-world", "--limit", "5"])
+
+    assert args.suite == "relationship-world"
+    assert args.limit == 5
+
+
+def test_eval_cli_parses_deep_flirt_suite() -> None:
+    module = _load_eval_module()
+
+    args = module._parse_args(["--suite", "deep-flirt", "--limit", "4"])
+
+    assert args.suite == "deep-flirt"
+    assert args.limit == 4
+
+
+def test_eval_builds_relationship_world_into_each_request() -> None:
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in module.quality_cases_for_suite("relationship-world")
+        if item.npc_id == "Shane"
+    )
+
+    request = module._build_request(case)
+
+    assert request.relationship_world is not None
+    assert request.relationship_world.views
+    assert request.relationship_world.objective_relationships == []
+    assert request.display_name == "珊恩"
+
+
+def test_eval_records_resolved_feminine_display_name(
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+    case = next(
+        item
+        for item in module.quality_cases_for_suite("relationship-world")
+        if item.npc_id == "Shane"
+    )
+
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+        provider="fake",
+        suite="relationship-world",
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    assert record["displayName"] == "珊恩"
+
+
+def test_eval_records_relationship_diagnostics_only_for_relationship_suite(
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+    case = module.quality_cases_for_suite("relationship-world")[0]
+
+    summary = module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case,),
+        provider="fake",
+        suite="relationship-world",
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    assert summary["suite"] == "relationship-world"
+    assert record["suite"] == "relationship-world"
+    assert all(
+        {
+            "relationshipVisibility",
+            "relationshipAcceptance",
+            "mediationStatus",
+            "jealousyTrigger",
+            "jealousyActive",
+        }.issubset(turn)
+        for turn in record["turns"]
+    )
+    assert "relationshipWorld" not in record
+
+    default_case = case_by_id("wizard-daily")
+    default_output = tmp_path / "default"
+    module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=default_output,
+        cases=(default_case,),
+        provider="fake",
+        suite="default",
+    )
+    default_record = json.loads(
+        (default_output / "results.jsonl").read_text(encoding="utf-8")
+    )
+    assert "relationshipVisibility" not in default_record["turns"][0]
+
+
+def test_eval_records_affection_pacing_fields_for_selected_suite(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+    cases = module.quality_cases_for_suite("affection-pacing")
+
+    class StableProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del request, messages
+            return ProviderResult(
+                reply="炉火还暖着，今晚先把记录放一放，过来坐一会儿。",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", StableProvider)
+    summary = module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=cases[:1],
+        suite="affection-pacing",
+    )
+
+    record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    assert summary["suite"] == "affection-pacing"
+    assert "affectionPacing" in summary
+    assert isinstance(summary["affectionPacing"]["eligibleTurns"], int)
+    assert record["suite"] == "affection-pacing"
+    assert "affectionPacing" in record
+    assert len(record["turns"]) == 3
+    assert all("affectionPacing" in turn for turn in record["turns"])
+
+
 def test_eval_cli_allows_fake_provider_for_offline_smoke() -> None:
     module = _load_eval_module()
 
@@ -1016,3 +1767,85 @@ def test_eval_cli_allows_fake_provider_for_offline_smoke() -> None:
         model=None,
         timeout=None,
     ).name == "fake"
+
+
+def test_eval_deep_flirt_fake_provider_carries_three_turn_history_for_dating_and_married(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """deep-flirt 的两种关系阶段都必须按三轮连续传递 NPC 回复。"""
+
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+    captured_requests = []
+    captured_messages = []
+
+    class FakeProvider:
+        name = "fake"
+
+        def generate(self, request, *, messages):
+            captured_requests.append(request)
+            captured_messages.append(messages)
+            turn_number = len(captured_requests)
+            return ProviderResult(
+                reply=f"fake-reply-{turn_number}",
+                provider="fake",
+                fallback=False,
+                latencyMs=0,
+            )
+
+    monkeypatch.setattr(
+        module,
+        "_build_provider",
+        lambda provider, *, endpoint, model, timeout: FakeProvider(),
+    )
+    cases = module.quality_cases_for_suite("deep-flirt")
+    selected_cases = (cases[0], cases[2])
+
+    summary = module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=selected_cases,
+        provider="fake",
+        suite="deep-flirt",
+    )
+
+    assert summary["suite"] == "deep-flirt"
+    assert summary["caseCount"] == 2
+    assert summary["successfulTurns"] == 6
+    assert len(captured_requests) == 6
+    assert len(captured_messages) == 6
+
+    for case_index, case in enumerate(selected_cases):
+        request_group = captured_requests[case_index * 3 : case_index * 3 + 3]
+        assert [request.message for request in request_group] == [
+            turn.message for turn in case.dialogue_turns()
+        ]
+        assert all(request.channel == "face_to_face" for request in request_group)
+        assert all(
+            not (item.get("role") == "user" and item.get("content") == "")
+            for request in request_group
+            for item in request.history
+        )
+        assert request_group[1].history[-1]["content"] == "fake-reply-" + str(
+            case_index * 3 + 1
+        )
+        assert request_group[2].history[-1]["content"] == "fake-reply-" + str(
+            case_index * 3 + 2
+        )
+
+    record_lines = (tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()
+    records = [json.loads(line) for line in record_lines if line.strip()]
+    assert len(records) == 2
+    assert all(record["suite"] == "deep-flirt" for record in records)
+    assert all(len(record["turns"]) == 3 for record in records)
+    assert all(
+        all(turn["playerInputSource"] == "fixed" for turn in record["turns"])
+        for record in records
+    )
+    assert all(
+        "initiativeExpectation" in turn and "initiativeKind" in turn
+        for record in records
+        for turn in record["turns"]
+    )
