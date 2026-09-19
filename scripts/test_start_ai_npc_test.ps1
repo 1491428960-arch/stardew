@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $scriptRoot = Split-Path -Parent $PSScriptRoot
 $cmdPath = Join-Path $PSScriptRoot 'start_ai_npc_test.cmd'

@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $sanitizerPath = Join-Path $PSScriptRoot 'sanitize_fast_test_save.ps1'
 $script:passed = 0

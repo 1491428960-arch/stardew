@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $scriptPath = Join-Path $PSScriptRoot 'start_visual_test.ps1'
 $pwsh = (Get-Command pwsh -ErrorAction Stop).Source

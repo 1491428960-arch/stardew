@@ -1,0 +1,6 @@
+﻿# 分发形态的锁（优先级高于 core.autocrlf 与个人配置）
+# Windows 脚本必须 CRLF，且 .ps1 需 UTF-8 BOM，否则 PowerShell 5.1 会乱码；
+# 判断口径永远是 git ls-files --eol 的 i/ 列（索引内 = 别人 clone 到的）。
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf

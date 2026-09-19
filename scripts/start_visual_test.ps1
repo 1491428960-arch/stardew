@@ -1,4 +1,4 @@
-<#[
+﻿<#[
 .SYNOPSIS
     启动 FastTest 的真实游戏引擎视觉测试，并验证截图、manifest 与 DLL 哈希。
 

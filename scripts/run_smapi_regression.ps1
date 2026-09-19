@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     只读执行 AI NPC 的 SMAPI 回归前检查，并在用户明确要求时启动 SMAPI。
 

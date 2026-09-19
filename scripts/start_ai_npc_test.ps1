@@ -1,4 +1,4 @@
-<#[
+﻿<#[
 .SYNOPSIS
     一键启动 Bridge 和 Stardew AI NPC 快速测试 profile。
 
