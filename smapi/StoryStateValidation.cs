@@ -238,12 +238,15 @@ public static class StoryStateValidation
             errors.Add("topic is required");
         }
 
-        if (!string.Equals(openLoop.OriginChannel, "remote", StringComparison.Ordinal))
+        // 频道名统一走常量：此前这两处写的是字面量，而同一代码库的
+        // ConversationModels.ConversationChannel 已有 Remote/FaceToFace——
+        // 改常量值时会静默漏掉字面量（2026-09-20 跨层重复扫描发现）。
+        if (!string.Equals(openLoop.OriginChannel, ConversationChannel.Remote, StringComparison.Ordinal))
         {
             errors.Add("originChannel must be remote");
         }
 
-        if (!string.Equals(openLoop.NextChannel, "face_to_face", StringComparison.Ordinal))
+        if (!string.Equals(openLoop.NextChannel, ConversationChannel.FaceToFace, StringComparison.Ordinal))
         {
             errors.Add("nextChannel must be face_to_face");
         }
