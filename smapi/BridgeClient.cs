@@ -411,7 +411,13 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         // （2026-09-20 用户反馈）。此前这里**无条件**拒绝，于是 GroupDialogueMenu
         // 侧发起的开场请求在这一层被兜底掉——而且它发生在发 HTTP 之前，
         // 所以 Bridge 侧完全看不到那次请求，排查时极具误导性。
-        if (!allowEmptyMessage && string.IsNullOrWhiteSpace(request.Message))
+        //
+        // ⚠️ 这里必须与 Bridge 侧 `GroupDialogueRequest._validate_group_shape` 保持
+        // **同一条规则**：空消息只在**历史也为空**时才是开场。两处规则不同就会产生
+        // “SMAPI 放行、Bridge 422” 这种静默不一致——本次的开场问题正是这类不一致
+        // 的表现，所以两边一起改，并由 GroupOpeningBridgeClientTests 钉住。
+        if (string.IsNullOrWhiteSpace(request.Message) &&
+            (!allowEmptyMessage || (request.History?.Count ?? 0) > 0))
         {
             return BridgeGroupDialogueResponse.Offline("bridge: message empty");
         }

@@ -56,6 +56,20 @@ public sealed class GroupOpeningBridgeClientTests
         "围绕最近发现的矿石聊聊",
         Array.Empty<GroupDialogueHistoryEntry>());
 
+    private static GroupDialogueRequest RequestWithHistory(string message) => new(
+        message,
+        new[]
+        {
+            new GroupDialogueParticipant("Abigail", "Abigail"),
+            new GroupDialogueParticipant("Sebastian", "Sebastian"),
+        },
+        "矿洞传闻",
+        "围绕最近发现的矿石聊聊",
+        new[]
+        {
+            new GroupDialogueHistoryEntry("player", "player", "你们好啊"),
+        });
+
     private static (BridgeClient Client, StubHandler Handler) Build()
     {
         var handler = new StubHandler();
@@ -115,6 +129,33 @@ public sealed class GroupOpeningBridgeClientTests
         var (client, handler) = Build();
 
         var response = await client.SendGroupAsync(Request("你们周末干嘛？"));
+
+        Assert.NotNull(handler.Request);
+        Assert.False(response.Fallback);
+    }
+
+    [Fact]
+    public async Task An_opening_flag_with_history_is_still_rejected()
+    {
+        // 与 Bridge 侧保持**同一条规则**：空消息只有在历史也为空时才是开场。
+        // 两处规则不同的话，就会出现「SMAPI 放行、Bridge 422」这种静默不一致
+        // —— 2026-09-20 的开场问题正是这类不一致造成的，所以这里提前钉住。
+        var (client, handler) = Build();
+
+        var response = await client.SendGroupAsync(
+            RequestWithHistory(string.Empty), allowEmptyMessage: true);
+
+        Assert.True(response.Fallback);
+        Assert.Empty(response.Turns);
+        Assert.Null(handler.Request);
+    }
+
+    [Fact]
+    public async Task A_real_message_with_history_is_still_sent()
+    {
+        var (client, handler) = Build();
+
+        var response = await client.SendGroupAsync(RequestWithHistory("那你们呢？"));
 
         Assert.NotNull(handler.Request);
         Assert.False(response.Fallback);
