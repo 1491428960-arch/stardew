@@ -379,7 +379,8 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
 
     public async Task<BridgeGroupDialogueResponse> SendGroupAsync(
         GroupDialogueRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowEmptyMessage = false)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -406,7 +407,11 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             return BridgeGroupDialogueResponse.Offline("bridge: active speaker invalid");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Message))
+        // 空消息只在「开场」语义下合法：玩家接受邀约后一句话都没说，由 NPC 起头
+        // （2026-09-20 用户反馈）。此前这里**无条件**拒绝，于是 GroupDialogueMenu
+        // 侧发起的开场请求在这一层被兜底掉——而且它发生在发 HTTP 之前，
+        // 所以 Bridge 侧完全看不到那次请求，排查时极具误导性。
+        if (!allowEmptyMessage && string.IsNullOrWhiteSpace(request.Message))
         {
             return BridgeGroupDialogueResponse.Offline("bridge: message empty");
         }

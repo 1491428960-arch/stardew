@@ -272,7 +272,10 @@ public sealed class GroupDialogueMenu : IClickableMenu
             "auto");
         try
         {
-            pendingRequest.Start(bridgeClient.SendGroupAsync(request, cancellationSource.Token));
+            pendingRequest.Start(bridgeClient.SendGroupAsync(
+                request,
+                cancellationSource.Token,
+                allowEmptyMessage: opening));
         }
         catch (Exception exception)
         {
@@ -302,7 +305,21 @@ public sealed class GroupDialogueMenu : IClickableMenu
         if (response.Fallback || next.Invitation.Status != GroupInvitationStatus.Completed)
         {
             session = next;
-            hint = "这次没有可用回复，公开历史未写入，可以重试。";
+            // 排障辅助（2026-09-20 起常驻）：把失败的关键事实压成一行放进 hint，
+            // 它直接画在菜单上、玩家可见，不需要额外的日志管线。
+            // 之所以保留而不是用完就删——「无可用回复」本身是异常情况，而这串信息
+            // 上一次直接把排查从“反复猜测”变成了“一眼看出”（当时缺 warn 字段，
+            // 正是它藏着 "bridge: message empty" 这个真正的原因）。
+            var diag = string.Join(
+                " ",
+                $"fb={response.Fallback}",
+                $"n={response.Turns.Count}",
+                $"spk=[{string.Join("|", response.Turns.Select(t => t.SpeakerNpcId))}]",
+                $"len=[{string.Join("|", response.Turns.Select(t => (t.Content ?? string.Empty).Length))}]",
+                $"add=[{string.Join("|", response.Turns.Select(t => (t.AddressedTo?.Count ?? 0)))}]",
+                $"warn=[{string.Join("|", response.Warnings)}]",
+                $"roster=[{string.Join("|", session.Invitation.Participants)}]");
+            hint = $"无可用回复({diag})。可以重试。";
             return;
         }
 
