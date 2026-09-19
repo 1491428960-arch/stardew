@@ -1,0 +1,70 @@
+{
+ "schemaVersion": 1,
+ "source": "存档 Wofs_412086775 的 player.friendshipData",
+ "note": "只有 friendshipData 里有记录的 NPC 才能进入聊天与群聊，因此气泡元素的适用范围以此名单为准，而不是索引里的全部可聊天角色。",
+ "count": 47,
+ "npcs": [
+  "Lewis",
+  "Robin",
+  "Pierre",
+  "Gus",
+  "Abigail",
+  "Harvey",
+  "Sam",
+  "Sophia",
+  "Haley",
+  "Willy",
+  "Shane",
+  "Leah",
+  "Andy",
+  "Elliott",
+  "Caroline",
+  "Demetrius",
+  "Linus",
+  "Marnie",
+  "Clint",
+  "Penny",
+  "Victor",
+  "Olivia",
+  "Vincent",
+  "Jas",
+  "Jodi",
+  "MarlonFay",
+  "Wizard",
+  "Alex",
+  "Maru",
+  "Sebastian",
+  "Evelyn",
+  "George",
+  "Pam",
+  "Emily",
+  "MermaidLantana",
+  "Claire",
+  "Martin",
+  "Dwarf",
+  "MorrisTod",
+  "GuntherSilvian",
+  "Sandy",
+  "Susan",
+  "Krobus",
+  "Kent",
+  "Henchman",
+  "Scarlett",
+  "SVE_Henchman"
+ ],
+ "mergeGroups": [
+  {
+   "members": [
+    "Henchman",
+    "SVE_Henchman"
+   ],
+   "note": "同一个随从的两个 ID，共用一套元素"
+  }
+ ],
+ "aliases": {
+  "GuntherSilvian": "Gunther",
+  "MarlonFay": "Marlon",
+  "MorrisTod": "Morris",
+  "MermaidLantana": "Mermaid"
+ }
+}
