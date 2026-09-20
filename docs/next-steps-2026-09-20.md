@@ -5,7 +5,7 @@
 
 ## A. 需要你拍板或动手
 
-### A1. 正式环境部署（唯一没验过的环节）
+### A1. 正式环境部署 ✅ **已于 2026-09-20 完成**（用户授权后部署并经真机验证，见第 164／168／170 项）
 - **做什么**：把 `smapi/bin/Debug/net6.0/StardewAI.NPC.dll` 装进正式 `Mods`，用你自己的存档跑一遍群聊（F9 → 接受邀约或自由发起 → 发消息）。
 - **为什么**：至今所有游戏内证据都来自 FastTest 隔离 profile + 测试存档 `test_447101921`；正式 Mods、正式存档、正式 Bridge 组合一次都没跑过。
 - **怎么验证**：游戏内能看到多人各说一句、邀约状态变化、`SMAPI-latest.txt` 无异常；如需机读证据可用 `/api/quality/results` 或诊断文件。
@@ -33,7 +33,7 @@
 | B4 | ~~清理死代码~~ **✅ 已于第 180 项删除（`test_page.py`，102 行）** | `bridge/src/stardew_ai_bridge/test_page.py`（102 行 `TEST_PAGE_HTML`）全仓库无引用者 | 删除前先全仓 grep 确认无引用（已做过一次） |
 | B5 | 五个菜单的 `DrawButton` 重复实现（**建议暂不做**） | 实测共 **5 处**：`GroupDialogueHubMenu` / `GroupDialogueMenu` / `GroupParticipantMenu` / `InventoryItemPicker` 四者实现**完全相同**（白底、禁用变灰），`ChatInputMenu` 另有彩色 `tint` 参数。若做，需引入 `ActionButtonMenuBase`（按钮底纹依赖 `IClickableMenu.drawTextureBox`，它是 protected static，普通静态类调不到）。**不建议在无法真机验证时做**：收益仅约 32 行重复，却要改 4～5 个 UI 类（含核心聊天界面），按钮渲染出错无法被单测发现 | 改完必须跑一次游戏内视觉场景（`group-hub`/`group-free`）确认按钮外观与点击坐标都没变 |
 | B6 | ~~把 `group-send` 的三人名单换成游戏内存在的角色~~ **✅ 已于 2026-09-20 00:42 完成** | 原三人名单含 Sophia，而 FastTest 存档未装 SVE，导致 `groupRequestStateCount=2` 而非 3 | **待真机确认**：跑 `group-send`（新目录），看 `groupRequestStateCount=3` |
-| B7 | 给"游戏内验证"补一个不发声的开关说明 | 目前视觉 harness 自动静音，但启动瞬间仍可能有一声 | 文档说明即可，或后续做 Core Audio 层面的按进程静音 |
+| B7 | ~~给"游戏内验证"补一个不发声的开关说明~~ **✅ 已于第 181 项写进 handoff §4.1** | 目前视觉 harness 自动静音，但启动瞬间仍可能有一声 | 文档说明即可，或后续做 Core Audio 层面的按进程静音 |
 | B8 | 视需要扩充非重点角色的行为样例 | 行为样例分布高度不均：Wizard/Sophia/Shane/Sebastian/Alex 五个角色占 173/251 条（69%），其余 39 个角色各仅 2 条。目前靠"角色专属校准卡"（如 Elliott 的节奏卡）弥补；若群聊里非重点角色的对白质量明显落后，可考虑扩样例 | 扩充后跑角色质量评测对照（⚠️ **先看 B14**：`run_character_quality_eval.py` 是唯一**没有云端确认门且成本最高**的入口，单 NPC 评测累计约 5,514 万 tokens——要跑请先确认预算与授权）；样例需带 `sourceMods` 与原文依据 |
 | B9 | 统一**三处“同概念多实现”**：**✅ ③ `_string_list` 已于第 136 项统一**；①②（事件匹配／usage 合并）仍待定 | **✅ ③ 的当前状态**：元素规则已与 `behavior_quality` 版一致（只接受真字符串、`bytes`／`bytearray`／`Mapping` 整体拒绝、非字符串项丢弃；**返回类型仍为 `list[str]`**，因为 7 个调用点里 4 个用 `extend`，`None` 会 TypeError）。两个“差异说明”测试已改写成“已统一”契约。**①② 仍待定且都无实际影响**。以下是三处的原始记录：今晚查出三处结构性隐患，都用测试固化了差异、**未改代码**：① **事件匹配**——`story_state._matches_event` 拆**候选**的命名空间前缀（`mod.pack:56` ↔ `56` 认），`relationship_gating._event_id_matches` 只匹配**基线**前缀（同一组不认）；② **usage 合并**——`app._merge_provider_usages` 给**部分和**（缺字段的条目跳过、其余照常累加），`group_conversation._merge_usage` 给**保守值**（有一条缺该字段就整体 `None`）；③ **`_string_list`**——`story_state` 版总是返回 list、把非字符串项 `str()` 后保留（对 `bytes` 会产出 `["97","98"]` 这种"看着正常其实错"的数据），`behavior_quality` 版用 `None` 表示"格式不对"、丢弃非字符串项、排除 Mapping/bytes（更严谨）。三者**当前都无实际影响**（调用方输入受控），但都属"将来改一处忘另一处就会静默不一致" | 统一后删掉对应的"差异说明"测试即可；若保持现状，至少不要再引入第四套实现 |
 | B10 | ~~统一两套脱敏的敏感键集合~~ **✅ 已于第 93 项修复** | **当前状态**：两套 `_SENSITIVE_KEYS` 已是**同一组 10 个语义键**（源码在 `behavior_quality.py:59-70` 与 `prompts.py:704-715`，第 93 项实测归一化后完全一致）；且测试已改成“正向 + 关系断言”，**将来再加键加固不会再失败**。以下现象描述**保留为历史，不要照着施工**：第四处"同概念多实现"（前三处见 B9）。两套脱敏**各漏一边**：`behavior_quality.sanitize_quality_artifact`（脱敏**写盘工件**）**不认 `password`／`secret`**，会原样保留并写进 `artifacts/`；`prompts._sanitize_value`（脱敏**进 Prompt 的内容**）**不认 `cookie`／`payload`／`prompt`／`bearer`**，会原样带进 Prompt。另有键归一化方向相反、命中后一个置 `"[已省略]"` 一个丢弃键、替换文案与元组处理不同（共五处差异，已由 `bridge/tests/test_secret_key_conventions.py` 固化）。**风险面有限**：`artifacts/` 已被 gitignore、不入库，且需模型被诱导输出敏感字段才触发 | 最小改动是把两边的 `_SENSITIVE_KEYS` 取并集（会增加脱敏范围，属行为变更，需跑全量测试确认没有下游依赖被脱敏掉的字段）；统一后删掉 `test_secret_key_conventions.py` 里的差异断言 |

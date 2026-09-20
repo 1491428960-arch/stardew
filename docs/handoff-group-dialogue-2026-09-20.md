@@ -56,6 +56,13 @@
 产物：`<名>.png`（菜单截图）、`<名>.json`（manifest：回合数、记忆计数等）、`<名>-diagnostics.json`、`audio-mute.json`。
 **每次必须换新 OutputPath**（脚本拒绝覆盖）。
 
+**关于静音（跑之前该知道的事）**：harness 会**自动把本次运行静音**，但**启动瞬间仍可能漏出一声**。
+
+- **怎么静的**：`VisualTestHarness.MuteAudio` 只改**本次进程的运行时音量**——把 `musicVolumeLevel` / `soundVolumeLevel` / `ambientVolumeLevel` / `footstepVolumeLevel` 四个字段清零，然后**必须调 `initializeVolumeLevels()`**（游戏把音量等级换算成分类音量缓存在那里，只改字段不调它，**正在播放的音乐仍按旧缓存音量出声**，实测如此），再反射调 `musicCategory` / `ambientCategory` / `soundCategory` / `footstepCategory` 四个分类的 `SetVolume(0)`。证据写在产物的 `audio-mute.json` 里。
+- **不动全局设置**：改的是进程内 `Game1.options`，**不会写回你的游戏音量配置**。
+- **为什么还可能有一声**：执行时机是尽量早的（Mod 加载时，早于 `GameLaunched`），因为**游戏在标题界面就会开始放音乐**；但**从进程启动到那一刻之间**仍有一个窗口，音乐可能已经起头。
+- **想彻底消除**：需要在 **Core Audio 层面按进程静音**（例如对进程调用 `ISimpleAudioVolume`），**目前没做**——所以跑视觉测试时若听到一声，是预期内现象，不是 bug。
+
 ### 4.2 云端批次
 
 ```powershell
