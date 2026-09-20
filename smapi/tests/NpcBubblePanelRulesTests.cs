@@ -22,7 +22,7 @@ public sealed class NpcBubblePanelRulesTests
     [Fact]
     public void Fill_base_matches_the_export_script_constant()
     {
-        // 与 scripts/export_npc_bubble_assets.py::BUBBLE_TEX_BASE 同源，改一处必须同步另一处。
+        // 与 bridge 的 npc_bubble_tint.py::BUBBLE_TEX_BASE 同源，改一处必须同步另一处。
         Assert.Equal(new Color(253, 188, 110), NpcBubblePanelRules.FillBase);
     }
 

@@ -47,7 +47,8 @@ public static class NpcBubblePanelRules
 
     /// <summary>
     /// 填充基准色 <c>#fdbc6e</c>：九宫格中心块（被拉伸的那块）的主色，
-    /// 与 <c>scripts/export_npc_bubble_assets.py::BUBBLE_TEX_BASE</c> 同源。
+    /// 与 <c>stardew_ai_bridge.npc_bubble_tint::BUBBLE_TEX_BASE</c> 同源（Python 侧的唯一定义处；
+    /// C# 不能 import Python，此处是跨语言复刻，改一处必须同步另一处）。
     /// </summary>
     public static readonly Color FillBase = new(253, 188, 110);
 

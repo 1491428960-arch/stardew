@@ -26,21 +26,26 @@ from __future__ import annotations
 
 import base64
 import io
+import sys
 from collections import Counter
 from pathlib import Path
 
 from PIL import Image
 
 ROOT = Path(r"E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory")
+sys.path.insert(0, str(ROOT / "bridge" / "src"))
+
+# 基准色只有一处：bridge 侧的 npc_bubble_tint（九宫格中心块主色 #fdbc6e）。
+# 那边用它反推 tint、这边用它定描边色相 —— 此前这里自带一份同值副本，靠注释人工同步；
+# 现在直接 import，改一处就是改两处。
+from stardew_ai_bridge.npc_bubble_tint import BUBBLE_TEX_BASE  # noqa: E402
+
 GAME = Path(r"D:\sbeam\steamapps\common\Stardew Valley\Content (unpacked)")
 SOURCE = GAME / "Maps/MenuTiles.png"
 SOURCE_BOX = (0, 256, 60, 316)          # Maps\MenuTiles.xnb (0,256,60,60)
 TARGET = ROOT / "bridge/src/stardew_ai_bridge/npc_bubble_texture.py"
 PREVIEW_DIR = ROOT / ".tmp/ui-preview"
 
-# 与 scripts/export_npc_bubble_assets.py::BUBBLE_TEX_BASE 同源：九宫格中心块主色 #fdbc6e。
-# 两边必须一致 —— 那边用它反推 tint，这边用它定描边色相，否则设计色会对不上。
-BUBBLE_TEX_BASE = (253, 188, 110)
 # 描边饱和度 ≈0.97、填充 ≈0.55，两档分明，阈值取中间。
 EDGE_SATURATION = 0.75
 
@@ -156,7 +161,7 @@ def _module_source(
     )
     return f'''"""气泡专用的 MenuTiles 九宫格变体（自动生成，勿手改）。
 
-气泡底是 `IClickableMenu.drawTextureBox(Maps\\MenuTiles (0,256,60,60), tint)` 画出来的，
+气泡底是 `IClickableMenu.drawTextureBox(Maps\\\\MenuTiles (0,256,60,60), tint)` 画出来的，
 最终色 = 纹理色 × tint ÷ 255。这块贴图**自带的描边是红橙色**（(177,78,5)，饱和度 0.97、
 B 通道只有 5）：白 tint 下面板/按钮是木框本色，没问题；可角色气泡的 tint 是紫红/靛蓝
 这类深色，描边的 B 通道乘完仍是 5×84÷255 ≈ 2 —— 「紫红底色」旁边就围了一圈**橙红**的边。
@@ -172,7 +177,7 @@ B 通道只有 5）：白 tint 下面板/按钮是木框本色，没问题；可
 * 描边映射：{edges}
 * 填充 {sum(kept.values())} px（{len(kept)} 色）**逐像素原样保留**，纹理色差不受影响；
 * 只改这一块 60×60 裁剪 —— 面板 / 按钮 / 凹槽共用的那份贴图原封不动；
-* 与 `scripts/export_npc_bubble_assets.py::BUBBLE_TEX_BASE` 同源，改一处必须同步另一处。
+* 基准色取自 `stardew_ai_bridge.npc_bubble_tint::BUBBLE_TEX_BASE`（脚本直接 import，不是副本）。
 
 生成脚本：scripts/build_bubble_texture.py（只读游戏解包目录，幂等）
 源 {SOURCE.name} → 60x60，png {len(raw)}B
