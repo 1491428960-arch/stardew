@@ -3096,7 +3096,10 @@ def build_group_voice_cards(
             context = {}
         if not isinstance(context, Mapping):
             continue
-        identity = context.get("identity", {})
+        # 2026-09-20 修（语义层审计）：这里此前读 "identity"，而 ContextBuilder 实际写的是
+        # "npcIdentity"（见同文件的其它读取点）——于是 tone / sentencePattern /
+        # signatureMoves 永远取不到，群聊回退路径的声线卡只剩 topicHints 与锚点。
+        identity = context.get("npcIdentity", {})
         identity = identity if isinstance(identity, Mapping) else {}
         voice_style = identity.get("voiceStyle", {})
         voice_style = voice_style if isinstance(voice_style, Mapping) else {}

@@ -43,13 +43,18 @@ def test_app_merge_sums_complete_entries() -> None:
     assert (merged.input_tokens, merged.output_tokens, merged.total_tokens) == (15, 3, 18)
 
 
-def test_app_merge_keeps_a_partial_sum_when_one_entry_misses_a_field() -> None:
+def test_app_merge_leaves_a_field_empty_when_one_entry_misses_it() -> None:
+    """2026-09-20（语义层审计）统一口径。
+
+    此前私聊逐字段累加、群聊保守，同一上游两条路径给出不同结果。
+    现统一到**保守口径**：只要有一个 chunk 没报该字段就留空——
+    token 用量用于成本统计，「缺失」比「偏小」安全。
+    """
     merged = _merge_provider_usages([_usage(10, 2, 12), _usage(5)])
 
     assert merged is not None
     assert merged.input_tokens == 15
-    # 与 group_conversation 的口径相反：这里仍给出已观测到的 output/total。
-    assert (merged.output_tokens, merged.total_tokens) == (2, 12)
+    assert (merged.output_tokens, merged.total_tokens) == (None, None)
 
 
 def test_app_merge_omits_fields_that_no_entry_reported() -> None:
@@ -71,7 +76,7 @@ def test_app_merge_ignores_none_entries_among_real_ones() -> None:
 # --- 差异本身（group 侧自身的行为见 test_group_usage_merge.py）-------------
 
 
-def test_the_two_mergers_disagree_on_partially_reported_fields() -> None:
+def test_the_two_mergers_agree_on_partially_reported_fields() -> None:
     usages = [_usage(10, 2, 12), _usage(5)]
 
     app_side = _merge_provider_usages(usages)
@@ -80,6 +85,6 @@ def test_the_two_mergers_disagree_on_partially_reported_fields() -> None:
     assert app_side is not None and group_side is not None
     # 两边都报了的字段，口径一致
     assert app_side.input_tokens == group_side.input_tokens == 15
-    # 只有部分条目报了的字段，两边口径不同
-    assert app_side.output_tokens == 2
+    # 只有部分条目报了的字段，两边都留空（保守口径：缺失比偏小安全）
+    assert app_side.output_tokens is None
     assert group_side.output_tokens is None

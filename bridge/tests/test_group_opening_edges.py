@@ -242,3 +242,24 @@ def test_no_invitation_means_an_empty_object() -> None:
 
     assert json.loads(scene["content"])["invitation"] == {}
 
+def test_limit_warnings_caps_and_keeps_guard_entries() -> None:
+    """回归保护（2026-09-20 语义层审计）。
+
+    群聊响应此前直接 `warnings=warnings` 不截断，而 models.py 声明 max_length=20，
+    累积超过 20 条时 pydantic 校验失败 → 端点 500（私聊有 _limit_warnings，群聊没有）。
+    现在两边共用 group_conversation.limit_warnings。
+    """
+    from stardew_ai_bridge.group_conversation import limit_warnings
+
+    many = [f"provider: note {index}" for index in range(30)]
+    capped = limit_warnings(many)
+    assert len(capped) == 20
+    # 保留的是末尾（最新的）
+    assert capped[-1] == "provider: note 29"
+
+    # guard 类警告必须保留，即使它在很前面
+    mixed = ["response_guard: 越界"] + [f"provider: note {index}" for index in range(30)]
+    kept = limit_warnings(mixed)
+    assert len(kept) == 20
+    assert "response_guard: 越界" in kept
+

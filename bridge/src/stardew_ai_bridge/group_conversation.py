@@ -616,10 +616,10 @@ class GroupConversationService:
             fallback=any(result.fallback for result in provider_results),
             turns=turns,
             providerCalls=len(provider_results),
-            providerErrors=provider_errors,
+            providerErrors=limit_warnings(provider_errors),
             fallbackCount=sum(result.fallback for result in provider_results),
             latencyMs=int((perf_counter() - started_at) * 1000),
-            warnings=warnings,
+            warnings=limit_warnings(warnings),
             usage=_merge_usage([result.usage for result in provider_results]),
             memoryHighlights=memory_highlights[:_MAX_MEMORY_HIGHLIGHTS],
         )
@@ -730,12 +730,39 @@ class GroupConversationService:
             return [], [], retried, f"{first_error}；重试后仍失败：{exc}"
 
 
+# 响应里 warnings / providerErrors 的条数上限（与 models.py 的 max_length 对齐）。
+# 2026-09-20 修（语义层审计）：这条截断此前只有私聊路径做（app.py 的 _limit_warnings），
+# 群聊直接原样返回，累积超过 20 条时 pydantic 校验失败 → 端点 500。
+_WARNING_LIMIT = 20
+
+
+def limit_warnings(warnings: Iterable[str]) -> list[str]:
+    """保留 guard 类警告与末尾若干条，总数不超过 _WARNING_LIMIT。"""
+    values = list(warnings)
+    guard_indices = [
+        index
+        for index, warning in enumerate(values)
+        if warning.startswith(("response_guard:", "fallback_guard:"))
+    ]
+    selected = set(guard_indices[-_WARNING_LIMIT:])
+    for index in range(len(values) - 1, -1, -1):
+        if len(selected) >= _WARNING_LIMIT:
+            break
+        selected.add(index)
+    return [values[index] for index in sorted(selected)]
+
+
 def _merge_usage(usages: list[ProviderUsage | None]) -> ProviderUsage | None:
     present = [item for item in usages if item is not None]
     if not present:
         return None
 
     def total(field: str) -> int | None:
+        # 保守口径：只要有一个 chunk 没报该字段，就不给这个字段一个偏小的数。
+        #
+        # 2026-09-20（语义层审计）：私聊的 `_merge_provider_usages` 此前是逐字段累加，
+        # 两边口径不同。**统一到这里的保守口径**——token 用量用于成本统计，
+        # 「缺失」比「偏小」安全，调用方能从 None 看出数据不全。
         values = [getattr(item, field) for item in present]
         return sum(values) if all(value is not None for value in values) else None
 

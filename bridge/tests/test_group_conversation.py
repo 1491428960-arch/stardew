@@ -327,7 +327,7 @@ def test_build_group_voice_cards_reuses_the_single_npc_pipeline() -> None:
         def build(self, payload, source_mods=(), **values):
             calls.append(dict(payload))
             return {
-                "identity": {
+                "npcIdentity": {
                     "npcId": payload["npcId"],
                     "voiceStyle": {
                         "tone": "轻快、跳拍",
@@ -376,12 +376,12 @@ def test_group_messages_reuse_the_single_npc_role_cards() -> None:
     from stardew_ai_bridge.group_conversation import build_group_messages
 
     sophia_card = [
-        {"role": "system", "name": "identity", "content": "你是 Sophia"},
+        {"role": "system", "name": "npcIdentity", "content": "你是 Sophia"},
         {"role": "system", "name": "voice_card", "content": "sophia voice"},
         {"role": "user", "content": "我昨天路过葡萄园。"},
     ]
     emily_card = [
-        {"role": "system", "name": "identity", "content": "你是 Emily"},
+        {"role": "system", "name": "npcIdentity", "content": "你是 Emily"},
         {"role": "system", "name": "voice_card", "content": "emily voice"},
         {"role": "user", "content": "我昨天路过葡萄园。"},
     ]
@@ -410,8 +410,8 @@ def test_group_messages_reuse_the_single_npc_role_cards() -> None:
 def test_group_messages_turn_based_only_uses_the_active_speaker_card() -> None:
     from stardew_ai_bridge.group_conversation import build_group_messages
 
-    sophia_card = [{"role": "system", "name": "identity", "content": "你是 Sophia"}]
-    emily_card = [{"role": "system", "name": "identity", "content": "你是 Emily"}]
+    sophia_card = [{"role": "system", "name": "npcIdentity", "content": "你是 Sophia"}]
+    emily_card = [{"role": "system", "name": "npcIdentity", "content": "你是 Emily"}]
 
     messages = build_group_messages(
         participants=[{"npcId": "Sophia"}, {"npcId": "Emily"}],
@@ -504,8 +504,8 @@ def test_multi_turn_scene_card_states_group_specific_dialogue_rules() -> None:
         participants=[{"npcId": "Sophia"}, {"npcId": "Emily"}],
         active_npc_id="Sophia",
         participant_prompts={
-            "sophia": [{"role": "system", "name": "identity", "content": "你是 Sophia"}],
-            "emily": [{"role": "system", "name": "identity", "content": "你是 Emily"}],
+            "sophia": [{"role": "system", "name": "npcIdentity", "content": "你是 Sophia"}],
+            "emily": [{"role": "system", "name": "npcIdentity", "content": "你是 Emily"}],
         },
         strategy="multi_turn",
         turn_count=3,

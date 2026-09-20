@@ -167,21 +167,27 @@ def _limit_warnings(warnings: Iterable[str]) -> list[str]:
 def _merge_provider_usages(
     usages: Iterable[ProviderUsage | None],
 ) -> ProviderUsage | None:
-    """合计同一轮内所有真实上游请求的用量；缺失字段仍保持缺失。"""
+    """合计同一轮内所有真实上游请求的用量。
 
-    totals: dict[str, int] = {}
-    has_usage = False
-    for usage in usages:
-        if usage is None:
-            continue
-        has_usage = True
-        for field_name in ("input_tokens", "output_tokens", "total_tokens"):
-            value = getattr(usage, field_name)
-            if value is not None:
-                totals[field_name] = totals.get(field_name, 0) + value
-    if not has_usage:
+    保守口径：只要有一个 chunk 没报某个字段，该字段就留空。
+    2026-09-20（语义层审计）统一——此前私聊逐字段累加、群聊保守，
+    同一上游两条路径给出不同结果。token 用量用于成本统计，
+    「缺失」比「偏小」安全，调用方能从 None 看出数据不全。
+    """
+
+    present = [usage for usage in usages if usage is not None]
+    if not present:
         return None
-    return ProviderUsage(**totals)
+
+    def total(field_name: str) -> int | None:
+        values = [getattr(usage, field_name) for usage in present]
+        return sum(values) if all(value is not None for value in values) else None
+
+    return ProviderUsage(
+        input_tokens=total("input_tokens"),
+        output_tokens=total("output_tokens"),
+        total_tokens=total("total_tokens"),
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
