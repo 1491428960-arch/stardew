@@ -142,9 +142,14 @@ h1 { margin: 10px 0 12px; font-size: clamp(1.5rem, 2.6vw, 2.1rem); font-weight: 
   content: "此处为游戏画面示意（菜单叠在场景之上）"; position: absolute; left: 10px; bottom: 8px;
   color: rgba(255,255,255,.34); font-size: 12px; letter-spacing: .04em; pointer-events: none;
 }
-.stage.f8::before {
-  /* ChatInputMenu.DrawBackdrop：整屏遮罩（现走 MenuSkinRules.ScrimAlpha，改前是 Color.Black * 0.42f） */
-  content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.42);
+/* 整屏遮罩：F8（ChatInputMenu.DrawBackdrop）、F9（GroupDialogueMenu.draw）、
+   群聊中心（GroupDialogueHubMenu.draw）**三处都调** MenuSkinDrawing.DrawScrim，
+   强度是同一个常量 Color.Black * MenuSkinRules.ScrimAlpha。
+   改前 F8 是 Color.Black * 0.42f，而 F9 与中心完全没有遮罩 —— 那层差异是
+   「三个界面不像一家人」里最容易被忽略的一条。数值按 C# 逐字写：
+   MenuSkinRules.cs:69 ScrimAlpha = 0.28f → rgba(0,0,0,.28)。 */
+.stage.f8::before, .stage.f9::before, .stage.hub::before {
+  content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.28);
 }
 
 /* 游戏字体近似：字号 17.5px 来自 bubble-f9.png 实测的中文全角字宽。
@@ -302,18 +307,21 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>私聊消息区 / 角色面板</td><td>消息区高 max(40, footer.Y-header.Bottom-16)；宽≥240+280+8 时右侧开 280×min(112,高) 的角色面板</td><td><code>ChatLayoutRules.cs:72-93</code></td></tr>
           <tr><td>私聊按钮</td><td>footer 宽≥600 → gap 8，发送 96、找话题 128、物品 104、结束 96，全部同高贴底</td><td><code>ChatLayoutRules.cs:95-130</code></td></tr>
           <tr><td>私聊 header 画不画</td><td>两个开关都返回 true（2026-09-20 外壳重构后）</td><td><code>ChatLayoutRules.cs:188,191</code></td></tr>
-          <tr><td>私聊标题带</td><td>竖条 <code>(header.X+12, header.Y+12, 4, 20)</code> 取角色强调色（<code>AccentFor</code>，查不到角色回退默认紫 <code>(176,146,242)</code>）；标题 <code>(header.X+24, header.Y+9)</code> 走 <code>Ink</code>；状态字 <code>(header.X+40+⌈标题宽⌉, header.Y+11)</code> 走 <code>InkSoft</code>；发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>，色 <code>(150,96,48)×0.55f</code></td><td><code>MenuSkinDrawing.DrawTitleBand</code>、<code>MenuSkinRules.cs:71-123</code>（令牌 TitleBarInset 12 / TitleBarWidth 4 / TitleBarHeight 20 / TitleTextGap 12 / StatusTextGap 16 / TitleTextOffsetY −3 / StatusTextOffsetY −1 / RuleInset 12 / RuleBottomOffset 14 / RuleHeight 2、Ink / InkSoft / RuleColor）</td></tr>
+          <tr><td>私聊标题带</td><td>竖条 <code>(header.X+12, header.Y+12, 4, 20)</code> 取角色强调色（<code>AccentFor</code>，查不到角色回退默认紫 <code>(176,146,242)</code>）；标题 <code>(header.X+24, header.Y+9)</code> 走 <code>Ink</code>；状态字 <code>(header.X+40+⌈标题宽⌉, header.Y+11)</code> 走 <code>InkSoft</code>；发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>，色 <code>(150,96,48)×0.55f</code> ——
+              ⚠ 那是 XNA 的预乘写法（RGB 与 alpha 一起乘），实际是 <code>Color(82,52,26,140)</code>，
+              网页上的等价写法是 <code>rgba(82,52,26,140/255)</code>（见页面里 <code>RULE_COLOR_CSS</code> 的推导）</td><td><code>MenuSkinDrawing.DrawTitleBand</code>、<code>MenuSkinRules.cs:71-123</code>（令牌 TitleBarInset 12 / TitleBarWidth 4 / TitleBarHeight 20 / TitleTextGap 12 / StatusTextGap 16 / TitleTextOffsetY −3 / StatusTextOffsetY −1 / RuleInset 12 / RuleBottomOffset 14 / RuleHeight 2、Ink / InkSoft / RuleColor）</td></tr>
+          <tr><td>三个界面的遮罩</td><td>三处都画整屏 <code>Color.Black * ScrimAlpha</code>，实测把底下的游戏画面压暗到 72%（改前 F8 是 0.42f、F9 与中心<b>完全没有</b>遮罩）</td><td><code>MenuSkinDrawing.DrawScrim</code>、<code>MenuSkinRules.cs:69</code>（ScrimAlpha = 0.28f）；调用点 <code>ChatInputMenu.cs:635</code>、<code>GroupDialogueMenu.cs:162</code>、<code>GroupDialogueHubMenu.cs:119</code></td></tr>
           <tr><td>标题带的强调色来源</td><td>角色强调色与气泡、徽章同一份数据：<code>NpcBubbleStyle.Accent</code>（由 <code>npc_bubble_elements.py</code> 的 <code>palette.accent</code> 导出）。Sophia = <code>#f292d2</code></td><td><code>MenuSkinDrawing.AccentFor</code> / <code>NpcBubbleStyle.cs:11-22,54</code></td></tr>
           <tr><td>群聊面板</td><td>w=min(1120, max(680, 视口宽-48))；h=min(720, max(430, 视口高-48))</td><td><code>GroupDialogueLayoutRules.cs:32-35</code></td></tr>
           <tr><td>群聊 header / footer</td><td>header 高 min(118, 面板高)；footer 高 min(104, 面板高) 贴底、左右内缩 20</td><td><code>GroupDialogueLayoutRules.cs:42-44</code></td></tr>
           <tr><td>群聊参与者条</td><td>(header.X+20, header.Bottom-48, header.W-40, min(32, header.H-20))</td><td><code>GroupDialogueLayoutRules.cs:45-49</code></td></tr>
           <tr><td>群聊消息区</td><td>(panel.X+20, header.Bottom, panel.W-40, footer.Y-header.Bottom-12)，一次最多 10 条</td><td><code>GroupDialogueLayoutRules.cs:28,50-54</code></td></tr>
           <tr><td>群聊按钮</td><td>发送 / 重试 / 关闭 各 88 宽、gap 8，贴 footer 右端</td><td><code>GroupDialogueLayoutRules.cs:56-66</code></td></tr>
-          <tr><td>群聊标题 / 参与者文字</td><td>(header.X+12, header.Y+10) 与 (participantStrip.X, participantStrip.Y)</td><td><code>GroupDialogueMenu.draw</code></td></tr>
+          <tr><td>群聊标题 / 参与者文字</td><td>标题走与私聊<b>同一句</b> <code>DrawTitleBand(layout.Header, "线上多人对话", null, AccentFor(participants[0].NpcId))</code> → 竖条 <code>(header.X+12, header.Y+12, 4, 20)</code>、标题 <code>(header.X+24, header.Y+9)</code>、发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>；参与者行 <code>(participantStrip.X, participantStrip.Y)</code> 走 <code>InkSoft</code></td><td><code>GroupDialogueMenu.cs:170-176</code>、<code>MenuSkinDrawing.DrawTitleBand</code>（改前标题只在 <code>(header.X+12, header.Y+10)</code> 一行裸文字）</td></tr>
           <tr><td>群聊底部提示</td><td>(messageArea.X+12, messageArea.Bottom-28)</td><td><code>GroupDialogueMenu.draw</code>（提示行分支）</td></tr>
           <tr><td>推送气泡的起点</td><td>左 = messageArea.X+12，右 = messageArea.Right-12，首条 y = messageArea.Y+12</td><td><code>GroupDialogueMenu.draw</code>（bubbleLeft / bubbleRight）</td></tr>
           <tr><td>中心面板</td><td>w=min(1080, max(680, 视口宽-48))；h=min(680, max(440, 视口高-48))</td><td><code>GroupDialogueHubLayoutRules.cs:15-16</code></td></tr>
-          <tr><td>中心标题 / 首行 / 行距</td><td>标题 (panel.X+32, panel.Y+24)；首行 y=panel.Y+94；每行 92 高、步进 104</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
+          <tr><td>中心标题 / 首行 / 行距</td><td>标题同样走 <code>DrawTitleBand</code>，header 是 <code>new Rectangle(panel.X, panel.Y, panel.W, HubTitleBandHeight = 74)</code> → 竖条 <code>(panel.X+12, panel.Y+12, 4, 20)</code>、标题 <code>(panel.X+24, panel.Y+9)</code>、发丝线 <code>(panel.X+12, panel.Y+60, panel.W-24, 2)</code>（74 − 14）；首行 y=panel.Y+94；每行 92 高、步进 104</td><td><code>GroupDialogueHubMenu.cs:126-131</code>、<code>MenuSkinRules.cs:237</code>（改前标题只在 <code>(panel.X+32, panel.Y+24)</code> 一行裸文字）</td></tr>
           <tr><td>中心卡片文字</td><td>(row.X+18, row.Y+14/42/66)：标题·参与者为黑、主题为 DarkSlateGray、状态为 DimGray</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
           <tr><td>中心按钮</td><td>接受 / 稍后 / 忽略 各 64×52、gap 6、行长 18 处对齐右端；关闭 148×56 贴右下</td><td><code>GroupInvitationActionLayoutRules.cs:15-18</code>、<code>GroupDialogueHubLayoutRules.cs:26-29</code></td></tr>
           <tr><td>中心底部提示 / 空态</td><td>hint (panel.X+32, panel.Bottom-112)；空态 (panel.X+40, panel.Y+94)</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
@@ -683,6 +691,13 @@ __FRAME_SCRIPT__
     return { panel, closeButton: { x: panel.x + panel.w - 180, y: buttonY, w: 148, h: 56 } };  // :27-30
   }
 
+  // MenuSkinRules.HubTitleBandHeight —— smapi/MenuSkinRules.cs:237
+  // 群聊中心标题带的固定高度；C# 用它当 DrawTitleBand 的 header 矩形：
+  //   new Rectangle(panel.X, panel.Y, panel.Width, HubTitleBandHeight)
+  // 分隔线因此落在 panel.Y + 74 - 14 = panel.Y + 60（TitleRule 的 RuleBottomOffset）。
+  // listTop 与首行 y 也同值（panel.Y + 74 / panel.Y + 94），三处引用同一个数。
+  const HUB_TITLE_BAND_HEIGHT = 74;
+
   // GroupInvitationActionLayoutRules —— smapi/GroupInvitationActionLayoutRules.cs:15-67
   const INVITATION_BUTTON = { width: 64, gap: 6, height: 52, topOffset: 18 };  // :15-18
   const actionRowX = (row) => row.x + row.w - INVITATION_BUTTON.width * 3 - INVITATION_BUTTON.gap * 2;  // :21-24
@@ -899,14 +914,21 @@ __FRAME_SCRIPT__
     const bar = rectEl(parent, { x: barX, y: barY, w: 4, h: 20 }); // TitleBarWidth / TitleBarHeight
     bar.style.background = rgb(accent);
     bar.style.zIndex = "3";
+    // data-band：给自动化核对（含 /test/ui-redesign 的同一套核对）留的锚点，
+    // 值就是 MenuSkinRules 里的令牌名，页面渲染不受影响。
+    bar.dataset.band = "bar";
 
     // TitleTextPosition：横 barX + TitleTextGap(12)，纵 barY + TitleTextOffsetY(-3)
-    textAt(parent, barX + 12, barY - 3, title, GAME_BLACK).style.zIndex = "3";
+    const titleEl = textAt(parent, barX + 12, barY - 3, title, GAME_BLACK);
+    titleEl.style.zIndex = "3";
+    titleEl.dataset.band = "title";
 
     if (status) {
       // StatusTextPosition：barX + TitleTextGap(12) + ceil(标题宽) + StatusTextGap(16)，纵 barY + StatusTextOffsetY(-1)
       const statusX = barX + 12 + Math.ceil(measureText(title)) + 16;
-      textAt(parent, statusX, barY - 1, status, DIM_GRAY, "g-sm").style.zIndex = "3";
+      const statusEl = textAt(parent, statusX, barY - 1, status, DIM_GRAY, "g-sm");
+      statusEl.style.zIndex = "3";
+      statusEl.dataset.band = "status";
     }
 
     // TitleRule：距 header 左右各内缩 RuleInset(12)、底边之上 RuleBottomOffset(14)、高 RuleHeight(2)
@@ -918,6 +940,7 @@ __FRAME_SCRIPT__
     });
     rule.style.background = RULE_COLOR_CSS;
     rule.style.zIndex = "3";
+    rule.dataset.band = "rule";
   }
 
   // ── 气泡（ChatBubbleDrawing.Draw）──
@@ -1270,7 +1293,15 @@ __FRAME_SCRIPT__
 
     // 面板：MenuSkinDrawing.DrawPanel(Color.White) —— GroupDialogueMenu.draw
     nineSlice(stage, L.panel, [255, 255, 255], MENU_TEX).style.zIndex = "1";
-    textAt(stage, L.header.x + 12, L.header.y + 10, "线上多人对话", GAME_BLACK).style.zIndex = "3"; // draw 的标题带
+    // 标题带（GroupDialogueMenu.draw:170-175 → MenuSkinDrawing.DrawTitleBand）：
+    // 竖条 (header.X+12, header.Y+12, 4, 20) + 标题 (header.X+24, header.Y+9)
+    // + 发丝线 (header.X+12, header.Bottom-14, header.W-24, 2)，强调色取第一位参与者
+    // （C# 是 MenuSkinDrawing.AccentFor(participants[0].NpcId)）。
+    // 改前这里只在 (header.X+12, header.Y+10) 画一行裸文字 —— 既没有竖条也没有分隔线。
+    titleBand(
+      stage, L.header, "线上多人对话", null,
+      parseColor(styleFor(s.participants[0]).accent, DEFAULT_ACCENT),
+    );
     textAt(stage, L.participantStrip.x, L.participantStrip.y, s.participants.join("、"), DIM_GRAY).style.zIndex = "3"; // draw 的参与者行（MenuSkinRules.InkSoft）
 
     // 消息区（GroupDialogueMenu.draw）
@@ -1312,7 +1343,17 @@ __FRAME_SCRIPT__
   function renderHub(vw, vh) {
     const L = hubLayout(vw, vh);
     nineSlice(stage, L.panel, [255, 255, 255], MENU_TEX).style.zIndex = "1";   // GroupDialogueHubMenu.draw（面板）
-    textAt(stage, L.panel.x + 32, L.panel.y + 24, "线上多人对话", GAME_BLACK).style.zIndex = "3"; // draw 的标题带
+    // 标题带（GroupDialogueHubMenu.draw:126-131 → MenuSkinDrawing.DrawTitleBand）：
+    // C# 传的 header 是 panel 顶部那条固定高度的带
+    //   new Rectangle(panel.X, panel.Y, panel.W, MenuSkinRules.HubTitleBandHeight = 74)，
+    // 于是竖条 (panel.X+12, panel.Y+12, 4, 20)、标题 (panel.X+24, panel.Y+9)、
+    // 发丝线 (panel.X+12, panel.Y+74-14, panel.W-24, 2)。
+    // 强调色取第一张邀约卡的第一位参与者（C# 是 visibleInvitations[0].Participants.FirstOrDefault()）。
+    // 改前这里只在 (panel.X+32, panel.Y+24) 画一行裸文字。
+    titleBand(
+      stage, { x: L.panel.x, y: L.panel.y, w: L.panel.w, h: HUB_TITLE_BAND_HEIGHT }, "线上多人对话", null,
+      parseColor(styleFor(SAMPLE.hub[0].participants[0]).accent, DEFAULT_ACCENT),
+    );
 
     let y = L.panel.y + 94;   // draw 的首行 y
     for (const invitation of SAMPLE.hub) {
@@ -1363,8 +1404,12 @@ __FRAME_SCRIPT__
     return k;
   }
 
+  // 三个界面都有一层 DrawScrim（改前只有 F8 有），类名只用来标注当前是哪个界面；
+  // 遮罩本身写在 CSS 的 .stage.f8/.f9/.hub::before 上，三处同值。
+  const VIEW_CLASS = { chat: "f8", group: "f9", hub: "hub" };
+
   function render() {
-    stage.className = "stage" + (state.view === "chat" ? " f8" : "");
+    stage.className = `stage ${VIEW_CLASS[state.view]}`;
     stage.style.width = state.width + "px";
     stage.style.height = state.height + "px";
     stage.replaceChildren();

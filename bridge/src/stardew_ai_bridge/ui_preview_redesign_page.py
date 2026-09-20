@@ -196,7 +196,8 @@ h1 { margin: 9px 0 10px; font-size: clamp(1.4rem, 2.4vw, 1.95rem); font-weight: 
   content: "此处为游戏画面示意"; position: absolute; left: 9px; bottom: 7px;
   color: rgba(255,255,255,.3); font-size: 12px; pointer-events: none;
 }
-/* ChatInputMenu.DrawBackdrop：整屏遮罩（现走 MenuSkinRules.ScrimAlpha；新设计统一为轻遮罩） */
+/* 整屏遮罩：F8 / F9 / 中心三处都画 MenuSkinDrawing.DrawScrim
+   （Color.Black * MenuSkinRules.ScrimAlpha = 0.28f）；改前只有 F8 有，且是 0.42f */
 .scrim { position: absolute; inset: 0; background: #000; }
 
 /* 游戏字体近似：字号 17.5px 来自 bubble-f9.png 实测的中文全角字宽（与 /test/ui 同源） */
@@ -358,8 +359,10 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           </tr>
           <tr>
             <td>标题栏</td>
-            <td>F8 的 header 算得出 92px 高，但两个开关都是 false，<b>什么都不画</b>——面板顶部留一条空白；
-                F9 的标题在 <code>(header.X+12, header.Y+10)</code>；中心的标题在 <code>(panel.X+32, panel.Y+24)</code></td>
+            <td><b>改前</b>：F8 的 header 算得出 92px 高，但两个开关都是 false，<b>什么都不画</b>——面板顶部留一条空白；
+                F9 的标题在 <code>(header.X+12, header.Y+10)</code>；中心的标题在 <code>(panel.X+32, panel.Y+24)</code>。
+                <br>本项 2026-09-20 已落地：三处现在都走 <code>DrawTitleBand</code>，
+                本页左右两栏画法一致（竖条 + 标题 + 发丝线，几何见下方第二节第 3 项）</td>
             <td>三处统一：角色强调色竖条 + 标题 + 右侧状态字，标题下一条<b>发丝分隔线</b></td>
             <td>F8 顶部那条空白是「脏」的主要来源之一；加上标题后三个界面的第一眼结构一致，
                 竖条让「现在跟谁说话」有个视觉锚点</td>
@@ -414,7 +417,8 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           <tr>
             <td>配色</td>
             <td>三档文字色混用：<code>Color.Black</code> / <code>DarkSlateGray</code>(47,79,79) / <code>DimGray</code>(105,105,105)；
-                F8 有 42% 黑遮罩，F9 与中心没有</td>
+                <b>改前</b> F8 有 42% 黑遮罩，F9 与中心没有（本项已落地：三处都走
+                <code>MenuSkinDrawing.DrawScrim</code>，同一个 <code>ScrimAlpha = 0.28f</code>）</td>
             <td>文字收敛为两档（<code>Black</code> + <code>DimGray</code>）；三处遮罩统一成 28%</td>
             <td><code>DarkSlateGray</code> 偏青，压在暖橙底上会发灰发脏；两档足够表达层次。
                 遮罩统一后三个界面「浮在画面上的高度」一致，这是风格割裂里最容易被忽略的一条</td>
@@ -450,8 +454,15 @@ ul.plain b { color: var(--soft); font-weight: 600; }
             <td>3. 标题带</td>
             <td>① 强调竖条：<code>b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, 4, 20), accentColor)</code>；
                 ② 标题 / 状态：<code>b.DrawString(Game1.smallFont, ..., Color.Black / Color.DimGray)</code>；
-                ③ 分隔线：<code>b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, w, 1), new Color(150, 96, 48) * 0.55f)</code></td>
-            <td><span class="ok">精确</span>：<code>fadeToBlackRect</code> 是 1×1 白纹理，原版到处用它画纯色矩形</td>
+                ③ 分隔线：<code>b.Draw(Game1.fadeToBlackRect, new Rectangle(x, y, w, RuleHeight), new Color(150, 96, 48) * 0.55f)</code>
+                —— 高度是 <code>MenuSkinRules.RuleHeight = 2</code>（<code>MenuSkinRules.cs:99</code>），<b>不是 1</b></td>
+            <td><span class="ok">精确</span>：<code>fadeToBlackRect</code> 是 1×1 白纹理，原版到处用它画纯色矩形。
+                <br><span class="flag">颜色要按预乘读</span>：XNA 的 <code>Color * float</code> 把 RGB 与 alpha
+                <b>一起乘</b>（逐通道相乘后取整），所以 <code>new Color(150, 96, 48) * 0.55f</code> 实际是
+                <code>Color(82, 52, 26, 140)</code>；网页上的等价写法因此是
+                <code>rgba(82,52,26,140/255)</code>，而不是 <code>rgba(150,96,48,.55)</code> —— 后者叠在
+                <code>#ffc576</code> 面板上得 <code>rgb(197,141,80)</code>，比 C# 的 <code>rgb(160,117,68)</code>
+                亮 37 个色阶（换算与实测见 <code>SKIN.rule</code> 的注释）</td>
           </tr>
           <tr>
             <td>4. 输入框去深色带</td>
@@ -484,9 +495,13 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           </tr>
           <tr>
             <td>8. 统一轻遮罩</td>
-            <td>F9 / 中心补一句 <code>b.Draw(Game1.fadeToBlackRect, viewportRect, Color.Black * 0.28f)</code>；
-                F8 把现有 <code>0.42f</code> 改成 <code>0.28f</code></td>
-            <td><span class="ok">精确</span>：F8 现有代码就是这个写法，照搬</td>
+            <td>抽一句 <code>MenuSkinDrawing.DrawScrim</code>（<code>b.Draw(Game1.fadeToBlackRect,
+                viewportRect, Color.Black * MenuSkinRules.ScrimAlpha)</code>），三处界面各调一次；
+                F8 原来的 <code>0.42f</code> 一并收敛到这个常量</td>
+            <td><span class="ok">精确</span>：F8 现有代码就是这个写法，照搬；常量
+                <code>ScrimAlpha = 0.28f</code>（<code>MenuSkinRules.cs:69</code>）三处同值，
+                调用点 <code>ChatInputMenu.cs:635</code> / <code>GroupDialogueMenu.cs:162</code> /
+                <code>GroupDialogueHubMenu.cs:119</code></td>
           </tr>
           <tr>
             <td>9. 卡片文字并两行</td>
@@ -551,9 +566,10 @@ ul.plain b { color: var(--soft); font-weight: 600; }
         <tbody>
           <tr>
             <td>遮罩强度</td>
-            <td><b>统一 26%</b></td>
-            <td>比 F8 现在的 42% 轻（不压抑），但给了 F9 与中心「浮起来」的感觉（原本完全没有）。
-                同一个数、三个界面 —— 最省事也最自洽</td>
+            <td><b>统一 28%</b></td>
+            <td>比改前 F8 的 42% 轻（不压抑），但给了 F9 与中心「浮起来」的感觉（改前完全没有遮罩）。
+                同一个数、三个界面 —— 最省事也最自洽。本稿最初写 26%，落地时定为
+                <code>MenuSkinRules.ScrimAlpha = 0.28f</code>，本页已按落地值改齐</td>
             <td>按介入深度分档（F8 34% / 中心 26% / F9 18%）：更讲究，但多一个需要解释的规则</td>
           </tr>
           <tr>
@@ -747,7 +763,7 @@ __FRAME_SCRIPT__
   };
   const GAME_BLACK = [0, 0, 0];
   const GAME_GRAY = [128, 128, 128];            // Color.Gray —— 按钮禁用 tint
-  const DARK_SLATE_GRAY = [47, 79, 79];         // Color.DarkSlateGray —— 现状在用的次级文字色
+  const DARK_SLATE_GRAY = [47, 79, 79];         // Color.DarkSlateGray —— **改前**的次级文字色（现状已统一到 InkSoft，这里只作记录）
   const DIM_GRAY = [105, 105, 105];             // Color.DimGray —— 新设计统一后的次级文字色
   const DARK_SLATE_BLUE = [72, 61, 139];
   const DARK_BUBBLE_TEXT = [243, 240, 252];     // ChatBubbleDrawing.DarkBubbleText
@@ -769,8 +785,25 @@ __FRAME_SCRIPT__
     btnDisabled: GAME_GRAY,
     ink: GAME_BLACK,
     inkSoft: DIM_GRAY,
-    rule: [150, 96, 48], ruleAlpha: 0.55,
-    scrim: 0.26,
+    /**
+     * 标题带底部的发丝分隔线。
+     *
+     * C# 是 `MenuSkinRules.RuleColor = new Color(150, 96, 48) * 0.55f`。
+     * ⚠ **XNA 的 `Color * float` 把 RGB 与 alpha 一起乘**（Color.cs 的 operator*，逐通道
+     * 相乘后 `(int)` 截断）：(150,96,48,255) × 0.55 → **Color(82, 52, 26, 140)**。
+     * 而 SpriteBatch 的 AlphaBlend 是 `src = One / dst = InverseSourceAlpha`，
+     * 且 tint 直接乘在 1×1 白纹理（Game1.fadeToBlackRect）上 ——
+     * 所以网页上的等价写法是「**预乘后的 RGB** + alpha 140/255」，也就是下面的值。
+     *
+     * ⚠ 不要写成 `rgba(150,96,48,.55)` —— 那是「原色 + 55% 透明」，没把预乘算进去：
+     * 叠在 #ffc576 面板上得 rgb(197,141,80)，比 C# 的 rgb(160,117,68) 亮 37 个色阶。
+     * 写法与推导与 /test/ui 的 RULE_COLOR_CSS 同源（那边已按同一份换算写下）。
+     */
+    rule: [82, 52, 26], ruleAlpha: 140 / 255,
+    // 整屏遮罩强度：C# 落地值是 MenuSkinRules.ScrimAlpha = 0.28f（三处 ChatInputMenu /
+    // GroupDialogueMenu / GroupDialogueHubMenu 共用一句 DrawScrim）。
+    // 本稿最初推荐 26%，落地时定为 28% —— 以 C# 为准，页面跟着改成同一个数。
+    scrim: 0.28,
     // 卡片几何**一点不动**（92 / 104）。原本想让卡片加高到 116 来避开下边框，
     // 实测发现这条路走不通：九宫格 slice 20 意味着「面板 20 + 凹槽 20 + 卡片 20」三层边框，
     // 1280×720 下加高后每屏只能放 3 张（现在 4 张），1600×900 也一样 —— 拿「少看一张邀约」
@@ -891,6 +924,12 @@ __FRAME_SCRIPT__
     const panel = centeredInViewport(vw, vh, panelWidth, panelHeight, true);
     return { panel, closeButton: { x: panel.x + panel.w - 180, y: panel.y + panel.h - 76, w: 148, h: 56 } };
   }
+
+  // MenuSkinRules.HubTitleBandHeight —— smapi/MenuSkinRules.cs:237
+  // 群聊中心标题带的固定高度，C# 直接拿它当 DrawTitleBand 的 header 高：
+  //   new Rectangle(panel.X, panel.Y, panel.Width, HubTitleBandHeight)
+  // 分隔线因此落在 panel.Y + 74 − 14 = panel.Y + 60（TitleRule 的 RuleBottomOffset）。
+  const HUB_TITLE_BAND_HEIGHT = 74;
 
   const INVITATION_BUTTON = { width: 64, gap: 6, height: 52, topOffset: 18 };   // GroupInvitationActionLayoutRules.cs:15-18
   const actionRowX = (row) => row.x + row.w - INVITATION_BUTTON.width * 3 - INVITATION_BUTTON.gap * 2;
@@ -1192,19 +1231,25 @@ __FRAME_SCRIPT__
     const bar = rectEl(stage, { x: barX, y: barY, w: 4, h: 20 });
     bar.style.background = rgb(accent);
     bar.style.zIndex = "5";
+    // data-band：与 /test/ui 同一套锚点，用来逐值核对两个页面（值就是 MenuSkinRules 的令牌名）
+    bar.dataset.band = "bar";
     const titleEl = textAt(stage, barX + 12, barY - 3, title, SKIN.ink);
     titleEl.style.zIndex = "5";
+    titleEl.dataset.band = "title";
     if (status) {
       const statusEl = textAt(stage, barX + 12 + Math.ceil(measureText(title)) + 16, barY - 1, status, SKIN.inkSoft, "g-sm");
       statusEl.style.zIndex = "5";
+      statusEl.dataset.band = "status";
     }
-    // 发丝分隔线：原版用 fadeToBlackRect 画纯色矩形
-    const rule = rectEl(stage, { x: header.x + 12, y: header.y + header.h - 14, w: header.w - 24, h: 2 });
+    // 发丝分隔线 MenuSkinRules.TitleRule(header) = (header.X+12, header.Bottom-14,
+    // header.W-24, RuleHeight = 2)；颜色取上面预乘过的 SKIN.rule / ruleAlpha。
+    const rule = rectEl(stage, { x: header.x + 12, y: header.y + header.h - 14, w: Math.max(1, header.w - 24), h: 2 });
     rule.style.background = `rgba(${SKIN.rule[0]},${SKIN.rule[1]},${SKIN.rule[2]},${SKIN.ruleAlpha})`;
     rule.style.zIndex = "5";
+    rule.dataset.band = "rule";
   }
 
-  /** 遮罩（ChatInputMenu.DrawBackdrop 的写法）。 */
+  /** 遮罩（MenuSkinDrawing.DrawScrim：Color.Black * MenuSkinRules.ScrimAlpha）。 */
   function scrim(stage, vw, vh, alpha) {
     if (alpha <= 0) return;
     const el = document.createElement("div");
@@ -1258,7 +1303,11 @@ __FRAME_SCRIPT__
     const s = SAMPLE.chat;
     guides.length = 0;
 
-    scrim(stage, vw, vh, design ? (OPT.scrim ? SKIN.scrim : 0.42) : 0.42);
+    // 遮罩：F8（ChatInputMenu.DrawBackdrop）、F9、中心三处**都画**同一层
+    // MenuSkinDrawing.DrawScrim（Color.Black * MenuSkinRules.ScrimAlpha = 0.28f）；
+    // 改前 F8 是 0.42f、F9 与中心完全没有遮罩。
+    // 「统一轻遮罩」开关只作用在新设计栏，关掉 = 不做这一层（仅用于对照）。
+    scrim(stage, vw, vh, (!design || OPT.scrim) ? SKIN.scrim : 0);
     // F8 用哪套框：
     //   · 现状侧（左侧那栏）—— 用规整的 20px 九宫格 + 关掉投影，表现「drawDialogueBox 没有投影」
     //     这一条可确定的差异。**不**照切 (0,0,256,256)，因为那块不是九宫格素材、切出来会整片错位
@@ -1269,12 +1318,12 @@ __FRAME_SCRIPT__
       useDialogueFrame ? DIALOGUE_TEX : MENU_TEX,
       useDialogueFrame ? { z: 1, noShadow: true, noBake: true } : { z: 1, noShadow: !design });
 
-    if (!design) {
-      // 现状侧把两处「看得出问题」的地方直接标出来，方便逐项对照
-      addNote(stage, L.header, "现状：header 算得出 92px，但两个开关都是 false —— 什么都不画");
-    }
-
-    if (design && OPT.title) {
+    // 标题带（ChatInputMenu.DrawHeader → MenuSkinDrawing.DrawTitleBand）：
+    // 竖条 (header.X+12, header.Y+12, 4, 20) + 标题 (header.X+24, header.Y+9)
+    // + 状态字 + 发丝线 (header.X+12, header.Bottom-14, header.W-24, 2)。
+    // ChatLayoutRules 的两个开关现在都是 true，所以**现状栏也照实机画**；
+    // 新设计栏跟随「标题带 + 分隔线」开关。
+    if (!design || OPT.title) {
       titleBand(stage, L.header, `和 ${s.npc} 聊聊`,
         s.hearts ? `好感度 ${s.hearts} 心` : "好感度未知",
         parseColor(styleFor(s.npc).accent, [176, 146, 242]));
@@ -1335,7 +1384,7 @@ __FRAME_SCRIPT__
       const infoX = portraitFrame.x + portraitFrame.w + 12;
       textAt(stage, infoX, p.y + 22, s.npc, SKIN.ink).style.zIndex = "5";
       textAt(stage, infoX, p.y + 22 + 28, `好感度 ${s.hearts} 心`,
-        design ? SKIN.inkSoft : DARK_SLATE_GRAY).style.zIndex = "5";
+        SKIN.inkSoft).style.zIndex = "5";
       const meter = { x: infoX, y: p.y + p.h - 12 - 10, w: p.x + p.w - infoX - 12, h: 10 };
       rectEl(stage, meter).style.cssText += `background:${rgb(METER_BG)};z-index:5`;
       const filled = Math.round(meter.w * clamp(s.hearts / 10, 0, 1));
@@ -1382,17 +1431,20 @@ __FRAME_SCRIPT__
     const s = SAMPLE.group;
     guides.length = 0;
 
-    scrim(stage, vw, vh, design && OPT.scrim ? SKIN.scrim : 0);
+    // 遮罩：F8 / F9 / 中心三处都画（MenuSkinDrawing.DrawScrim，MenuSkinRules.ScrimAlpha = 0.28f）；
+    // 改前 F9 与中心完全没有遮罩、F8 是 0.42f。
+    // 「统一轻遮罩」开关只作用在新设计栏，关掉 = 不做这一层（仅用于对照）。
+    scrim(stage, vw, vh, (!design || OPT.scrim) ? SKIN.scrim : 0);
     nineSlice(stage, L.panel, SKIN.panel, MENU_TEX, { z: 1 });
 
-    if (design && OPT.title) {
+    // 标题带（GroupDialogueMenu.draw:170-175 → MenuSkinDrawing.DrawTitleBand）：与 F8 同一句，
+    // 强调色取第一位参与者；参与者行在 header 里另一条基线上，走 InkSoft（= DimGray）。
+    // 改前标题只是 (header.X+12, header.Y+10) 的一行裸文字，既没有竖条也没有分隔线。
+    if (!design || OPT.title) {
       titleBand(stage, L.header, "线上多人对话", null,
         parseColor(styleFor(s.participants[0]).accent, [176, 146, 242]));
-      textAt(stage, L.participantStrip.x, L.participantStrip.y, s.participants.join("、"), SKIN.inkSoft).style.zIndex = "5";
-    } else {
-      textAt(stage, L.header.x + 12, L.header.y + 10, "线上多人对话", GAME_BLACK).style.zIndex = "5";
-      textAt(stage, L.participantStrip.x, L.participantStrip.y, s.participants.join("、"), DARK_SLATE_GRAY).style.zIndex = "5";
     }
+    textAt(stage, L.participantStrip.x, L.participantStrip.y, s.participants.join("、"), SKIN.inkSoft).style.zIndex = "5";
 
     const area = L.messageArea;
     const bubbleLeft = area.x + 12, bubbleRight = area.x + area.w - 12;
@@ -1455,7 +1507,6 @@ __FRAME_SCRIPT__
       button(stage, L.closeButton, "关闭", true);
       textAt(stage, area.x + 12, area.y + area.h - 28, s.hint, GAME_GRAY, "g-sm").style.zIndex = "5";
       addNote(stage, L.inputBox, "现状：输入框下面那条深色带");
-      addNote(stage, { x: L.panel.x, y: L.panel.y, w: L.panel.w, h: 6 }, "现状：面板直接压在游戏画面上（无遮罩）");
     }
 
     guides.push(["Panel", L.panel], ["Header", L.header], ["ParticipantStrip", L.participantStrip],
@@ -1471,17 +1522,22 @@ __FRAME_SCRIPT__
     const s = SAMPLE.hub;
     guides.length = 0;
 
-    scrim(stage, vw, vh, design && OPT.scrim ? SKIN.scrim : 0);
+    // 遮罩：F8 / F9 / 中心三处都画（MenuSkinDrawing.DrawScrim，MenuSkinRules.ScrimAlpha = 0.28f）；
+    // 改前 F9 与中心完全没有遮罩、F8 是 0.42f。
+    // 「统一轻遮罩」开关只作用在新设计栏，关掉 = 不做这一层（仅用于对照）。
+    scrim(stage, vw, vh, (!design || OPT.scrim) ? SKIN.scrim : 0);
     nineSlice(stage, L.panel, SKIN.panel, MENU_TEX, { z: 1 });
 
     const cardH = SKIN.cardHeight;       // 92 —— 新设计也不动它（理由见 SKIN 里的注释）
     const cardStep = SKIN.cardStep;      // 104
 
-    if (design && OPT.title) {
-      titleBand(stage, { x: L.panel.x, y: L.panel.y, w: L.panel.w, h: 74 }, "线上多人对话", null,
+    // 标题带（GroupDialogueHubMenu.draw:126-131 → MenuSkinDrawing.DrawTitleBand）：
+    // header 是 panel 顶部那条固定 74 高的带（MenuSkinRules.HubTitleBandHeight），
+    // 于是分隔线落在 panel.Y + 74 − 14 = panel.Y + 60；强调色取第一张卡的第一位参与者。
+    // 改前标题只是 (panel.X+32, panel.Y+24) 的一行裸文字。
+    if (!design || OPT.title) {
+      titleBand(stage, { x: L.panel.x, y: L.panel.y, w: L.panel.w, h: HUB_TITLE_BAND_HEIGHT }, "线上多人对话", null,
         parseColor(styleFor(s.cards[0].participants[0]).accent, [176, 146, 242]));
-    } else {
-      textAt(stage, L.panel.x + 32, L.panel.y + 24, "线上多人对话", GAME_BLACK).style.zIndex = "5";
     }
 
     const listTop = L.panel.y + 74;
@@ -1502,7 +1558,7 @@ __FRAME_SCRIPT__
         textAt(stage, row.x + 18, row.y + SKIN.cardRow2YDesign,
           `主题：${invitation.topic} · ${status}`, SKIN.inkSoft).style.zIndex = "6";
       } else {
-        textAt(stage, row.x + 18, row.y + 42, `主题：${invitation.topic}`, DARK_SLATE_GRAY).style.zIndex = "6";
+        textAt(stage, row.x + 18, row.y + 42, `主题：${invitation.topic}`, SKIN.inkSoft).style.zIndex = "6";
         // 现状：第三行在 +66，文字底 +94 —— 比卡片本身（92）还低 2px，直接被下边框切断
         textAt(stage, row.x + 18, row.y + SKIN.cardStatusYLegacy,
           `状态：${status}`, DIM_GRAY, "g-sm").style.zIndex = "6";
