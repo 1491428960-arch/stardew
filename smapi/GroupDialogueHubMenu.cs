@@ -157,14 +157,14 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                 var actionWidth = 64;
                 var actionGap = 6;
                 var actionX = row.Right - (actionWidth * 3) - (actionGap * 2);
-                DrawButton(b, new Rectangle(actionX, row.Y + 18, actionWidth, 52), "接受", true);
-                DrawButton(b, new Rectangle(actionX + actionWidth + actionGap, row.Y + 18, actionWidth, 52), "稍后", true);
-                DrawButton(b, new Rectangle(actionX + ((actionWidth + actionGap) * 2), row.Y + 18, actionWidth, 52), "忽略", true);
+                MenuButtonDrawing.DrawButton(b, new Rectangle(actionX, row.Y + 18, actionWidth, 52), "接受", true);
+                MenuButtonDrawing.DrawButton(b, new Rectangle(actionX + actionWidth + actionGap, row.Y + 18, actionWidth, 52), "稍后", true);
+                MenuButtonDrawing.DrawButton(b, new Rectangle(actionX + ((actionWidth + actionGap) * 2), row.Y + 18, actionWidth, 52), "忽略", true);
                 y += 104;
             }
         }
 
-        DrawButton(b, closeButton, "关闭", enabled: true);
+        MenuButtonDrawing.DrawButton(b, closeButton, "关闭", enabled: true);
         b.DrawString(Game1.smallFont, hint, new Vector2(panel.X + 32, panel.Bottom - 112), Color.Gray);
         drawMouse(b);
     }
@@ -227,12 +227,6 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
         exitThisMenuNoSound();
     }
 
-    private static void DrawButton(SpriteBatch b, Rectangle bounds, string label, bool enabled)
-    {
-        drawTextureBox(b, bounds.X, bounds.Y, bounds.Width, bounds.Height, enabled ? Color.White : Color.Gray);
-        var size = Game1.smallFont.MeasureString(label);
-        b.DrawString(Game1.smallFont, label, new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f), enabled ? Color.Black : Color.DimGray);
-    }
 
     private void RefreshLayout()
     {

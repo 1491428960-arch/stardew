@@ -144,10 +144,10 @@ public sealed class InventoryItemPicker : IClickableMenu
                 Color.DarkSlateGray);
         }
 
-        DrawButton(b, displayButton, "展示", selectedItem is not null);
-        DrawButton(b, shareButton, "分享", selectedItem is not null && CanShare(selectedItem));
-        DrawButton(b, giftButton, "赠送", selectedItem is not null && CanGift(selectedItem));
-        DrawButton(b, cancelButton, "取消", true);
+        MenuButtonDrawing.DrawButton(b, displayButton, "展示", selectedItem is not null);
+        MenuButtonDrawing.DrawButton(b, shareButton, "分享", selectedItem is not null && CanShare(selectedItem));
+        MenuButtonDrawing.DrawButton(b, giftButton, "赠送", selectedItem is not null && CanGift(selectedItem));
+        MenuButtonDrawing.DrawButton(b, cancelButton, "取消", true);
         drawMouse(b);
     }
 
@@ -188,16 +188,5 @@ public sealed class InventoryItemPicker : IClickableMenu
             action,
             ItemInteractionRules.ReadGiftTaste(npc, selectedItem),
             specialInteraction));
-    }
-
-    private static void DrawButton(SpriteBatch b, Rectangle bounds, string label, bool enabled)
-    {
-        drawTextureBox(b, bounds.X, bounds.Y, bounds.Width, bounds.Height, enabled ? Color.White : Color.Gray);
-        var size = Game1.smallFont.MeasureString(label);
-        b.DrawString(
-            Game1.smallFont,
-            label,
-            new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
-            enabled ? Color.Black : Color.DimGray);
     }
 }

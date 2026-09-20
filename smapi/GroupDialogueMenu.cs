@@ -189,9 +189,9 @@ public sealed class GroupDialogueMenu : IClickableMenu
             }
         }
 
-        DrawButton(b, layout.SendButton, "发送", !sending);
-        DrawButton(b, layout.RetryButton, "重试", !sending && session.CanRetry);
-        DrawButton(b, layout.CloseButton, "关闭", true);
+        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", !sending);
+        MenuButtonDrawing.DrawButton(b, layout.RetryButton, "重试", !sending && session.CanRetry);
+        MenuButtonDrawing.DrawButton(b, layout.CloseButton, "关闭", true);
         inputBox.Draw(b, drawShadow: true);
         b.DrawString(Game1.smallFont, hint, new Vector2(layout.MessageArea.X + 12, layout.MessageArea.Bottom - 28), Color.Gray);
         drawMouse(b);
@@ -407,13 +407,6 @@ public sealed class GroupDialogueMenu : IClickableMenu
         cancellationSource.Cancel();
         onClosed?.Invoke();
         exitThisMenu();
-    }
-
-    private static void DrawButton(SpriteBatch b, Rectangle bounds, string label, bool enabled)
-    {
-        drawTextureBox(b, bounds.X, bounds.Y, bounds.Width, bounds.Height, enabled ? Color.White : Color.Gray);
-        var size = Game1.smallFont.MeasureString(label);
-        b.DrawString(Game1.smallFont, label, new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f), enabled ? Color.Black : Color.DimGray);
     }
 
     private static GroupDialogueLayout CalculateLayout()

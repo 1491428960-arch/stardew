@@ -854,10 +854,10 @@ public class ChatInputMenu : IClickableMenu
 
     private void DrawFooter(SpriteBatch b)
     {
-        DrawButton(b, layout.SendButton, "发送", enabled: !sending, tint: new Color(235, 246, 236));
-        DrawButton(b, layout.TopicButton, "找话题", enabled: !sending, tint: new Color(239, 231, 244));
-        DrawButton(b, layout.InventoryButton, "物品", enabled: !sending, tint: new Color(235, 240, 246));
-        DrawButton(b, layout.CloseButton, "结束", enabled: true, tint: new Color(247, 232, 227));
+        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", enabled: !sending, tint: new Color(235, 246, 236));
+        MenuButtonDrawing.DrawButton(b, layout.TopicButton, "找话题", enabled: !sending, tint: new Color(239, 231, 244));
+        MenuButtonDrawing.DrawButton(b, layout.InventoryButton, "物品", enabled: !sending, tint: new Color(235, 240, 246));
+        MenuButtonDrawing.DrawButton(b, layout.CloseButton, "结束", enabled: true, tint: new Color(247, 232, 227));
         inputBox.Draw(b, drawShadow: true);
     }
 
@@ -938,22 +938,6 @@ public class ChatInputMenu : IClickableMenu
     private int? GetFriendshipHearts()
     {
         return friendshipHeartsOverride ?? GameStateCollector.Collect(npc).FriendshipHearts;
-    }
-
-    private static void DrawButton(
-        SpriteBatch b,
-        Rectangle bounds,
-        string label,
-        bool enabled,
-        Color tint)
-    {
-        drawTextureBox(b, bounds.X, bounds.Y, bounds.Width, bounds.Height, enabled ? tint : Color.Gray);
-        var size = Game1.smallFont.MeasureString(label);
-        b.DrawString(
-            Game1.smallFont,
-            label,
-            new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
-            enabled ? Color.Black : Color.DimGray);
     }
 
     private void UpdateInputBoxBounds()
