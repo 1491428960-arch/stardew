@@ -167,4 +167,17 @@ public sealed class GroupInvitationTripleTests
         Assert.Contains("groupDialogueInvitations", json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void The_generated_three_npc_template_id_is_recognized()
+    {
+        // 真机上抛的正是这个 ID（group:animals:abigail|alex|andy:... : templateId is invalid），
+        // 所以直接钉住它：主题前缀在主题表里就算合法。
+        Assert.True(GroupInvitationRules.IsKnownTemplateId("animals:abigail|alex|andy"));
+        Assert.True(GroupInvitationRules.IsKnownTemplateId("family:abigail|shane"));
+        // 旧版硬编码 ID 仍要认（旧存档里有）
+        Assert.True(GroupInvitationRules.IsKnownTemplateId("neutral-public-topic"));
+        // 不存在的主题要拒
+        Assert.False(GroupInvitationRules.IsKnownTemplateId("not-a-theme:a|b"));
+    }
+
 }
