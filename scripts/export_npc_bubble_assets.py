@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -20,25 +19,17 @@ from stardew_ai_bridge.npc_bubble_elements import (  # noqa: E402
     NPC_BUBBLE_ELEMENTS,
 )
 
+# 颜色解析与「设计色 → tint」的反推都只有一份实现：bridge 侧的 npc_bubble_tint
+# （两个预览页 /test/ui 与 /test/ui-redesign 也从那里取）。这里不再复制公式与基准色。
+from stardew_ai_bridge.npc_bubble_tint import (  # noqa: E402
+    bubble_to_tint,
+    parse_color,
+)
+
 CELL = 24
 FRAME_CELL = 32
 OUT_PNG = ROOT / "smapi" / "assets" / "npc_bubbles.png"
 OUT_CS = ROOT / "smapi" / "NpcBubbleStyle.cs"
-
-_RGBA = re.compile(
-    r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+)\s*)?\)"
-)
-
-
-def parse_color(value: str) -> tuple[int, int, int]:
-    """把 '#rrggbb' 或 'rgba(r, g, b, a)' 统一成 RGB 三元组。"""
-    m = _RGBA.match(value.strip())
-    if m:
-        return int(m.group(1)), int(m.group(2)), int(m.group(3))
-    hexv = value.strip().lstrip("#")
-    if len(hexv) == 6:
-        return int(hexv[0:2], 16), int(hexv[2:4], 16), int(hexv[4:6], 16)
-    raise ValueError(f"无法解析颜色: {value!r}")
 
 
 def build_sheet_html(names: list[str]) -> str:
@@ -101,7 +92,8 @@ def csharp_color(rgb: tuple[int, int, int]) -> str:
 # 基准色取 MenuTiles (0,256,60,60) 九宫格**中心块**的主色（20×20 里占一半的那一色），
 # 因为气泡的中心区正是被拉伸的这块；该块另有 3 个近邻色（#ffc576 / #f5b56f / #f5b565），
 # 用主色反推时它们的偏差在 7 个色阶以内。
-BUBBLE_TEX_BASE = (253, 188, 110)   # #fdbc6e
+# 常量与实现见 stardew_ai_bridge.npc_bubble_tint（BUBBLE_TEX_BASE = (253, 188, 110) = #fdbc6e），
+# 上面 import 进来的 bubble_to_tint 就是它 —— 本文件不再自带一份。
 
 # 注意：玩家气泡与 NPC 兜底气泡**不走这条反推**。
 # 它们的设计色（浅蓝 (226,239,246) / 浅紫 (239,231,244)）在 G、B 通道上高于上面的基准色
@@ -111,15 +103,6 @@ BUBBLE_TEX_BASE = (253, 188, 110)   # #fdbc6e
 # 本文件继续负责 46 个角色的专属配色：43 个各通道都在基准色以内，回乘无损；
 # 另有 3 个深蓝角色（Maru / Mermaid / Henchman）的 B 通道超出基准色 110，被 min() 压到 110，
 # 渲染后 B 比设计色暗 7~9 个色阶——这是乘法 tint 的硬边界，要彻底消掉同样得换未着色面板。
-
-
-def bubble_to_tint(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
-    """把设计色反推成 tint，使 drawTextureBox 乘完纹理后正好回到设计色。"""
-
-    return tuple(
-        min(255, round(channel * 255 / base))
-        for channel, base in zip(rgb, BUBBLE_TEX_BASE)
-    )
 
 
 def write_csharp(names: list[str]) -> None:

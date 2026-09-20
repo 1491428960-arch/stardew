@@ -27,11 +27,30 @@ import json
 from .group_dialogue_review_page import _CHARACTER_FRAME_SCRIPT
 from .npc_bubble_catalog import NPC_BUBBLE_ALIASES
 from .npc_bubble_elements import NPC_BUBBLE_ELEMENTS
+from .npc_bubble_panel_plain import (
+    NPC_FALLBACK_BUBBLE_TINT,
+    PLAIN_MENU_TEX_DATA_URI,
+    PLAYER_BUBBLE_TINT,
+)
 from .npc_bubble_texture import BUBBLE_MENU_TEX_DATA_URI
+from .npc_bubble_tint import bubble_tint_of
+
+
+def _tint_literal(tint: tuple[int, int, int]) -> str:
+    """把 tint 元组写成 JS 数组字面量的内容（页面里外面套一层 []）。"""
+
+    return ", ".join(str(channel) for channel in tint)
 
 
 def _styles_payload() -> dict[str, dict[str, object]]:
-    """与回放页同源的 NPC_STYLES（回放页 group_dialogue_review_page.py:235-241）。"""
+    """与回放页同源的 NPC_STYLES（回放页 group_dialogue_review_page.py:235-241）。
+
+    比回放页多一个 ``bubbleTint``：``bubble`` 是**设计色**（页面拿它当最终色用，例如角色面板
+    的立绘占位底色），而画进彩色 MenuTiles 的必须是**反推后的 tint** —— 面板是
+    「纹理色 × tint ÷ 255」，直接把设计色当 tint 会再乘一次橙黄木纹、整体暗一档
+    （Abigail 设计色 (65,44,109) → 渲染成 (64,32,47)）。公式只在
+    :mod:`npc_bubble_tint` 里有一份，这里算好交给 JS，页面侧不再各留一份实现。
+    """
 
     return {
         npc: {
@@ -42,6 +61,7 @@ def _styles_payload() -> dict[str, dict[str, object]]:
                 key: item["palette"][key]
                 for key in ("accent", "accentSoft", "bubble", "border")
             },
+            "bubbleTint": list(bubble_tint_of(item["palette"]["bubble"])),
         }
         for npc, item in NPC_BUBBLE_ELEMENTS.items()
     }
@@ -298,7 +318,8 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>气泡内边距 / 行间 / 间距 / 安全边距 / 最小宽</td><td>12 / 4 / 20 / 8 / 180</td><td><code>ChatBubbleDrawing.cs:20,23,29,32,35</code></td></tr>
           <tr><td>气泡换行宽 / 高度</td><td>ContentWidth = max(80, 可用宽-24-8)；高 = 24 + LineSpacing + 4 + n×LineSpacing + (n-1)×4</td><td><code>ChatBubbleDrawing.cs:44-62</code></td></tr>
           <tr><td>气泡宽度</td><td>clamp(ceil(文本宽+24), min(180, 可用宽), 可用宽)</td><td><code>ChatBubbleDrawing.cs:85-101</code></td></tr>
-          <tr><td>玩家 / NPC 兜底气泡色</td><td>(226,239,246) / (239,231,244)</td><td><code>ChatBubbleDrawing.cs:37-38</code></td></tr>
+          <tr><td>玩家 / NPC 兜底气泡色</td><td>(226,239,246) / (239,231,244) —— 这是**设计色**（最终色）；两者走未着色面板 <code>Maps\MenuTilesUncolored</code> 的同一九宫格，tint 由 <code>ToPanelTint</code> 按基色 (248,248,248) 反推为 (232,246,253) / (246,238,251)，回乘即还原设计色</td><td><code>ChatBubbleDrawing.cs:50-60,178-193</code></td></tr>
+          <tr><td>角色气泡色</td><td>46 个角色各一份配色，<code>palette.bubble</code> 是**设计色**（回放页直接铺的最终色）；画进彩色面板前按基色 <code>#fdbc6e</code> 反推 <code>tint = 设计色 × 255 ÷ 基色</code>，回乘即还原设计色（Abigail (65,44,109) → tint (66,60,253)）；设计色直接当 tint 会再乘一次木纹 → (64,32,47)，整体暗一档</td><td><code>npc_bubble_tint.py</code>（与 C# 导出、<code>/test/ui-redesign</code> 共用同一份公式）</td></tr>
           <tr><td>深色气泡上的正文色</td><td>(243,240,252)</td><td><code>ChatBubbleDrawing.cs:41</code></td></tr>
           <tr><td>说话人文字色</td><td>玩家 DarkSlateBlue；NPC 用该角色的 Accent</td><td><code>ChatBubbleDrawing.cs:134-138</code></td></tr>
           <tr><td>装饰边框外扩</td><td>Pad = 14；三套构图按 (发言次序 + kind 字符码和) % 3 轮换</td><td><code>NpcBubbleFrame.cs:21,308-317</code></td></tr>
@@ -418,8 +439,9 @@ __FRAME_SCRIPT__
    * Hub 面板与行（GroupDialogueHubMenu.cs:118/142）走这一套。投影 = 同一套九宫格再画一遍、
    * `Color.Black * 0.4f`、整体偏移 (-8, +8)。
    *
-   * ⚠ 气泡（ChatBubbleDrawing.cs:108）本也走这一套，但它另用一份描边色相归一过的变体
-   * BUBBLE_MENU_TEX —— 原来那圈红边就是这块贴图的描边被深色 tint 乘出来的。
+   * ⚠ 角色气泡不直接用这一套：它另用一份描边色相归一过的变体 BUBBLE_MENU_TEX
+   * （原来那圈红边就是这块贴图的描边被深色 tint 乘出来的）；玩家与兜底气泡则换掉整块贴图，
+   * 走下面那份未着色的 PLAIN_MENU_TEX（ChatBubbleDrawing.cs:126-141）。
    */
   const MENU_TEX = {
     src: GAME_TEX.menuButton,
@@ -436,13 +458,41 @@ __FRAME_SCRIPT__
    *
    * 服务端把描边像素的色相归一到填充基准色、逐像素保留亮度（见 npc_bubble_texture.py），
    * 边框于是恒等于「底色的暗版本」，四档明暗与圆角形状一个像素没动。
-   * ⚠ 只有气泡用这一份；面板 / 按钮 / 凹槽继续用 MENU_TEX，别把两者对调。
+   * ⚠ 只有**角色气泡**用这一份；面板 / 按钮 / 凹槽继续用 MENU_TEX，玩家与兜底气泡用
+   *   PLAIN_MENU_TEX，三者别对调。
    */
   const BUBBLE_MENU_TEX = {
     src: "__BUBBLE_MENU_TEX__",
     slice: MENU_TEX.slice,
     shadow: MENU_TEX.shadow,
   };
+
+  /**
+   * 玩家 / NPC 兜底气泡的九宫格 —— Maps\MenuTilesUncolored (0,256,60,60)。
+   *
+   * 切法与 MENU_TEX 完全一致，换的是**整块贴图**：未着色面板是彩色 MenuTiles 的去色版，
+   * alpha 轮廓逐像素相同，底板色区从 #fdbc6e 换成近白 (248,248,248)、描边也从红橙换成冷灰紫。
+   *
+   * 这两个气泡为什么必须换：彩色面板的基色 #fdbc6e 只有 G 188 / B 110，而玩家气泡的浅蓝
+   * (226,239,246) 与兜底气泡的浅紫 (239,231,244) 在 G / B 上比基色还高（反推要 324 / 570）——
+   * 乘法 tint 最多到 1.0 倍，那些颜色根本乘不出来，直接当 tint 只会被橙黄木纹染成橙棕。
+   * 换成近白面板后，两个设计色反推出来的 tint 是 (232,246,253) / (246,238,251)，全在界内。
+   *
+   * ⚠ 只有这两个用它（ChatBubbleDrawing.cs:126-141 的 DrawPanel 分支）；角色气泡继续用
+   *   彩色贴图的描边变体 BUBBLE_MENU_TEX —— 那些专属配色本来就在基准色域内。
+   */
+  const PLAIN_MENU_TEX = {
+    src: "__PLAIN_MENU_TEX__",
+    slice: MENU_TEX.slice,
+    shadow: MENU_TEX.shadow,
+  };
+
+  /**
+   * 上面两个设计色反推出来的 tint（ChatBubbleDrawing.cs:57,60 的
+   * PlayerBubbleTint / NpcFallbackBubbleTint，公式见 :178-193）。
+   */
+  const PLAYER_BUBBLE_TINT = [__PLAYER_BUBBLE_TINT__];
+  const NPC_FALLBACK_BUBBLE_TINT = [__NPC_FALLBACK_BUBBLE_TINT__];
 
   /**
    * MenuTiles (0,0,256,256) —— Game1.drawDialogueBox 的 64×64 九宫格。
@@ -835,9 +885,17 @@ __FRAME_SCRIPT__
     const bounds = { x: isPlayer ? right - width : left, y, w: width, h: height };  // :97-101
 
     const style = isPlayer ? null : styleFor(npcId);                        // :105
-    const bubbleTint = isPlayer ? [226, 239, 246] : parseColor(style && style.bubble, [239, 231, 244]); // :37-38, :105,114
-    // 气泡专用贴图：描边色相已归一到填充色，乘完 tint 是底色的暗版本（见 BUBBLE_MENU_TEX）。
-    const el = nineSlice(stage, bounds, bubbleTint, BUBBLE_MENU_TEX);
+    // 玩家与「表里没有专属配色的 NPC」走未着色面板 + 反推 tint（:126-141 的 DrawPanel 分支）；
+    // 角色气泡仍是彩色贴图的描边变体 + 自己的 tint（NpcBubbleStyle.Bubble 已是反推值）。
+    const plain = isPlayer || !Object.hasOwn(NPC_STYLES, canonicalNpcId(npcId));
+    // 角色气泡的 tint 由服务端按设计色反推（npc_bubble_tint.py，与 C# 导出同一公式）：
+    // 彩色面板画的是「纹理色 × tint ÷ 255」，设计色直接当 tint 会被木纹再乘一次，
+    // 结果整体暗一档（Abigail (65,44,109) → (64,32,47)）。
+    const bubbleTint = isPlayer
+      ? PLAYER_BUBBLE_TINT
+      : (plain ? NPC_FALLBACK_BUBBLE_TINT : style.bubbleTint); // :50-60, :178-193
+    // 贴图与 tint 必须配套：未着色面板配反推 tint，彩色变体配角色 tint（见两个常量的说明）。
+    const el = nineSlice(stage, bounds, bubbleTint, plain ? PLAIN_MENU_TEX : BUBBLE_MENU_TEX);
     el.dataset.bubble = npcId || "player";
     el.style.zIndex = "2";
 
@@ -1313,4 +1371,7 @@ def ui_preview_page() -> str:
         _UI_PREVIEW_BODY.replace("__DATA__", _json(payload))
         .replace("__FRAME_SCRIPT__", _CHARACTER_FRAME_SCRIPT)
         .replace("__BUBBLE_MENU_TEX__", BUBBLE_MENU_TEX_DATA_URI)
+        .replace("__PLAIN_MENU_TEX__", PLAIN_MENU_TEX_DATA_URI)
+        .replace("__PLAYER_BUBBLE_TINT__", _tint_literal(PLAYER_BUBBLE_TINT))
+        .replace("__NPC_FALLBACK_BUBBLE_TINT__", _tint_literal(NPC_FALLBACK_BUBBLE_TINT))
     )
