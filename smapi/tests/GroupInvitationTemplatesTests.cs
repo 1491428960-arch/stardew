@@ -52,4 +52,60 @@ public sealed class GroupInvitationTemplatesTests
                     .Count());
         }
     }
+    [Fact]
+    public void There_are_thousands_of_templates()
+    {
+        // 用户反馈：模板太匮乏（“阿比全是公式化下矿”）。模板现在是按
+        // 「角色组合 × 话题池」程序化生成的，数量应达到四位数。
+        var count = GroupInvitationTemplates.All.Count;
+        Console.WriteLine($"[Templates] 模板总数 = {count}");
+        Assert.True(count >= 1000, $"模板数只有 {count}，应达到四位数");
+    }
+
+    [Fact]
+    public void Most_pairs_of_known_npcs_share_at_least_one_theme()
+    {
+        // 主题是从真实对白抽的，覆盖面广（craft/friendship/work 都在 60 个角色以上），
+        // 所以绝大多数组合都能找到共同话题；找不到的由生成器兜底到“镇上日常”。
+        var npcIds = GroupInvitationThemes.ThemesByNpc.Keys.OrderBy(id => id, StringComparer.Ordinal).ToArray();
+        var pairsWithTemplate = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var template in GroupInvitationTemplates.All.Where(t => t.RequiredParticipants.Count == 2))
+        {
+            pairsWithTemplate.Add(string.Join("|", template.RequiredParticipants.OrderBy(x => x, StringComparer.Ordinal)));
+        }
+
+        var total = 0;
+        var missing = 0;
+        for (var first = 0; first < npcIds.Length - 1; first++)
+        {
+            for (var second = first + 1; second < npcIds.Length; second++)
+            {
+                total++;
+                if (!pairsWithTemplate.Contains(string.Join("|", new[] { npcIds[first], npcIds[second] }.OrderBy(x => x, StringComparer.Ordinal))))
+                {
+                    missing++;
+                }
+            }
+        }
+
+        // 兜底保证一个都不缺
+        Assert.Equal(0, missing);
+        Assert.True(total > 1000, $"两两组合只有 {total} 对");
+    }
+
+    [Fact]
+    public void Abigail_pairs_are_not_all_about_mining()
+    {
+        // 回归保护：此前只有 6 个模板，Abigail 参与的任何组合都会被塞进“下矿”。
+        // 现在她的组合应该分到探险、超自然，以及兜底话题等多种题目。
+        var titles = GroupInvitationTemplates.All
+            .Where(t => t.RequiredParticipants.Contains("Abigail", StringComparer.OrdinalIgnoreCase))
+            .Select(t => t.Title)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(titles.Length >= 8, $"Abigail 相关模板的题目只有 {titles.Length} 种");
+        Console.WriteLine($"[Templates] Abigail 的题目：{string.Join("、", titles.Take(12))}");
+        Assert.Contains(titles, title => !title.Contains("矿", StringComparison.Ordinal));
+    }
 }

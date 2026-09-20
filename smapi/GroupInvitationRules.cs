@@ -18,15 +18,34 @@ public static class GroupInvitationRules
     public const int MaxVisibleInvitations = 4;
     public const int ExpirationDays = 7;
 
-    private static readonly HashSet<string> KnownTemplateIds = new(StringComparer.Ordinal)
+    /// <summary>
+    /// 存档里出现过的合法模板 ID。
+    ///
+    /// 2026-09-20：模板改为「角色组合 × 话题池」程序化生成后（上万条），
+    /// 硬编码白名单立刻过时。改成**旧 ID ∪ 模板表里现有的全部 ID**——
+    /// 这样玩家存档里已经存在的旧邀约仍然合法，新生成的也认得。
+    /// </summary>
+    private static readonly HashSet<string> KnownTemplateIds = BuildKnownTemplateIds();
+
+    private static HashSet<string> BuildKnownTemplateIds()
     {
-        "neutral-public-topic",
-        "mineral-and-mystery",
-        "research-follow-up",
-        "adventure-trio",
-        "seasonal-chores",
-        "social-perspective",
-    };
+        // 旧版硬编码的那几个：**不要删**，否则旧存档里的邀约会变成“不合法”。
+        var ids = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "neutral-public-topic",
+            "mineral-and-mystery",
+            "research-follow-up",
+            "adventure-trio",
+            "seasonal-chores",
+            "social-perspective",
+        };
+        foreach (var template in GroupInvitationTemplates.All)
+        {
+            ids.Add(template.TemplateId);
+        }
+
+        return ids;
+    }
 
     private static readonly HashSet<string> Sources = new(StringComparer.Ordinal)
     {
@@ -59,10 +78,11 @@ public static class GroupInvitationRules
     public static string BuildDuplicateKey(GroupDialogueInvitationRecord invitation)
     {
         ArgumentNullException.ThrowIfNull(invitation);
-        // 模板 ID 也要归一化成小写：本方法的契约是“整个去重键大小写不敏感”，
-        // 只 Trim 会让大小写不同的模板 ID 产生不同的键。
-        return $"{invitation.TemplateId.Trim().ToLowerInvariant()}::" +
-            BuildPairKey(invitation.Participants);
+        // 2026-09-20：模板现在是「角色组合 × 话题」程序化生成的，同一个组合对应
+        // 多个模板 ID。若继续把 TemplateId 算进键里，“同一对人”会被判成不重复，
+        // 于是接连刷出同一个组合。所以去重键**只看参与者组合**：同一组人 7 天内
+        // 不重复，而每次的话题可以不同（47 人两两有 1081 种组合，足够轮换）。
+        return BuildPairKey(invitation.Participants);
     }
 
     /// <summary>

@@ -134,11 +134,11 @@ public sealed class GroupInvitationTripleTests
         // 而它要求三个角色都在组合里，两人组合匹配不到。
         var invitation = Assert.Single(Generate(20, Three));
 
-        Assert.Contains(
-            invitation.TemplateId,
-            GroupInvitationTemplates.All
-                .Where(template => template.RequiredParticipants.Count == 3)
-                .Select(template => template.TemplateId));
+        // 模板现在按需生成（All 只含两两组合，避免 35 万个对象常驻内存），
+        // 所以这里直接检查“为这三个人生成的模板”里有没有它。
+        // 注意顺序：ForGroup 内部按字母序拼 key，这里的顺序要与之一致才能对上。
+        var forGroup = GroupInvitationTemplates.ForGroup(new[] { "Abigail", "Maru", "Sebastian" });
+        Assert.Contains(invitation.TemplateId, forGroup.Select(template => template.TemplateId));
     }
 
     [Fact]

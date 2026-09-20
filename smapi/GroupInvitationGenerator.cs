@@ -83,14 +83,25 @@ public sealed class GroupInvitationGenerator
         return Array.Empty<GroupDialogueInvitationRecord>();
     }
 
+    /// <summary>
+    /// 为这组人取可用模板。**按需生成**：模板是按「角色 × 共同主题」算出来的，
+    /// 全组合预生成会有 35 万个对象（约 150 MB），对 mod 不可接受。
+    /// </summary>
     private IEnumerable<GroupInvitationTemplate> MatchingTemplates(
         IReadOnlyList<GroupParticipantCandidate> group)
     {
+
         var groupIds = group.Select(candidate => candidate.NpcId).ToArray();
+        // 按需生成：模板由「角色 × 共同主题」算出，全组合预生成会有 35 万个对象
+        // （约 150 MB），对 mod 不可接受。这里只为当前这组候选算一次。
+        var generated = GroupInvitationTemplates.ForGroup(groupIds);
         return templates
+            .Concat(generated)
             .Where(template => template.RequiredParticipants.Count == 0 ||
                 template.RequiredParticipants.All(required =>
                     groupIds.Contains(required, StringComparer.OrdinalIgnoreCase)))
+            .GroupBy(template => template.TemplateId, StringComparer.Ordinal)
+            .Select(grouping => grouping.First())
             .OrderByDescending(template => template.RequiredParticipants.Count)
             .ThenBy(template => template.TemplateId, StringComparer.Ordinal);
     }
