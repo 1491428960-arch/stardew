@@ -254,8 +254,10 @@ public sealed class ModEntry : Mod
     /// 所以「手动保存」「睡觉过夜」「退出到标题」三条路都覆盖得到；DayEnding 只在睡觉时触发
     /// （白天直接退游戏就丢），SaveCreating 只在新档创建时触发一次（那时还没有任何历史）。
     ///
-    /// 这里**不**在每追加一条对话时就写：写一次的代价是把整份档案序列化成约 1 MB 文本
-    /// （见 ChatHistoryArchiveTests 的满档实测），一天下来几十轮对话就是几十次白干；
+    /// 这里**不**在每追加一条对话时就写：写一次的代价是把整份档案序列化成十几 MB 文本
+    /// （满档 = 二十位 NPC 各 1000 条，实测 15.23 MB / 28 ms；现实规模——只跟五六位深聊——
+    /// 是 0.89 MB / 1.7 ms，见 ChatHistoryArchiveTests 的两条预算用例），
+    /// 一天下来几十轮对话就是几十次白干；
     /// 而 SMAPI 的 WriteSaveData 写的是内存里的 CustomData，本来也不落盘，多写毫无收益。
     /// </summary>
     private void SaveChatHistoryArchive()

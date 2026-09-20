@@ -15,12 +15,19 @@ namespace StardewAI.NPC;
 public static class ChatHistoryRules
 {
     /// <summary>
-    /// 单次回看最多铺多少条历史。取值只看「翻得动」与「占地小」两件事：
-    /// 一屏约 6～10 条气泡，60 条约十屏；按单条 <see cref="MaxContentLength"/> 字的上限算，
-    /// 一位 NPC 最坏情况约 29 KB，二十位不到 1 MB。这一份会随存档保存
-    /// （见 <see cref="ChatHistoryArchive"/>），取值同时是存档体积的上限。
+    /// 单次回看最多铺多少条历史。2026-09-21 由 60 提到 1000：60 条只够回看十来屏，
+    /// 玩家想翻「上周那次」根本翻不到，而回看档案本来就是给玩家翻的（发给模型的窗口
+    /// 仍是 <c>BridgeClient.MaxHistoryItems</c> 条，一字不动）。
+    ///
+    /// 这个常量同时是**存档体积的上限**（这一份随存档保存，见 <see cref="ChatHistoryArchive"/>）。
+    /// 2026-09-21 实测（数字打在 <c>ChatHistoryArchiveTests</c> 的两条预算用例里备查）：
+    /// 满档 = 每位 NPC 都聊满 1000 条 240 字 → 20 位 / 2 万条 = **15.23 MB**，
+    /// 序列化 28 ms、反序列化 40 ms、常驻内存 10.7 MB；
+    /// 现实规模 = 只跟 5 位深聊（玩家 12 字 / NPC 60 字）→ **0.89 MB**、
+    /// 序列化 1.7 ms、反序列化 2.4 ms。存档里一个中文字 3 字节且不做转义，
+    /// 所以「档案多大，存档就长大多少」——再往上加之前先看那两条用例的数字。
     /// </summary>
-    public const int MaxDisplayMessages = 60;
+    public const int MaxDisplayMessages = 1000;
 
     /// <summary>
     /// 单条记录的文本上限。写入端（<see cref="BridgeClient"/>）与存档读回时共用这一份，

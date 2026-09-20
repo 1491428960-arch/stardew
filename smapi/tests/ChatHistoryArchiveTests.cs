@@ -236,8 +236,9 @@ public sealed class ChatHistoryArchiveTests
     [Fact]
     public void Full_capacity_archive_stays_within_the_size_and_time_budget()
     {
-        // 满档：20 位 NPC × 60 条 × 240 字 —— 写入端能达到的上限，
+        // 满档：20 位 NPC × 1000 条 × 240 字 —— 写入端能达到的上限，
         // 直接决定存档会长大多少、Saving 时要多花多久。数字打在测试输出里备查。
+        // 2026-09-21 上限由 60 提到 1000：这个用例的绝对体积也跟着涨了约 16 倍。
         const int npcCount = 20;
         var content = new string('聊', ChatHistoryRules.MaxContentLength);
         var history = new Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>(StringComparer.Ordinal);
@@ -287,12 +288,72 @@ public sealed class ChatHistoryArchiveTests
         Assert.Equal(npcCount * ChatHistoryRules.MaxDisplayMessages, loaded.MessageCount);
         Assert.Equal(npcCount, loaded.History.Count);
 
-        // 1 MB 量级：涨到几 MB 说明规格变了，宁可在这里红一次，也别到存档里才发现。
-        Assert.InRange(bytes, 700 * 1024, 1400 * 1024);
+        // 15 MB 量级：涨到几十 MB 说明规格变了，宁可在这里红一次，也别到存档里才发现。
+        Assert.InRange(bytes, 13 * 1024 * 1024, 20 * 1024 * 1024);
 
         // 宽松上限：这里量的是量级不是性能门禁（机器会抖），卡住的是「别写成秒级」。
         Assert.True(serializeMs < 5000);
         Assert.True(loadMs < 5000);
+    }
+
+    [Fact]
+    public void Realistic_five_npc_archive_stays_within_the_size_and_time_budget()
+    {
+        // 现实规模：只跟 5 位 NPC 深聊到 1000 条，且单条长度取真实分布
+        // （玩家提问约 12 字、NPC 回应约 60 字），而不是 240 字的极端值。
+        // 满档用例量的是上限，这一条量的是「玩家真这么聊会长多大」。
+        const int npcCount = 5;
+        const int playerMessageLength = 12;
+        const int npcMessageLength = 60;
+        var playerMessage = new string('问', playerMessageLength);
+        var npcMessage = new string('答', npcMessageLength);
+        var history = new Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>(StringComparer.Ordinal);
+        for (var npc = 0; npc < npcCount; npc++)
+        {
+            history[$"Npc{npc}"] = Enumerable.Range(0, ChatHistoryRules.MaxDisplayMessages)
+                .Select(index => new BridgeDialogueHistoryItem
+                {
+                    Role = index % 2 == 0 ? "user" : "assistant",
+                    Content = index % 2 == 0 ? playerMessage : npcMessage,
+                    Intent = "chat",
+                    RelationshipStage = "friendly",
+                })
+                .ToArray();
+        }
+
+        var warmup = ChatHistoryArchive.Serialize(history, "MyFarm_123456789");
+        _ = ChatHistoryArchive.Load(warmup, "MyFarm_123456789");
+
+        string json = warmup;
+        var serializeMs = double.MaxValue;
+        var loadMs = double.MaxValue;
+        for (var round = 0; round < 3; round++)
+        {
+            var serializeWatch = Stopwatch.StartNew();
+            json = ChatHistoryArchive.Serialize(history, "MyFarm_123456789");
+            serializeWatch.Stop();
+
+            var loadWatch = Stopwatch.StartNew();
+            _ = ChatHistoryArchive.Load(json, "MyFarm_123456789");
+            loadWatch.Stop();
+
+            serializeMs = Math.Min(serializeMs, serializeWatch.Elapsed.TotalMilliseconds);
+            loadMs = Math.Min(loadMs, loadWatch.Elapsed.TotalMilliseconds);
+        }
+
+        var loaded = ChatHistoryArchive.Load(json, "MyFarm_123456789");
+        var bytes = Encoding.UTF8.GetByteCount(json);
+        output.WriteLine(
+            $"现实规模回看档案（{npcCount} 位 NPC 满 1000 条、玩家 {playerMessageLength} 字 / NPC {npcMessageLength} 字）："
+            + $"条数={loaded.MessageCount}；UTF8 字节={bytes}（{bytes / 1024.0 / 1024.0:0.00} MB）；"
+            + $"序列化={serializeMs:0.0} ms；反序列化={loadMs:0.0} ms（各取三轮最快）");
+
+        Assert.Equal(npcCount * ChatHistoryRules.MaxDisplayMessages, loaded.MessageCount);
+
+        // 1 MB 量级：五位 NPC 聊满也只是一部手机照片的大小，属于「存档能承受」的那一档。
+        Assert.InRange(bytes, 600 * 1024, 2 * 1024 * 1024);
+        Assert.True(serializeMs < 2000);
+        Assert.True(loadMs < 2000);
     }
 
     private static Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>> HistoryFor(

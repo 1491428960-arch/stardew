@@ -83,6 +83,15 @@ public sealed class ChatHistoryRulesTests
     }
 
     [Fact]
+    public void Display_cap_is_pinned_at_the_value_the_player_asked_for()
+    {
+        // 2026-09-21 用户拍板：60 条翻不回「上周那次」，先定 1000。
+        // 这条断言是防回退的护栏——这个常量同时是存档体积的上限，
+        // 改大改小都要重新量一遍（见 ChatHistoryArchiveTests 的两条预算用例）。
+        Assert.Equal(1000, ChatHistoryRules.MaxDisplayMessages);
+    }
+
+    [Fact]
     public void Missing_or_empty_history_returns_nothing()
     {
         Assert.Empty(ChatHistoryRules.ToDisplayMessages(null));
