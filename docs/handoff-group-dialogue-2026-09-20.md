@@ -84,6 +84,33 @@ $env:PYTHONPATH='bridge/src;scripts'
 9. **`gameState` 是逐参与者的**：`GroupDialogueMenu` 为每个参与者各自解析状态，解析不到时保持 null，**不拿别人的状态顶替**（例：FastTest profile 不含 SVE，SVE 角色解析不到 gameState——第 85 行那个 Sophia 的旧例即由此而来）。
 10. **回应名单内的人要用"你"**：当面对话写第三人称名字很怪；`addressedTo` 必须与人称一致（对玩家说就留空数组）。
 
+## 5.1 ⚠️ Bridge 必须用「脱离 DSH 进程树」的方式启动
+
+**2026-09-20 实际事故**：Bridge 在 07:49:41 后静默停止，停了约两小时，用户在此期间
+按 F9 只看到 `无可用回复(... warn=[bridge: offline])`。而它当初是用
+`Start-Process pwsh -File scripts/start_bridge.ps1` 启动的——**那个 pwsh 跑在 DSH 的进程树里**，
+会被 job object 连带回收（与 DSH 自身的重启事故同源）。
+
+**正确启动方式：用 WMI 创建进程，并显式补齐环境变量**
+
+```powershell
+$repo = 'E:\workspace\projects\stardew-ai-npc.worktrees\story-memory'
+$inner = "set LOCALAPPDATA=C:\Users\Lenovo\AppData\Local && set USERPROFILE=C:\Users\Lenovo " +
+         "&& set PATH=C:\Users\Lenovo\AppData\Local\Programs\Python\Python310;C:\Program Files\PowerShell\7;%PATH% " +
+         "&& cd /d `"$repo`" && pwsh.exe -NoProfile -ExecutionPolicy Bypass -File `"$repo\scripts\start_bridge.ps1`" " +
+         "> C:\WINDOWS\TEMP\bridge-detached.out.log 2> C:\WINDOWS\TEMP\bridge-detached.err.log"
+Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "cmd.exe /c $inner" }
+```
+
+**为什么必须显式设环境变量**：WMI 创建的进程**不继承调用者的环境**，而
+`start_bridge.ps1` 的 Python 探测依赖 `$env:LOCALAPPDATA`、`$env:USERPROFILE` 与 `PATH`
+（候选里包括 `%LOCALAPPDATA%\Programs\Python\Python*`），缺了会直接抛
+「未找到可运行 Bridge 的 Python」。
+
+**排查口径**：`F9` 里出现 `warn=[bridge: offline]` 就是这一条；
+先用 `Get-NetTCPConnection -LocalPort 5678 -State Listen` 确认端口，再看
+`C:\WINDOWS\TEMP\bridge-detached.err.log` 的尾部。
+
 ## 6. 未完成 / 待用户拍板
 
 - **正式环境部署**：DLL 装进正式 Mods、用正式存档跑一遍群聊——至今只验过 FastTest 隔离 profile
