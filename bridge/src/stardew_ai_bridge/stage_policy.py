@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .personas import canonical_npc_id
+from .relationship_gating import CONVERSATION_LEAD_STAGES
 
 
 _STAGES = (
@@ -886,7 +887,7 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
             stage_key,
         )
     if (
-        stage_key in {"friend", "close", "dating", "married"}
+        stage_key in CONVERSATION_LEAD_STAGES
         and role_key in CONVERSATION_LEAD_TRIAL_NPC_IDS
     ):
         conversation_lead = deepcopy(_CONVERSATION_LEAD_CARD)

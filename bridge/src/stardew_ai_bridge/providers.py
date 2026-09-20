@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from .config import BridgeSettings, ProviderSettings
 from .models import DialogueTestRequest, OpenLoopSignal, ProviderResult, ProviderUsage
 from .vertex_auth import AccessTokenSource, AdcAccessTokenSource, VertexAuthError
+from .relationship_gating import relationship_stage_from_state
 
 
 log = logging.getLogger(__name__)
@@ -394,31 +395,19 @@ class FakeProvider(Provider):
 
     @classmethod
     def _relationship_stage(cls, state: NpcGameState | None) -> str:
+        # 统一到 relationship_gating（2026-09-20 系统性排查）：此前这里自己推导一遍，
+        # ①  忽略请求里显式给的 relationshipStage，② 心数边界用 3 而其它三处用 2。
         if state is None:
             return "stranger"
-        if state.children_count is not None and state.children_count > 0:
-            return "parent"
-        marriage = (state.marriage_status or "").strip().casefold()
-        if marriage in {"married", "spouse", "partner", "roommate"}:
-            return "married"
-        relationship = (state.relationship or "").strip().casefold()
-        if relationship in {
-            "dating",
-            "engaged",
-            "fiance",
-            "fiancé",
-            "girlfriend",
-            "boyfriend",
-        }:
-            return "dating"
-        hearts = state.friendship_hearts or 0
-        if hearts >= 8:
-            return "close"
-        if hearts >= 6:
-            return "friend"
-        if hearts >= 3:
-            return "acquaintance"
-        return "stranger"
+        return relationship_stage_from_state(
+            # NpcGameState 里没有 relationshipStage 字段（C# 也不在 gameState 里发它，
+            # 只发在 history item 上），所以这里显式传 None。
+            explicit_stage=None,
+            children_count=state.children_count,
+            marriage_status=state.marriage_status,
+            relationship=state.relationship,
+            friendship_hearts=state.friendship_hearts,
+        )
 
     @staticmethod
     def _history_count(history: list[dict[str, object]]) -> int:

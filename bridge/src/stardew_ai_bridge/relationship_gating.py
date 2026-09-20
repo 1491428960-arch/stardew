@@ -246,3 +246,48 @@ def resolve_relationship_gate(
         relationship_status_preserved=status_preserved,
         missing_event_ids=missing,
     )
+
+# 2026-09-20（系统性排查 · 语义层）：下面两个换算此前被复制到多处，且**已经漂移**：
+# - `providers.py` 的分档把「2 心」判成 stranger，而 prompts/corpus/本模块都判
+#   acquaintance（并连带走 stranger 的短答与不主动策略）。夹具恰好只喂 3／4 心，
+#   所以这条分歧一直没被照到。
+# - `providers.py` 还会**忽略请求里显式给的 relationshipStage**，自己重新推导一遍。
+# 现在统一到这里，四处改为调用。
+_HEART_STAGE_THRESHOLDS = ((8, "close"), (6, "friend"), (2, "acquaintance"))
+
+
+def hearts_to_stage(hearts: int | None) -> str:
+    """好感心数 → 关系阶段。四处必须给出同一答案。"""
+    value = hearts or 0
+    for threshold, stage in _HEART_STAGE_THRESHOLDS:
+        if value >= threshold:
+            return stage
+    return "stranger"
+
+
+_MARRIED_MARKERS = frozenset({"married", "spouse", "partner", "roommate"})
+_DATING_MARKERS = frozenset(
+    {"dating", "engaged", "fiance", "fiancé", "girlfriend", "boyfriend"}
+)
+
+
+def relationship_stage_from_state(
+    *,
+    explicit_stage: str | None = None,
+    children_count: int | None = None,
+    marriage_status: str | None = None,
+    relationship: str | None = None,
+    friendship_hearts: int | None = None,
+) -> str:
+    """游戏状态 → 关系阶段。**显式 stage 优先**，其次孩子/婚姻/恋爱标记，最后按心数兜底。"""
+    candidate = str(explicit_stage or "").strip().casefold()
+    if candidate in STAGE_RANK:
+        return candidate
+    if children_count is not None and children_count > 0:
+        return "parent"
+    if str(marriage_status or "").strip().casefold() in _MARRIED_MARKERS:
+        return "married"
+    if str(relationship or "").strip().casefold() in _DATING_MARKERS:
+        return "dating"
+    return hearts_to_stage(friendship_hearts)
+

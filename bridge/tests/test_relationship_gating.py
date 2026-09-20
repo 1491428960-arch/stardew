@@ -153,3 +153,40 @@ def test_context_uses_effective_stage_profile_and_exposes_gate_state() -> None:
     assert identity["stageProfile"]["stage"] == "acquaintance"
     assert identity["stagePolicy"]["stage"] == "acquaintance"
     assert identity["relationshipGate"]["effectiveStage"] == "acquaintance"
+
+def test_single_source_of_heart_stage_thresholds() -> None:
+    """回归保护（2026-09-20 系统性排查 · 语义层）。
+
+    「好感心数 → 关系阶段」此前有五套实现（relationship_gating / prompts /
+    providers / corpus + 语料标注），且**已经漂移**：2 心时 gating 与 prompts
+    判 acquaintance，而 providers 判 stranger（连带走 stranger 的短答与不主动
+    策略）。夹具恰好只喂 3／4 心，所以这条分歧一直没被照到。
+
+    现在统一到 relationship_gating.hearts_to_stage，这里把三个消费者钉在一起。
+    """
+    from stardew_ai_bridge import providers, relationship_gating
+    from stardew_ai_bridge.models import NpcGameState
+
+    # 权威表：2 心就是 acquaintance（这条此前被 test_relationship_gating_edges 锚定）
+    assert relationship_gating.hearts_to_stage(2) == "acquaintance"
+    assert relationship_gating.hearts_to_stage(1) == "stranger"
+    assert relationship_gating.hearts_to_stage(6) == "friend"
+    assert relationship_gating.hearts_to_stage(8) == "close"
+
+    # providers 的整段推导必须与之一致（此前它是 3）
+    for hearts, expected in ((1, "stranger"), (2, "acquaintance"), (5, "acquaintance"),
+                             (6, "friend"), (8, "close")):
+        state = NpcGameState(npcId="Abigail", friendshipHearts=hearts)
+        assert providers.FakeProvider._relationship_stage(state) == expected, (
+            f"{hearts} 心时 providers 给出 "
+            f"{providers.FakeProvider._relationship_stage(state)}，应为 {expected}"
+        )
+
+    # 显式标记仍然优先于心数（此前 providers 完全忽略它们）
+    assert providers.FakeProvider._relationship_stage(
+        NpcGameState(npcId="Abigail", friendshipHearts=0, marriageStatus="married")
+    ) == "married"
+    assert providers.FakeProvider._relationship_stage(
+        NpcGameState(npcId="Abigail", friendshipHearts=0, childrenCount=1)
+    ) == "parent"
+

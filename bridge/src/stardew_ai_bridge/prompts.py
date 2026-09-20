@@ -13,7 +13,7 @@ from .behavior_quality import (
 from .evidence import has_dialogue_control_residue
 from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
-from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate
+from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate, relationship_stage_from_state
 from .relationship_world import project_relationship_context
 from .stage_policy import apply_relationship_event_gate, build_stage_policy
 from .story_state import build_story_state
@@ -505,37 +505,28 @@ def _first_value(values: Mapping[str, Any], *names: str) -> Any:
 
 
 def _relationship_stage(state: Mapping[str, Any]) -> str:
-    explicit = state.get("relationshipStage", state.get("relationship_stage"))
-    if isinstance(explicit, str) and explicit.strip().casefold() in _STAGE_KEYS:
-        return explicit.strip().casefold()
+    """统一到 relationship_gating（2026-09-20 系统性排查）。
 
+    此前 prompts 与 providers 各推导一遍：prompts 认显式 relationshipStage、
+    providers 忽略它；心数边界两处都是 2 与 3 的分歧点。
+    """
     children = state.get("childrenCount")
     try:
-        if children is not None and int(children) > 0:
-            return "parent"
+        child_count = int(children) if children is not None else None
     except (TypeError, ValueError):
-        pass
-
-    marriage = str(state.get("marriageStatus", "")).strip().casefold()
-    if marriage in {"married", "spouse", "partner", "roommate"}:
-        return "married"
-
-    relationship = str(state.get("relationship", "")).strip().casefold()
-    if relationship in {"dating", "engaged", "fiance", "fiancé", "girlfriend", "boyfriend"}:
-        return "dating"
-
+        child_count = None
     hearts = state.get("friendshipHearts")
     try:
-        heart_count = int(hearts) if hearts is not None else 0
+        heart_count = int(hearts) if hearts is not None else None
     except (TypeError, ValueError):
-        heart_count = 0
-    if heart_count >= 8:
-        return "close"
-    if heart_count >= 6:
-        return "friend"
-    if heart_count >= 2:
-        return "acquaintance"
-    return "stranger"
+        heart_count = None
+    return relationship_stage_from_state(
+        explicit_stage=state.get("relationshipStage", state.get("relationship_stage")),
+        children_count=child_count,
+        marriage_status=str(state.get("marriageStatus", "")),
+        relationship=str(state.get("relationship", "")),
+        friendship_hearts=heart_count,
+    )
 
 
 def _is_plain_dialogue_input(player_input: str) -> bool:
