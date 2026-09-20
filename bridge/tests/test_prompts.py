@@ -7704,7 +7704,12 @@ def test_natural_topic_without_explicit_plan_can_stop_after_one_small_fact() -> 
 def test_topic_opening_may_be_spontaneous_but_must_explain_new_context(
     natural_mode: bool,
 ) -> None:
-    """主动找话题可以自带新话题，但不能把未铺垫的前情当作玩家已知。"""
+    """主动找话题可以自带新话题，但不能把未铺垫的前情当作玩家已知。
+
+    来源句是硬要求（不是「三选一交代一项」），并且要点名禁止「X 不会…／X 还是…」
+    这类预设对方已知的开头；结尾的接话点必须是玩家能接的口子（真问题／把玩家
+    拉进来的具体事／玩家已知的共同对象），不再允许只给 NPC 单方面的物。
+    """
 
     context = {
         "npcIdentity": {
@@ -7733,7 +7738,14 @@ def test_topic_opening_may_be_spontaneous_but_must_explain_new_context(
     assert "必须在同一条消息给出最小背景" in contract
     assert "不要只说‘那件事、那首歌、最近那个" in contract
     assert "玩家不需要知道此前未说过的前提" in contract
-    assert "明确接话点" in contract
+    assert "无论话题从哪来，都必须有一句来源句" in contract
+    assert "不要用‘X 不会…’‘X 还是…’这类预设对方已知的句式开头" in contract
+    assert "三选一：一个真问题、一件把玩家拉进来的具体事、或一个玩家已知的共同对象" in contract
+    assert "只留一个口子就够，不要堆问题，也不要用命令或提醒代替口子" in contract
+    assert "记录簿不会长腿跑掉" in contract
+    assert "我刚把今天的记录簿合上" in contract
+    assert "至少交代其中一项" not in contract
+    assert "不强制追问、邀约或安排" not in contract
 
 
 def test_natural_topic_without_explicit_plan_downgrades_stage_execution_card() -> None:

@@ -132,13 +132,17 @@ _CHANNEL_INSTRUCTIONS = {
 _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     "允许从角色自己的近况、记忆、兴趣或眼前观察主动开启新话题，不要求玩家先铺垫；"
     "但第一次提到一个新对象、事件、人物或记忆时，必须在同一条消息给出最小背景："
-    "它是什么、刚发生了什么，或为什么此刻想到它，至少交代其中一项。"
+    "它是什么、刚发生了什么，或为什么此刻想到它；"
+    "无论话题从哪来，都必须有一句来源句，用‘我刚把…’‘我最近在…’‘刚才看到…’说清它是从哪来的，"
+    "不能把它当成双方已经知道的东西，不要用‘X 不会…’‘X 还是…’这类预设对方已知的句式开头。"
     "玩家不需要知道此前未说过的前提；不要只说‘那件事、那首歌、最近那个、后来怎么样了’，"
     "也不要用‘你还记得吧’把缺失背景推给玩家。"
-    "如果话题来自 NPC 自己的近况、记忆或兴趣，要用‘我刚想起’‘我最近在’‘刚才看到’等方式标明来源，"
-    "不要把它写成玩家已经知道、参与过或答应过的事实。"
-    "说完后留下一个明确接话点（具体对象、动作、选择、感受或小事实），让玩家知道可以接哪里；"
-    "不强制追问、邀约或安排。"
+    "说完后给玩家留一个能接的口子，三选一：一个真问题、一件把玩家拉进来的具体事、"
+    "或一个玩家已知的共同对象；口子不一定是问句。"
+    "只留一个口子就够，不要堆问题，也不要用命令或提醒代替口子。"
+    "✗ 不能这样：‘记录簿不会长腿跑掉。倒是你，今天看起来没怎么好好休息，得先坐下，别站在塔里晃。’"
+    "✓ 应该这样：‘我刚把今天的记录簿合上——上面半页星图怎么算都不对。你今天在农场忙完了吗？’"
+    "两条示例只示范来源句和口子这两个步骤，句式和对象随角色与场景变化，里面的事实不要当作当前剧情。"
 )
 _HISTORY_LIMIT = 12
 _PROMPT_HISTORY_LIMIT = 12
@@ -3876,11 +3880,30 @@ def _build_voice_execution_card(
         limit=4,
         item_limit=12,
     )
-    voice_actions: list[str] = []
-    for key in ("sentencePattern", "responseRules"):
-        voice_actions.extend(
-            _compact_text_list(voice_style.get(key), limit=2, item_limit=75)
+    # 取词顺序：角色专属的 signatureMoves 先占名额，命中不了就自然回落到
+    # sentencePattern，最后才是所有角色共用的 responseRules。
+    # 命中 signatureMoves 时 responseRules 只取 1 条，把名额让给角色特征；
+    # 未命中时取 2 条，保持旧版的兜底信息量。
+    signature_moves = _compact_text_list(
+        voice_style.get("signatureMoves"),
+        limit=2,
+        item_limit=140,
+    )
+    voice_actions: list[str] = list(signature_moves)
+    voice_actions.extend(
+        _compact_text_list(
+            voice_style.get("sentencePattern"),
+            limit=2,
+            item_limit=75,
         )
+    )
+    voice_actions.extend(
+        _compact_text_list(
+            voice_style.get("responseRules"),
+            limit=1 if signature_moves else 2,
+            item_limit=75,
+        )
+    )
     voice_actions = voice_actions[:3]
     avoid = _compact_text_list(voice_style.get("avoid"), limit=2, item_limit=60)
     tone = _text(voice_style.get("tone"), limit=120)
