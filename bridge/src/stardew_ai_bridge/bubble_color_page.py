@@ -30,6 +30,12 @@
 页面自身**零滤镜**：所有贴图都在服务端预乘 tint 后内联（与
 ``ui_preview_redesign_assets.GAME_TEX_BAKED`` 同一套做法），跨浏览器渲染结果一致。
 
+**本页零依赖**：贴图那点像素活儿（解 PNG、逐通道乘、再编回 PNG）走标准库的
+:mod:`stardew_ai_bridge.png_rgba`，**不需要 Pillow**。此前这里在模块顶层 ``from PIL import Image``，
+而 Bridge 的运行环境没有 Pillow 也没法装 —— 于是 ``import stardew_ai_bridge.app`` 直接失败、
+**Bridge 一重启就挂**（2026-09-21 事故，与 2026-09-20 ``group_dialogue_review_page`` 同一类）。
+现在这个模块只 import 本包内模块与标准库，`app.py` 那层惰性导入是留给「以后再有人加错依赖」的护栏，不是本页的必需品。
+
 气泡外围的**装饰边框**也一并画上：形状与配色直接复用回放页的 ``_CHARACTER_FRAME_SCRIPT``
 （``characterFrameSvg``）与 ``npc_bubble_elements`` 的 ``ornament`` 表 —— 本页不复制任何
 装饰常量，只决定「画在哪」。几何是气泡外扩 14px（= ``NpcBubbleFrame.Pad``），与设计稿、
@@ -41,17 +47,14 @@
 
 from __future__ import annotations
 
-import base64
-import io
 import json
-
-from PIL import Image
 
 from .group_dialogue_review_page import _CHARACTER_FRAME_SCRIPT
 from .npc_bubble_elements import NPC_BUBBLE_ELEMENTS
 from .npc_bubble_panel_plain import PLAIN_MENU_TEX_DATA_URI, PLAIN_PANEL_BASE
 from .npc_bubble_texture import BUBBLE_MENU_TEX_DATA_URI
 from .npc_bubble_tint import BUBBLE_TEX_BASE, bubble_to_tint, parse_color, to_tint
+from .png_rgba import tint_data_uri
 from .ui_preview_redesign_assets import GAME_TEX
 
 #: 页面里气泡的显示尺寸（像素）。九宫格 slice = 20，四角原样、边与中心拉伸。
@@ -64,16 +67,15 @@ _RED_EDGE_SAMPLE = "Sophia"
 _bake_cache: dict[tuple[str, tuple[int, int, int]], str] = {}
 
 
-def _decode(data_uri: str) -> Image.Image:
-    return Image.open(io.BytesIO(base64.b64decode(data_uri.split(",", 1)[1]))).convert("RGBA")
-
-
 def _bake(data_uri: str, tint: tuple[int, int, int]) -> str:
     """把 tint **预乘**进贴图像素，返回新的 data URI。
 
     与 ``GAME_TEX_BAKED`` 同一套做法：预览页因此不需要任何 SVG 滤镜，
     也就不会遇到「滤镜在部分浏览器 / GPU 路径下被忽略或按 linearRGB 计算」那类偏差。
     alpha 保持原样 —— 游戏里 tint 的 alpha 是 255，逐通道乘法不动 alpha。
+
+    像素活儿在 :mod:`stardew_ai_bridge.png_rgba`（标准库 ``zlib`` + 字节算术），
+    所以这一页不依赖 Pillow；结果按 ``(贴图, tint)`` 缓存，页面首次渲染只算一遍。
     """
 
     key = (data_uri, tint)
@@ -81,23 +83,7 @@ def _bake(data_uri: str, tint: tuple[int, int, int]) -> str:
     if cached is not None:
         return cached
 
-    image = _decode(data_uri)
-    pixels = image.load()
-    for y in range(image.height):
-        for x in range(image.width):
-            r, g, b, a = pixels[x, y]
-            if a == 0:
-                continue
-            pixels[x, y] = (
-                round(r * tint[0] / 255),
-                round(g * tint[1] / 255),
-                round(b * tint[2] / 255),
-                a,
-            )
-
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
-    baked = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    baked = tint_data_uri(data_uri, tint)
     _bake_cache[key] = baked
     return baked
 

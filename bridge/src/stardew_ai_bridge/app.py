@@ -39,7 +39,6 @@ from .group_dialogue_lab_page import group_dialogue_lab_page
 from .group_dialogue_review_page import group_dialogue_review_page
 from .ui_preview_page import ui_preview_page
 from .ui_preview_redesign_page import ui_preview_redesign_page
-from .bubble_color_page import bubble_color_page
 from .models import GroupDialogueRequest, GroupDialogueResponse
 
 
@@ -610,6 +609,26 @@ def ui_preview_redesign() -> str:
 
 @app.get("/test/bubble-colors", response_class=HTMLResponse)
 def bubble_colors() -> str:
-    """46 个角色的气泡底色核对：现方案（彩色木框）vs 备选（去色面板）。"""
+    """46 个角色的气泡底色核对：现方案（彩色木框）vs 备选（去色面板）。
+
+    页面**自身零依赖**（贴图的 PNG 解码与 tint 预乘走标准库，见 ``png_rgba``），
+    但这里的惰性导入保留 —— 它是「一个页面的 import 不该拖垮整个 Bridge」的护栏：
+    2026-09-21 与 2026-09-20 各发生过一次（`from PIL import Image` 缺失 /
+    `group_dialogue_review_page` 的错误 import）→ `import stardew_ai_bridge.app` 直接失败，
+    Bridge 一重启就挂。现在最坏情况只是这一个路由 503，其余路由与 Bridge 本体不受影响。
+    """
+
+    try:
+        from .bubble_color_page import bubble_color_page
+    except ModuleNotFoundError as error:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"页面模块加载失败：当前 Bridge 环境缺少 {error.name}；"
+                "Bridge 本体与其余路由不受影响。"
+            ),
+        ) from error
 
     return bubble_color_page()
