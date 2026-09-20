@@ -8,7 +8,7 @@
 
 **坑 1：只减去“定义那一行”，不要排除整个定义文件。**
 同文件内部调用是**合法的生产使用**。早期版本把定义文件整个排除掉，于是把
-`merge_persona`（`personas.py:318` 就在调它）、`case_by_id`、`build_group_messages`、
+`merge_persona`（`personas.py` 的 `_ensure_profile_layers` 就在调它）、`case_by_id`、`build_group_messages`、
 `build_vertex_url` 四个核心函数误报成“没人用”——44 个结果里有 18 个是假阳性。
 
 **坑 2：装饰器注册的函数天然没有显式调用。**

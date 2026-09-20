@@ -186,13 +186,40 @@ public sealed class MenuSkinRulesTests
         Assert.True(group.InputBox.Contains(groupVisual), $"群聊视觉输入框越出命中区: {groupVisual} ⊄ {group.InputBox}");
     }
 
+    /// <summary>
+    /// 视觉输入框的**可达**宽度下限。用真实布局（而不是手搓的窄矩形）来断言：
+    /// 两个布局给出命中区宽 ≥ 120（<c>ChatLayoutRules</c> 与 <c>GroupDialogueLayoutRules</c>
+    /// 里的 <c>Math.Max(120, …)</c>），视觉矩形再左右各缩
+    /// <see cref="MenuSkinRules.InputBoxHorizontalInset"/> → 视觉宽恒 ≥ 96。
+    ///
+    /// 原来这条用手拼一个 40 宽的输入框去撞 <see cref="MenuSkinRules.InputBoxMinimumWidth"/>：
+    /// 40 宽在现有几何下拼不出来，命中的只是那条不可达的防呆分支，绿得与行为无关。
+    /// </summary>
     [Fact]
     public void Visual_input_rect_keeps_a_usable_minimum_width()
     {
-        var visual = MenuSkinRules.InputBoxVisual(new Rectangle(0, 0, 40, 112));
+        const int layoutFloor = 120;   // 两处布局的 Math.Max(120, …)
+        var minimum = layoutFloor - (MenuSkinRules.InputBoxHorizontalInset * 2);
 
-        Assert.Equal(MenuSkinRules.InputBoxMinimumWidth, visual.Width);
-        Assert.Equal(48, visual.Height);
+        foreach (var (width, height) in new[] { (1280, 720), (1920, 1080), (1024, 600), (640, 480) })
+        {
+            var chat = MenuSkinRules.InputBoxVisual(ChatLayoutRules.Calculate(width, height).InputBox);
+            var group = MenuSkinRules.InputBoxVisual(GroupDialogueLayoutRules.Calculate(width, height).InputBox);
+
+            Assert.Equal(MenuSkinRules.InputBoxHeight, chat.Height);
+            Assert.Equal(MenuSkinRules.InputBoxHeight, group.Height);
+            Assert.True(chat.Width >= minimum, $"{width}×{height} 私聊视觉输入框过窄：{chat.Width} < {minimum}");
+            Assert.True(group.Width >= minimum, $"{width}×{height} 群聊视觉输入框过窄：{group.Width} < {minimum}");
+        }
+
+        // MenuSkinRules.InputBoxMinimumWidth = 80 是**防呆**下限而不是布局下限（96 > 80），
+        // Math.Max(80, …) 的 80 分支在现有几何下取不到。保留它的理由与代价：
+        // 消除这条不可达分支必须把布局下限降到 104 以下，而布局下限就是命中区宽度 ——
+        // 三个界面的点击判定都吃 layout.InputBox，所以不动，只在这里钉住它仍然生效。
+        var degenerate = MenuSkinRules.InputBoxVisual(new Rectangle(0, 0, 40, 112));
+
+        Assert.Equal(MenuSkinRules.InputBoxMinimumWidth, degenerate.Width);
+        Assert.Equal(MenuSkinRules.InputBoxHeight, degenerate.Height);
     }
 
     [Fact]

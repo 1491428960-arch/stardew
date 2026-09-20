@@ -143,7 +143,18 @@ public static class MenuSkinRules
     /// <summary>输入框在输入区凹槽内左右各内缩的距离。</summary>
     public const int InputBoxHorizontalInset = 12;
 
-    /// <summary>输入框绘制宽度的下限，与布局里的 <c>Math.Max(120, …)</c> 同义。</summary>
+    /// <summary>
+    /// 输入框**绘制**宽度的防呆下限。⚠ 它不是布局下限，两边差着一档：
+    ///
+    /// 布局下限写在 <c>ChatLayoutRules.Calculate</c> 与 <c>GroupDialogueLayoutRules.Calculate</c>
+    /// 的 <c>Math.Max(120, …)</c>，两处都是 <b>120</b>；<see cref="InputBoxVisual"/> 再左右各缩
+    /// <see cref="InputBoxHorizontalInset"/>，于是视觉宽 ≥ 120 − 24 = <b>96</b>，
+    /// 也就是说 <c>Math.Max(80, …)</c> 里的 80 在现有几何下<b>取不到</b>，是条不可达的防呆分支。
+    ///
+    /// 保留它只为将来有人把布局下限调低时不至于画出一个畸形的框。
+    /// ⚠ 不要为了「消除死分支」去改布局下限：120 同时决定 <c>layout.InputBox</c> 的宽度，
+    /// 而三个界面的命中判定用的就是 <c>layout.InputBox</c>，改它会动点击区域。
+    /// </summary>
     public const int InputBoxMinimumWidth = 80;
 
     /// <summary>

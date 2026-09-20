@@ -753,11 +753,12 @@ public class ChatInputMenu : IClickableMenu
 
         if (!string.IsNullOrWhiteSpace(uiHint) && y < area.Bottom - MessagePadding)
         {
+            // 提示行文字色与 F9 群聊、Hub 同源：三处都用 MenuSkinRules.InkSoft（次级文字档）。
             b.DrawString(
                 Game1.smallFont,
                 uiHint,
                 new Vector2(area.X + MessagePadding, y),
-                Color.Gray);
+                MenuSkinRules.InkSoft);
         }
 
         DrawProfile(b);

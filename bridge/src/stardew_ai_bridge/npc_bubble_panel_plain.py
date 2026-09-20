@@ -12,16 +12,15 @@
 **角色气泡不受影响**：46 个角色的专属配色本来就在基准色域内，继续用彩色 MenuTiles 的
 描边归一变体（见 `npc_bubble_texture.py`）与各自的 tint。
 
-与 `smapi/ChatBubbleDrawing.cs` 的 `PanelSource` / `PanelBase` / `ToPanelTint`
-（:42-60、:178-193）同源：C# 不能 import Python，那边是**跨语言复刻**，改一处必须同步另一处。
+与 `smapi/ChatBubbleDrawing.cs` 的 `PanelSource` / `PanelBase` / `ToPanelTint` 同源：
+C# 不能 import Python，那边是**跨语言复刻**，改一处必须同步另一处。
 **Python 侧的反推公式只有一份** —— `npc_bubble_tint.to_tint`；本文件只是给它补上未着色面板的
 基色，公式与下面两个 tint 都不再自己抄一遍。
 
 生成脚本：.tmp/ui-preview/_build_plain_panel.py（只读游戏解包目录，幂等）
 源 MenuTilesUncolored.png → 60x60，png 322B
 
-⚠ 重跑该生成脚本前要先同步它的模板 —— 那里面仍内联着一份同形状公式与两个 tint 数值
-（本轮收敛只动了 `bridge/` 与 `scripts/`），否则本文件会被写回「两份实现」的旧形态。
+该脚本的模板已与本文件同步（同样只 import `to_tint`、不再自带公式），重跑不会把本文件写回旧形态。
 """
 
 from __future__ import annotations

@@ -25,7 +25,7 @@
 
 ## 附带修掉的范围外问题
 
-- 构建的实际基线是 **2 个 nullable 警告**（`GroupDialogueMenu.cs:198/213`），与「0 警告」的记录不符。改用 `TryGetValue` 后归零；`SpeakerId` 为 null（模型声明非空，实际不会发生）时由「抛异常」退化为「空字符串」。
+- 构建的实际基线是 **2 个 nullable 警告**（都在 `GroupDialogueMenu.draw` 的提示行分支附近），与「0 警告」的记录不符。改用 `TryGetValue` 后归零；`SpeakerId` 为 null（模型声明非空，实际不会发生）时由「抛异常」退化为「空字符串」。
 - `DoorActionParser.RelaxResidentialGate` 放行后把居民 token 清空，导致改写过 action 再也 `TryParse` 不通过——**改动前就如此**，已加测试记录，避免以后被当成回归。
 - 群聊消息区是「按条数取最近 10 条」，私聊是「按高度取窗口 + 滚动」，两套语义不同；统一属视觉/产品决策。
 

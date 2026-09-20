@@ -173,7 +173,8 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
         }
 
         MenuButtonDrawing.DrawButton(b, closeButton, "关闭", enabled: true, tint: MenuSkinRules.SecondaryButtonTint);
-        b.DrawString(Game1.smallFont, hint, new Vector2(panel.X + 32, panel.Bottom - 112), Color.Gray);
+        // 提示行文字色与 F9 群聊、F8 私聊同源：都用 MenuSkinRules.InkSoft。
+        b.DrawString(Game1.smallFont, hint, new Vector2(panel.X + 32, panel.Bottom - 112), MenuSkinRules.InkSoft);
         drawMouse(b);
     }
 

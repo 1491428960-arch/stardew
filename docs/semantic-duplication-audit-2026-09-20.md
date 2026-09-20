@@ -33,16 +33,16 @@
 
 | # | 症状 | 位置 |
 |---|---|---|
-| 1 | **群聊「挑重要的记」整条链从未生效**——`ValidateGroupResponse` 重建响应时漏复制 `MemoryHighlights`。视觉验证用 `QueueResponseForVisualTest` 直塞响应、绕过了这层，所以一直没暴露 | `BridgeClient.cs:629-652` |
-| 2 | **矮人与 Abigail 的矿石对话是坏的**——`specialInteraction.ToString().ToLowerInvariant()` 发出 `"mineraltasting"`，Bridge 只认 `"mineral_tasting"` → 422 → 兜底回复 | `ConversationModels.cs:56` |
-| 3 | **心数 2 时阶段判错**——`providers` 用 `>=3`、其它三处用 `>=2`，走 stranger 的短答与不主动策略。夹具只喂 3／4 心，所以没照到 | `providers.py:419` 等四处 |
-| 4 | **`providers` 忽略显式 `relationshipStage`**，自己重新推导一遍 | `providers.py:396-421` |
-| 5 | **「朋友及以上」阶段集合的第四份字面量**（上一轮我误称「三处已统一」） | `stage_policy.py:889` |
+| 1 | **群聊「挑重要的记」整条链从未生效**——`ValidateGroupResponse` 重建响应时漏复制 `MemoryHighlights`。视觉验证用 `QueueResponseForVisualTest` 直塞响应、绕过了这层，所以一直没暴露 | `BridgeClient.ValidateGroupResponse` |
+| 2 | **矮人与 Abigail 的矿石对话是坏的**——`specialInteraction.ToString().ToLowerInvariant()` 发出 `"mineraltasting"`，Bridge 只认 `"mineral_tasting"` → 422 → 兜底回复 | `ConversationModels.SpecialInteractionValue` |
+| 3 | **心数 2 时阶段判错**——`providers` 用 `>=3`、其它三处用 `>=2`，走 stranger 的短答与不主动策略。夹具只喂 3／4 心，所以没照到 | `providers._relationship_stage` 等四处 |
+| 4 | **`providers` 忽略显式 `relationshipStage`**，自己重新推导一遍 | `providers._relationship_stage` |
+| 5 | **「朋友及以上」阶段集合的第四份字面量**（上一轮我误称「三处已统一」） | `stage_policy` 里对 `relationship_gating.CONVERSATION_LEAD_STAGES` 的引用 |
 | 13 | **群聊完全没有回复质量门**——舞台动作／Markdown／提示词泄露会原样进对白、甚至进长期记忆 | `group_conversation.guard_group_turns` 逐条过 `ResponseGuard.check`，丢弃不合格那条（**不把整场拖进 fallback**） |
 | 14 | **群聊开场对 `guard` 完全不可见**——只有私聊的 topic 契约算开场 | `guard.is_opening_prompt` 统一开场信号（私聊 topic 契约／群聊卡 + 没有玩家消息），`_missing_topic_grounding` → `missing_opening_grounding` |
 | 6 · 7 | **`recentFacts`／`relationshipWorld` 进不了群聊多轮 prompt**（SMAPI 一直在发） | 第 194 项：`build_group_messages` 注入场景卡 |
 | 8 | **群聊 `warnings` 超 20 条 → pydantic 校验失败 → 端点 500** | 第 194 项：`group_conversation.limit_warnings` 两边共用 |
-| 9 | **`build_group_voice_cards` 读错 key**（`identity` vs `npcIdentity`）→ 声线卡三项永远为空 | 第 194 项：改 key 名（`prompts.py:3108`） |
+| 9 | **`build_group_voice_cards` 读错 key**（`identity` vs `npcIdentity`）→ 声线卡三项永远为空 | 第 194 项：改 key 名（`prompts.build_group_voice_cards`） |
 | 11 | **`usage` 合并两套口径**（群聊保守、私聊累加） | 第 194 项：统一到保守口径 |
 | 12 | **记忆去重用 `string.GetHashCode()`**（.NET 跨进程随机化 → 重启后去重失效） | 第 194 项：改用稳定 SHA256 |
 | 15 | **`objectiveRelationships` 形状不匹配**（C# 有向边 vs Python 单对象 + `extra="forbid"` → 422） | 第 194 项：在同一 normalizer 里折叠 from/to |
@@ -91,9 +91,9 @@
 **现状是分裂的**：
 
 - `prompts.py` 一旦 `childrenCount > 0` 就判 `parent`，**优先于 marriageStatus**
-- `stage_policy.py:902` 只给 `{dating, married}` 发 `affectionInitiative` → **「已婚 + 有孩子」的 NPC 拿不到任何亲密契约**
-- 而 `relationship_gating` 与 `character_quality_eval.py:697` 又把它当亲密阶段
-- `behavior_quality.py:1997` 更是把 parent 的任何浪漫表达直接判 `romance_boundary_violation`
+- `stage_policy` 里 `affectionInitiative` 的发放处只认 `{dating, married}` → **「已婚 + 有孩子」的 NPC 拿不到任何亲密契约**
+- 而 `relationship_gating` 与 `character_quality_eval._case_romance_eligible` 又把它当亲密阶段
+- `behavior_quality` 的 `romance_boundary_violation` 判定更是把 parent 的任何浪漫表达直接判违规
 
 **后果**：已婚有孩子的 NPC 在运行时收不到亲密引导，在评测里又被判「越界」。
 

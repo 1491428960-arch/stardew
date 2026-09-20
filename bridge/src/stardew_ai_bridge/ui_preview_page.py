@@ -143,7 +143,7 @@ h1 { margin: 10px 0 12px; font-size: clamp(1.5rem, 2.6vw, 2.1rem); font-weight: 
   color: rgba(255,255,255,.34); font-size: 12px; letter-spacing: .04em; pointer-events: none;
 }
 .stage.f8::before {
-  /* ChatInputMenu.cs:634-641 DrawBackdrop：整屏 Color.Black * 0.42f */
+  /* ChatInputMenu.DrawBackdrop：整屏遮罩（现走 MenuSkinRules.ScrimAlpha，改前是 Color.Black * 0.42f） */
   content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.42);
 }
 
@@ -264,17 +264,18 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
             <td>F8 私聊</td>
             <td>面板 + 全屏压暗底、消息区气泡（玩家靠右 / NPC 靠左带徽章与装饰边框）、
                 右侧角色面板（立绘位、名字、好感度、好感度条）、底部输入框与四个按钮、消息区提示行。
-                <b>两点是实现的真实样子，不是本稿省略</b>：① 顶部 header 会被算出来但当前什么都不画
-                （<code>ChatLayoutRules.cs:180,182</code> 两个开关都是 false）；② 720p 下消息区只放得下一条消息，
-                其余要靠滚动才能看到（<code>ChatInputMenu.cs:690-701</code> 的取窗逻辑）；
+                <b>两点是实现的真实样子，不是本稿省略</b>：① 顶部 header 画不画由
+                <code>ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus</code> 决定
+                （2026-09-20 外壳重构后两个开关都是 true，标题带会画出来）；② 720p 下消息区只放得下一条消息，
+                其余要靠滚动才能看到（<code>ChatTextLayoutRules.SelectLatestThatFit</code> 的取窗逻辑）；
                 换到 1920×1080 就能看到玩家与 NPC 各一条。</td>
-            <td><code>ChatLayoutRules.cs:31-143</code>、<code>ChatInputMenu.cs:634-910</code></td>
+            <td><code>ChatLayoutRules.Calculate</code>、<code>ChatInputMenu.draw</code></td>
           </tr>
           <tr>
             <td>F9 群聊</td>
             <td>面板、标题、参与者条、消息区气泡（含同角色重复发言的构图轮换）、
                 输入框与发送 / 重试 / 关闭按钮、底部提示行</td>
-            <td><code>GroupDialogueLayoutRules.cs:30-77</code>、<code>GroupDialogueMenu.cs:147-238</code></td>
+            <td><code>GroupDialogueLayoutRules.Calculate</code>、<code>GroupDialogueMenu.draw</code></td>
           </tr>
           <tr>
             <td>群聊中心</td>
@@ -282,7 +283,7 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
                 卡片第三行的「状态」会压到卡片底边框上——这是游戏原样：实机截图
                 <code>artifacts/visual-tests/20260910-group-hub-r11/group-hub.png</code>
                 里同样如此（文字 y=row+66、卡片高 92 与 12px 边框内沿 row+80 相撞）。</td>
-            <td><code>GroupDialogueHubLayoutRules.cs:13-30</code>、<code>GroupDialogueHubMenu.cs:109-164</code>、
+            <td><code>GroupDialogueHubLayoutRules.Calculate</code>、<code>GroupDialogueHubMenu.draw</code>、
                 <code>GroupInvitationActionLayoutRules.cs:15-67</code></td>
           </tr>
         </tbody>
@@ -300,33 +301,33 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>私聊 header / footer</td><td>header 高 min(92, max(48, h/4))；footer 高 min(112, max(72, h/3))，贴底</td><td><code>ChatLayoutRules.cs:62-71</code></td></tr>
           <tr><td>私聊消息区 / 角色面板</td><td>消息区高 max(40, footer.Y-header.Bottom-16)；宽≥240+280+8 时右侧开 280×min(112,高) 的角色面板</td><td><code>ChatLayoutRules.cs:72-93</code></td></tr>
           <tr><td>私聊按钮</td><td>footer 宽≥600 → gap 8，发送 96、找话题 128、物品 104、结束 96，全部同高贴底</td><td><code>ChatLayoutRules.cs:95-130</code></td></tr>
-          <tr><td>私聊 header 文字</td><td>当前**什么都不画**（标题与状态都被关掉）</td><td><code>ChatLayoutRules.cs:180,182</code></td></tr>
+          <tr><td>私聊 header 文字</td><td>标题带 + 好感度状态字（2026-09-20 外壳重构后两个开关都是 true）</td><td><code>ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus</code></td></tr>
           <tr><td>群聊面板</td><td>w=min(1120, max(680, 视口宽-48))；h=min(720, max(430, 视口高-48))</td><td><code>GroupDialogueLayoutRules.cs:32-35</code></td></tr>
           <tr><td>群聊 header / footer</td><td>header 高 min(118, 面板高)；footer 高 min(104, 面板高) 贴底、左右内缩 20</td><td><code>GroupDialogueLayoutRules.cs:42-44</code></td></tr>
           <tr><td>群聊参与者条</td><td>(header.X+20, header.Bottom-48, header.W-40, min(32, header.H-20))</td><td><code>GroupDialogueLayoutRules.cs:45-49</code></td></tr>
           <tr><td>群聊消息区</td><td>(panel.X+20, header.Bottom, panel.W-40, footer.Y-header.Bottom-12)，一次最多 10 条</td><td><code>GroupDialogueLayoutRules.cs:28,50-54</code></td></tr>
           <tr><td>群聊按钮</td><td>发送 / 重试 / 关闭 各 88 宽、gap 8，贴 footer 右端</td><td><code>GroupDialogueLayoutRules.cs:56-66</code></td></tr>
-          <tr><td>群聊标题 / 参与者文字</td><td>(header.X+12, header.Y+10) 与 (participantStrip.X, participantStrip.Y)</td><td><code>GroupDialogueMenu.cs:175-176</code></td></tr>
-          <tr><td>群聊底部提示</td><td>(messageArea.X+12, messageArea.Bottom-28)</td><td><code>GroupDialogueMenu.cs:236</code></td></tr>
-          <tr><td>推送气泡的起点</td><td>左 = messageArea.X+12，右 = messageArea.Right-12，首条 y = messageArea.Y+12</td><td><code>GroupDialogueMenu.cs:182-186</code></td></tr>
+          <tr><td>群聊标题 / 参与者文字</td><td>(header.X+12, header.Y+10) 与 (participantStrip.X, participantStrip.Y)</td><td><code>GroupDialogueMenu.draw</code></td></tr>
+          <tr><td>群聊底部提示</td><td>(messageArea.X+12, messageArea.Bottom-28)</td><td><code>GroupDialogueMenu.draw</code>（提示行分支）</td></tr>
+          <tr><td>推送气泡的起点</td><td>左 = messageArea.X+12，右 = messageArea.Right-12，首条 y = messageArea.Y+12</td><td><code>GroupDialogueMenu.draw</code>（bubbleLeft / bubbleRight）</td></tr>
           <tr><td>中心面板</td><td>w=min(1080, max(680, 视口宽-48))；h=min(680, max(440, 视口高-48))</td><td><code>GroupDialogueHubLayoutRules.cs:15-16</code></td></tr>
-          <tr><td>中心标题 / 首行 / 行距</td><td>标题 (panel.X+32, panel.Y+24)；首行 y=panel.Y+94；每行 92 高、步进 104</td><td><code>GroupDialogueHubMenu.cs:128,131,140,157</code></td></tr>
-          <tr><td>中心卡片文字</td><td>(row.X+18, row.Y+14/42/66)：标题·参与者为黑、主题为 DarkSlateGray、状态为 DimGray</td><td><code>GroupDialogueHubMenu.cs:150-152</code></td></tr>
+          <tr><td>中心标题 / 首行 / 行距</td><td>标题 (panel.X+32, panel.Y+24)；首行 y=panel.Y+94；每行 92 高、步进 104</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
+          <tr><td>中心卡片文字</td><td>(row.X+18, row.Y+14/42/66)：标题·参与者为黑、主题为 DarkSlateGray、状态为 DimGray</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
           <tr><td>中心按钮</td><td>接受 / 稍后 / 忽略 各 64×52、gap 6、行长 18 处对齐右端；关闭 148×56 贴右下</td><td><code>GroupInvitationActionLayoutRules.cs:15-18</code>、<code>GroupDialogueHubLayoutRules.cs:26-29</code></td></tr>
-          <tr><td>中心底部提示 / 空态</td><td>hint (panel.X+32, panel.Bottom-112)；空态 (panel.X+40, panel.Y+94)</td><td><code>GroupDialogueHubMenu.cs:134,162</code></td></tr>
+          <tr><td>中心底部提示 / 空态</td><td>hint (panel.X+32, panel.Bottom-112)；空态 (panel.X+40, panel.Y+94)</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
           <tr><td>最多少张邀约卡</td><td>4</td><td><code>GroupInvitationRules.cs:18</code> MaxVisibleInvitations</td></tr>
           <tr><td>气泡内边距 / 行间 / 间距 / 安全边距 / 最小宽</td><td>12 / 4 / 20 / 8 / 180</td><td><code>ChatBubbleDrawing.cs:20,23,29,32,35</code></td></tr>
-          <tr><td>气泡换行宽 / 高度</td><td>ContentWidth = max(80, 可用宽-24-8)；高 = 24 + LineSpacing + 4 + n×LineSpacing + (n-1)×4</td><td><code>ChatBubbleDrawing.cs:44-62</code></td></tr>
-          <tr><td>气泡宽度</td><td>clamp(ceil(文本宽+24), min(180, 可用宽), 可用宽)</td><td><code>ChatBubbleDrawing.cs:85-101</code></td></tr>
+          <tr><td>气泡换行宽 / 高度</td><td>ContentWidth = max(80, 可用宽-24-8)；高 = 24 + LineSpacing + 4 + n×LineSpacing + (n-1)×4</td><td><code>ChatBubbleDrawing.ContentWidth / MeasureHeight</code></td></tr>
+          <tr><td>气泡宽度</td><td>clamp(ceil(文本宽+24), min(180, 可用宽), 可用宽)</td><td><code>ChatBubbleDrawing.Draw</code>（宽度 clamp）</td></tr>
           <tr><td>玩家 / NPC 兜底气泡色</td><td>(226,239,246) / (239,231,244) —— 这是**设计色**（最终色）；两者走未着色面板 <code>Maps\MenuTilesUncolored</code> 的同一九宫格，tint 由 <code>ToPanelTint</code> 按基色 (248,248,248) 反推为 (232,246,253) / (246,238,251)，回乘即还原设计色</td><td><code>ChatBubbleDrawing.cs:50-60,178-193</code></td></tr>
           <tr><td>角色气泡色</td><td>46 个角色各一份配色，<code>palette.bubble</code> 是**设计色**（回放页直接铺的最终色）；画进彩色面板前按基色 <code>#fdbc6e</code> 反推 <code>tint = 设计色 × 255 ÷ 基色</code>，回乘即还原设计色（Abigail (65,44,109) → tint (66,60,253)）；设计色直接当 tint 会再乘一次木纹 → (64,32,47)，整体暗一档</td><td><code>npc_bubble_tint.py</code>（与 C# 导出、<code>/test/ui-redesign</code> 共用同一份公式）</td></tr>
-          <tr><td>深色气泡上的正文色</td><td>(243,240,252)</td><td><code>ChatBubbleDrawing.cs:41</code></td></tr>
-          <tr><td>说话人文字色</td><td>玩家 DarkSlateBlue；NPC 用该角色的 Accent</td><td><code>ChatBubbleDrawing.cs:134-138</code></td></tr>
+          <tr><td>深色气泡上的正文色</td><td>(243,240,252)</td><td><code>ChatBubbleDrawing.DarkBubbleText</code></td></tr>
+          <tr><td>说话人文字色</td><td>玩家 DarkSlateBlue；NPC 用该角色的 Accent</td><td><code>ChatBubbleDrawing.Draw</code>（说话人 DrawString）</td></tr>
           <tr><td>装饰边框外扩</td><td>Pad = 14；三套构图按 (发言次序 + kind 字符码和) % 3 轮换</td><td><code>NpcBubbleFrame.cs:21,308-317</code></td></tr>
           <tr><td>换行方式</td><td>逐**字符**断行（不按词），超宽即换行</td><td><code>ChatTextLayoutRules.cs:8-42</code></td></tr>
-          <tr><td>角色面板底色 / 立绘</td><td>drawTextureBox(Color(248,240,224))；立绘 64×64，外框再放大 6</td><td><code>ChatInputMenu.cs:846-874</code></td></tr>
-          <tr><td>好感度条</td><td>高 10、底 (206,195,180)、填充 (181,137,191)，按 心数/10 比例</td><td><code>ChatInputMenu.cs:892-909</code></td></tr>
-          <tr><td>四个按钮的 tint</td><td>发送 (235,246,236)、找话题 (239,231,244)、物品 (235,240,246)、结束 (247,232,227)</td><td><code>ChatInputMenu.cs:831-834</code></td></tr>
+          <tr><td>角色面板底色 / 立绘</td><td>drawTextureBox(Color(248,240,224))；立绘 64×64，外框再放大 6</td><td><code>ChatInputMenu.DrawProfile</code></td></tr>
+          <tr><td>好感度条</td><td>高 10、底 (206,195,180)、填充 (181,137,191)，按 心数/10 比例</td><td><code>ChatInputMenu.DrawProfile</code>（好感度条）</td></tr>
+          <tr><td>四个按钮的 tint</td><td>发送 (235,246,236)、找话题 (239,231,244)、物品 (235,240,246)、结束 (247,232,227)</td><td><code>ChatInputMenu.DrawFooter</code></td></tr>
           <tr><td>按钮绘制</td><td>drawTextureBox(tint 或 Gray) + 居中标签，禁用时文字改 DimGray</td><td><code>MenuButtonDrawing.cs:22-36</code></td></tr>
           <tr><td>输入框</td><td>原版 <code>LooseSprites\textBox</code>（192×48）横向三片：左 16px + 中 (W-32) + 右 16px；源矩形高写的是 Height，H&gt;48 的部分被采样 clamp 到贴图末行 (57,54,65,66)，那片半透明冷阴影与面板底色相乘就是下半的米褐色</td><td class="done">2026-09-20 真贴图原样内联（base64），与游戏截图 y434-473 逐行同值</td></tr>
           <tr><td>菜单九宫格纹理（按钮 / 气泡 / F9 / Hub）</td><td><code>Maps\MenuTiles</code> 的 (0,256,60,60) 切 20px：四角 20×20 原样、四边拉伸、中心拉伸到 (w-40)×(h-40)；投影是同一套再画一遍、黑色 40%、整体偏移 (-8,+8)</td><td class="done">2026-09-20 真贴图原样内联，与游戏截图面板/按钮逐像素同值</td></tr>
@@ -372,7 +373,7 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
         <li><b>光标</b>：原版是 500ms 周期闪烁的 4×32 竖条（<code>Rectangle(X+16+文字宽+2, Y+8, 4, 32)</code>），
             页面画静态不闪烁版本，位置取空文本时。</li>
         <li><b>NPC 立绘</b>：页面没有游戏素材，角色面板里的 64×64 位置用角色徽章占位并标注。</li>
-        <li><b>滚动条</b>：F8 在消息超出时才画（<code>ChatInputMenu.cs:775-827</code>）；示例消息放得下，所以看不到它。</li>
+        <li><b>滚动条</b>：F8 在消息超出时才画（<code>ChatInputMenu.UpdateScrollBar / DrawScrollBar</code>）；示例消息放得下，所以看不到它。</li>
         <li><b>示例文案</b>：三个界面的对话与邀约卡都是本页面编的示例，只有<em>结构</em>来自代码；
             邀约卡的标题取自 <code>GroupInvitationThemes.cs</code> 的真实主题名。</li>
         <li><b>气泡间距</b>：代码里 <code>Gap = NpcBubbleFrame.Pad + 6 = 20</code>（<code>ChatBubbleDrawing.cs:29</code>），
@@ -435,13 +436,13 @@ __FRAME_SCRIPT__
   /**
    * MenuTiles (0,256,60,60) —— drawTextureBox 的默认源矩形，num = 60/3 = 20。
    *
-   * 按钮（MenuButtonDrawing.cs:29）、F9 群聊面板（GroupDialogueMenu.cs:168）、
-   * Hub 面板与行（GroupDialogueHubMenu.cs:118/142）走这一套。投影 = 同一套九宫格再画一遍、
+   * 按钮（MenuButtonDrawing.DrawButton）、F9 群聊面板（GroupDialogueMenu.draw）、
+   * Hub 面板与卡片行（GroupDialogueHubMenu.draw）走这一套。投影 = 同一套九宫格再画一遍、
    * `Color.Black * 0.4f`、整体偏移 (-8, +8)。
    *
    * ⚠ 角色气泡不直接用这一套：它另用一份描边色相归一过的变体 BUBBLE_MENU_TEX
    * （原来那圈红边就是这块贴图的描边被深色 tint 乘出来的）；玩家与兜底气泡则换掉整块贴图，
-   * 走下面那份未着色的 PLAIN_MENU_TEX（ChatBubbleDrawing.cs:126-141）。
+   * 走下面那份未着色的 PLAIN_MENU_TEX（ChatBubbleDrawing.Draw 的 DrawPanel 分支）。
    */
   const MENU_TEX = {
     src: GAME_TEX.menuButton,
@@ -497,7 +498,7 @@ __FRAME_SCRIPT__
   /**
    * MenuTiles (0,0,256,256) —— Game1.drawDialogueBox 的 64×64 九宫格。
    *
-   * 只有 F8 私聊面板用它（ChatInputMenu.cs:258-265），而且**没有投影**
+   * 只有 F8 私聊面板用它（ChatInputMenu.draw 里的 MenuSkinDrawing.DrawPanel），而且**没有投影**
    * （drawDialogueBox 里没有任何阴影绘制）。它与上面那套不是同一张切片 ——
    * 这正是页面前一版把「两套的关系」列为未查明的答案：同图不同源矩形。
    *
@@ -518,9 +519,9 @@ __FRAME_SCRIPT__
   const DARK_SLATE_GRAY = [47, 79, 79];    // Color.DarkSlateGray
   const DIM_GRAY = [105, 105, 105];        // Color.DimGray
   const DARK_SLATE_BLUE = [72, 61, 139];   // Color.DarkSlateBlue
-  const DARK_BUBBLE_TEXT = [243, 240, 252]; // ChatBubbleDrawing.cs:41
-  const METER_BG = [206, 195, 180];        // ChatInputMenu.cs:899
-  const METER_FILL = [181, 137, 191];      // ChatInputMenu.cs:906
+  const DARK_BUBBLE_TEXT = [243, 240, 252]; // ChatBubbleDrawing.DarkBubbleText
+  const METER_BG = [206, 195, 180];        // ChatInputMenu.DrawProfile（好感度条底）
+  const METER_FILL = [181, 137, 191];      // ChatInputMenu.DrawProfile（好感度条填充）
 
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
   // 「纹理色 × tint ÷ 255」这条乘法现在由 tintFilter() 的 feColorMatrix 真正作用在贴图上，
@@ -850,16 +851,16 @@ __FRAME_SCRIPT__
     return el;
   }
 
-  // ── 气泡（ChatBubbleDrawing.Draw —— smapi/ChatBubbleDrawing.cs:68-149）──
+  // ── 气泡（ChatBubbleDrawing.Draw）──
   const BUBBLE = { padding: 12, lineSpacing: 4, gap: 20, safetyMargin: 8, minWidth: 180 }; // :20,23,29,32,35
 
-  /** ChatBubbleDrawing.MeasureHeight —— smapi/ChatBubbleDrawing.cs:50-62 */
+  /** ChatBubbleDrawing.MeasureHeight —— 与 smapi 侧同名方法逐行对照 */
   function measureBubbleHeight(lineCount, lineSpacingPx) {
     const n = lineCount <= 0 ? 1 : lineCount;
     return BUBBLE.padding * 2 + lineSpacingPx + BUBBLE.lineSpacing + n * lineSpacingPx + (n - 1) * BUBBLE.lineSpacing;
   }
 
-  /** ChatBubbleDrawing.ContentWidth —— smapi/ChatBubbleDrawing.cs:44-47 */
+  /** ChatBubbleDrawing.ContentWidth —— 与 smapi 侧同名方法逐行对照 */
   const contentWidthFor = (available) => Math.max(80, available - BUBBLE.padding * 2 - BUBBLE.safetyMargin);
 
   /**
@@ -876,16 +877,16 @@ __FRAME_SCRIPT__
    * @param lineSpacing 游戏字体行高（⚠ 反推值，见页面底部）
    */
   function drawBubble(stage, left, right, y, speaker, content, npcId, isPlayer, occurrence, lineSpacing) {
-    const availableWidth = Math.max(BUBBLE.minWidth, right - left);         // :85
-    const lines = wrapText(content, contentWidthFor(availableWidth));       // :716 / :205-208
+    const availableWidth = Math.max(BUBBLE.minWidth, right - left);         // Draw 的 availableWidth
+    const lines = wrapText(content, contentWidthFor(availableWidth));       // Wrap 调用来自 ChatInputMenu.DrawMessages / GroupDialogueMenu.draw
     if (lines.length === 0) return 0;
-    const textWidth = Math.max(...lines.map(measureText));                  // :87-90
-    const width = clamp(Math.ceil(textWidth + BUBBLE.padding * 2), Math.min(BUBBLE.minWidth, availableWidth), availableWidth); // :92-95
-    const height = measureBubbleHeight(lines.length, lineSpacing);          // :96
-    const bounds = { x: isPlayer ? right - width : left, y, w: width, h: height };  // :97-101
+    const textWidth = Math.max(...lines.map(measureText));                  // Draw 的 textWidth
+    const width = clamp(Math.ceil(textWidth + BUBBLE.padding * 2), Math.min(BUBBLE.minWidth, availableWidth), availableWidth); // Draw 的宽度 clamp
+    const height = measureBubbleHeight(lines.length, lineSpacing);          // Draw 的 height
+    const bounds = { x: isPlayer ? right - width : left, y, w: width, h: height };  // Draw 的 bounds
 
-    const style = isPlayer ? null : styleFor(npcId);                        // :105
-    // 玩家与「表里没有专属配色的 NPC」走未着色面板 + 反推 tint（:126-141 的 DrawPanel 分支）；
+    const style = isPlayer ? null : styleFor(npcId);                        // Draw 的 style
+    // 玩家与「表里没有专属配色的 NPC」走未着色面板 + 反推 tint（Draw 的 DrawPanel 分支）；
     // 角色气泡仍是彩色贴图的描边变体 + 自己的 tint（NpcBubbleStyle.Bubble 已是反推值）。
     const plain = isPlayer || !Object.hasOwn(NPC_STYLES, canonicalNpcId(npcId));
     // 角色气泡的 tint 由服务端按设计色反推（npc_bubble_tint.py，与 C# 导出同一公式）：
@@ -893,7 +894,7 @@ __FRAME_SCRIPT__
     // 结果整体暗一档（Abigail (65,44,109) → (64,32,47)）。
     const bubbleTint = isPlayer
       ? PLAYER_BUBBLE_TINT
-      : (plain ? NPC_FALLBACK_BUBBLE_TINT : style.bubbleTint); // :50-60, :178-193
+      : (plain ? NPC_FALLBACK_BUBBLE_TINT : style.bubbleTint); // Draw 的 PlayerBubbleTint / NpcFallbackBubbleTint
     // 贴图与 tint 必须配套：未着色面板配反推 tint，彩色变体配角色 tint（见两个常量的说明）。
     const el = nineSlice(stage, bounds, bubbleTint, plain ? PLAIN_MENU_TEX : BUBBLE_MENU_TEX);
     el.dataset.bubble = npcId || "player";
@@ -917,10 +918,10 @@ __FRAME_SCRIPT__
       stage.append(frame);
     }
 
-    // 徽章（NpcBubbleStyle.CellSize = 24，ChatBubbleDrawing.cs:106,124-132）
+    // 徽章（NpcBubbleStyle.CellSize = 24，ChatBubbleDrawing.Draw 的徽章分支）
     const showBadge = Boolean(style && glyphFor(npcId));
-    const textLeft = bounds.x + BUBBLE.padding;                             // :122
-    let speakerLeft = textLeft;                                             // :123
+    const textLeft = bounds.x + BUBBLE.padding;                             // Draw 的 textLeft
+    let speakerLeft = textLeft;                                             // Draw 的 speakerLeft
     if (showBadge) {
       const badge = document.createElement("span");
       badge.className = "bubble-badge abs";
@@ -930,10 +931,10 @@ __FRAME_SCRIPT__
       badge.style.zIndex = "6";
       badge.innerHTML = glyphFor(npcId);
       stage.append(badge);
-      speakerLeft = textLeft + 24 + 6;                                      // :131
+      speakerLeft = textLeft + 24 + 6;                                      // Draw 的徽章让位（CellSize + 6）
     }
 
-    // 说话人（:134-138）
+    // 说话人（Draw 的说话人 DrawString）
     const nameEl = document.createElement("div");
     nameEl.className = "g bubble-name";
     nameEl.style.left = speakerLeft + "px";
@@ -943,9 +944,9 @@ __FRAME_SCRIPT__
     nameEl.textContent = speaker;
     stage.append(nameEl);
 
-    // 正文（:140-146）
+    // 正文（Draw 的 bodyColor 与正文循环）
     const bodyColor = (isPlayer || !style) ? GAME_BLACK : DARK_BUBBLE_TEXT;
-    let lineY = bounds.y + BUBBLE.padding + lineSpacing + BUBBLE.lineSpacing; // :141
+    let lineY = bounds.y + BUBBLE.padding + lineSpacing + BUBBLE.lineSpacing; // Draw 的 lineY 起点
     for (const line of lines) {
       const lineEl = document.createElement("div");
       lineEl.className = "g bubble-line";
@@ -955,7 +956,7 @@ __FRAME_SCRIPT__
       lineEl.style.zIndex = "6";
       lineEl.textContent = line;
       stage.append(lineEl);
-      lineY += lineSpacing + BUBBLE.lineSpacing;                             // :145
+      lineY += lineSpacing + BUBBLE.lineSpacing;                             // Draw 的 lineY 步进
     }
     return height;
   }
@@ -966,7 +967,7 @@ __FRAME_SCRIPT__
     return ornamentFor(npcId);
   }
 
-  // ── 输入框（原版 LooseSprites\textBox，ChatInputMenu.cs:89-100 构造、:835 绘制）──
+  // ── 输入框（原版 LooseSprites\textBox，ChatInputMenu 构造函数里 new TextBox、DrawFooter 里 inputBox.Draw）──
   /**
    * 与 StardewValley.Menus.TextBox.Draw 同构。
    *
@@ -1035,7 +1036,7 @@ __FRAME_SCRIPT__
     chat: {
       npc: "Sophia",
       hearts: 6,
-      hint: "",                                     // uiHint 为空时不画（ChatInputMenu.cs:763）
+      hint: "",                                     // uiHint 为空时不画（ChatInputMenu.DrawMessages 的提示行分支）
       messages: [
         { role: "npc", text: "刚从葡萄架那边回来，手上全是泥。" },
         { role: "player", text: "辛苦了，我给你带了点东西。" },
@@ -1090,18 +1091,19 @@ __FRAME_SCRIPT__
     const s = SAMPLE.chat;
 
     // 面板：Game1.drawDialogueBox(..., drawOnlyBox: true, ignoreTitleSafe: true)
-    // —— ChatInputMenu.cs:258-265；边框是对话盒纹理 ⚠
+    // —— ChatInputMenu.draw；边框是对话盒纹理 ⚠
     nineSlice(stage, L.panel, [255, 255, 255], DIALOGUE_TEX).style.zIndex = "1";
 
-    // header：ChatLayoutRules.cs:180,182 两个开关都是 false，所以这里什么都不画。
-    // （页面把它留空，正是实现的样子；勾「布局参考线」能看到这块矩形。）
+    // header：ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus 两个开关
+    // （2026-09-20 外壳重构后都是 true，实机会画标题带；本页未复刻这一层，留空。）
+    // 勾「布局参考线」能看到这块矩形。
 
-    // 消息区（ChatInputMenu.cs:667-773）
+    // 消息区（ChatInputMenu.DrawMessages）
     const area = L.conversationArea;
-    const maxWidth = Math.max(80, area.w - 12 * 2 - 12 - 8);          // :673-678
-    const fixedHeight = 12 * 2 + LINE_SPACING + 4;                    // :684-686
-    const availableHeight = Math.max(1, area.h - 12 * 2 - 8);         // :687-689
-    // 从最新一条往前塞，直到放不下（ChatTextLayoutRules.SelectLatestThatFit —— :76-124）
+    const maxWidth = Math.max(80, area.w - 12 * 2 - 12 - 8);          // DrawMessages 的 maxWidth
+    const fixedHeight = 12 * 2 + LINE_SPACING + 4;                    // DrawMessages 的 fixedHeight
+    const availableHeight = Math.max(1, area.h - 12 * 2 - 8);         // DrawMessages 的 availableHeight
+    // 从最新一条往前塞，直到放不下（ChatTextLayoutRules.SelectLatestThatFit）
     const selected = [];
     let remaining = availableHeight;
     for (let i = s.messages.length - 1; i >= 0; i--) {
@@ -1112,32 +1114,32 @@ __FRAME_SCRIPT__
       selected.unshift(s.messages[i]);
       remaining -= cost;
     }
-    // 逐条绘制，画到底就停（ChatInputMenu.cs:711-754）
+    // 逐条绘制，画到底就停（ChatInputMenu.DrawMessages 的绘制循环）
     let y = area.y + 12;
     for (const message of selected) {
       const isPlayer = message.role === "player";
       const drawn = drawBubble(
         stage, area.x + 12, area.x + area.w - 12, y,
-        isPlayer ? "你" : s.npc,                       // :715
+        isPlayer ? "你" : s.npc,                       // Draw 的 speaker
         message.text, isPlayer ? null : s.npc, isPlayer, 0, LINE_SPACING,
       );
       if (!drawn) continue;
-      if (y + drawn > area.y + area.h - 12) break;    // :736-739
-      y += drawn + BUBBLE.gap;                        // :753
+      if (y + drawn > area.y + area.h - 12) break;    // DrawMessages 的越界 break
+      y += drawn + BUBBLE.gap;                        // DrawMessages 的 y 步进
     }
     // ⚠ 这不是 bug：F8 的消息区在 720p 下只够放一条（SelectLatestThatFit 从最新往
-    //    前塞，放不下就停），其余消息要靠滚动（ChatInputMenu.cs:775-827）才能看到。
-    const fitNote = `消息区可容纳 ${selected.length} / ${s.messages.length} 条（取窗逻辑 ChatInputMenu.cs:690-701）`;
+    //    前塞，放不下就停），其余消息要靠滚动（ChatInputMenu.UpdateScrollBar / DrawScrollBar）才能看到。
+    const fitNote = `消息区可容纳 ${selected.length} / ${s.messages.length} 条（取窗逻辑 ChatTextLayoutRules.SelectLatestThatFit）`;
 
-    // uiHint（ChatInputMenu.cs:763-770）：非空才画在消息区左下的灰色小字
-    if (s.hint) textAt(stage, area.x + 12, y, s.hint, GAME_GRAY, "g-sm");
+    // uiHint（ChatInputMenu.DrawMessages 的提示行分支）：非空才画在消息区左下的次级色小字
+    if (s.hint) textAt(stage, area.x + 12, y, s.hint, DIM_GRAY, "g-sm");
 
-    // 角色面板（ChatInputMenu.cs:838-910）
+    // 角色面板（ChatInputMenu.DrawProfile）
     if (L.profilePanel) {
       const p = L.profilePanel;
-      nineSlice(stage, p, [248, 240, 224], MENU_TEX).style.zIndex = "2";   // :846-852
-      const portraitFrame = { x: p.x + 12, y: p.y + Math.trunc((p.h - 64) / 2), w: 64, h: 64 }; // :855-859
-      nineSlice(stage, { x: portraitFrame.x - 6, y: portraitFrame.y - 6, w: portraitFrame.w + 12, h: portraitFrame.h + 12 }, [255, 255, 255], MENU_TEX).style.zIndex = "3"; // :862-868
+      nineSlice(stage, p, [248, 240, 224], MENU_TEX).style.zIndex = "2";   // DrawProfile 的角色卡（CardTint）
+      const portraitFrame = { x: p.x + 12, y: p.y + Math.trunc((p.h - 64) / 2), w: 64, h: 64 }; // DrawProfile 的 portraitFrame
+      nineSlice(stage, { x: portraitFrame.x - 6, y: portraitFrame.y - 6, w: portraitFrame.w + 12, h: portraitFrame.h + 12 }, [255, 255, 255], MENU_TEX).style.zIndex = "3"; // DrawProfile 的立绘白描边底板
       // ⚠ 页面没有游戏立绘素材，这里用该角色的徽章占位并标注
       const ph = document.createElement("div");
       ph.className = "abs";
@@ -1157,17 +1159,17 @@ __FRAME_SCRIPT__
       holder.firstElementChild.setAttribute("height", "32");
       ph.append(holder);
       stage.append(ph);
-      const infoX = portraitFrame.x + portraitFrame.w + 12;                 // :876
-      textAt(stage, infoX, p.y + 22, s.npc, GAME_BLACK).style.zIndex = "4";  // :877-882
-      textAt(stage, infoX, p.y + 22 + 28, `好感度 ${s.hearts} 心`, DARK_SLATE_GRAY).style.zIndex = "4"; // :884-890
-      // 好感度条（:892-909）
+      const infoX = portraitFrame.x + portraitFrame.w + 12;                 // DrawProfile 的 infoX
+      textAt(stage, infoX, p.y + 22, s.npc, GAME_BLACK).style.zIndex = "4";  // DrawProfile 的 displayName
+      textAt(stage, infoX, p.y + 22 + 28, `好感度 ${s.hearts} 心`, DIM_GRAY).style.zIndex = "4"; // DrawProfile 的关系文字（InkSoft）
+      // 好感度条（DrawProfile 的 meter）
       const meter = { x: infoX, y: p.y + p.h - 12 - 10, w: p.x + p.w - infoX - 12, h: 10 };
       rectEl(stage, meter).style.cssText += `background:${rgb(METER_BG)};z-index:4`;
-      const filled = Math.round(meter.w * clamp(s.hearts / 10, 0, 1));       // :900-907
+      const filled = Math.round(meter.w * clamp(s.hearts / 10, 0, 1));       // DrawProfile 的 filledWidth
       if (filled > 0) rectEl(stage, { x: meter.x, y: meter.y, w: filled, h: meter.h }).style.cssText += `background:${rgb(METER_FILL)};z-index:5`;
     }
 
-    // 底部按钮与输入框（ChatInputMenu.cs:829-836）
+    // 底部按钮与输入框（ChatInputMenu.DrawFooter）
     button(stage, L.sendButton, "发送", true, [235, 246, 236]);
     button(stage, L.topicButton, "找话题", true, [239, 231, 244]);
     button(stage, L.inventoryButton, "物品", true, [235, 240, 246]);
@@ -1188,17 +1190,17 @@ __FRAME_SCRIPT__
     const L = groupLayout(vw, vh);
     const s = SAMPLE.group;
 
-    // 面板：drawTextureBox(Color.White) —— GroupDialogueMenu.cs:168-174
+    // 面板：MenuSkinDrawing.DrawPanel(Color.White) —— GroupDialogueMenu.draw
     nineSlice(stage, L.panel, [255, 255, 255], MENU_TEX).style.zIndex = "1";
-    textAt(stage, L.header.x + 12, L.header.y + 10, "线上多人对话", GAME_BLACK).style.zIndex = "3"; // :175
-    textAt(stage, L.participantStrip.x, L.participantStrip.y, s.participants.join("、"), DARK_SLATE_GRAY).style.zIndex = "3"; // :176
+    textAt(stage, L.header.x + 12, L.header.y + 10, "线上多人对话", GAME_BLACK).style.zIndex = "3"; // draw 的标题带
+    textAt(stage, L.participantStrip.x, L.participantStrip.y, s.participants.join("、"), DIM_GRAY).style.zIndex = "3"; // draw 的参与者行（MenuSkinRules.InkSoft）
 
-    // 消息区（:181-230）
+    // 消息区（GroupDialogueMenu.draw）
     const area = L.messageArea;
-    const bubbleLeft = area.x + 12;        // :182
-    const bubbleRight = area.x + area.w - 12; // :183
-    let y = area.y + 12;                   // :186
-    const seen = new Map();                // :189-194 按发言人计次
+    const bubbleLeft = area.x + 12;        // draw 的 bubbleLeft
+    const bubbleRight = area.x + area.w - 12; // draw 的 bubbleRight
+    let y = area.y + 12;                   // draw 的首条 y
+    const seen = new Map();                // draw 的 seenBySpeaker（按发言人计次）
     const visible = s.messages.slice(-10); // MaxVisibleMessages = 10（GroupDialogueLayoutRules.cs:28）
     let drawnCount = 0;
     for (const message of visible) {
@@ -1206,20 +1208,20 @@ __FRAME_SCRIPT__
       const occurrence = seen.get(speakerKey) || 0;
       seen.set(speakerKey, occurrence + 1);
       const isPlayer = message.role === "player";
-      const display = isPlayer ? "玩家" : speakerKey;    // :200-204
+      const display = isPlayer ? "玩家" : speakerKey;    // draw 的 displayNames 回退
       const drawn = drawBubble(stage, bubbleLeft, bubbleRight, y, display, message.text, isPlayer ? null : speakerKey, isPlayer, occurrence, LINE_SPACING);
       if (!drawn) continue;
       drawnCount++;
-      y += drawn + BUBBLE.gap;                           // :225
-      if (y > area.y + area.h - LINE_SPACING) break;     // :226
+      y += drawn + BUBBLE.gap;                           // draw 的 y 步进
+      if (y > area.y + area.h - LINE_SPACING) break;     // draw 的画到底 break
     }
 
     button(stage, L.sendButton, "发送", true);
-    button(stage, L.retryButton, "重试", false);   // session.CanRetry 为假时是灰的（:233）
+    button(stage, L.retryButton, "重试", false);   // session.CanRetry 为假时是灰的（MenuButtonDrawing.DrawButton）
     button(stage, L.closeButton, "关闭", true);
     textBox(stage, L.inputBox);
     caret(stage, { x: L.inputBox.x + 16, y: L.inputBox.y + 8, w: 4, h: 32 });
-    textAt(stage, area.x + 12, area.y + area.h - 28, s.hint, GAME_GRAY, "g-sm").style.zIndex = "3"; // :236
+    textAt(stage, area.x + 12, area.y + area.h - 28, s.hint, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的提示行分支（MenuSkinRules.InkSoft）
 
     addGuides([
       ["Panel", L.panel], ["Header", L.header], ["ParticipantStrip", L.participantStrip],
@@ -1231,25 +1233,25 @@ __FRAME_SCRIPT__
 
   function renderHub(vw, vh) {
     const L = hubLayout(vw, vh);
-    nineSlice(stage, L.panel, [255, 255, 255], MENU_TEX).style.zIndex = "1";   // GroupDialogueHubMenu.cs:118-124
-    textAt(stage, L.panel.x + 32, L.panel.y + 24, "线上多人对话", GAME_BLACK).style.zIndex = "3"; // :125-129
+    nineSlice(stage, L.panel, [255, 255, 255], MENU_TEX).style.zIndex = "1";   // GroupDialogueHubMenu.draw（面板）
+    textAt(stage, L.panel.x + 32, L.panel.y + 24, "线上多人对话", GAME_BLACK).style.zIndex = "3"; // draw 的标题带
 
-    let y = L.panel.y + 94;   // :131
+    let y = L.panel.y + 94;   // draw 的首行 y
     for (const invitation of SAMPLE.hub) {
-      const row = { x: L.panel.x + 32, y, w: L.panel.w - 64, h: 92 };          // :140
-      nineSlice(stage, row, [255, 255, 255], MENU_TEX).style.zIndex = "2";     // :142-148
+      const row = { x: L.panel.x + 32, y, w: L.panel.w - 64, h: 92 };          // draw 的卡片行矩形
+      nineSlice(stage, row, [255, 255, 255], MENU_TEX).style.zIndex = "2";     // draw 的卡片 drawTextureBox
       const names = invitation.participants.join("、");
-      textAt(stage, row.x + 18, row.y + 14, `${invitation.title} · ${names}`, GAME_BLACK).style.zIndex = "3";      // :150
-      textAt(stage, row.x + 18, row.y + 42, `主题：${invitation.topic}`, DARK_SLATE_GRAY).style.zIndex = "3";      // :151
-      textAt(stage, row.x + 18, row.y + 66, `状态：${invitation.status} · 到期第 ${invitation.expires} 天`, DIM_GRAY, "g-sm").style.zIndex = "3"; // :152
-      ["接受", "稍后", "忽略"].forEach((label, i) => {                          // :154-156
+      textAt(stage, row.x + 18, row.y + 14, `${invitation.title} · ${names}`, GAME_BLACK).style.zIndex = "3";      // draw 的标题行（Ink）
+      textAt(stage, row.x + 18, row.y + 42, `主题：${invitation.topic}`, DIM_GRAY).style.zIndex = "3";      // draw 的主题行（InkSoft）
+      textAt(stage, row.x + 18, row.y + 66, `状态：${invitation.status} · 到期第 ${invitation.expires} 天`, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的状态行（InkSoft）
+      ["接受", "稍后", "忽略"].forEach((label, i) => {                          // draw 的三个按钮（GroupInvitationActionLayoutRules）
         button(stage, actionButtonAt(row, i), label, true);
       });
-      y += 104;                                                                // :157
+      y += 104;                                                                // draw 的行步进
     }
 
-    button(stage, L.closeButton, "关闭", true);                                  // :161
-    textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, SAMPLE.hubHint, GAME_GRAY, "g-sm").style.zIndex = "3"; // :162
+    button(stage, L.closeButton, "关闭", true);                                  // draw 的关闭按钮
+    textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, SAMPLE.hubHint, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的提示行（InkSoft）
 
     addGuides([["Panel", L.panel], ["CloseButton", L.closeButton]]);
     return `邀约卡 ${SAMPLE.hub.length} 张，显示上限 GroupInvitationRules.cs:18 = 4`;

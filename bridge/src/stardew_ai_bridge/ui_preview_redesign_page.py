@@ -196,7 +196,7 @@ h1 { margin: 9px 0 10px; font-size: clamp(1.4rem, 2.4vw, 1.95rem); font-weight: 
   content: "此处为游戏画面示意"; position: absolute; left: 9px; bottom: 7px;
   color: rgba(255,255,255,.3); font-size: 12px; pointer-events: none;
 }
-/* ChatInputMenu.cs:634-641 DrawBackdrop：整屏 Color.Black * 0.42f（新设计统一为轻遮罩） */
+/* ChatInputMenu.DrawBackdrop：整屏遮罩（现走 MenuSkinRules.ScrimAlpha；新设计统一为轻遮罩） */
 .scrim { position: absolute; inset: 0; background: #000; }
 
 /* 游戏字体近似：字号 17.5px 来自 bubble-f9.png 实测的中文全角字宽（与 /test/ui 同源） */
@@ -616,7 +616,7 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           <tr>
             <td><span class="flag">改布局、不改点击坐标</span></td>
             <td>F9 提示行分离：只有当提示放不进 header 时，消息区可用高度才减 30px
-                （<code>GroupDialogueMenu.cs:226</code> 的 break 条件）</td>
+                （<code>GroupDialogueMenu.draw</code> 的 break 条件）</td>
             <td>中低。短提示走 header 时气泡区<b>零影响</b>；长提示（排障串）时可见气泡少一条左右</td>
           </tr>
           <tr>
@@ -750,13 +750,14 @@ __FRAME_SCRIPT__
   const DARK_SLATE_GRAY = [47, 79, 79];         // Color.DarkSlateGray —— 现状在用的次级文字色
   const DIM_GRAY = [105, 105, 105];             // Color.DimGray —— 新设计统一后的次级文字色
   const DARK_SLATE_BLUE = [72, 61, 139];
-  const DARK_BUBBLE_TEXT = [243, 240, 252];     // ChatBubbleDrawing.cs:41
-  const METER_BG = [206, 195, 180];             // ChatInputMenu.cs:899
-  const METER_FILL = [181, 137, 191];           // ChatInputMenu.cs:906
+  const DARK_BUBBLE_TEXT = [243, 240, 252];     // ChatBubbleDrawing.DarkBubbleText
+  const METER_BG = [206, 195, 180];             // ChatInputMenu.DrawProfile（好感度条底）
+  const METER_FILL = [181, 137, 191];           // ChatInputMenu.DrawProfile（好感度条填充）
 
   // ── 外壳重构的「设计令牌」：全部是 tint（与纹理色逐通道相乘） ─────────────
   //
-  // 基准：MenuTiles (0,256,60,60) 的填充是 #ffc576、描边是 #b14e05（实测游戏截图）。
+  // 基准：MenuTiles (0,256,60,60) 中心块的**主色**是 #fdbc6e（该块另有近邻色
+  // #ffc576 / #f5b56f / #f5b565，下面几条是截图里逐点实测的采样值）、描边是 #b14e05（实测游戏截图）。
   // tint 只能让颜色变暗（相乘 ≤ 1），所以层级靠「向下分档」：
   //   面板（白 tint，最亮） → 内容区凹槽（暗一档） → 卡片/按钮回到白 tint（浮起来）
   const SKIN = {
@@ -1035,7 +1036,7 @@ __FRAME_SCRIPT__
     return nineSlice(parent, r, SKIN.inset, MENU_TEX, { noShadow: true, z: 2 });
   }
 
-  // ── 气泡（ChatBubbleDrawing.cs:68-149）：尺寸、换行、几何一律不动 ─────────
+  // ── 气泡（ChatBubbleDrawing.Draw）：尺寸、换行、几何一律不动 ─────────
   const BUBBLE = { padding: 12, lineSpacing: 4, gap: 20, safetyMargin: 8, minWidth: 180 };
   const LINE_SPACING = 28;   // 游戏字体行高（⚠ 由气泡高度反推，与 /test/ui 同值）
 
@@ -1049,7 +1050,7 @@ __FRAME_SCRIPT__
   // 游戏侧（NpcBubbleStyle.Bubble）用的就是反推值，所以现状栏与新设计栏都跟着用同一个值 ——
   // 「现状栏保持原样」的旧做法会让本页两栏自相矛盾，也会与 /test/ui 不一致。
 
-  function measureBubbleHeight(lineCount, lineSpacingPx) {          // :50-62
+  function measureBubbleHeight(lineCount, lineSpacingPx) {          // ChatBubbleDrawing.MeasureHeight
     const n = lineCount <= 0 ? 1 : lineCount;
     return BUBBLE.padding * 2 + lineSpacingPx + BUBBLE.lineSpacing + n * lineSpacingPx + (n - 1) * BUBBLE.lineSpacing;
   }
@@ -1203,7 +1204,7 @@ __FRAME_SCRIPT__
     rule.style.zIndex = "5";
   }
 
-  /** 遮罩（ChatInputMenu.cs:634-641 DrawBackdrop 的写法）。 */
+  /** 遮罩（ChatInputMenu.DrawBackdrop 的写法）。 */
   function scrim(stage, vw, vh, alpha) {
     if (alpha <= 0) return;
     const el = document.createElement("div");
@@ -1285,7 +1286,7 @@ __FRAME_SCRIPT__
     }
 
     const area = L.conversationArea;
-    const maxWidth = Math.max(80, area.w - 12 * 2 - 12 - 8);          // ChatInputMenu.cs:673-678
+    const maxWidth = Math.max(80, area.w - 12 * 2 - 12 - 8);          // ChatInputMenu.DrawMessages 的 maxWidth
     const fixedHeight = 12 * 2 + LINE_SPACING + 4;
     const availableHeight = Math.max(1, area.h - 12 * 2 - 8);
     const selected = [];
@@ -1372,7 +1373,7 @@ __FRAME_SCRIPT__
       ["InputBox", L.inputBox], ["Send", L.sendButton], ["Topic", L.topicButton],
       ["Inventory", L.inventoryButton], ["Close", L.closeButton]);
     addGuides(stage, guides);
-    return `消息区放得下 ${selected.length} / ${s.messages.length} 条（取窗逻辑 ChatInputMenu.cs:690-701）`;
+    return `消息区放得下 ${selected.length} / ${s.messages.length} 条（取窗逻辑 ChatTextLayoutRules.SelectLatestThatFit）`;
   }
 
   // ── F9 群聊 ────────────────────────────────────────────────────────────
@@ -1488,7 +1489,7 @@ __FRAME_SCRIPT__
 
     let y = L.panel.y + 94;
     for (const invitation of s.cards) {
-      const row = { x: L.panel.x + 32, y, w: L.panel.w - 64, h: cardH };     // GroupDialogueHubMenu.cs:140
+      const row = { x: L.panel.x + 32, y, w: L.panel.w - 64, h: cardH };     // GroupDialogueHubMenu.draw 的卡片行矩形
       nineSlice(stage, row, SKIN.card, MENU_TEX, { z: 3 });
       const names = invitation.participants.join("、");
       const status = `${invitation.status} · 到期第 ${invitation.expires} 天`;
