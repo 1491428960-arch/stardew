@@ -772,9 +772,3 @@ def affection_pacing_cases() -> tuple[CharacterQualityCase, ...]:
     """返回亲密节奏套件案例；调用方不得修改其中的 dataclass 实例。"""
 
     return AFFECTION_PACING_CASES
-
-
-def affection_pacing_catalog() -> dict[str, object]:
-    """返回套件元数据，案例字段由通用目录函数脱敏导出。"""
-
-    return dict(AFFECTION_PACING_SUITE)

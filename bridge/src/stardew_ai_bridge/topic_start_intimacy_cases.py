@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from .character_quality_eval import CharacterQualityCase, CharacterQualityTurn
 
 
@@ -1276,12 +1274,6 @@ TOPIC_START_INTIMACY_CASES = TOPIC_START_INTIMACY_CASES + _FEMININE_MALE_TOPIC_C
 
 
 def topic_start_intimacy_cases() -> tuple[CharacterQualityCase, ...]:
-    """返回独立套件案例，调用方不得修改其中的 dataclass 实例。"""
+    """返回独立套件案例；调用方不得修改其中的 dataclass 实例。"""
 
     return TOPIC_START_INTIMACY_CASES
-
-
-def topic_start_intimacy_catalog() -> list[dict[str, Any]]:
-    """返回套件元数据；案例字段由 quality evaluator 脱敏导出。"""
-
-    return dict(TOPIC_START_INTIMACY_SUITE)  # type: ignore[return-value]
