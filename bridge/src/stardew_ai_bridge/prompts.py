@@ -15,6 +15,10 @@ from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
 from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate, relationship_stage_from_state
 from .relationship_world import project_relationship_context
+from .speech import (
+    VOICE_ANCHOR_MAX_TEXT,
+    voice_anchor_text_fits,
+)
 from .stage_policy import apply_relationship_event_gate, build_stage_policy
 from .story_state import build_story_state
 from .source_aliases import source_matches
@@ -144,8 +148,32 @@ _MAX_BEHAVIOR_EXAMPLES = 2
 _MAX_ORIGINAL_STYLE_EXAMPLES = 4
 _MAX_KNOWLEDGE_FACTS = 2
 _MAX_VOICE_CARD_TOPICS = 3
+# 通用对白证据文本的截断长度；**语气锚点不用它**——锚点必须传
+# `VOICE_ANCHOR_MAX_TEXT`（见 `_dialogue_evidence_text` 的 `limit` 参数）。
 _DIALOGUE_EVIDENCE_TEXT_LIMIT = 100
 _EXAMPLE_TEXT_LIMIT = 72
+# 记忆进 prompt 的准入下限（P1 第 27 条）：
+#   - `knowledge_facts` 侧的 `confidence == "low"` 是这一档的字符串写法，
+#     这里给出数值口径，两边说的是同一件事；
+#   - 没有任何选择逻辑读过 `MemoryRecord.Importance` / `KnownBy` / `Status`，
+#     结构化记忆记录进入时按同一套规则处理（见 `select_memory_facts`）。
+MEMORY_FACT_CONFIDENCE_FLOOR = 0.6
+MEMORY_FACT_TEXT_LIMIT = 240
+_MEMORY_FACT_ACTIVE_STATUS = "active"
+# 置信度的两种写法：SMAPI 的 `MemoryRecord.Confidence` 是 0–1 的数值，
+# 索引侧 `knowledgeFacts` 用 `high` / `medium` / `low` 字符串。同一个概念
+# 的两种形态要换算到同一把尺子上，否则「统一准入」会按形态给不同结论。
+_MEMORY_FACT_CONFIDENCE_WORDS = {
+    "high": 0.9,
+    "medium": 0.7,
+    "low": 0.3,
+}
+# 不进 prompt 的记忆范围：`private`（只属于某一方的私下经历）与
+# `npc_only`（旧拼写）。SMAPI 的 `MemoryKnowledgeScope` 没有 `npc_only`，
+# 但索引侧的历史数据出现过，所以两种拼写都认。
+# `knownBy` 的判定另见 `_memory_record_text`：记忆挂在谁的 prompt 上，
+# 判断标准就是谁记得它。
+_MEMORY_FACT_PRIVATE_SCOPES = frozenset({"private", "npc_only"})
 _APPROVED_BEHAVIOR_SOURCE_TYPES = {"handcrafted_example", "human_approved"}
 _FEW_SHOT_BEHAVIOR_SOURCE_TYPES = {"human_approved"}
 _ITEM_CONTEXT_FIELDS = (
@@ -475,9 +503,18 @@ def _remove_stardew_braced_directives(value: str) -> str:
     return "".join(result)
 
 
-def _dialogue_evidence_text(value: object) -> str:
-    """清理仅供模型模仿的对白副本，不改动索引中的可追溯原文。"""
-    text = _text(value, limit=_DIALOGUE_EVIDENCE_TEXT_LIMIT)
+def _dialogue_evidence_text(
+    value: object,
+    *,
+    limit: int = _DIALOGUE_EVIDENCE_TEXT_LIMIT,
+) -> str:
+    """清理仅供模型模仿的对白副本，不改动索引中的可追溯原文。
+
+    `limit` 由调用点给出：语气锚点必须传 `VOICE_ANCHOR_MAX_TEXT`，与生成侧的
+    窗口同一个上限（P1 第 26 条——此前锚点在群聊按 60 丢、在这里按 100 截，
+    同一段文本三条路径三个长度）。
+    """
+    text = _text(value, limit=limit)
     if not text:
         return ""
     if text.lstrip().startswith("%"):
@@ -495,6 +532,139 @@ def _dialogue_evidence_text(value: object) -> str:
     text = text.replace("|", " ")
     text = text.replace("@", "你")
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _memory_fact_confidence(value: object) -> float | None:
+    """读一条记忆的置信度；缺字段或读不出数值时返回 `None`（= 未标注）。
+
+    两种形态都认：SMAPI 的 0–1 数值，以及索引侧 `knowledgeFacts` 的
+    `high` / `medium` / `low` 字面量（换算见 `_MEMORY_FACT_CONFIDENCE_WORDS`）。
+    """
+
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        folded = value.strip().casefold()
+        if folded in _MEMORY_FACT_CONFIDENCE_WORDS:
+            return _MEMORY_FACT_CONFIDENCE_WORDS[folded]
+        try:
+            return float(folded)
+        except ValueError:
+            return None
+    return None
+
+
+def _memory_fact_sort_key(record: Mapping[str, Any]) -> tuple[float, float]:
+    try:
+        importance = float(record.get("importance") or 0)
+    except (TypeError, ValueError):
+        importance = 0.0
+    return (-importance, -(_memory_fact_confidence(record.get("confidence")) or 0.0))
+
+
+def _memory_fact_text(value: object) -> str:
+    """记忆内容文本：超长**整条丢掉**而不是截半句。
+
+    `_text(..., limit=...)` 是截断语义，直接用会把一段长记忆切成看似完整的
+    半句话——那比丢掉更糟：模型会把半句当成完整事实复述。
+    """
+
+    if not isinstance(value, str):
+        return ""
+    stripped = value.strip()
+    if not stripped or len(stripped) > MEMORY_FACT_TEXT_LIMIT:
+        return ""
+    return stripped
+
+
+def _memory_record_text(record: Mapping[str, Any], npc_id: str) -> str:
+    """结构化记忆记录能不能进 prompt；不能则返回空串。
+
+    文本字段认两种名字：SMAPI `MemoryRecord.Content`（写进请求的 `memories`
+    时）与索引侧 `knowledgeFacts.Summary`——同一条事实的两种存放形态。
+    """
+
+    status = _text(record.get("status"), limit=32).casefold()
+    if status and status != _MEMORY_FACT_ACTIVE_STATUS:
+        # `Corrected` / `Superseded` / `Forgotten` 的记忆以前照样会进 prompt：
+        # 整个选择逻辑只按时间取最近 6 条，Status 字段写了却没人读。
+        return ""
+    confidence = _memory_fact_confidence(record.get("confidence"))
+    if confidence is not None and confidence < MEMORY_FACT_CONFIDENCE_FLOOR:
+        # 与 `knowledge_facts` 的「low 直接丢」是同一档门控。
+        return ""
+    scope = _text(record.get("knowledgeScope"), limit=32).casefold()
+    if scope in _MEMORY_FACT_PRIVATE_SCOPES:
+        return ""
+    known_by = record.get("knownBy")
+    if isinstance(known_by, (list, tuple, set)):
+        names = {
+            _text(item, limit=80).casefold() for item in known_by if _text(item, limit=80)
+        }
+        current = str(npc_id).strip().casefold()
+        # 有标注时，这条记忆必须**属于当前 NPC**：`knownBy` 只有别人（例如
+        # 只写了 Emily）的事实不该出现在 Shane 的 prompt 里。玩家知情不算
+        # 充分条件——记忆挂在谁的 prompt 上，判断标准就是谁记得它。
+        if names and current and current not in names:
+            return ""
+    return _memory_fact_text(_first_value(record, "content", "summary"))
+
+
+def _memory_plain_text(value: object) -> str:
+    """纯文本记忆行（当前 SMAPI 实际发送的形态）。"""
+
+    return _memory_fact_text(value)
+
+
+def select_memory_facts(facts: object, *, npc_id: str = "") -> list[str]:
+    """「哪条记忆该进 prompt」的唯一入口（P1 第 27 条）。
+
+    此前 Bridge 只把整份 `recentFacts` 原样塞进 `game_state` 卡片——长度、重复、
+    内容一概不看；而 `knowledge_facts` 那条通道却按 scope + confidence + 事件门控
+    筛。同一个问题两条通道，两条都不完整：**筛选规则只写在一处，另一处没有**。
+
+    现在两处调用（`_build_context_core` 与 `_safe_context`）都走这里：
+
+    - 结构化记录（`content` / `confidence` / `importance` / `status` /
+      `knowledgeScope` / `knownBy`）按上面那套口径筛选，并按重要性、置信度排序；
+    - 纯文本行做空白归一、空值丢弃与完全重复去重，**保持输入顺序**——
+      文本行没有时间以外的排序依据，重排会让每轮 prompt 都不一样。
+
+    返回的是可以直接放进 prompt 的文本行；`None` 与记录对象都不会漏出去。
+    """
+
+    if not isinstance(facts, Iterable) or isinstance(facts, (str, bytes, Mapping)):
+        return []
+    structured: list[Mapping[str, Any]] = []
+    plain: list[str] = []
+    for fact in facts:
+        if isinstance(fact, Mapping):
+            structured.append(fact)
+            continue
+        text = _memory_plain_text(fact)
+        if text:
+            plain.append(text)
+
+    picked: list[str] = []
+    seen: set[str] = set()
+
+    def add(text: str) -> None:
+        cleaned = _remove_secret_labels(text)
+        if not cleaned:
+            return
+        key = cleaned.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        picked.append(cleaned)
+
+    for record in sorted(structured, key=_memory_fact_sort_key):
+        add(_memory_record_text(record, npc_id))
+    for text in plain:
+        add(text)
+    return picked
 
 
 def _first_value(values: Mapping[str, Any], *names: str) -> Any:
@@ -1027,14 +1197,12 @@ class ContextBuilder:
             if display_name and not _is_known_identity_name(display_name, identity):
                 identity["displayName"] = display_name
 
-        facts_input = _first_value(values, "recentFacts", "recent_facts") or ()
-        recent_facts = [
-            item
-            for item in (
-                _remove_secret_labels(_text(fact)) for fact in facts_input
-            )
-            if item
-        ]
+        # 记忆准入统一在 `select_memory_facts`（P1 第 27 条）：两条通道
+        # （`knowledgeFacts` 与 `recentFacts`）用同一套规则，而不是各自演化。
+        recent_facts = select_memory_facts(
+            _first_value(values, "recentFacts", "recent_facts") or (),
+            npc_id=str(npc_id),
+        )
 
         history_input = values.get("history", values.get("conversationHistory", ())) or ()
         history: list[dict[str, str]] = []
@@ -1339,8 +1507,17 @@ def _safe_voice_card(
         for raw_anchor in raw_anchors:
             if not isinstance(raw_anchor, Mapping):
                 continue
-            text = _dialogue_evidence_text(raw_anchor.get("text"))
-            if not text or has_dialogue_control_residue(text):
+            # 窗口判定用**清理前**的原文：`_dialogue_evidence_text` 会截断，
+            # 先截再判会把 120 字的异常锚点伪装成 80 字合格锚点。
+            # 下限设 0 保持私聊路径的历史行为：它一直接受很短的语气碎片，
+            # 6 字下限只对生成侧与群聊声线卡生效。
+            raw_text = raw_anchor.get("text")
+            text = _dialogue_evidence_text(
+                raw_text, limit=VOICE_ANCHOR_MAX_TEXT
+            )
+            if not text or not voice_anchor_text_fits(raw_text, min_length=0):
+                continue
+            if has_dialogue_control_residue(text):
                 continue
             if plain_dialogue and _is_plain_voice_lore_text(text):
                 # 普通寒暄仍需保留不带剧情的角色语气锚点；包含魔法、预兆
@@ -3111,9 +3288,20 @@ def build_group_voice_cards(
             for raw_anchor in raw_anchors:
                 if not isinstance(raw_anchor, Mapping):
                     continue
-                text = _dialogue_evidence_text(raw_anchor.get("text"))
-                # 只带短句锚点；长段关系对白会把群聊对白带成范文。
-                if not text or len(text) > 60:
+                # 窗口判定用**清理前**的原文（与私聊路径同一口径）：
+                # `_dialogue_evidence_text` 会截断到上限，先截再判会把 81 字的
+                # 样本伪装成 80 字合格锚点，于是「超出窗口就丢弃」变成
+                # 「超出窗口就裁剪」——同一段文本在两条路径上两种处理。
+                raw_anchor_text = raw_anchor.get("text")
+                text = _dialogue_evidence_text(
+                    raw_anchor_text, limit=VOICE_ANCHOR_MAX_TEXT
+                )
+                # 「短句锚点」的阈值与生成侧**同一个窗口**（P1 第 26 条：
+                # 这里此前是独立的 `len(text) > 60`，于是 61–80 字之间完全
+                # 合格的锚点在群聊侧被静默丢弃——同一份索引，单聊能看见、
+                # 群聊看不见）。设计意图（长段关系对白会把群聊带成范文）
+                # 由同一个 80 字上限表达，不再是一份更窄的字面量。
+                if not text or not voice_anchor_text_fits(raw_anchor_text):
                     continue
                 anchors.append(text)
                 if len(anchors) >= 2:
@@ -3270,8 +3458,16 @@ def _build_natural_role_texture_card(
             for raw_anchor in raw_anchors:
                 if not isinstance(raw_anchor, Mapping):
                     continue
-                text = _dialogue_evidence_text(raw_anchor.get("text"))
-                if not text:
+                raw_anchor_text = raw_anchor.get("text")
+                text = _dialogue_evidence_text(
+                    raw_anchor_text, limit=VOICE_ANCHOR_MAX_TEXT
+                )
+                # 上限与生成侧同一个窗口（用清理前的原文判定，超窗即丢）；
+                # 下限保持历史行为（只排除空串），自然纹理卡一直用很短的
+                # 语气碎片，本次不改它的口径。
+                if not text or not voice_anchor_text_fits(
+                    raw_anchor_text, min_length=0
+                ):
                     continue
                 anchor: dict[str, str] = {"text": text}
                 for key in ("sourceKey", "sourceMod", "voiceEnergy"):
@@ -3288,8 +3484,13 @@ def _build_natural_role_texture_card(
         for raw_anchor in style_samples:
             if not isinstance(raw_anchor, Mapping):
                 continue
-            text = _dialogue_evidence_text(raw_anchor.get("text"))
-            if not text:
+            raw_anchor_text = raw_anchor.get("text")
+            text = _dialogue_evidence_text(
+                raw_anchor_text, limit=VOICE_ANCHOR_MAX_TEXT
+            )
+            if not text or not voice_anchor_text_fits(
+                raw_anchor_text, min_length=0
+            ):
                 continue
             anchor = {"text": text}
             for key in ("sourceKey", "sourceMod", "voiceEnergy"):
@@ -4699,11 +4900,12 @@ class PromptBuilder:
                 for key in _STATE_FIELDS
                 if key in context.get("gameState", {})
             },
-            "recentFacts": [
-                _remove_secret_labels(_text(item))
-                for item in context.get("recentFacts", ())
-                if _text(item)
-            ],
+            # 与 `_build_context_core` 共用同一个准入实现；这里是最后一道
+            # 防线，不再自己写一遍过滤（P1 第 27 条）。
+            "recentFacts": select_memory_facts(
+                context.get("recentFacts", ()),
+                npc_id=_text(safe_identity.get("npcId"), limit=80),
+            ),
             "qualityContext": safe_quality_context,
             "history": [
                 {

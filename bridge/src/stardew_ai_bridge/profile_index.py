@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from .behavior_quality import validate_behavior_example
+from .dialogue_stage import sample_stage_specificity, stage_hint_applies
 from .evidence import (
     has_dialogue_control_residue,
     is_model_evidence_record as _shared_is_model_evidence_record,
 )
 from .personas import canonical_npc_id, is_female_bachelor_eligible
+from .relationship_gating import game_event_completed
 from .speech import derive_speech_profile, select_stage_voice_anchors
 from .source_aliases import (
     normalize_source_marker,
@@ -1341,57 +1343,27 @@ def _relationship_stage_matches(
     *,
     allow_lower_stage: bool = False,
 ) -> bool:
-    requested = relationship_stage.strip().casefold()
-    if not requested:
-        return True
-    conditions = record.get("conditions")
-    actual = (
-        conditions.get("relationshipStage", conditions.get("relationship_stage"))
-        if isinstance(conditions, Mapping)
-        else None
-    )
-    if not isinstance(actual, str) or not actual.strip():
-        from .corpus import infer_dialogue_conditions
+    """这条记录能不能用在当前关系阶段；判定统一在 `dialogue_stage`。
 
-        actual = infer_dialogue_conditions(
-            str(record.get("sourcePath", "")),
-            str(record.get("sourceKey", "")),
-        ).get("relationshipStage")
-    if not isinstance(actual, str) or not actual.strip():
-        return True
-    actual = actual.strip().casefold()
-    if requested == "parent":
-        return actual in {"parent", "married"}
-    if requested == "married":
-        if allow_lower_stage:
-            return actual in {
-                "stranger",
-                "acquaintance",
-                "friend",
-                "close",
-                "dating",
-                "married",
-            }
-        return actual == "married"
-    stage_rank = {
-        "stranger": 0,
-        "acquaintance": 1,
-        "friend": 2,
-        "close": 3,
-        "dating": 4,
-    }
-    if requested == "stranger":
-        return actual == "stranger"
-    requested_rank = stage_rank.get(requested)
-    actual_rank = stage_rank.get(actual)
-    if requested_rank is None or actual_rank is None:
-        return actual == requested
-    # 普通语气样本保持严格边界，避免 Shane 等角色在朋友阶段重新变回
-    # 陌生期口吻。只有 speech_evidence 在明确话题没有当前阶段命中时，
-    # 才允许把更早阶段的日常对白作为“这个话题该怎么说”的补充证据。
-    if allow_lower_stage:
-        return actual_rank >= 0 and actual_rank <= requested_rank
-    return actual_rank > 0 and actual_rank <= requested_rank
+    2026-09-20（语义层审计 P1 第 25 条）：这里此前是「阶段条件是否适用」的
+    三套判定之一（另外两套在 `speech`），而且它与 `_relationship_specificity_priority`
+    各自读一次 `conditions`、各自推断一次。现在读取、推断、匹配、排序都从
+    `dialogue_stage` 派生，本函数只声明自己用哪种应用方式：
+
+    - 头一次尝试（`allow_lower_stage=False`）→ `at_most_present`，但**排除
+      stranger**：允许复用更早阶段的日常对白（朋友阶段可以借用相识阶段原话），
+      但不退回无心级的初识寒暄；
+    - 明确话题没有当前阶段命中时的回退（`allow_lower_stage=True`）→ 连
+      stranger 一起算进候选。
+    """
+
+    return stage_hint_applies(
+        record,
+        relationship_stage,
+        policy="at_most_present",
+        infer=True,
+        include_stranger=allow_lower_stage,
+    )
 
 
 def _relationship_specificity_priority(
@@ -1404,30 +1376,7 @@ def _relationship_specificity_priority(
         # 这里的事件素材已经通过 completed_event_ids 闸门；既然它是角色
         # 真实经历，就应先于婚后/日常锚点进入窗口，随后仍由事件配额限量。
         return 0
-    requested = relationship_stage.strip().casefold()
-    if not requested:
-        return 0
-    conditions = record.get("conditions")
-    actual = (
-        conditions.get("relationshipStage", conditions.get("relationship_stage"))
-        if isinstance(conditions, Mapping)
-        else None
-    )
-    if not isinstance(actual, str) or not actual.strip():
-        from .corpus import infer_dialogue_conditions
-
-        actual = infer_dialogue_conditions(
-            str(record.get("sourcePath", "")),
-            str(record.get("sourceKey", "")),
-        ).get("relationshipStage")
-    if not isinstance(actual, str) or not actual.strip():
-        return 1
-    actual = actual.strip().casefold()
-    if requested == "parent":
-        return 0 if actual in {"parent", "married"} else 1
-    if requested == "married":
-        return 0 if actual == "married" else 1
-    return 0 if actual == requested else 1
+    return sample_stage_specificity(record, relationship_stage)
 
 
 def _evidence_priority(record: Mapping[str, Any]) -> int:
@@ -1444,7 +1393,12 @@ def _event_dialogue_is_completed(
     record: Mapping[str, Any],
     completed_event_ids: set[str],
 ) -> bool:
-    """事件对白只能在游戏状态确认该事件后进入生成证据。"""
+    """事件对白只能在游戏状态确认该事件后进入生成证据。
+
+    2026-09-20（语义层审计 #28）：此前这里**必须**由 `sourceMod` 合成前缀
+    （`Vanilla:56`）才认，而 `relationship_gating` 认的是「两边都能带前缀」。
+    现在统一到共享实现；`sourceMod` 仍然参与，但不再是非它不可的额外门槛。
+    """
 
     if not _is_event_dialogue_record(record):
         return True
@@ -1456,9 +1410,7 @@ def _event_dialogue_is_completed(
     if source_mod:
         accepted.add(f"{source_mod}:{event_id}")
     return any(
-        completed == candidate
-        or completed.rsplit(":", 1)[-1] == candidate
-        for completed in completed_event_ids
+        game_event_completed(candidate, completed_event_ids)
         for candidate in accepted
     )
 
@@ -2166,17 +2118,22 @@ class ProfileIndexStore:
                 continue
             if not _source_matches(raw_event.get("sourceMod"), source_mods):
                 continue
+            # 2026-09-20（语义层审计 #28）：四处门控统一到 relationship_gating
+            # 的宽口径 —— 命名空间前缀两个方向都认，分隔符差异容忍。
             required_event = raw_event.get("requiredEventId")
             if isinstance(required_event, str) and required_event.strip():
-                if required_event.strip().casefold() not in completed_keys:
+                if not game_event_completed(required_event, completed_keys):
                     continue
             selected = self._select_fields(raw_event, self._EVENT_FIELDS)
-            event_keys = {
-                str(raw_event.get(field, "")).strip().casefold()
+            event_ids = [
+                str(raw_event.get(field, "")).strip()
                 for field in ("eventId", "sourceKey")
                 if raw_event.get(field)
-            }
-            if completed_keys.intersection(event_keys):
+            ]
+            if any(
+                game_event_completed(event_id, completed_keys)
+                for event_id in event_ids
+            ):
                 selected["status"] = "completed"
             result.append(selected)
             if len(result) >= capped_limit:
@@ -2231,7 +2188,7 @@ class ProfileIndexStore:
                 continue
             required_event = raw_relation.get("requiredEventId")
             if isinstance(required_event, str) and required_event.strip():
-                if required_event.strip().casefold() not in completed_keys:
+                if not game_event_completed(required_event, completed_keys):
                     continue
             known_npc_id = str(
                 raw_relation.get("knownNpcId", raw_relation.get("subjectNpcId", ""))
@@ -2638,7 +2595,7 @@ class ProfileIndexStore:
                 continue
             required_event = raw_fact.get("requiredEventId")
             if isinstance(required_event, str) and required_event.strip():
-                if required_event.strip().casefold() not in completed_keys:
+                if not game_event_completed(required_event, completed_keys):
                     continue
             selected = self._canonicalize_selected_npc(
                 self._select_fields(raw_fact, self._FACT_FIELDS)

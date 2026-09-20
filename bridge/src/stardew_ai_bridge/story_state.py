@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .personas import canonical_npc_id
+from .relationship_gating import game_event_completed, game_event_id_tokens
 
 
 _STAGES = {
@@ -26,7 +26,6 @@ _LOW_MOODS = {
     "sad",
     "tired",
 }
-_EVENT_TOKEN_RE = re.compile(r"[^a-z0-9一-鿿]+", re.IGNORECASE)
 
 _ROLE_INITIATIVE_BIASES = {
     "Wizard": "measured_interest",
@@ -60,22 +59,21 @@ def _normalise_stage(value: object) -> str:
 
 
 def _event_tokens(value: object) -> set[str]:
-    text = str(value).strip().casefold()
-    if not text:
-        return set()
-    candidates = {text}
-    if ":" in text:
-        candidates.add(text.rsplit(":", 1)[-1])
-    tokens: set[str] = set()
-    for candidate in candidates:
-        tokens.add(candidate)
-        tokens.add(_EVENT_TOKEN_RE.sub("", candidate))
-    return {token for token in tokens if token}
+    """保留旧入口，实现统一到 ``relationship_gating.game_event_id_tokens``。
+
+    2026-09-20（语义层审计 #28）：「游戏事件是否已完成」此前有**四套匹配规则**，
+    这里是其中一套（拆**候选**前缀 + 去分隔符）。现在四处共用一份实现，
+    本函数只是转发，`_matches_event` 同样如此——保留它们是因为本模块内部
+    已经按「token 集合」组织，且现有测试钉着这层契约。
+    """
+
+    return game_event_id_tokens(value)
 
 
 def _matches_event(candidate: object, completed: set[str]) -> bool:
-    candidate_tokens = _event_tokens(candidate)
-    return bool(candidate_tokens.intersection(completed))
+    """候选事件是否命中已完成 token 集合（统一实现见 #28 说明）。"""
+
+    return game_event_completed(candidate, completed)
 
 
 def _string_list(value: object) -> list[str]:

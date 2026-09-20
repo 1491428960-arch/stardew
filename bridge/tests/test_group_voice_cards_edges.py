@@ -10,6 +10,11 @@
     只带短句锚点；长段关系对白会把群聊对白带成范文。
 
 所以下面既测“取不到就跳过”，也测“长锚点被丢掉”。
+
+**2026-09-20（P1 第 26 条）**：这里的阈值此前是独立写死的 `len(text) > 60`，
+与生成侧 6–80 的窗口不一致，于是 61–80 字之间合格的锚点在群聊侧被静默丢弃。
+现在两者共用同一个窗口，所以下面「长锚点被丢掉」用的样本必须**超过 80 字**
+才仍然成立。
 """
 
 from __future__ import annotations
@@ -119,6 +124,8 @@ def _with_anchors(*texts: Any) -> dict[str, Any]:
 
 
 def test_short_anchors_are_kept_and_long_ones_dropped() -> None:
+    # 长样本要**超过 80 字**（生成侧窗口的上限）才应被丢弃；
+    # 61–80 字是合格锚点，见 `test_dialogue_evidence_window.py`。
     builder = _Builder(_with_anchors("今天鸡舍那边挺忙的。", "很长的一句" * 20))
 
     cards = build_group_voice_cards(builder, [{"npcId": "Shane"}])
@@ -127,19 +134,19 @@ def test_short_anchors_are_kept_and_long_ones_dropped() -> None:
 
 
 def test_at_most_two_anchors_are_kept() -> None:
-    builder = _Builder(_with_anchors("第一句。", "第二句。", "第三句。", "第四句。"))
+    builder = _Builder(_with_anchors("第一句台词。", "第二句台词。", "第三句台词。", "第四句台词。"))
 
     cards = build_group_voice_cards(builder, [{"npcId": "Shane"}])
 
-    assert cards["shane"]["voiceAnchors"] == ["第一句。", "第二句。"]
+    assert cards["shane"]["voiceAnchors"] == ["第一句台词。", "第二句台词。"]
 
 
 def test_non_mapping_or_blank_anchors_are_ignored() -> None:
-    builder = _Builder({"voiceCard": {"voiceAnchors": ["不是映射", {"text": "   "}, {"text": "好的。"}]}})
+    builder = _Builder({"voiceCard": {"voiceAnchors": ["不是映射", {"text": "   "}, {"text": "好的，我知道了。"}]}})
 
     cards = build_group_voice_cards(builder, [{"npcId": "Shane"}])
 
-    assert cards["shane"]["voiceAnchors"] == ["好的。"]
+    assert cards["shane"]["voiceAnchors"] == ["好的，我知道了。"]
 
 
 def test_a_non_sequence_anchor_field_is_ignored() -> None:

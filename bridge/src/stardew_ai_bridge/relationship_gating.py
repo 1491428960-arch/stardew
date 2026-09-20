@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from .personas import canonical_npc_id
 
@@ -40,6 +41,61 @@ CONVERSATION_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
 CONVERSATION_LEAD_STAGE_ORDER = {
     stage: STAGE_RANK[stage] for stage in ("friend", "close", "dating", "married")
 }
+
+# 2026-09-20（语义层审计 #28）：「游戏事件是否已完成」此前有**四套匹配规则**，
+# 各自演化：
+#   ① `story_state._matches_event` —— 拆**候选**前缀（`Mod.Pack:EventX` 也产出
+#      `eventx`），并额外去掉非字母数字字符（`shane-heart-6` ↔ `Shane6`）。
+#   ② `relationship_gating._event_id_matches` —— 只匹配**基线**前缀：
+#      `completed` 侧可以带命名空间，`required` 侧不行。
+#   ③ `profile_index._event_dialogue_is_completed` —— 由记录的 `sourceMod`
+#      合成前缀（`Vanilla:56`），但**必须**带前缀才算。
+#   ④ `profile_index.story_events` / `known_characters` 的门控 —— 直接
+#      `required.strip().casefold() in completed_keys`，**两侧都不认前缀**。
+# 前两套「两边都能认」的宽口径给出同一个答案，③④ 会分裂：内容侧声明
+# `requiredEventId="56"`、游戏侧报 `completed=["flashshifter.SVE:56"]` 时，
+# ②判已完成、④判未完成（内容库 `storyEvents` 目前为空，所以是潜伏分歧）。
+#
+# 下面两个函数是**唯一实现**，四处一律从它派生。宽口径同时保留两条旧契约：
+# 命名空间前缀两个方向都认（`flashshifter.SVE:56` ↔ `56`），分隔符差异容忍
+# （`Shane6` ↔ `shane-heart-6`）。
+_EVENT_TOKEN_RE = re.compile(r"[^a-z0-9一-鿿]+", re.IGNORECASE)
+
+
+def game_event_id_tokens(value: object) -> set[str]:
+    """事件 ID → 可比较的 token 集合。
+
+    产出 `(全名, 去掉命名空间前缀的尾段)`，每个再附一份去掉分隔符的写法。
+    大小写、两端空白一律归一；`None` 与其它对象先 `str()`（与旧实现一致）。
+    """
+
+    text = str(value).strip().casefold()
+    if not text:
+        return set()
+    candidates = {text}
+    if ":" in text:
+        candidates.add(text.rsplit(":", 1)[-1])
+    tokens: set[str] = set()
+    for candidate in candidates:
+        tokens.add(candidate)
+        tokens.add(_EVENT_TOKEN_RE.sub("", candidate))
+    return {token for token in tokens if token}
+
+
+def game_event_completed(required: object, completed: Iterable[object]) -> bool:
+    """`required` 指向的事件是否出现在 `completed` 里。
+
+    `completed` 可以是任意可迭代对象；空集合直接判否（没有已完成事件
+    不等于“全都完成了”）。
+    """
+
+    required_tokens = game_event_id_tokens(required)
+    if not required_tokens:
+        return False
+    for value in completed:
+        if required_tokens.intersection(game_event_id_tokens(value)):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -141,12 +197,9 @@ def _heart_stage(friendship_hearts: object) -> str | None:
 
 
 def _event_id_matches(required: str, completed: set[str]) -> bool:
-    required_key = required.strip().casefold()
-    return any(
-        value == required_key
-        or value.endswith(f":{required_key}")
-        for value in completed
-    )
+    """保留旧签名，实现统一到 ``game_event_completed``（见上方 #28 说明）。"""
+
+    return game_event_completed(required, completed)
 
 
 def relationship_event_gates(npc_id: object) -> tuple[RelationshipEventGate, ...]:

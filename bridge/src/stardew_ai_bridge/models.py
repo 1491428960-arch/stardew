@@ -586,7 +586,12 @@ class DialogueTestRequest(ApiModel):
         alias="groupParticipantIds",
         max_length=3,
     )
-    group_turn_count: int = Field(default=2, alias="groupTurnCount", ge=1, le=4)
+    # 2026-09-20（语义层审计 #29）：群聊回合上限此前有两个默认值，而且语义不同——
+    # `GroupDialogueRequest.turn_count` 默认 None（「没指定，由服务按在场人数算」），
+    # 这里默认 2（「就两个回合」）。同一个概念两个答案，谁也不知道该信谁。
+    # 现在两处**统一为 None = 未指定**，具体额度只由
+    # `group_conversation.turn_budget` 决定；群聊装配路径始终显式传值。
+    group_turn_count: int | None = Field(default=None, alias="groupTurnCount", ge=1, le=4)
 
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
     _strip_message = field_validator("message", mode="before")(_strip_dialogue_message)
@@ -598,6 +603,21 @@ class DialogueTestRequest(ApiModel):
     def _validate_message_for_intent(self) -> "DialogueTestRequest":
         if self.intent != "topic" and not self.message:
             raise ValueError("消息不能为空")
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_group_turn_count(self) -> "DialogueTestRequest":
+        """把「未指定」在**构造期**折算成确定值，别让它以 `None` 漏到下游。
+
+        2026-09-20（语义层审计 #29）：默认值由 2 改成 None 之后，
+        `providers.py` 的 `[: request.group_turn_count]` 会变成
+        `slice(stop=None)` —— Python **不报错**，而是切到末尾，是个静默的行为变更。
+        这里按「演示回复跟随请求要的回合数」折算：没给名单（私聊请求）就没有
+        隐式额度，保持 None；给了名单就取名单长度，仍然是 None 表示未指定。
+        """
+
+        if self.group_turn_count is None and self.group_participant_ids:
+            self.group_turn_count = len(self.group_participant_ids)
         return self
 
     def context(self) -> NpcContext:

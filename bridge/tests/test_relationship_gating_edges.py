@@ -1,8 +1,11 @@
-"""`relationship_gating` 的三个内部辅助，以及它与 `story_state` 事件匹配**方向**的差异。
+"""`relationship_gating` 的三个内部辅助，以及它与 `story_state` 事件匹配的**统一契约**。
 
-这条差异容易埋雷：同一个事件 ID 在 `story_state` 里算“已完成”、在关系门控里可能算“未完成”。
-当前不会触发（`_EVENT_GATES` 里的 required 一律是纯数字），但若将来往里写带命名空间的 ID，
-就会静默失配——所以用测试把两个方向都写清楚，将来若有人统一它们，这里会立刻报出来。
+这里原本钉着一条「方向不同」的差异（同一个事件 ID 在 `story_state` 里算“已完成”、
+在关系门控里可能算“未完成”），并写明“将来若有人统一它们，这里会立刻报出来”。
+
+2026-09-20（语义层审计 #28）**统一已经发生**：两处都改为调用
+`relationship_gating.game_event_completed`，命名空间前缀**两个方向都认**。
+所以下面改成钉新契约——`required="mod.pack:56"` + `completed={"56"}` 从此也命中。
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from stardew_ai_bridge.relationship_gating import (
     _event_id_matches,
     _heart_stage,
     _normalise_stage,
+    game_event_completed,
 )
 from stardew_ai_bridge.story_state import _event_tokens, _matches_event
 
@@ -70,17 +74,28 @@ def test_event_id_matches_exact_and_namespaced_completed_values() -> None:
     assert _event_id_matches("56", {"57"}) is False
 
 
-def test_event_id_matches_does_not_split_a_namespaced_required_id() -> None:
-    # 与 story_state 的方向**相反**：这里不会把候选自身的前缀拆掉。
-    assert _event_id_matches("mod.pack:56", {"56"}) is False
+def test_event_id_matches_also_splits_a_namespaced_required_id() -> None:
+    """#28 统一后：候选自身带前缀也命中基线，**不再**是单向的。"""
+    assert _event_id_matches("mod.pack:56", {"56"}) is True
+    assert _event_id_matches("mod.pack:56", {"mod.pack:56"}) is True
+    assert _event_id_matches("mod.pack:56", {"57"}) is False
 
 
-def test_the_two_event_matchers_disagree_only_on_a_namespaced_candidate() -> None:
-    # 把差异固化成一条可执行说明：两边都容忍前缀，但方向不同。
-    # ① 基线是短名、候选带前缀：只有 story_state 认。
+def test_the_two_event_matchers_agree_in_both_directions() -> None:
+    """两个入口对同一组输入必须给出同一答案（它们现在共用一个实现）。"""
     assert _matches_event("mod.pack:56", _event_tokens("56")) is True
-    assert _event_id_matches("mod.pack:56", {"56"}) is False
+    assert _event_id_matches("mod.pack:56", {"56"}) is True
 
-    # ② 基线带前缀、候选是短名：两边都认。
     assert _matches_event("56", _event_tokens("mod.pack:56")) is True
     assert _event_id_matches("56", {"mod.pack:56"}) is True
+
+    # 无关事件仍然是 False，两个方向都别放宽。
+    assert _matches_event("57", _event_tokens("mod.pack:56")) is False
+    assert _event_id_matches("57", {"mod.pack:56"}) is False
+
+
+def test_the_shared_implementation_is_what_the_public_name_resolves_to() -> None:
+    """`game_event_completed` 是唯一实现：`story_state` 侧的入口也认它。"""
+
+    assert game_event_completed("56", {"flashshifter.SVE:56"}) is True
+    assert game_event_completed("flashshifter.SVE:56", {"56"}) is True

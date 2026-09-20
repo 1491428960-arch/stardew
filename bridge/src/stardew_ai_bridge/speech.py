@@ -9,6 +9,11 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from .dialogue_stage import (
+    sample_stage_distance,
+    sample_stage_hint,
+    stage_hint_applies,
+)
 from .evidence import (
     has_dialogue_control_residue,
     is_model_evidence_record,
@@ -32,7 +37,14 @@ _VOICE_ANCHOR_CONTROL = re.compile(
     re.IGNORECASE,
 )
 # 语气锚点应是一小句游戏对白；过长的资料型句子会稀释角色的句式信号。
-_VOICE_ANCHOR_MAX_TEXT = 80
+#
+# 2026-09-20（语义层审计 P1 第 26 条）：这对窗口此前被三处各写一遍——
+# 生成侧 6–80、群聊声线卡 `> 60` 直接丢弃、私聊证据文本截断到 100。
+# 于是 61–80 字之间**完全合格**的锚点在群聊侧被静默丢弃（实测真实索引：
+# 622 条 voiceAnchors 里 34 条落在该区间）。现在窗口与裁剪只在这里定义，
+# 其余调用点引用 `voice_anchor_text_fits` / `clip_voice_anchor_text`。
+VOICE_ANCHOR_MIN_TEXT = 6
+VOICE_ANCHOR_MAX_TEXT = 80
 _VOICE_ANCHOR_MAX_COUNT = 8
 _STAGE_VOICE_ANCHOR_MAX_COUNT = 8
 _ENERGY_EXCITEMENT_MARKERS: tuple[str, ...] = (
@@ -72,6 +84,27 @@ def _count_markers(text: str, markers: Iterable[str]) -> int:
     return sum(folded.count(marker.casefold()) for marker in markers)
 
 
+def voice_anchor_text_fits(
+    text: object,
+    *,
+    min_length: int = VOICE_ANCHOR_MIN_TEXT,
+    max_length: int = VOICE_ANCHOR_MAX_TEXT,
+) -> bool:
+    """窗口判定：这段文本能不能当作语气锚点（长度口径的唯一权威）。
+
+    比较的是 **strip 之后**的长度——生成侧就是先 `strip` 再比，调用方若自己
+    用原始长度判断，会在带首尾空白的样本上得出不同答案。
+
+    `min_length=0` 表示调用点不设下限：自然纹理卡历史上接受极短原文，
+    本次不改它的口径；**上限一律是同一个 80**——那才是三处漂移的地方。
+    """
+
+    if not isinstance(text, str):
+        return False
+    length = len(text.strip())
+    return min_length <= length <= max_length
+
+
 def _voice_energy(text: str) -> tuple[str, dict[str, int]]:
     """从短对白中提取可解释的表达能量信号。"""
 
@@ -96,47 +129,19 @@ def _voice_energy(text: str) -> tuple[str, dict[str, int]]:
 
 
 def _sample_relationship_stage(sample: Mapping[str, Any]) -> str:
-    conditions = sample.get("conditions")
-    if not isinstance(conditions, Mapping):
-        return ""
-    value = conditions.get(
-        "relationshipStage",
-        conditions.get("relationship_stage", ""),
-    )
-    return str(value).strip().casefold() if isinstance(value, str) else ""
+    """样本自己的阶段条件；读取规则统一在 `dialogue_stage`。
 
+    这里只读**显式**条件、不做推断：生成侧的锚点是「原文自带的阶段」，
+    推断留给检索侧（`profile_index` 传 `infer=True`）。
+    """
 
-def _stage_matches(sample: Mapping[str, Any], requested_stage: str) -> bool:
-    actual_stage = _sample_relationship_stage(sample)
-    if not actual_stage or not requested_stage:
-        return True
-    if requested_stage == "parent":
-        return actual_stage in {"parent", "married"}
-    return actual_stage == requested_stage
+    return sample_stage_hint(sample)
 
 
 def _stage_distance(sample: Mapping[str, Any], requested_stage: str) -> int | None:
-    """返回 Sophia 原文相对当前关系阶段的优先级，越小越贴近。"""
+    """阶段锚点排序；实现见 `dialogue_stage.sample_stage_distance`。"""
 
-    actual_stage = _sample_relationship_stage(sample)
-    if not actual_stage or not requested_stage:
-        return None
-    if requested_stage == "parent":
-        return 0 if actual_stage in {"parent", "married"} else None
-    if requested_stage == "dating":
-        if actual_stage == "dating":
-            return 0
-        # SVE 的 Sophia 没有单独 dating 键时，close/friend/acquaintance
-        # 仍是比陌生期介绍句更可靠的恋爱前语气；陌生期只作最后回退。
-        return {
-            "close": 1,
-            "friend": 2,
-            "acquaintance": 3,
-            "stranger": 4,
-        }.get(actual_stage)
-    if requested_stage == "married":
-        return 0 if actual_stage == "married" else None
-    return 0 if actual_stage == requested_stage else None
+    return sample_stage_distance(sample, requested_stage)
 
 
 def _stage_conditioned_voice_sample(sample: Mapping[str, Any]) -> bool:
@@ -222,28 +227,19 @@ def select_stage_voice_anchors(
 
     sample_list = [dict(sample) for sample in samples if isinstance(sample, Mapping)]
 
-    stage_distances = {
-        distance
-        for sample in sample_list
-        if (distance := _stage_distance(sample, requested_stage)) is not None
-    }
-    if requested_stage == "dating":
-        if 0 in stage_distances:
-            allowed_stage_distances = {0}
-        elif stage_distances & {1, 2, 3}:
-            allowed_stage_distances = stage_distances & {1, 2, 3}
-        elif 4 in stage_distances:
-            allowed_stage_distances = {4}
-        else:
-            allowed_stage_distances = set()
-    else:
-        allowed_stage_distances = {0} if 0 in stage_distances else set()
-    prefer_stage_samples = bool(allowed_stage_distances)
-
+    # 阶段准入顺序（P1 第 25 条统一到 dialogue_stage）：
+    #   ① 精确命中当前阶段的原文；
+    #   ② 一条精确命中都没有时，借更早阶段的（dating 才允许，越早越靠后）；
+    #   ③ 连带阶段的原文都没有时，才用无条件日常样本兜底；
+    #   ④ 最后才轮到 stranger 原文——SVE 的 Sophia 没有更近阶段键时，
+    #      陌生期介绍句仍比完全没有原文可用。
     def collect_candidates(
-        *, allow_nearby_stage: bool = False
+        *,
+        stage_policy: Literal["exact", "at_most_present"] = "exact",
+        unconditioned_samples: bool = False,
+        stranger_samples: bool = False,
     ) -> list[tuple[tuple[int, int, int, int], dict[str, Any]]]:
-        """先用精确阶段；只有精确阶段为空时才借用相邻恋爱阶段原文。"""
+        """按给定阶段策略收集候选；两个开关决定放宽到哪一档。"""
 
         candidates: list[tuple[tuple[int, int, int, int], dict[str, Any]]] = []
         seen_texts: set[str] = set()
@@ -252,9 +248,14 @@ def select_stage_voice_anchors(
             actual_stage = _sample_relationship_stage(sample)
             stage_distance = _stage_distance(sample, requested_stage)
             if actual_stage:
-                if stage_distance not in allowed_stage_distances:
+                if not stage_hint_applies(
+                    sample,
+                    requested_stage,
+                    policy=stage_policy,
+                    include_stranger=stranger_samples,
+                ):
                     continue
-            elif prefer_stage_samples:
+            elif not unconditioned_samples:
                 # 有明确阶段原文时，不能让无条件 Introduction 抢走窗口。
                 continue
             sample_id = sample.get("sampleId")
@@ -264,7 +265,7 @@ def select_stage_voice_anchors(
             if not isinstance(text, str):
                 continue
             cleaned_text = text.strip()
-            if not 6 <= len(cleaned_text) <= _VOICE_ANCHOR_MAX_TEXT:
+            if not voice_anchor_text_fits(cleaned_text):
                 continue
             if has_dialogue_control_residue(cleaned_text):
                 continue
@@ -313,9 +314,23 @@ def select_stage_voice_anchors(
             )
         return candidates
 
+    # 四级回退：精确阶段 → 更早阶段（dating 借用恋爱前原文）→ 无条件日常样本
+    # → stranger 原文。只有前一级**一条候选都凑不出**时才会放开下一级，
+    # 所以有精确阶段原文时，早期阶段与无阶段样本都不会抢走窗口。
     candidates = collect_candidates()
     if not candidates:
-        candidates = collect_candidates(allow_nearby_stage=True)
+        candidates = collect_candidates(stage_policy="at_most_present")
+    if not candidates:
+        candidates = collect_candidates(
+            stage_policy="at_most_present",
+            unconditioned_samples=True,
+        )
+    if not candidates:
+        candidates = collect_candidates(
+            stage_policy="at_most_present",
+            unconditioned_samples=True,
+            stranger_samples=True,
+        )
 
     if not candidates:
         return []
@@ -391,7 +406,7 @@ def _voice_anchor_candidates(
         if not all(isinstance(value, str) and value.strip() for value in (sample_id, text)):
             continue
         cleaned_text = text.strip()
-        if not 6 <= len(cleaned_text) <= _VOICE_ANCHOR_MAX_TEXT:
+        if not voice_anchor_text_fits(cleaned_text):
             continue
         if has_dialogue_control_residue(cleaned_text):
             continue

@@ -1,16 +1,31 @@
-"""`speech._stage_matches` 的直测。
+"""「阶段条件在什么情况下适用」的边界。
 
-这个函数决定"某个原文样本能不能用在当前关系阶段的请求里"，
-此前整段没有覆盖。它的两条规则值得钉住：婚后视同 parent，
-以及样本或请求缺阶段时**不筛掉**样本。
+## 这个文件为什么还在
+
+它此前叫 `speech._stage_matches` 的直测——那个函数决定「某条原文样本能不能用在
+当前关系阶段的请求里」，但**全仓没有生产调用方**（`profile_index` 与 `speech`
+各自另有一套），10 条用例钉着一个已经断线的实现。
+
+2026-09-20（语义层审计 P1 第 25 条）把三套判定收成 `dialogue_stage` 的一份实现
+之后，这些用例**没有被删掉**：它们覆盖的边界（严格相等、婚后视同 parent、
+`stranger` 不放宽、样本或请求缺阶段时不筛掉）正是新实现三种 policy 要负责的东西。
+钉住的实现换成了权威实现，覆盖一条没少。
+
+同时补上两处旧测试照不到、但统一后必须明确的边界：
+
+- `married` 视同 `parent` 只在请求 `parent` 时成立，反向不成立；
+- 只有 `at_most_present` 才允许更早阶段，`exact` 不放宽。
+
+「阶段自身的读取与推断规则」在 `test_dialogue_stage_authority.py`，
+「窗口长度」在 `test_dialogue_evidence_window.py`，这里只管适用性边界。
 """
 
 from __future__ import annotations
 
 import pytest
 
+from stardew_ai_bridge.dialogue_stage import sample_stage_hint, stage_hint_applies
 from stardew_ai_bridge.speech import (
-    _stage_matches,
     derive_speech_profile,
     select_stage_voice_anchors,
 )
@@ -44,13 +59,18 @@ def _samples(count: int) -> list[dict[str, object]]:
     ]
 
 
+# --- 适用性：严格相等 + 婚后视同 parent -------------------------------------
+
+
 @pytest.mark.parametrize(
     ("stage", "requested", "expected"),
     [
-        # 婚后同时满足 parent 与 married
+        # 婚后与 parent 是同一段婚姻关系的两种状态，互相命中；
+        # 但恋爱不等于婚姻，反向不成立。
         ("married", "parent", True),
         ("parent", "parent", True),
-        ("parent", "married", False),
+        ("parent", "married", True),
+        ("dating", "married", False),
         ("married", "married", True),
         # 大小写与空白会被归一化
         ("  Married ", "married", True),
@@ -60,30 +80,103 @@ def _samples(count: int) -> list[dict[str, object]]:
         ("friend", "parent", False),
     ],
 )
-def test_stage_matches_normalises_and_treats_married_as_parent(
+def test_parent_widening_applies_only_when_parent_is_requested(
     stage: str, requested: str, expected: bool
 ) -> None:
     sample = {"conditions": {"relationshipStage": stage}}
 
-    assert _stage_matches(sample, requested) is expected
+    assert stage_hint_applies(sample, requested, policy="parent_widens") is expected
 
 
-def test_missing_stage_on_either_side_keeps_the_sample() -> None:
+@pytest.mark.parametrize(
+    ("stage", "requested", "expected"),
+    [
+        # 婚后请求同样接受更早阶段的日常对白：这是 `allow_lower_stage`
+        # 的原意——婚后可以用朋友期的口语节奏补 few-shot，不退回陌生期腔。
+        ("friend", "married", True),
+        ("close", "dating", True),  # 只有 at_most_present 才借用更早阶段
+        ("stranger", "acquaintance", False),  # 默认不回退到无心级初识对白
+        ("close", "stranger", False),  # stranger 是排序表起点，不放宽
+        ("dating", "married", True),  # 恋爱期原文比陌生期介绍句更贴近婚后语气
+        # 但「请求 parent」只认已婚原文：parent 的来源只有它。
+        ("close", "parent", False),
+        ("married", "parent", True),
+    ],
+)
+def test_only_at_most_present_borrows_earlier_stages(
+    stage: str, requested: str, expected: bool
+) -> None:
+    sample = {"conditions": {"relationshipStage": stage}}
+
+    assert stage_hint_applies(sample, requested, policy="at_most_present") is expected
+    if not expected:
+        assert stage_hint_applies(sample, requested, policy="exact") is False
+
+
+def test_stranger_samples_come_back_only_through_the_explicit_fallback() -> None:
+    # 「借用更早阶段」的回退（`allow_lower_stage=True`）才把 stranger 算进来；
+    # 这是 profile_index 检索侧的两级尝试，不是两套判定。
+    sample = {"conditions": {"relationshipStage": "stranger"}}
+
+    assert (
+        stage_hint_applies(sample, "friend", policy="at_most_present")
+        is False
+    )
+    assert (
+        stage_hint_applies(
+            sample, "friend", policy="at_most_present", include_stranger=True
+        )
+        is True
+    )
+
+
+def test_exact_never_widens() -> None:
+    sample = {"conditions": {"relationshipStage": "married"}}
+
+    assert stage_hint_applies(sample, "married", policy="exact") is True
+    assert stage_hint_applies(sample, "parent", policy="exact") is False
+    assert stage_hint_applies(sample, "dating", policy="exact") is False
+
+
+# --- 缺条件一律保留 ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("policy", ["exact", "at_most_present", "parent_widens"])
+def test_missing_stage_on_either_side_keeps_the_sample(policy: str) -> None:
     # 样本没写阶段，或这次请求不指定阶段时，都不应该把样本筛掉。
-    assert _stage_matches({"conditions": {}}, "married") is True
-    assert _stage_matches({"conditions": {"relationshipStage": "married"}}, "") is True
-    assert _stage_matches({"conditions": {"relationshipStage": None}}, "parent") is True
+    assert stage_hint_applies({"conditions": {}}, "married", policy=policy) is True
+    assert (
+        stage_hint_applies(
+            {"conditions": {"relationshipStage": "married"}}, "", policy=policy
+        )
+        is True
+    )
+    assert (
+        stage_hint_applies(
+            {"conditions": {"relationshipStage": None}}, "parent", policy=policy
+        )
+        is True
+    )
 
 
-def test_missing_or_malformed_conditions_keep_the_sample() -> None:
-    assert _stage_matches({}, "married") is True
-    assert _stage_matches({"conditions": "married"}, "married") is True
+@pytest.mark.parametrize("policy", ["exact", "at_most_present", "parent_widens"])
+def test_missing_or_malformed_conditions_keep_the_sample(policy: str) -> None:
+    assert stage_hint_applies({}, "married", policy=policy) is True
+    assert stage_hint_applies({"conditions": "married"}, "married", policy=policy) is True
+
+
+def test_a_non_string_stage_is_treated_as_missing() -> None:
+    assert sample_stage_hint({"conditions": {"relationshipStage": 42}}) == ""
+    assert stage_hint_applies({"conditions": {"relationshipStage": 42}}, "married") is True
+
+
+# --- 锚点选择仍然走同一套适用性 ---------------------------------------------
 
 
 def test_select_stage_voice_anchors_returns_nothing_without_a_requested_stage() -> None:
     # 刻意用**无阶段条件**的样本：这样一旦把实现里的 `if not requested_stage: return []`
     # 提前返回删掉，它们就会作为回退被采纳、断言立刻失败。
-    # （若用带阶段样本，删掉提前返回后会被下游的 stage_distance 过滤掉，测试反而抓不住。）
+    # （若用带阶段样本，删掉提前返回后会被下游的阶段过滤掉，测试反而抓不住。）
     plain = [
         _sample(conditions={}),
         _sample(sampleId="s2", conditions={}, text="另一句没有阶段的闲聊"),
@@ -127,6 +220,30 @@ def test_select_stage_voice_anchors_falls_back_to_unconditioned_samples() -> Non
     anchors = select_stage_voice_anchors([_sample(conditions={})], "Shane", "married")
 
     assert [item["sampleId"] for item in anchors] == ["s1"]
+
+
+def test_select_stage_voice_anchors_borrows_earlier_stages_only_as_a_fallback() -> None:
+    # 「借用更早阶段」只在前两级都空时才发生：这里有精确阶段样本，
+    # 早期阶段样本不该进入窗口（P1 第 25 条统一后仍保持这条口径）。
+    exact = _sample(sampleId="exact", conditions={"relationshipStage": "dating"})
+    earlier = _sample(sampleId="earlier", conditions={"relationshipStage": "friend"})
+
+    anchors = select_stage_voice_anchors(
+        [earlier, exact], "Sophia", "dating", max_count=8
+    )
+
+    assert [item["sampleId"] for item in anchors] == ["exact"]
+
+
+def test_select_stage_voice_anchors_borrows_earlier_stage_when_nothing_exact_exists() -> None:
+    earlier = _sample(sampleId="earlier", conditions={"relationshipStage": "friend"})
+
+    anchors = select_stage_voice_anchors([earlier], "Sophia", "dating")
+
+    assert [item["sampleId"] for item in anchors] == ["earlier"]
+
+
+# --- 生成入口的其余容错 -----------------------------------------------------
 
 
 def test_derive_speech_profile_tolerates_non_numeric_limits() -> None:

@@ -83,7 +83,7 @@ def _group_scene_instruction(
         else "第一个发言的人先接玩家，之后由内容和角色决定谁接；"
     )
     if strategy == "multi_turn":
-        limit = turn_count or (len(roster_ids) if roster_ids else 1)
+        limit = turn_budget(turn_count, len(roster_ids))
         return (
             "这是公开线上群聊，channel=remote。像几个熟人同时在群里说话，"
             "不要写成轮流做任务汇报。"
@@ -260,6 +260,11 @@ def build_group_prompt(
     roster: list[dict[str, object]] = []
     for item in participants:
         npc_id = _participant_value(item, "npc_id", "npcId")
+        if not str(npc_id or "").strip():
+            # 与 build_group_messages 同一条规矩：空 ID 不算名单成员。
+            # 2026-09-20（语义层审计 #29）：此前这里把空 ID 也算进回合额度，
+            # 于是回退 prompt 与场景卡对同一场群聊给出不同的「最多输出 N 个回合」。
+            continue
         entry: dict[str, object] = {
             "npcId": npc_id,
             "displayName": _participant_value(item, "display_name", "displayName"),
@@ -306,7 +311,7 @@ def build_group_prompt(
             "如果某条对白点名了名单里的另一个人（addressedTo），那个人应当接一轮；"
             "整段至少出现一次来回：有人说完，另一个人接住并推进一次。"
             "其余人可以不发言——沉默要来自角色自己没话说，而不是因为没人接。"
-            f"最多输出 {turn_count or (len(participants) if participants else 1)} 个公开回合，"
+            f"最多输出 {turn_budget(turn_count, len(roster))} 个公开回合，"
             "每个回合只说对应 speakerNpcId 自己的话，不要替别人代答。"
             + other_speaker_rule
             + "不能让名单外 NPC 加入，不能把远程聊天写成已经线下见面。"
@@ -358,9 +363,31 @@ def build_group_prompt(
     return messages
 
 
+def _canonical_participant_ids(participant_ids: Iterable[str]) -> dict[str, str]:
+    """**本次请求**参与者名单的唯一索引：casefold 键 → 规范写法。
+
+    2026-09-20（语义层审计 #31）：`addressedTo` 的「必须在名单内」这条约束
+    此前在两处各判一遍（都在本模块：解析出的发言人、归一化后的目标）。
+    现在本函数是这份名单的权威来源，两处都从它派生。
+
+    注意 `providers.py` 里还有一处**看着像、其实不是**：它判的是 Fake 内置
+    白名单 `_GROUP_LABELS`（「是不是演示自己认识的角色」，防止回显请求方伪造的
+    身份文本），与「是否在本次请求的名单内」不是同一个概念——**不要合并**。
+    """
+
+    index: dict[str, str] = {}
+    for item in participant_ids:
+        if not isinstance(item, str):
+            continue
+        canonical = item.strip()
+        if canonical:
+            index.setdefault(canonical.casefold(), canonical)
+    return index
+
+
 def _normalize_addressed_to(
     value: object,
-    participant_ids: set[str],
+    participant_ids: Iterable[str],
 ) -> list[str]:
     """只保留名单内目标：模型偶尔会写 player/you 或大小写不符的代称。
 
@@ -369,7 +396,7 @@ def _normalize_addressed_to(
 
     if not isinstance(value, (list, tuple)):
         return []
-    allowed = {item.casefold(): item for item in participant_ids}
+    allowed = _canonical_participant_ids(participant_ids)
     normalized: list[str] = []
     for item in value:
         if not isinstance(item, str):
@@ -480,7 +507,7 @@ def guard_memory_highlights(
 def parse_multi_turn_payload(
     reply: str,
     *,
-    participant_ids: set[str],
+    participant_ids: Iterable[str],
     expected_turn_count: int,
 ) -> tuple[list[GroupTurn], list[str]]:
     """解析多轮回复，并取出可选 memory 字段（值得长期记住的事实或约定）。"""
@@ -494,7 +521,7 @@ def parse_multi_turn_payload(
     if not parsed["turns"] or len(parsed["turns"]) > expected_turn_count:
         raise GroupResponseError("multi_turn 返回轮数越界")
 
-    normalized_ids = {item.casefold() for item in participant_ids}
+    normalized_ids = set(_canonical_participant_ids(participant_ids))
     turns: list[GroupTurn] = []
     for item in parsed["turns"]:
         if not isinstance(item, Mapping):
@@ -610,7 +637,11 @@ class GroupConversationService:
         participant_by_id = {
             item.npc_id.casefold(): item for item in request.participants
         }
-        participant_cards = self._participant_cards(request.participants)
+        # 2026-09-20（语义层审计 #10）：参与者上下文此前在这里**无条件构建两次**
+        # ——一次声线卡（`_participant_cards`）、一次角色卡（`_participant_prompts`），
+        # 而两份产物都要走 `ContextBuilder.build`。主路径（角色卡可用）只读角色卡，
+        # 声线卡那份整份被丢掉，纯浪费。现在声线卡**按需**构建：只有回退到
+        # `build_group_prompt` 时才现取（见 `_call_participant`）。
         participant_prompts = self._participant_prompts(request.participants, request)
         if request.strategy == "fanout":
             results = [
@@ -618,7 +649,6 @@ class GroupConversationService:
                     request,
                     participant,
                     participant.npc_id,
-                    participant_cards,
                     participant_prompts,
                 )
                 for participant in request.participants
@@ -628,7 +658,7 @@ class GroupConversationService:
             active = participant_by_id[active_id.casefold()]
             results = [
                 self._call_participant(
-                    request, active, active.npc_id, participant_cards, participant_prompts
+                    request, active, active.npc_id, participant_prompts
                 )
             ]
 
@@ -709,7 +739,6 @@ class GroupConversationService:
         request: GroupDialogueRequest,
         participant: GroupParticipant,
         active_npc_id: str,
-        participant_cards: Mapping[str, Mapping[str, object]] | None = None,
         participant_prompts: Mapping[str, Sequence[Mapping[str, str]]] | None = None,
     ) -> tuple[GroupParticipant, ProviderResult]:
         provider_request = DialogueTestRequest.model_validate(
@@ -749,20 +778,23 @@ class GroupConversationService:
                 recent_facts=request.recent_facts,
             )
         else:
+            # 2026-09-20（语义层审计 #10）：声线卡只在这条回退路径上被读，
+            # 所以只在这里现取——主路径不再为一份没人读的产物多跑一遍
+            # `ContextBuilder.build`（`build_group_voice_cards` 逐人构建）。
             messages = build_group_prompt(
-            active_npc_id=active_npc_id,
-            participants=request.participants,
-            shared_game_state=request.game_state,
-            relationship_world=request.relationship_world,
-            recent_facts=request.recent_facts,
-            public_history=[item.model_dump(by_alias=True) for item in request.history],
-            player_message=request.message,
-            strategy=request.strategy,
-            turn_count=request.turn_count,
-            invitation_topic=request.invitation_topic,
-            invitation_guidance=request.invitation_guidance,
-            participant_cards=participant_cards,
-        )
+                active_npc_id=active_npc_id,
+                participants=request.participants,
+                shared_game_state=request.game_state,
+                relationship_world=request.relationship_world,
+                recent_facts=request.recent_facts,
+                public_history=[item.model_dump(by_alias=True) for item in request.history],
+                player_message=request.message,
+                strategy=request.strategy,
+                turn_count=request.turn_count,
+                invitation_topic=request.invitation_topic,
+                invitation_guidance=request.invitation_guidance,
+                participant_cards=self._participant_cards(request.participants),
+            )
         result = self.provider_router.generate(provider_request, messages=messages)
         return participant, result, provider_request, messages
 
