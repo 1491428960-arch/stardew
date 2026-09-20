@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .personas import canonical_npc_id
-from .relationship_gating import CONVERSATION_LEAD_STAGES
+from .relationship_gating import INTIMATE_STAGES, CONVERSATION_LEAD_STAGES
 
 
 _STAGES = (
@@ -900,7 +900,7 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
         if stage_key == "friend":
             conversation_lead["required"] = "optional"
         result["conversationLead"] = conversation_lead
-    if stage_key in {"dating", "married"}:
+    if stage_key in INTIMATE_STAGES:
         role_policies = _AFFECTION_INITIATIVE_BY_ROLE.get(role_key, {})
         affection = deepcopy(
             role_policies.get(stage_key, _DEFAULT_AFFECTION_INITIATIVE)
@@ -951,7 +951,7 @@ def apply_relationship_event_gate(
         ),
     }
 
-    if result.get("stage") in {"dating", "married", "parent"}:
+    if result.get("stage") in INTIMATE_STAGES:
         if intimacy_rank < _STAGES.index("friend"):
             result.pop("conversationLead", None)
         affection = result.get("affectionInitiative")

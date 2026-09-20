@@ -263,3 +263,40 @@ def test_limit_warnings_caps_and_keeps_guard_entries() -> None:
     assert len(kept) == 20
     assert "response_guard: 越界" in kept
 
+def test_the_multi_turn_scene_carries_relationship_world_and_recent_facts() -> None:
+    """回归保护（2026-09-20 语义层审计）。
+
+    relationshipWorld 与 recentFacts 此前只有单轮回退路径带，而生产走多轮路径——
+    于是 SMAPI 一直在发的这两个字段根本进不了 prompt。与 invitation 那次同形。
+    """
+    messages = build_group_messages(
+        participants=_PARTICIPANTS,
+        active_npc_id="Shane",
+        participant_prompts=None,
+        strategy="multi_turn",
+        turn_count=2,
+        player_message="",
+        recent_facts=["玩家上周送过 Shane 一束花"],
+    )
+    scene = next(m for m in messages if m.get("name") == "group_scene")
+    content = json.loads(scene["content"])
+
+    assert "relationshipWorld" in content
+    assert content["recentFacts"] == ["玩家上周送过 Shane 一束花"]
+
+
+def test_the_multi_turn_scene_reports_empty_contexts_without_breaking() -> None:
+    messages = build_group_messages(
+        participants=_PARTICIPANTS,
+        active_npc_id="Shane",
+        participant_prompts=None,
+        strategy="multi_turn",
+        turn_count=2,
+        player_message="",
+    )
+    scene = next(m for m in messages if m.get("name") == "group_scene")
+    content = json.loads(scene["content"])
+
+    assert content["relationshipWorld"] == {}
+    assert content["recentFacts"] == []
+

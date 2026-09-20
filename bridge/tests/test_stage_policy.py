@@ -355,7 +355,10 @@ def test_dating_and_married_policies_expose_structured_affection_initiative() ->
         "channelRules",
     } <= set(dating["Wizard"]["affectionInitiative"])
     assert "affectionInitiative" not in build_stage_policy("Wizard", "friend")
-    assert "affectionInitiative" not in build_stage_policy("Wizard", "parent")
+    # 2026-09-20（用户拍板）：parent 是「与玩家有孩子」，**继承 married 的亲密契约**。
+    # 此前这里断言 parent 没有 affectionInitiative——那是遗漏而非设计：
+    # parent 卡片本身的 initiative 文案就是“主动照顾彼此和孩子的实际需要”。
+    assert "affectionInitiative" in build_stage_policy("Wizard", "parent")
 
     kinds = {
         npc_id: tuple(dating[npc_id]["affectionInitiative"]["allowedKinds"])

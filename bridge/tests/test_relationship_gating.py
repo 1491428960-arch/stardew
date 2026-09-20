@@ -186,7 +186,50 @@ def test_single_source_of_heart_stage_thresholds() -> None:
     assert providers.FakeProvider._relationship_stage(
         NpcGameState(npcId="Abigail", friendshipHearts=0, marriageStatus="married")
     ) == "married"
+    # 2026-09-20（用户拍板）：parent 只表示「与玩家有孩子」——
+    # 配偶 + 有孩子才是 parent；普通 NPC 自己的孩子（如 Jodi 的两个孩子）
+    # 是背景信息，不该改变“我和他的关系”。
     assert providers.FakeProvider._relationship_stage(
-        NpcGameState(npcId="Abigail", friendshipHearts=0, childrenCount=1)
+        NpcGameState(npcId="Abigail", friendshipHearts=0, marriageStatus="married", childrenCount=1)
     ) == "parent"
+    assert providers.FakeProvider._relationship_stage(
+        NpcGameState(npcId="Jodi", friendshipHearts=8, childrenCount=2)
+    ) == "close"
+
+def test_parent_means_having_a_child_with_the_player() -> None:
+    """2026-09-20（用户拍板）：parent 拆成两种状态。
+
+    此前 `childrenCount > 0` 就判 parent，把两件事混在一起：
+    ① 这个 NPC 自己有孩子（背景信息）；② 我和他有了孩子（关系状态）。
+    现在只有 ② 才是 parent，且 **parent 继承 married 的亲密契约**。
+    """
+    from stardew_ai_bridge.relationship_gating import INTIMATE_STAGES, relationship_stage_from_state
+
+    # 配偶 + 有孩子 → parent
+    assert relationship_stage_from_state(marriage_status="married", children_count=1) == "parent"
+    # 配偶无孩子 → married
+    assert relationship_stage_from_state(marriage_status="married") == "married"
+    # 非配偶有孩子 → 不影响关系阶段（普通 NPC 自己的孩子是背景信息）
+    assert relationship_stage_from_state(children_count=2, friendship_hearts=8) == "close"
+    assert relationship_stage_from_state(children_count=2, friendship_hearts=1) == "stranger"
+
+    # parent 属于既成亲密关系
+    assert "parent" in INTIMATE_STAGES
+    assert INTIMATE_STAGES == frozenset({"dating", "married", "parent"})
+
+
+def test_parent_inherits_the_married_intimacy_contract() -> None:
+    """parent 必须拿到与 married 相同的结构化亲密契约（stage_policy）。
+
+    此前 stage_policy 的集合只有 {dating, married}，于是“已婚+有孩子”的 NPC
+    拿不到任何 affectionInitiative，而评测侧又把 parent 当亲密阶段。
+    """
+    from stardew_ai_bridge.stage_policy import build_stage_policy
+
+    married = build_stage_policy("Shane", "married")
+    parent = build_stage_policy("Shane", "parent")
+
+    assert "affectionInitiative" in married
+    assert "affectionInitiative" in parent
+    assert married["affectionInitiative"]["maxActions"] == parent["affectionInitiative"]["maxActions"]
 

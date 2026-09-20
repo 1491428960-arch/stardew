@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .personas import canonical_npc_id
+from .relationship_gating import INTIMATE_STAGES
 
 
 REVIEW_DIMENSIONS = (
@@ -1994,11 +1995,11 @@ def diagnose_affection_initiative(
     if exit_allowed:
         tags.add("guarded_exit_allowed")
 
-    if romantic_signal and stage not in {"dating", "married"}:
+    if romantic_signal and stage not in INTIMATE_STAGES:
         tags.add("flirt_stage_mismatch")
     if romantic_signal and (
         not bool(romance_eligible)
-        or stage not in {"dating", "married"}
+        or stage not in INTIMATE_STAGES
         or intensity in {"direct", "explicit"} and not adult_consensual
     ):
         tags.add("romance_boundary_violation")

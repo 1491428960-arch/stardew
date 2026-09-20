@@ -147,6 +147,8 @@ def build_group_messages(
     public_history: Sequence[Mapping[str, object]] = (),
     invitation_topic: str | None = None,
     invitation_guidance: str | None = None,
+    relationship_world: RelationshipWorldContext | None = None,
+    recent_facts: Sequence[str] = (),
 ) -> list[dict[str, str]]:
     """群聊消息：参与者角色卡与私聊完全同源，只额外追加一张群聊场景卡。
 
@@ -218,6 +220,15 @@ def build_group_messages(
                         }
                         for item in participants
                     ],
+                    # 2026-09-20 修（语义层审计）：这两个字段此前只有单轮回退路径带，
+                    # 而生产走的是多轮路径——于是 SMAPI 一直在发的 relationshipWorld
+                    # 与 recentFacts 根本进不了 prompt（与 invitation 那次同形）。
+                    "relationshipWorld": (
+                        relationship_world.model_dump(by_alias=True, exclude_none=True)
+                        if relationship_world is not None
+                        else {}
+                    ),
+                    "recentFacts": list(recent_facts),
                     "publicHistory": [dict(item) for item in public_history],
                 },
                 ensure_ascii=False,
@@ -665,6 +676,8 @@ class GroupConversationService:
                 ],
                 invitation_topic=request.invitation_topic,
                 invitation_guidance=request.invitation_guidance,
+                relationship_world=request.relationship_world,
+                recent_facts=request.recent_facts,
             )
         else:
             messages = build_group_prompt(

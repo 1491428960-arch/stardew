@@ -28,6 +28,14 @@ STAGE_RANK = {
 # character_quality_eval.py 里**各写了一份一模一样的表**（连比较逻辑都同构），
 # prompts.py 还有第三份只含集合的副本。三处任何一处改了都会漏掉另两处，
 # 所以统一在这里派生——**相对顺序与 STAGE_RANK 天然一致，不会再漂移**。
+# 2026-09-20（用户拍板）：parent 此前把两件事混在一起——
+#   ① 这个 NPC 自己有孩子（例如 Jodi 的两个孩子）：这是**背景信息**，
+#      不该改变“我和他的关系”；
+#   ② 我和他有了孩子：这才是**关系状态**，是 married 的子状态。
+# 现在 ① 不再影响阶段；② 仍判 parent，且 **parent 继承 married 的亲密契约**。
+# 需要判断“算不算既成亲密关系”的地方，用 INTIMATE_STAGES，不要各写一份字面量。
+INTIMATE_STAGES = frozenset({"dating", "married", "parent"})
+
 CONVERSATION_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
 CONVERSATION_LEAD_STAGE_ORDER = {
     stage: STAGE_RANK[stage] for stage in ("friend", "close", "dating", "married")
@@ -283,9 +291,11 @@ def relationship_stage_from_state(
     candidate = str(explicit_stage or "").strip().casefold()
     if candidate in STAGE_RANK:
         return candidate
-    if children_count is not None and children_count > 0:
+    spouse = str(marriage_status or "").strip().casefold() in _MARRIED_MARKERS
+    if spouse and children_count is not None and children_count > 0:
+        # 只有“与玩家有孩子”才是 parent；普通 NPC 自己的孩子是背景信息。
         return "parent"
-    if str(marriage_status or "").strip().casefold() in _MARRIED_MARKERS:
+    if spouse:
         return "married"
     if str(relationship or "").strip().casefold() in _DATING_MARKERS:
         return "dating"

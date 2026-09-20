@@ -169,6 +169,42 @@ class RelationshipFact(ApiModel):
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
 
 
+
+
+def _fold_relationship_edges(value: object) -> object:
+    """把游戏端发来的**关系边**折叠成 Bridge 期望的**单对象事实**。
+
+    2026-09-20 修（语义层审计）：C# 的 objectiveRelationships 发的是有向边
+    （fromNpcId／toNpcId／strength／tension…），而 RelationshipFact 必填 npcId
+    且 ApiModel 是 extra="forbid"——于是校验 422、请求退化成兜底回复。
+    mediation／jealousy 有专门的形状转换，**唯独 objectiveRelationships 漏了**。
+    """
+    if not isinstance(value, Mapping):
+        return value
+    edges = value.get("objectiveRelationships")
+    if not isinstance(edges, (list, tuple)) or not edges:
+        return value
+    folded: list[object] = []
+    for edge in edges:
+        if not isinstance(edge, Mapping):
+            folded.append(edge)
+            continue
+        if "npcId" in edge:
+            folded.append(edge)
+            continue
+        # 取边的“另一端”：玩家的边是 player→npc，所以优先 toNpcId。
+        other = edge.get("toNpcId") or edge.get("fromNpcId")
+        relation = edge.get("relationType")
+        if not other or relation not in ("dating", "engaged", "married"):
+            continue
+        item = dict(edge)
+        item.pop("fromNpcId", None)
+        item.pop("toNpcId", None)
+        item["npcId"] = other
+        folded.append(item)
+    normalized = dict(value)
+    normalized["objectiveRelationships"] = folded
+    return normalized
 class RelationshipView(ApiModel):
     owner_npc_id: str = Field(alias="ownerNpcId", min_length=1, max_length=100)
     subject_npc_id: str = Field(alias="subjectNpcId", min_length=1, max_length=100)
@@ -311,6 +347,8 @@ class RelationshipWorldContext(ApiModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_csharp_snapshot_shape(cls, value: object) -> object:
+        value = _fold_relationship_edges(value)
+
         """兼容游戏端按当前 NPC 发送的单对象关系快照。"""
 
         if not isinstance(value, Mapping):
