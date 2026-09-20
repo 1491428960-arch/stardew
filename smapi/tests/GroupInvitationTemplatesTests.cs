@@ -108,4 +108,26 @@ public sealed class GroupInvitationTemplatesTests
         Console.WriteLine($"[Templates] Abigail 的题目：{string.Join("、", titles.Take(12))}");
         Assert.Contains(titles, title => !title.Contains("矿", StringComparison.Ordinal));
     }
+    [Fact]
+    public void Diag_print_abigail_templates()
+    {
+        // 临时诊断：用户反馈“主题是动物，但具体内容还是矿洞”，
+        // 需要看实际的 title/topic/guidance 里到底写了什么。
+        foreach (var group in new[]
+                 {
+                     new[] { "Abigail", "Alex" },
+                     new[] { "Abigail", "Shane" },
+                 })
+        {
+            Console.WriteLine($"[Diag] === {string.Join(" + ", group)} ===");
+            foreach (var template in GroupInvitationTemplates.ForGroup(group))
+            {
+                Console.WriteLine($"[Diag]   [{template.TemplateId}]");
+                Console.WriteLine($"[Diag]   标题={template.Title}");
+                Console.WriteLine($"[Diag]   话题={template.Topic}");
+                Console.WriteLine($"[Diag]   引导={template.Guidance}");
+            }
+        }
+    }
+
 }

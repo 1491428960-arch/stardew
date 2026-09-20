@@ -192,3 +192,53 @@ def test_the_prompt_path_keeps_the_invitation_context_when_opening() -> None:
 
     assert invitation["topic"] == "矿洞传闻"
     assert invitation["guidance"] == "围绕最近发现的矿石聊聊"
+
+# --- 4. 多轮路径必须带上邀约的话题 -----------------------------------------
+
+
+def test_the_multi_turn_path_carries_the_invitation() -> None:
+    """回归保护（2026-09-20 用户实测发现）。
+
+    用户反馈“主题是动物，但具体内容还是矿洞”。真因是 `build_group_messages`
+    的场景卡里**没有 invitation**，而实际用的正是多轮路径——于是邀约的
+    topic/guidance 根本进不了 prompt，模型只知道“这是群聊”，便按角色卡
+    自由发挥。单轮路径 `build_group_prompt` 一直带着它，两条路径在此不一致。
+    """
+    _, messages = _messages("")
+    scene = next(m for m in messages if m.get("name") == "group_scene")
+    assert "invitation" in json.loads(scene["content"])
+
+
+def test_the_invitation_reaches_the_multi_turn_scene_card() -> None:
+    messages = build_group_messages(
+        participants=_PARTICIPANTS,
+        active_npc_id="Shane",
+        participant_prompts=None,
+        strategy="multi_turn",
+        turn_count=2,
+        player_message="",
+        invitation_topic="养的动物",
+        invitation_guidance="说自己的观察和照料方式。",
+    )
+    scene = next(m for m in messages if m.get("name") == "group_scene")
+    invitation = json.loads(scene["content"])["invitation"]
+
+    assert invitation["topic"] == "养的动物"
+    assert invitation["guidance"] == "说自己的观察和照料方式。"
+    # 约定必须写明：方向不是已确认的事实
+    assert "不是" in invitation["scope"]
+
+
+def test_no_invitation_means_an_empty_object() -> None:
+    messages = build_group_messages(
+        participants=_PARTICIPANTS,
+        active_npc_id="Shane",
+        participant_prompts=None,
+        strategy="multi_turn",
+        turn_count=2,
+        player_message="",
+    )
+    scene = next(m for m in messages if m.get("name") == "group_scene")
+
+    assert json.loads(scene["content"])["invitation"] == {}
+

@@ -145,6 +145,8 @@ def build_group_messages(
     turn_count: int | None = None,
     player_message: str = "",
     public_history: Sequence[Mapping[str, object]] = (),
+    invitation_topic: str | None = None,
+    invitation_guidance: str | None = None,
 ) -> list[dict[str, str]]:
     """群聊消息：参与者角色卡与私聊完全同源，只额外追加一张群聊场景卡。
 
@@ -192,6 +194,20 @@ def build_group_messages(
                         turn_count=turn_count,
                         # 玩家消息为空（或纯空白）⇒ 这是开场：NPC 自己起话题。
                         is_opening=not player_message.strip(),
+                    ),
+                    # 2026-09-20 修：这里此前**没有 invitation**，而实际用的正是多轮路径，
+                    # 于是邀约的 topic/guidance 根本进不了 prompt —— 模型只知道“这是群聊”，
+                    # 便按角色卡自由发挥（Abigail 就会一直聊回矿洞）。单轮路径
+                    # build_group_prompt 一直带着它，两条路径在此不一致。
+                    "invitation": (
+                        {
+                            "topic": invitation_topic,
+                            "guidance": invitation_guidance,
+                            "scope": "这是邀约给出的讨论方向，不是 NPC 已确认的事实、"
+                            "NPC 记忆或未来承诺。",
+                        }
+                        if (invitation_topic or invitation_guidance)
+                        else {}
                     ),
                     "participants": [
                         {
@@ -647,6 +663,8 @@ class GroupConversationService:
                 public_history=[
                     item.model_dump(by_alias=True) for item in request.history
                 ],
+                invitation_topic=request.invitation_topic,
+                invitation_guidance=request.invitation_guidance,
             )
         else:
             messages = build_group_prompt(
