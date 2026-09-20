@@ -649,10 +649,25 @@ def _select_vanilla_dialogue_paths(
 
 
 def _warn_for_unpacked_sources(root: Path, warnings: list[str]) -> None:
+    """报告根下未解包的 ``.xnb`` 来源，**按目录合并成一条**。
+
+    判据是「根下存在 ``.xnb``」，**与有没有同名 JSON 无关**——所以「把 xnb 解包」
+    并不能消除这条警告（2026-09-20 核实时纠正过这个误解，它曾写在待办里）。
+
+    像 SVE 的 ``assets/XNBs/`` 有 55 个室内地图 xnb，它们对**对话**索引没有用处，
+    逐条报告只会把 55 行噪音灌进 warnings、**让真正的警告被淹没**（与审计工具的
+    误报是同一类问题）。因此按目录合并，并保留目录名与数量，信息不丢。
+    """
+    by_directory: dict[Path, list[Path]] = {}
     for path in sorted(root.rglob("*.xnb")):
-        warnings.append(
-            f"xnb source requires unpacked JSON: {_relative_path(path, root)}"
-        )
+        by_directory.setdefault(path.parent, []).append(path)
+
+    for directory, paths in sorted(by_directory.items()):
+        relative = _relative_path(directory, root)
+        where = "" if relative == "." else f"{relative}/"
+        names = "、".join(path.name for path in paths[:3])
+        suffix = f" 等 {len(paths)} 个" if len(paths) > 3 else ""
+        warnings.append(f"xnb source requires unpacked JSON: {where}{names}{suffix}")
 
 
 def _dedupe_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

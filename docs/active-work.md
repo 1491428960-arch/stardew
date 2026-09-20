@@ -965,3 +965,11 @@
 - 2026-09-20 **跳层扫描第三轮：把 memory 高亮的「期望 vs 容忍」写成注释**（通宵自主工作第 173 项，**消除隐含意图**）。扫到一处**三层数字不一致**：提示词（`_group_scene_instruction`）告诉模型“memory 可选：**只挑 1～2 条**”，而代码 `_MAX_MEMORY_HIGHLIGHTS = 3` 允许并截断到 3 条，**第三层** SMAPI 的 `GroupMemoryRules.Plan` **完全不做数量截断**（只去空／trim／去重）。**判断**：这**很可能是有意设计**——“1～2”是给模型的期望值，“3”是防御边界（容忍它偶尔多给一条），所以**刻意不相等**；但代码里没有任何地方说明这一点，后来人只会当成漂移。**处置**：**不改行为**（改哪一边都可能破坏原意），而是在常量处把意图写清楚，并注明“三层里只有这里做数量截断”；同时记入待办 **B24**（若真要统一，须两边一起改，不能只改一边）。**验证**：Bridge 全量测试通过。
 
 - 2026-09-20 **改进审计工具：区分「本机网络」与「可能外部网络」**（通宵自主工作第 174 项，**工具质量**）。**起因**：拿 `audit_bridge_health.py` 复查（今天代码改了很多），它标出 **3 个“会发网络但没有确认门”**的脚本。**逐个查证后发现全是本机**：`benchmark_local_models.py` → 本机 Ollama；`build_npc_bubble_elements.py` → `http://127.0.0.1:5678/api/npcs`（本机 Bridge）；`generate_behavior_examples.py` → `http://127.0.0.1:11435/api/chat`（本机 Ollama）。**问题不在脚本，而在工具**：它只按关键词判“网络”（`httpx|requests\.|urllib|OpenAICompatibleProvider|--provider`），**不区分目标**——而**误报会让真正的风险条目失去可信度**。**改进**：加一层“**是否可能打到外部**”的判定——出现**远端 URL**（`https?://` 后不是本机）或**用了 provider 抽象**（那两个能在没有 httpx 的情况下走云端）才算；网络列现在分三档（`网络`／`本机`／空白），**只有“网络”那一档才会因缺确认门被标出**，“本机”仅作信息展示。**判定刻意保守**：端点若来自配置（例如 `settings.url`）仍按“可能外部”处理，因为那可能被改。**效果**：误报 3 → 1（两个降为“本机”，`generate_behavior_examples.py` 因含 provider 抽象仍报）；输出里也加了“三档含义”的说明文字。
+
+- 2026-09-20 **纠正 B12 的错误前提，并用“按目录合并”消掉 55 条噪音**（通宵自主工作第 175 项，**动手前先验证假设**）。**B12 原本写的是**：“解包 55 个 SVE xnb → 收益是消除 55 条索引警告”。**动手前先去看警告到底怎么产生**，结果发现判据是：
+
+      def _warn_for_unpacked_sources(root, warnings):
+          for path in sorted(root.rglob("*.xnb")):   # 见到 .xnb 就报
+              warnings.append(f"xnb source requires unpacked JSON: …")
+
+  ——**它只看“根下存在 `.xnb`”，与有没有同名 JSON 无关**。所以**解包根本消不掉这条警告**，B12 的前提是错的。而那 55 个是 SVE 的**室内地图**（每个 0.5 KB），对**对话**索引本身没有用处——它们纯粹是**噪音**。**真正的价值在这儿**：55 条噪音会把 warnings 淹没，**与第 174 项“审计误报让风险条目失去可信度”是同一个问题**。**修法**：`corpus.py` 的 `_warn_for_unpacked_sources` 改为**按目录合并成一条**，保留目录名、前 3 个文件名与“等 N 个”，信息不丢。**TDD**：新增 2 条测试（同目录多个 xnb → 一条；不同目录 → 各自一条）→ 红灯 1 failed → 修 → 定向 3 passed、**全量 2965 passed**（无回归）。**真实验证**：直接调 `build_dialogue_corpus(mod_roots=[SVE])` 实测，**55 条 → 1 条**（`assets/XNBs/AdventureGuild.xnb、AdventurerSummit.xnb、AndyHouse.xnb 等 55 个`），同一份语料仍出 6666 records。**顺带发现一个可复现性缺口**：当前默认索引（14.5 MB、09-18）的**构建命令没有落档**，文档里只有结果与命令片段，已记入待办 **B25**。

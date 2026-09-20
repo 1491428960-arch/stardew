@@ -332,6 +332,58 @@ def test_build_corpus_warns_when_vanilla_xnb_is_not_unpacked(tmp_path: Path) -> 
     )
 
 
+def test_many_xnb_in_one_directory_collapse_into_a_single_warning(
+    tmp_path: Path,
+) -> None:
+    """同一目录下的多个 xnb 合并成一条。
+
+    SVE 的 `assets/XNBs/` 有 55 个室内地图 xnb，它们对**对话**索引没有用处
+    （而判据本来就是“根下存在 .xnb”，与有没有同名 JSON 无关，所以解包也消不掉）。
+    逐条报告只会把 55 行噪音灌进 warnings，**让真正的警告被淹没**——
+    与审计工具的误报是同一类问题，所以这里按目录合并。
+    """
+    vanilla_root = tmp_path / "vanilla-dialogue"
+    maps = vanilla_root / "assets" / "XNBs"
+    maps.mkdir(parents=True)
+    for name in ("AdventureGuild", "AdventurerSummit", "AndyHouse", "ApplesRoom"):
+        (maps / f"{name}.xnb").write_bytes(b"binary placeholder")
+
+    from stardew_ai_bridge.corpus import build_dialogue_corpus
+
+    corpus = build_dialogue_corpus(vanilla_root=vanilla_root)
+
+    xnb_warnings = [
+        warning
+        for warning in corpus["warnings"]
+        if warning.startswith("xnb source requires unpacked JSON")
+    ]
+    assert len(xnb_warnings) == 1, xnb_warnings
+    # 信息不能丢：目录与数量都要写清楚。
+    assert "assets/XNBs" in xnb_warnings[0]
+    assert "4" in xnb_warnings[0]
+
+
+def test_xnb_in_different_directories_each_get_their_own_warning(
+    tmp_path: Path,
+) -> None:
+    vanilla_root = tmp_path / "vanilla-dialogue"
+    (vanilla_root / "a").mkdir(parents=True)
+    (vanilla_root / "b").mkdir(parents=True)
+    (vanilla_root / "a" / "One.xnb").write_bytes(b"x")
+    (vanilla_root / "b" / "Two.xnb").write_bytes(b"x")
+
+    from stardew_ai_bridge.corpus import build_dialogue_corpus
+
+    corpus = build_dialogue_corpus(vanilla_root=vanilla_root)
+
+    xnb_warnings = [
+        warning
+        for warning in corpus["warnings"]
+        if warning.startswith("xnb source requires unpacked JSON")
+    ]
+    assert len(xnb_warnings) == 2, xnb_warnings
+
+
 def test_build_corpus_uses_last_content_patcher_edit_for_duplicate_key(
     tmp_path: Path,
 ) -> None:

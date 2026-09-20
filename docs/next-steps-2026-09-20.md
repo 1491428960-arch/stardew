@@ -65,3 +65,4 @@
   `& $py -B -m pytest bridge/tests --cov=stardew_ai_bridge --cov-report=term-missing:skip-covered`
 - 新增脚本：`scripts/verify_project.ps1`（一键验证）、`E:\workspace\hub\scripts\time-check.ps1`（时间/阶段）
 - 诊断探针保留在 `E:\workspace\hub\.tmp\group-default-probe-20260919\`（`probe.py` / `probe2.py` / `probe3.py`）
+| B25 | **补齐当前默认索引的构建命令**（可复现性缺口） | **2026-09-20 第 175 项发现**：data/generated/ 里的默认索引 `vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json`（14.5 MB、09-18）**建构命令没有落档**——文档里只有结果与 8-26 时代的旧命令（那时索引名还是 `sve-profile-index-zh-CN.json`），而当前索引多了 `--vanilla-events-root` 等参数。**风险**：改过 `corpus.py`／`profile_index.py` 后想重建索引时，无法确定该用哪组参数，只能从工作日志里反推。 | 从 `artifacts/corpus/20260918-*` 与 `active-work.md` 第 459–463 项反推出完整命令，实测重建一次并与现有默认索引对比 SHA/统计；然后把命令写进 `docs/README.md` 或项目 `AGENTS.md` |
