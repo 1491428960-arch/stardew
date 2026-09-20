@@ -33,18 +33,19 @@ public sealed class GroupInvitationTripleTests
 
     private static IReadOnlyList<GroupDialogueInvitationRecord> Generate(
         int totalDays,
-        IReadOnlyList<GroupParticipantCandidate> candidates) =>
+        IReadOnlyList<GroupParticipantCandidate> candidates,
+        params GroupDialogueInvitationRecord[] existing) =>
         new GroupInvitationGenerator(GroupInvitationTemplates.All).Generate(
             new GroupInvitationGenerationContext(
                 CurrentTotalDays: totalDays,
                 CurrentDateLabel: $"Spring {totalDays}",
                 KnownParticipants: candidates,
-                ExistingInvitations: Array.Empty<GroupDialogueInvitationRecord>(),
+                ExistingInvitations: existing,
                 RecentTopicKeys: Array.Empty<string>(),
                 LastCreatedTotalDays: totalDays - 2));
 
     [Fact]
-    public void An_even_day_prefers_a_three_npc_invitation()
+    public void A_three_npc_invitation_is_preferred_when_the_last_one_was_smaller()
     {
         var invitation = Assert.Single(Generate(20, Three));
 
@@ -61,11 +62,58 @@ public sealed class GroupInvitationTripleTests
     }
 
     [Fact]
-    public void An_odd_day_falls_back_to_a_two_npc_invitation()
+    public void A_two_npc_invitation_follows_a_three_npc_one()
     {
-        var invitation = Assert.Single(Generate(21, Three));
+        // 上一张是三人 → 这一张回到两人；交替与「天数奇偶」无关
+        // （生成间隔也是 2 天，用奇偶做交替会让规模永远不变）。
+        var previous = new GroupDialogueInvitationRecord
+        {
+            InvitationId = "prev",
+            TemplateId = "adventure-trio",
+            Participants = new[] { "Abigail", "Sebastian", "Maru" },
+            ParticipantDisplayNames = new[] { "Abigail", "Sebastian", "Maru" },
+            Title = "上一张",
+            Topic = "上一张",
+            Guidance = "上一张",
+            CreatedOn = "Spring 18",
+            ExpiresOn = "day 25",
+            CreatedTotalDays = 18,
+            ExpiresTotalDays = 25,
+            Source = "periodic",
+            Status = GroupInvitationStatus.Completed,
+        };
+
+        var invitation = Assert.Single(Generate(20, Three, previous));
 
         Assert.Equal(2, invitation.Participants.Count);
+    }
+
+    [Fact]
+    public void The_same_day_parity_does_not_freeze_the_group_size()
+    {
+        // 回归保护：这条正是那个 bug —— 生成间隔是 2 天，所以连续几次生成
+        // 的天数奇偶性相同；若用奇偶决定规模，两人场会永远是两人场。
+        var previous = new GroupDialogueInvitationRecord
+        {
+            InvitationId = "prev",
+            TemplateId = "neutral-public-topic",
+            Participants = new[] { "Abigail", "Alex" },
+            ParticipantDisplayNames = new[] { "Abigail", "Alex" },
+            Title = "上一张",
+            Topic = "上一张",
+            Guidance = "上一张",
+            CreatedOn = "Spring 18",
+            ExpiresOn = "day 25",
+            CreatedTotalDays = 129,
+            ExpiresTotalDays = 136,
+            Source = "periodic",
+            Status = GroupInvitationStatus.Completed,
+        };
+
+        // 129 与 131 同为奇数——旧实现下两次都会是两人场。
+        var invitation = Assert.Single(Generate(131, Three, previous));
+
+        Assert.Equal(3, invitation.Participants.Count);
     }
 
     [Fact]

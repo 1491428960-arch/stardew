@@ -65,19 +65,19 @@ public sealed class GroupInvitationGeneratorTests
             GroupInvitationRules.BuildPairKey(existing.Participants));
     }
 
-    [Theory]
-    [InlineData(20, 3)]   // 偶数天：优先三人，更有群聊感
-    [InlineData(21, 2)]   // 奇数天：退回两人
-    public void Generator_alternates_between_three_and_two_npcs_by_day(
-        int totalDays, int expectedCount)
+    [Fact]
+    public void Generator_prefers_three_npcs_when_there_is_no_history()
     {
         // 2026-09-20：F9 的「自由发起」被移除后，三人群聊失去了唯一入口，
-        // 所以改由预设邀约承担——用日期做确定性交替（偶数天三人、奇数天两人），
-        // 既避免长期只出同一种规模，也不必引入随机数。
+        // 所以改由预设邀约承担。
+        //
+        // ⚠️ 最初用「天数奇偶」做两人/三人交替，但**生成间隔恰好也是 2 天**，
+        // 于是连续几次生成的天数奇偶性永远相同——规模会被冻住。现在改成看
+        // 上一张是几人（见 GroupInvitationTripleTests 的交替与回归保护）。
         var result = new GroupInvitationGenerator(GroupInvitationTemplates.All).Generate(
             new GroupInvitationGenerationContext(
-                CurrentTotalDays: totalDays,
-                CurrentDateLabel: $"Spring {totalDays}",
+                CurrentTotalDays: 20,
+                CurrentDateLabel: "Spring 20",
                 KnownParticipants: new[]
                 {
                     // 这三个角色对应新增的三人模板 adventure-trio。
@@ -87,10 +87,10 @@ public sealed class GroupInvitationGeneratorTests
                 },
                 ExistingInvitations: Array.Empty<GroupDialogueInvitationRecord>(),
                 RecentTopicKeys: Array.Empty<string>(),
-                LastCreatedTotalDays: totalDays - 2));
+                LastCreatedTotalDays: 18));
 
         var invitation = Assert.Single(result);
-        Assert.Equal(expectedCount, invitation.Participants.Count);
+        Assert.Equal(3, invitation.Participants.Count);
     }
 
     [Fact]

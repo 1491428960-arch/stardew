@@ -44,11 +44,19 @@ public sealed class GroupInvitationGenerator
             return Array.Empty<GroupDialogueInvitationRecord>();
         }
 
-        // 三人场更像群聊、两人更像私聊，所以用日期做**确定性交替**：
-        // 偶数天优先三人组合，奇数天优先两人组合。这样既避免长期只出同一种规模，
-        // 也不必引入随机数——生成结果可测、可复现。
+        // 三人场更像群聊、两人更像私聊，所以两种规模要交替出现。
+        //
+        // ⚠️ 2026-09-20 修正：最初用「天数奇偶」做交替，但**生成间隔恰好也是 2 天**，
+        // 于是每次生成的天数奇偶性永远相同——两人场会一直两人、三人场会一直三人。
+        // 改成看**上一张邀约是几人**：上一张不足三人，这一张就优先三人。
+        // 同样不引入随机数，生成结果可测、可复现。
+        var lastParticipantCount = context.ExistingInvitations
+            .Where(invitation => invitation.Participants is { Count: > 0 })
+            .OrderByDescending(invitation => invitation.CreatedTotalDays)
+            .Select(invitation => invitation.Participants.Count)
+            .FirstOrDefault();
         var preferThree = candidates.Length >= GroupInvitationRules.MaxParticipants &&
-                          context.CurrentTotalDays % 2 == 0;
+                          lastParticipantCount < GroupInvitationRules.MaxParticipants;
                           foreach (var group in EnumerateGroups(candidates, preferThree))
         {
             foreach (var template in MatchingTemplates(group))
