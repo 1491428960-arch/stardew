@@ -32,7 +32,7 @@
 ## 待用户确认 / 跨语言协调
 
 1. **#32 视口**：真机验证后决定是否把两个私聊菜单切到 `MenuViewportRules.PreferUiViewport`。
-2. **#39 口径**：`relationType` 的大小写口径要不要统一（需先确认 Bridge 侧发出的值大小写；并行线也在处理同类白名单）。
+2. ~~**#39 口径**：`relationType` 的大小写口径要不要统一（需先确认 Bridge 侧发出的值大小写；并行线也在处理同类白名单）。~~ **跨语言风险已由父代理排除（2026-09-20，只读实测）**：SMAPI **发出的值全是小写**（`StoryStateStore.cs:197/350` 的 `RelationType = "married"`），Bridge 侧读到的与自身产出的也都是小写（`group_conversation_cases.py:90` 的 `"dating"`、`relationship_world.py:119/130/189` 的 `"married"`），且两侧的比较都用大小写敏感口径（C# `Ordinal`／Python `==`）。所以「`"Dating"` 校验拒绝、亲吻接受」这个差异**只可能由外部手工构造的状态触发**，不在跨语言链路上——**不需要跨语言协调**。剩下的只是「要不要统一内部口径」这个结构清理问题，优先级可降。
 3. **#35 / B26**：F8 与交互键「能聊到的 NPC 集合」是否要一致。
 4. **#41**：生产 `Context.IsWorldReady` 与 harness 的就绪判定是否需要收敛（需真机）。
 5. **#33 约束**：亲吻门槛现只判一次，若将来出现第二个调用 `NpcKissAnimationController.TryStart` 的地方，必须先过 `KissInteractionRules.CanTriggerKiss`（注释已写明）。

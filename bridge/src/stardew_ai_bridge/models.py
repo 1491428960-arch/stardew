@@ -567,6 +567,14 @@ class DialogueTestRequest(ApiModel):
     history: list[dict[str, object]] = Field(default_factory=list, max_length=50)
     game_state: NpcGameState | None = Field(default=None, alias="gameState")
     intent: Literal["chat", "topic", "item"] = "chat"
+    # 2026-09-20（语义层审计 #46）：这里默认 False，而 C# 侧
+    # `BridgeClient.CompactPrompt` 默认 true——**两处不同是刻意的，不要顺手统一**：
+    #   · 游戏端（C#）默认走紧凑 prompt：线上往返省 token；
+    #   · Bridge 侧默认完整 prompt：离线评测与脚本需要完整 gameState 才能评质量，
+    #     而它们不传该字段时正好落到这个默认值。
+    # 两个默认值服务不同调用方、从不同时生效（游戏端总是显式发送该字段）。
+    # 改任一边前先确认「不传 compactPrompt 的调用方」会得到什么；
+    # 护栏用例见 bridge/tests/test_cross_language_constants.py。
     compact_prompt: bool = Field(default=False, alias="compactPrompt")
     channel: Literal["remote", "face_to_face"] | None = None
     item_context: ItemConversationContext | None = Field(

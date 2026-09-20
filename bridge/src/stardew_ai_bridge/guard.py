@@ -20,6 +20,8 @@ from .dialogue_boundaries import (
     NPC_CLOSE_REOPENING_PATTERNS,
     NPC_CLOSE_REPLY_MARKERS,
     PLAYER_CLOSE_MARKERS,
+    TURN_PLAN_MODES,
+    affection_requirement_from_turn_plan,
     contains_marker,
     event_gate_effective_stage,
     is_player_closing,
@@ -27,6 +29,7 @@ from .dialogue_boundaries import (
     reopens_after_close,
     reply_avoids_speech_particle,
     reply_opens_with_marker,
+    turn_plan_mode_from,
     violates_event_gate,
 )
 from .evaluation_budget import EvaluationBudgetExceeded
@@ -510,16 +513,9 @@ def _affection_mode(prompt: list[dict[str, str]]) -> str:
     return mode.strip().casefold() if isinstance(mode, str) else ""
 
 
-_TURN_PLAN_MODES = frozenset(
-    {
-        "answer_only",
-        "answer_plus_detail",
-        "answer_plus_lead",
-        "answer_plus_warmth",
-        "boundary_close",
-        "explicit_intimacy",
-    }
-)
+# 2026-09-20（语义层审计 #45）：模式集合的唯一定义在 dialogue_boundaries；
+# 这里保留旧名作别名，调用点不必改。
+_TURN_PLAN_MODES = TURN_PLAN_MODES
 
 
 def _turn_plan_payload(prompt: list[dict[str, str]]) -> Mapping[str, object]:
@@ -534,26 +530,19 @@ def _turn_plan_payload(prompt: list[dict[str, str]]) -> Mapping[str, object]:
 
 
 def _turn_plan_mode(prompt: list[dict[str, str]]) -> str:
-    value = _turn_plan_payload(prompt).get("mode")
-    if not isinstance(value, str):
-        return ""
-    mode = value.strip().casefold()
-    return mode if mode in _TURN_PLAN_MODES else ""
+    # 读取逻辑与模式集合都只有一份（dialogue_boundaries），见 #45。
+    return turn_plan_mode_from(_turn_plan_payload(prompt))
 
 
 def _affection_requirement(prompt: list[dict[str, str]]) -> str:
     """返回当前回合的主动亲密要求，缺少回合契约时回退阶段卡。"""
 
     turn_plan_mode = _turn_plan_mode(prompt)
-    if turn_plan_mode in {
-        "answer_only",
-        "answer_plus_detail",
-        "answer_plus_lead",
-        "boundary_close",
-    }:
-        return ""
-    if turn_plan_mode in {"answer_plus_warmth", "explicit_intimacy"}:
-        return "proactive"
+    if turn_plan_mode:
+        # 2026-09-20（语义层审计 #45）：映射只有一份
+        # （dialogue_boundaries.affection_requirement_from_turn_plan）。这里此前
+        # 重写了一份模式集合，改那边不会跟着变——正是本批要消除的分歧。
+        return affection_requirement_from_turn_plan(turn_plan_mode)
     quality = _prompt_payload(prompt, "quality_context")
     expectation = quality.get("initiativeExpectation")
     if isinstance(expectation, str):

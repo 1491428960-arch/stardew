@@ -22,6 +22,7 @@ from stardew_ai_bridge import app as bridge_app
 from stardew_ai_bridge.config import DEFAULT_FALLBACK_REPLY, BridgeSettings
 from stardew_ai_bridge.fallback import FallbackProvider
 from stardew_ai_bridge.guard import ResponseGuard
+from stardew_ai_bridge.models import DialogueTestRequest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BRIDGE_CLIENT = _REPO_ROOT / "smapi" / "BridgeClient.cs"
@@ -84,3 +85,30 @@ def test_the_pattern_actually_matches_a_leaked_line() -> None:
 
     assert ResponseGuard.is_topic_prompt_echo(leaked) is True
     assert ResponseGuard.is_topic_prompt_echo("我今天在矿洞里捡了块石头。") is False
+
+
+# --- #46 compactPrompt 的默认值：刻意的不同，不是漂移 -------------------------
+
+
+def test_compact_prompt_defaults_are_intentionally_different() -> None:
+    """两边默认值相反是**有意设计**，不是为了统一。
+
+    这条用例的作用是**拦住「顺手统一」**：有人看到两个相反的默认值会想改成一致，
+    但改了哪一边，都等于改变「不传 compactPrompt 的调用方」拿到的 prompt 形态 ——
+    · 游戏端（C#）默认紧凑：线上往返省 token；
+    · Bridge 侧默认完整：离线评测与脚本需要完整 gameState 才能评质量。
+    两个默认值服务不同调用方、从不同时生效（游戏端总是显式发送该字段）。
+    """
+
+    payload = {"npcId": "Abigail", "message": "你好", "provider": "fake"}
+    assert DialogueTestRequest.model_validate(payload).compact_prompt is False
+
+    match = re.search(
+        r"public bool CompactPrompt \{ get; init; \} = (\w+);",
+        _csharp_source(),
+    )
+    assert match, "BridgeClient 里找不到 CompactPrompt 的默认值"
+    assert match.group(1) == "true", (
+        "C# 的 CompactPrompt 默认值被改了：它与 Bridge 侧的 False 是刻意不同的一对，"
+        "改动前请先确认所有调用方都显式传值，并同步这一条护栏与代码注释"
+    )

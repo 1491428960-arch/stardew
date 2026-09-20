@@ -17,6 +17,12 @@ public sealed class BridgeDialogueRequest
     [JsonPropertyName("intent")]
     public string Intent { get; init; } = ConversationIntent.Chat;
 
+    // 2026-09-20（语义层审计 #46）：这里默认 true，而 Bridge 侧
+    // DialogueTestRequest.compactPrompt 默认 false——**两处不同是刻意的**：
+    // 游戏端默认紧凑（线上省 token），Bridge 的默认值服务评测与脚本（评质量需要
+    // 完整 gameState）。两个默认值从不同时生效，因为本字段总是显式发送。
+    // 不要为了「看起来一致」改这里；护栏用例见
+    // bridge/tests/test_cross_language_constants.py。
     [JsonPropertyName("compactPrompt")]
     public bool CompactPrompt { get; init; } = true;
 
