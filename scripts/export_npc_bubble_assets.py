@@ -87,12 +87,49 @@ def csharp_color(rgb: tuple[int, int, int]) -> str:
     return f"new Color({rgb[0]}, {rgb[1]}, {rgb[2]})"
 
 
+# ── 设计色 → tint 的反推（2026-09-20） ────────────────────────────────────
+#
+# 气泡底色在游戏里是 `IClickableMenu.drawTextureBox(b, x, y, w, h, tint)` 画出来的，
+# 最终色 = 纹理色 × tint ÷ 255（逐通道）。而 npc_bubble_elements.py 里的 palette.bubble
+# 是**设计色**——回放页把它当 CSS 背景色直接铺，所以它必须是「最终色」。
+#
+# 把这个设计色直接当 tint 传进 C#，橙黄的木纹就会把它乘偏：
+# Sophia 的品红 (105,43,84) 会被渲染成暗红 (104,31,36)，色相从 hue 320 偏到 ≈355，
+# 明度也掉一档——「气泡不该是这个颜色」就是这么来的。
+#
+# 所以导出时按纹理基准色反推：tint = 设计色 × 255 ÷ 基准色。回乘即可还原设计色。
+# 基准色取 MenuTiles (0,256,60,60) 九宫格**中心块**的主色（20×20 里占一半的那一色），
+# 因为气泡的中心区正是被拉伸的这块；该块另有 3 个近邻色（#ffc576 / #f5b56f / #f5b565），
+# 用主色反推时它们的偏差在 7 个色阶以内。
+BUBBLE_TEX_BASE = (253, 188, 110)   # #fdbc6e
+
+# 注意：玩家气泡与 NPC 兜底气泡**不走这条反推**。
+# 它们的设计色（浅蓝 (226,239,246) / 浅紫 (239,231,244)）在 G、B 通道上高于上面的基准色
+# （239 > 188、246 > 110），反推出来是 324 / 570，超过乘法 tint 的上限 255，乘不出来。
+# 所以那两处在 smapi/ChatBubbleDrawing.cs 里改用 Maps\MenuTilesUncolored（基色近白 248），
+# 由 ToPanelTint 反推成 (232,246,253) 与 (246,238,251)，回乘即还原设计色。
+# 本文件继续负责 46 个角色的专属配色：43 个各通道都在基准色以内，回乘无损；
+# 另有 3 个深蓝角色（Maru / Mermaid / Henchman）的 B 通道超出基准色 110，被 min() 压到 110，
+# 渲染后 B 比设计色暗 7~9 个色阶——这是乘法 tint 的硬边界，要彻底消掉同样得换未着色面板。
+
+
+def bubble_to_tint(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    """把设计色反推成 tint，使 drawTextureBox 乘完纹理后正好回到设计色。"""
+
+    return tuple(
+        min(255, round(channel * 255 / base))
+        for channel, base in zip(rgb, BUBBLE_TEX_BASE)
+    )
+
+
 def write_csharp(names: list[str]) -> None:
     rows: list[str] = []
     for index, npc in enumerate(names):
         element = NPC_BUBBLE_ELEMENTS[npc]
         palette = element["palette"]
-        bubble = parse_color(palette["bubble"])
+        # palette.bubble 是设计色（回放页直接铺的颜色），进 C# 前要反推成 tint，
+        # 否则会被 drawTextureBox 乘上橙黄木纹而偏色。见 bubble_to_tint 的说明。
+        bubble = bubble_to_tint(parse_color(palette["bubble"]))
         border = parse_color(palette["border"])
         accent = parse_color(palette["accent"])
         ornament = element["ornament"]

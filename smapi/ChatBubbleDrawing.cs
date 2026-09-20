@@ -34,8 +34,30 @@ internal static class ChatBubbleDrawing
     /// <summary>气泡最小宽度；内容再短也不会缩成一条。</summary>
     public const int MinWidth = 180;
 
-    private static readonly Color PlayerBubble = new(226, 239, 246);
-    private static readonly Color NpcFallbackBubble = new(239, 231, 244);
+    /// <summary>
+    /// 未着色面板纹理（<c>Maps\MenuTilesUncolored</c>）里的九宫格源区。
+    /// 它是 <c>Maps\MenuTiles</c> 的去色版：alpha 轮廓逐像素相同，
+    /// 只是底板色区从 #fdbc6e 换成了近白，因此可以拿设计色反推后直接染色。
+    /// </summary>
+    private static readonly Rectangle PanelSource = new(0, 256, 60, 60);
+
+    /// <summary>
+    /// 未着色面板底板区的基准色（实测：九宫格拉伸区的主色，占四成面积）。
+    /// 该区另有三个近邻色 255 / 240 / 239，用 248 反推时它们的偏差在 8 个色阶以内。
+    /// </summary>
+    private static readonly Color PanelBase = new(248, 248, 248);
+
+    /// <summary>玩家气泡设计色：浅蓝。</summary>
+    private static readonly Color PlayerBubbleDesign = new(226, 239, 246);
+
+    /// <summary>NPC 兜底气泡设计色：浅紫（角色没有专属配色时）。</summary>
+    private static readonly Color NpcFallbackBubbleDesign = new(239, 231, 244);
+
+    /// <summary>玩家气泡实际交给绘制接口的 tint。</summary>
+    private static readonly Color PlayerBubbleTint = ToPanelTint(PlayerBubbleDesign);
+
+    /// <summary>NPC 兜底气泡实际交给绘制接口的 tint。</summary>
+    private static readonly Color NpcFallbackBubbleTint = ToPanelTint(NpcFallbackBubbleDesign);
 
     /// <summary>深色角色气泡上的正文色；黑字在深底上不可读。</summary>
     private static readonly Color DarkBubbleText = new(243, 240, 252);
@@ -101,17 +123,25 @@ internal static class ChatBubbleDrawing
             height);
 
         // 角色视觉：NPC 侧使用角色专属底色 + 图标徽章 + 特征色。
-        // 玩家侧与未知角色沿用原本的浅色与黑字。
+        // 玩家侧与未知角色走未着色面板，底色回到设计色而不被木质纹理乘偏。
         var style = isPlayer ? null : NpcBubbleStyle.For(npcId);
         var showBadge = style is not null && NpcBubbleStyle.Sheet is not null;
 
-        IClickableMenu.drawTextureBox(
-            b,
-            bounds.X,
-            bounds.Y,
-            bounds.Width,
-            bounds.Height,
-            isPlayer ? PlayerBubble : style?.Bubble ?? NpcFallbackBubble);
+        if (isPlayer)
+        {
+            DrawPanel(b, bounds, PlayerBubbleDesign, PlayerBubbleTint);
+        }
+        else if (style is not null)
+        {
+            // 角色专属配色已由 scripts/export_npc_bubble_assets.py 按彩色 MenuTiles
+            // 的基色反推过，这里继续走原版接口，纹理与 tint 才是配套的一对。
+            IClickableMenu.drawTextureBox(
+                b, bounds.X, bounds.Y, bounds.Width, bounds.Height, style.Bubble);
+        }
+        else
+        {
+            DrawPanel(b, bounds, NpcFallbackBubbleDesign, NpcFallbackBubbleTint);
+        }
 
         // 装饰边框贴在气泡外侧一圈；画在底色之后、文字之前。
         if (style is not null)
@@ -146,5 +176,46 @@ internal static class ChatBubbleDrawing
         }
 
         return height;
+    }
+
+    /// <summary>
+    /// 把设计色反推成面板 tint。面板最终色 = 纹理色 × tint ÷ 255（逐通道），
+    /// 所以 tint = 设计色 × 255 ÷ <see cref="PanelBase"/>，回乘即还原设计色。
+    ///
+    /// 这一步非做不可：彩色 MenuTiles 的基色是 #fdbc6e，蓝紫通道只有 188 / 110，
+    /// 而玩家气泡的浅蓝、兜底气泡的浅紫在 G / B 上都高于基色（最高要 570），
+    /// 乘法最多只能到 1.0 倍，那些颜色根本乘不出来。换成近白的未着色面板后，
+    /// 两个设计色的反推值分别为 (232,246,253) 与 (246,238,251)，全部落在界内。
+    /// </summary>
+    private static Color ToPanelTint(Color design)
+    {
+        return new Color(
+            Math.Min(255, (int)Math.Round(design.R * 255.0 / PanelBase.R)),
+            Math.Min(255, (int)Math.Round(design.G * 255.0 / PanelBase.G)),
+            Math.Min(255, (int)Math.Round(design.B * 255.0 / PanelBase.B)));
+    }
+
+    /// <summary>
+    /// 用未着色面板画气泡底：保留九宫格木框纹理，同时让底色回到设计色。
+    /// 极端情况下拿不到未着色面板时退回纯色底——颜色依旧准确，只是失去木框纹理。
+    /// </summary>
+    private static void DrawPanel(SpriteBatch b, Rectangle bounds, Color design, Color tint)
+    {
+        var panel = Game1.uncoloredMenuTexture;
+        if (panel is null)
+        {
+            b.Draw(Game1.staminaRect, bounds, design);
+            return;
+        }
+
+        IClickableMenu.drawTextureBox(
+            b,
+            panel,
+            PanelSource,
+            bounds.X,
+            bounds.Y,
+            bounds.Width,
+            bounds.Height,
+            tint);
     }
 }
