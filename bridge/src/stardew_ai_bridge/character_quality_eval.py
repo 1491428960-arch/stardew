@@ -10,7 +10,13 @@ from .behavior_quality import (
     diagnose_affection_intensity,
     diagnose_affection_initiative,
     diagnose_conversation_lead,
+    diagnose_personal_affection,
     normalize_conversation_lead_skeleton,
+)
+from .dialogue_boundaries import (
+    channel_direction_tag as _channel_direction_tag,
+    repeats_affection_shape as _repeats_affection_shape,
+    violates_event_gate as _violates_event_gate,
 )
 from .personas import (
     FEMALE_BACHELOR_NPC_IDS,
@@ -22,6 +28,7 @@ from .stage_policy import build_stage_policy
 from .relationship_gating import (
     CONVERSATION_LEAD_STAGES,
     CONVERSATION_LEAD_STAGE_ORDER,
+    resolve_relationship_gate,
 )
 
 
@@ -3054,12 +3061,17 @@ def score_affection_variation(
             or kind == "conversation_exit"
             or shape == "conversation_exit"
         )
+        # 形状判定的唯一实现在 `dialogue_boundaries`（P1 #24）：
+        # 只看形状 + 新锚点 + 收口豁免，**不再额外要求主动类型相同**——
+        # 那个额外条件正是「运行时改写、评测判不机械」的分歧来源。
         mechanical = bool(
             index
-            and shape
-            and shape == previous_shape
             and not has_new_anchor
-            and not allowed_close
+            and _repeats_affection_shape(
+                shape,
+                previous_shape,
+                allowed_close=allowed_close,
+            )
         )
         scores.append(
             {
@@ -3538,6 +3550,23 @@ def score_generated_player_input(
     }
 
 
+def _event_gate_payload(case: CharacterQualityCase) -> object:
+    """把案例的事件状态投影成运行时同款的事件锁。
+
+    运行时的事件锁来自 `relationship_gating.resolve_relationship_gate` 经
+    `stage_policy.apply_relationship_event_gate` 的投影；评测侧此前完全没有
+    对应物，P1 #22 的「stage=dating 但 eventGate=friend 时两处结论相反」
+    就出在这里。这里只读同样的入口，不引入第二套事件判定。
+    """
+
+    return resolve_relationship_gate(
+        case.npc_id,
+        relationship_stage=case.relationship_stage,
+        friendship_hearts=case.friendship_hearts,
+        completed_event_ids=case.completed_event_ids,
+    )
+
+
 def score_character_reply(
     case: CharacterQualityCase,
     reply: str,
@@ -3602,14 +3631,31 @@ def score_character_reply(
             continuity = False
     if active_history and not continuity:
         tags.add("missing_continuity_evidence")
-    if case.channel == "remote" and any(
-        marker in text for marker in _REMOTE_ONLY_MARKERS
+    # 渠道方向越界与 `behavior_quality` 共用同一份标记与判定（P1 #21）。
+    channel_tag = _channel_direction_tag(case.channel, text)
+    if channel_tag:
+        tags.add(channel_tag)
+    # 事件锁：运行时 guard 会因「事件未解锁却落下主动亲密」触发重试，
+    # 离线评测此前完全不看事件锁，于是 stage=dating + eventGate=friend 时
+    # 一处拦、一处判合规（P1 #22）。这里复用同一个入口，两边同源。
+    # 案例没有 `completedEventIds` 时 `resolve_relationship_gate` 不会启用事件锁，
+    # 不会把「没提供事件状态」误判成「事件全部未完成」。
+    turn_relationship_focus = (
+        str(getattr(turn, "relationship_focus", "") or "").strip().casefold()
+        if turn is not None
+        else ""
+    )
+    if _violates_event_gate(
+        _event_gate_payload(case),
+        text,
+        detect_personal_affection=lambda value: bool(
+            diagnose_personal_affection(
+                value,
+                relationship_focus=turn_relationship_focus,
+            ).get("personalAffectionDetected")
+        ),
     ):
-        tags.add("wrong_channel")
-    if case.channel == "face_to_face" and any(
-        marker in text for marker in _FACE_TO_FACE_MARKERS
-    ):
-        tags.add("wrong_channel")
+        tags.add("event_gate_intimacy")
     affection_diagnostic: dict[str, object] | None = None
     conversation_lead_diagnostic: dict[str, object] | None = None
     turn_plan_mode = _turn_plan_mode(turn)

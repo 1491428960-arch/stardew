@@ -73,9 +73,31 @@ def test_a_guarded_boundary_reply_also_disables_the_retry(marker: str) -> None:
 
 
 def test_an_ordinary_reply_after_a_closing_input_is_retried() -> None:
-    # 玩家说要睡了，回复却只是敷衍——边界没被处理，应当重试。
+    """收口判定取并集后，「早点休息」这类自然收口不再被重试覆盖。
+
+    旧断言把「好的，那你早点休息。」当成敷衍（`早点休息` 只存在于离线评测
+    一侧的收口表里），于是运行时会对一条已经好好收口的回复再推一次浪漫表达——
+    正是 P1 #17 记录的分歧。并集之后这一句两侧一致算收口。
+    """
+
     assert (
         should_retry_for_relationship_boundary("Shane", _CLOSING_INPUT, "好的，那你早点休息。")
+        is False
+    )
+
+
+def test_a_reply_that_ignores_the_closing_input_is_still_retried() -> None:
+    """并集扩大的是「哪些说法算收口」，不是「收口可以被无视」。
+
+    回复索性换了话题、既没收口也没照顾，边界没被处理——必须重试。
+    """
+
+    assert (
+        should_retry_for_relationship_boundary(
+            "Shane",
+            _CLOSING_INPUT,
+            "对了，鸡舍那边的饲料我明天去补。",
+        )
         is True
     )
 

@@ -2057,7 +2057,15 @@ def test_guarded_refusal_with_shane_irritation_is_allowed_without_forcing_affect
     )
 
     assert diagnostic["initiativeDetected"] is True
-    assert "guarded_exit_allowed" in diagnostic["initiativeTags"]
+    # 2026-09-20（语义层审计 #16～#18；父代理决断）：这里**不再断言**
+    # `guarded_exit_allowed`。那条回复（“你别跟我较劲行不行？”）是**抱怨／划边界**，
+    # 不是收口——“别跟我较劲”属边界表（NPC_BOUNDARY_REPLY_MARKERS，24 条），
+    # 不在收口表（NPC_CLOSE_REPLY_MARKERS，26 条），而 guarded_exit_allowed 的语义是
+    # 「NPC 收口被允许」。旧断言之所以能过，只因旧实现恰好把这句算进了收口表——
+    # **那正是本次要消除的分歧本身**（测试固化了 bug）。
+    # 本条测试的意图（烦躁时允许拒绝、不强推爱意）由下面两条断言覆盖；
+    # 「收口被允许」另有 test_guarded_shane_natural_low_mood_rest_close_is_not_missing_affection 覆盖。
+    assert "missing_proactive_affection" not in diagnostic["initiativeTags"]
     assert "missing_personal_affection" not in diagnostic["initiativeTags"]
 
 

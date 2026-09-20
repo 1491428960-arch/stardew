@@ -7,6 +7,20 @@ from typing import Any
 
 from .personas import canonical_npc_id
 from .relationship_gating import INTIMATE_STAGES
+from .dialogue_boundaries import (
+    FACE_TO_FACE_MARKERS as _FACE_TO_FACE_MARKERS,
+    FUNCTIONAL_TASK_PATTERNS as _FUNCTIONAL_TASK_PATTERNS,
+    NPC_CLOSE_REPLY_MARKERS as _NPC_CLOSE_REPLY_MARKERS,
+    PLAYER_CLOSE_MARKERS as _PLAYER_CLOSE_MARKERS,
+    REMOTE_ONLY_MARKERS as _REMOTE_ONLY_MARKERS,
+    SPECIFIC_ARRANGEMENT_PATTERNS as _SPECIFIC_PLAN_PATTERNS,
+    WRONG_CHANNEL_TAG as _WRONG_CHANNEL_TAG,
+    channel_direction_tag as _channel_direction_tag,
+    contains_marker as _contains_marker,
+    is_npc_close_reply,
+    is_player_closing,
+    is_specific_arrangement,
+)
 
 
 REVIEW_DIMENSIONS = (
@@ -333,6 +347,10 @@ _INITIATIVE_SIGNAL_MARKERS: dict[str, tuple[str, ...]] = {
         "别担心",
         "照看",
         "帮你",
+        # 顶回去也是「按玩家的边界收住」，而不是没完成主动行为：
+        # `guard._GUARDED_BOUNDARY_REPLY_MARKERS` 一直认这一条，
+        # 离线评测的主动信号表漏了它，测试因此钉出一条假失败（P1 #17 同类）。
+        "别跟我较劲",
     ),
     "conversation_exit": (
         "先睡了",
@@ -691,23 +709,6 @@ _RELATIONSHIP_AFFECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 _COMPANIONSHIP_SUPPORT_PATTERNS = (
     re.compile(r"(?:陪你|陪我|一起待|一块待|等你|给你(?:看|听))"),
 )
-_FUNCTIONAL_TASK_PATTERNS = (
-    re.compile(
-        r"(?:收拾|整理|清理|修(?:好|理)?|搬(?:走|开)?|准备|过一遍|算完|喂鸡|浇|建|采购|交付|交给|给|查看|核对|汇报|交代|送|拿).{0,12}(?:鸡舍|账本|农活|工具|货物|材料|栅栏|农田|作物|订单|早餐|东西|建筑|房子|报告|记录|表格)"
-    ),
-    re.compile(
-        r"(?:鸡舍|账本|农活|工具|货物|材料|栅栏|农田|作物|订单|早餐|东西|建筑|房子|报告|记录|表格).{0,12}(?:收拾|整理|清理|修(?:好|理)?|搬(?:走|开)?|准备|过一遍|算完|喂鸡|浇|建|采购|交付|交给|给|查看|看|核对|汇报|交代|送|拿)"
-    ),
-)
-_SPECIFIC_PLAN_PATTERNS = (
-    re.compile(r"(?:一起|约).{0,8}(?:吃饭|骑车|散步|听歌|喝茶|出门|看画)"),
-    re.compile(
-        r"(?:陪你|陪我|和你|跟你|一起|一块|搭把手|帮(?:个)?忙).{0,12}(?:收拾|整理|修(?:好|理)?|搬|清理|准备)"
-    ),
-    re.compile(r"(?:今晚|明天|改天).{0,12}(?:七点|几点|在.{0,8}见|安排|约)"),
-    re.compile(r"(?:七点|几点).{0,12}(?:见|出发|过来)"),
-    *_FUNCTIONAL_TASK_PATTERNS,
-)
 _FUNCTIONAL_CONTEXT_AMBIGUOUS_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
     "player_directed_preference": (
         _TIME_FOR_PLAYER_PREFERENCE_PATTERN,
@@ -744,28 +745,12 @@ _REMOTE_ROMANCE_MARKERS = (
     "已经赴约",
     "过来找我",
 )
-_GUARDED_CLOSE_INPUT_MARKERS = (
-    "别逼我",
-    "没心情",
-    "心情很差",
-    "很难受",
-    "先不说了",
-    "不想聊",
-    "不用陪",
-    "别过来",
-    "就这样吧",
-)
-_GUARDED_CLOSE_REPLY_MARKERS = (
-    "好好休息",
-    "早点休息",
-    "早点睡",
-    "早点钻被窝",
-    "先睡吧",
-    "休息吧",
-    "明天再联系",
-    "先休息",
-    "别跟我较劲",
-)
+# 2026-09-20 起与 guard 共用同一份收口定义（见 `dialogue_boundaries` 的模块说明）。
+# 改名保留 `_GUARDED_` 前缀是因为下面只在 `expectation == "guarded"` 时消费它们，
+# 但**表本身**必须是同一张：此前两处分头演化，同一句「你先休息吧。」运行时放过、
+# 离线评测判缺爱意（P1 #16/#17）。
+_CLOSE_INPUT_MARKERS = _PLAYER_CLOSE_MARKERS
+_CLOSE_REPLY_MARKERS = _NPC_CLOSE_REPLY_MARKERS
 
 _CONVERSATION_LEAD_SHARE_PATTERNS = (
     re.compile(r"(?:没和别人|没有跟别人|没跟别人).{0,12}(?:说过|提过|讲过)"),
@@ -784,7 +769,9 @@ _CONVERSATION_LEAD_CHOICE_PATTERN = re.compile(
 )
 _CONVERSATION_LEAD_QUESTION_PATTERN = re.compile(r"[^。！？!?]{1,36}[？?]")
 _CONVERSATION_LEAD_GENERIC_QUESTION_PATTERN = re.compile(
-    r"(?:你呢|还有吗|怎么了|还好吗|怎么样|好吗)[？?。！!]?$"
+    # `行不行`／`好不好` 这类征求应允的反问属于**顶回去**，不是要玩家继续聊；
+    # 把它们排除在「实质追问」之外，收口回合才不会被误判成重新拉开（P1 #18）。
+    r"(?:你呢|还有吗|怎么了|还好吗|怎么样|好吗|行不行|好不好|成不成|可以吗)[？?。！!]?$"
 )
 _CONVERSATION_LEAD_STATUS_QUESTION_PATTERN = re.compile(
     r"(?:还好吗|还好么|好吗|怎么样|如何|顺利吗|忙吗|累吗)[？?]?\s*$"
@@ -1363,7 +1350,11 @@ def diagnose_conversation_lead(
     npc_id = str(_field_from_object(case, "npc_id", "") or _field_from_object(case, "npcId", ""))
     expectation = str(_field_from_object(turn, "initiative_expectation", "none") or "none").casefold()
     exit_reply = bool(_CONVERSATION_LEAD_EXIT_PATTERN.search(text))
-    close_reply = bool(_CONVERSATION_LEAD_CLOSE_REPLY_PATTERN.search(text))
+    # 收口判定同样取并集：共享表覆盖了原正则漏掉的 `早点睡`／`休息吧`／
+    # `不打扰你` 等说法（P1 #17），正则则保留它自己的位置敏感分支。
+    close_reply = is_npc_close_reply(text) or bool(
+        _CONVERSATION_LEAD_CLOSE_REPLY_PATTERN.search(text)
+    )
     has_question = bool(_CONVERSATION_LEAD_QUESTION_PATTERN.search(text))
     has_implicit_question = bool(
         _CONVERSATION_LEAD_IMPLICIT_QUESTION_PATTERN.search(text)
@@ -1373,7 +1364,10 @@ def diagnose_conversation_lead(
     has_specific = bool(anchors)
     has_choice = bool(_CONVERSATION_LEAD_CHOICE_PATTERN.search(text))
     has_share = any(pattern.search(text) for pattern in _CONVERSATION_LEAD_SHARE_PATTERNS)
-    has_plan = bool(_CONVERSATION_LEAD_PLAN_PATTERN.search(text))
+    # 与 `specificPlanDetected` 共用同一套「具体安排」判定（P1 #20）：
+    # 此前这里另有 `_CONVERSATION_LEAD_PLAN_PATTERN`，同一句安排在一处算、
+    # 在另一处不算，`specific_plan` 与 `companionship_only` 会同时出现。
+    has_plan = is_specific_arrangement(text)
     has_immediate_action = bool(
         _CONVERSATION_LEAD_IMMEDIATE_ACTION_PATTERN.search(text)
     )
@@ -1400,9 +1394,9 @@ def diagnose_conversation_lead(
         "explicit_rejection" in skip_when
         and bool(_CONVERSATION_LEAD_EXPLICIT_REJECTION_PATTERN.search(player_text))
     )
-    player_closing = bool(
-        _CONVERSATION_LEAD_PLAYER_CLOSING_PATTERN.search(player_text)
-    ) or explicit_rejection
+    # 玩家侧的收口判定统一到 `dialogue_boundaries`：字面标记表与正则的并集。
+    # `explicit_rejection` 仍是本诊断自己的额外维度（它由回合的 skipWhen 开启）。
+    player_closing = is_player_closing(player_text) or explicit_rejection
     acknowledges_rejection = bool(
         _CONVERSATION_LEAD_REJECTION_ACKNOWLEDGEMENT_PATTERN.search(text)
     )
@@ -1515,10 +1509,16 @@ def diagnose_conversation_lead(
 
     if generic_question and not (has_specific or has_choice):
         tags.add("generic_follow_up_only")
-    if _has_pattern(text, _COMPANIONSHIP_SUPPORT_PATTERNS) and not has_reason and not kind:
-        tags.add("companionship_only")
+    # 两个「只有……」标签互斥：安排已经成立时，陪伴词只是顺带，不再单独记为
+    # `companionship_only`（否则同一份 tags 会自相矛盾——见 P1 #20）。
     if has_plan and not has_reason and not kind:
         tags.add("specific_plan_only")
+    elif (
+        _has_pattern(text, _COMPANIONSHIP_SUPPORT_PATTERNS)
+        and not has_reason
+        and not kind
+    ):
+        tags.add("companionship_only")
     if not kind and text:
         tags.add("missing_conversation_lead")
     if not answered and player_text:
@@ -1832,10 +1832,7 @@ def diagnose_personal_affection(
         normalized,
         _COMPANIONSHIP_SUPPORT_PATTERNS,
     )
-    specific_plan_detected = _has_pattern(
-        normalized,
-        _SPECIFIC_PLAN_PATTERNS,
-    )
+    specific_plan_detected = is_specific_arrangement(normalized)
     normalized_focus = relationship_focus.strip().casefold()
     relationship_affection_evidence = (
         [
@@ -1965,14 +1962,11 @@ def diagnose_affection_initiative(
     else:
         detected = bool(detected_kinds)
 
-    guarded_close_requested = expectation == "guarded" and _has_pattern(
+    guarded_close_requested = expectation == "guarded" and _contains_marker(
         player_input.strip() if isinstance(player_input, str) else "",
-        tuple(re.compile(re.escape(marker)) for marker in _GUARDED_CLOSE_INPUT_MARKERS),
+        _CLOSE_INPUT_MARKERS,
     )
-    guarded_close_reply = expectation == "guarded" and _has_pattern(
-        text,
-        tuple(re.compile(re.escape(marker)) for marker in _GUARDED_CLOSE_REPLY_MARKERS),
-    )
+    guarded_close_reply = expectation == "guarded" and is_npc_close_reply(text)
     exit_allowed = (
         ("conversation_exit" in detected_kinds or guarded_close_reply)
         and expectation == "guarded"
@@ -2005,10 +1999,15 @@ def diagnose_affection_initiative(
         tags.add("romance_boundary_violation")
     if any(marker.casefold() in lowered for marker in _GENERIC_ROMANCE_MARKERS):
         tags.add("generic_romance")
+    # 渠道方向判定与 `character_quality_eval` 共用同一张表与同一个入口（P1 #21）：
+    # 此前两处的标记表不同，且离线评测侧没有 face_to_face 方向的反向检查。
+    channel_tag = _channel_direction_tag(channel, text)
+    if channel_tag:
+        tags.add(channel_tag)
     if channel == "remote" and any(
         marker.casefold() in lowered for marker in _REMOTE_ROMANCE_MARKERS
     ):
-        tags.update({"wrong_channel", "romance_channel_mismatch"})
+        tags.add("romance_channel_mismatch")
 
     return {
         "initiativeExpectation": expectation,

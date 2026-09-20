@@ -2,6 +2,11 @@
 
 这个模块不改写回复，也不把回复重新拼接成训练资料；它只返回适合评测
 结果和网页展示的短标签，避免把“自动提示”误当成角色质量结论。
+
+「重复 History 里的口头颗粒」与「以历史开场起句」两条判定与运行时
+`guard` 同源（`dialogue_boundaries.reply_avoids_speech_particle` /
+`reply_opens_with_marker`）：此前两处各写一套，同一个概念两个名字，
+运行时重试与离线标签可能给出相反结论（P1 #23）。
 """
 
 from __future__ import annotations
@@ -9,6 +14,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
+
+from .dialogue_boundaries import (
+    reply_avoids_speech_particle,
+    reply_opens_with_marker,
+)
 
 
 _SPEECH_PARTICLES = ("好吧", "行吧", "嗯", "哦", "啊", "唔", "呃", "嘿")
@@ -40,6 +50,21 @@ def _opening(reply: str) -> str:
     if not reply:
         return ""
     return _OPENING_SPLIT.split(reply, maxsplit=1)[0].strip()
+
+
+def _repeated_opening_markers(previous_openings: list[str]) -> tuple[str, ...]:
+    """把历史开场折成「短签名」标记，供共享的起句判定使用。
+
+    `今天还行` 与 `今天挺忙` 共享 `今天` 这个签名——这是本模块原有的
+    短签名口径（不比整段正文，也不要求逐字相同）。
+    """
+
+    markers: list[str] = []
+    for item in previous_openings:
+        signature = _opening_signature(item)
+        if signature and signature not in markers:
+            markers.append(signature)
+    return tuple(markers)
 
 
 def _assistant_replies(history: Any) -> list[str]:
@@ -85,26 +110,30 @@ def analyze_dialogue_style(
     opening = _opening(text)
     tags: set[str] = set()
 
-    if any(count >= 2 for count in counts.values()):
+    # 同一条回复内重复的颗粒：与「历史里已经用过」是两个维度，但都收敛到
+    # 同一个判定函数，运行时 guard 与这里的结论不会再分叉（P1 #23）。
+    repeated_in_reply = tuple(
+        sorted(particle for particle, count in counts.items() if count >= 2)
+    )
+    if reply_avoids_speech_particle(text, repeated_in_reply):
         tags.add("repeated_speech_particle")
 
     previous_replies = _assistant_replies(history)
     previous_openings = [_opening(item) for item in previous_replies]
-    current_particle = _OPENING_PARTICLE.match(opening)
-    previous_particles = {
-        match.group(1)
-        for item in previous_openings
-        if (match := _OPENING_PARTICLE.match(item))
-    }
-    if current_particle and current_particle.group(1) in previous_particles:
+    previous_particles = tuple(
+        sorted(
+            {
+                match.group(1)
+                for item in previous_openings
+                if (match := _OPENING_PARTICLE.match(item))
+            }
+        )
+    )
+    if reply_avoids_speech_particle(opening, previous_particles):
         tags.add("repeated_speech_particle")
 
-    current_signature = _opening_signature(opening)
-    if current_signature and any(
-        current_signature == _opening_signature(item)
-        for item in previous_openings
-        if item
-    ):
+    markers = _repeated_opening_markers(previous_openings)
+    if markers and reply_opens_with_marker(opening, markers):
         tags.add("repeated_opening")
 
     return {

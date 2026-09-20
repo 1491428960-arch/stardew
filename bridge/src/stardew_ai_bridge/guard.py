@@ -14,6 +14,21 @@ from .behavior_quality import (
     _mechanical_restatement,
 )
 from .character_quality_eval import _has_future_schedule_commitment
+from .dialogue_boundaries import (
+    NPC_BOUNDARY_REPLY_MARKERS,
+    NPC_CARE_REPLY_MARKERS,
+    NPC_CLOSE_REOPENING_PATTERNS,
+    NPC_CLOSE_REPLY_MARKERS,
+    PLAYER_CLOSE_MARKERS,
+    contains_marker,
+    event_gate_effective_stage,
+    is_player_closing,
+    repeats_affection_shape,
+    reopens_after_close,
+    reply_avoids_speech_particle,
+    reply_opens_with_marker,
+    violates_event_gate,
+)
 from .evaluation_budget import EvaluationBudgetExceeded
 from .models import ProviderResult
 from .relationship_gating import CONVERSATION_LEAD_STAGE_ORDER
@@ -208,44 +223,15 @@ _NATURAL_RETRY_CONTENT = {
     "voice_particle": "换一种自然口头节奏，避开最近用过的口头词；保留当前话题和角色。",
 }
 
-_WARMTH_SIGNAL_MARKERS = (
-    "想你",
-    "想念你",
-    "想念",
-    "想起你",
-    "想到你",
-    "惦记你",
-    "等你",
-    "等着你",
-    "等你忙完",
-    "盼着你",
-    "舍不得你",
-    "只想和你",
-    "想和你",
-    "想跟你",
-    "想陪你",
-    "陪着你",
-    "可惜你不在",
-    "希望你在",
-    "希望你能来",
-    "有你在",
-    "给你留",
-    "为你留",
-    "在乎你",
-    "喜欢你",
-    "偏爱你",
-    "巴不得你来",
-    "见到你",
-    "因为你",
-    "期待你",
-    "期待和你",
-    "期待与你",
-    "与你一同",
-    "与你共度",
-)
+# 2026-09-20：删掉两张死表。`_GUARDED_WARMTH_MARKERS` 与它唯一的下游
+# `_WARMTH_SIGNAL_MARKERS` 全仓只有定义、无任何读取点（AST 核实），
+# 审计报告把前者记为「死表而非重复实现」（见
+# `docs/semantic-duplication-audit-2026-09-20.md` 的「没被采纳的」一节）。
+# 真正的判定在 `_DIRECT_WARMTH_SIGNAL_MARKERS` 与
+# `behavior_quality.diagnose_personal_affection`。
 # 这些词必须表达“我对你有明确愿望/情绪”，不能只因为出现“有你在”或
 # “陪我”就把事务性邀约判成爱意。direct/explicit 质量场景和主动找话题
-# 首轮使用这组更严格的信号；普通聊天仍保留上面的角色化宽松信号。
+# 首轮使用这组更严格的信号。
 _DIRECT_WARMTH_SIGNAL_MARKERS = (
     "想你",
     "想念你",
@@ -272,128 +258,11 @@ _DIRECT_WARMTH_SIGNAL_MARKERS = (
     "可惜你不在",
     "希望你在",
 )
-_GUARDED_WARMTH_MARKERS = (
-    *_WARMTH_SIGNAL_MARKERS,
-    "陪我",
-    "陪你",
-    "陪着",
-    "一起坐",
-    "一起待",
-    "一起吃",
-    "一起休息",
-    "吃点东西",
-    "带点吃的",
-    "先休息",
-    "需要空间",
-    "不想聊",
-    "我会陪",
-    "我陪你",
-    "照看",
-    "帮你",
-    "留给我",
-)
-_CLOSE_INPUT_MARKERS = (
-    "不打扰",
-    "先休息",
-    "先睡",
-    "晚安",
-    "先走",
-    "下次再聊",
-    "改天再聊",
-    "不想聊",
-    "不想再聊",
-    "不想再说",
-    "不想再谈",
-    "不想谈",
-    "不用陪",
-    "别过来",
-    "别逼我",
-    "没心情",
-    "心情很差",
-    "很难受",
-    "就这样吧",
-    "先不说了",
-    "晚点再联系",
-    "晚点联系",
-    "晚点再聊",
-)
-_CLOSE_REPLY_MARKERS = (
-    "明天再聊",
-    "下次再聊",
-    "改天再聊",
-    "明天见",
-    "下次见",
-    "改天见",
-    "先睡吧",
-    "睡吧",
-    "先睡了",
-    "晚安",
-    "先休息",
-    "早点钻被窝",
-    "休息吧",
-    "明天再联系",
-    "不打扰你",
-    "不想聊",
-    "先这样",
-    "到这吧",
-    "回头见",
-    "回头再见",
-)
-_GUARDED_BOUNDARY_REPLY_MARKERS = (
-    "想一个人待",
-    "需要一点空间",
-    "需要空间",
-    "别过来",
-    "不想见人",
-    "今天状态很差",
-    "状态也不好",
-    "状态不好",
-    "真撑不住",
-    "累得不行",
-    "今天太累",
-    "早点钻被窝",
-    "先睡吧",
-    "休息吧",
-    "明天再联系",
-    "没法陪你多聊",
-    "想静一静",
-    "别等我",
-    "让我缓缓",
-    "别说了",
-    "不说了",
-    "不聊了",
-    "别勉强",
-    "别跟我较劲",
-)
-_CLOSE_REOPENING_PATTERNS = (
-    re.compile(
-        r"(?:明天|下次|改天|过会儿|等会儿|之后|以后|晚点|等下|回头).{0,16}(?P<action>来|过来|一起|见面|约|帮我|帮你|找我|陪我|看看|送|带|拿|准备|联系|告诉|问|安排)"
-    ),
-    re.compile(
-        r"(?:要不要|有空).{0,16}(?P<action>来|过来|一起|见|约|帮我|帮你|找我|陪我|送|带|拿|准备|联系|告诉|问|安排)"
-    ),
-    re.compile(
-        r"(?:别(?:急着)?走|先别走|等等|别急).{0,12}(?:接着|继续|再).{0,8}"
-        r"(?P<action>说|聊|讲|谈|看|听)"
-    ),
-)
-_NEGATED_FUTURE_ACTION = re.compile(r"(?:别|不要|不用|不必|无需).{0,3}$")
-_GUARDED_CARE_REPLY_MARKERS = (
-    "吃点东西",
-    "别空着肚子",
-    "弄点吃的",
-    "热一下就吃",
-    "躺下睡觉",
-    "不会烦你",
-    "带点吃的",
-    "先休息",
-    "早点休息",
-    "早点睡",
-    "别担心",
-    "照看你",
-    "帮你吃点",
-    "帮你休息",
-)
+_CLOSE_INPUT_MARKERS = PLAYER_CLOSE_MARKERS
+_CLOSE_REPLY_MARKERS = NPC_CLOSE_REPLY_MARKERS
+_GUARDED_BOUNDARY_REPLY_MARKERS = NPC_BOUNDARY_REPLY_MARKERS
+_CLOSE_REOPENING_PATTERNS = NPC_CLOSE_REOPENING_PATTERNS
+_GUARDED_CARE_REPLY_MARKERS = NPC_CARE_REPLY_MARKERS
 
 
 @dataclass(frozen=True)
@@ -724,25 +593,27 @@ def _violates_event_gate(
     prompt: list[dict[str, str]],
     reply: object,
 ) -> bool:
-    """事件未解锁时只拦截明确的专属亲近，不压掉普通日常照顾。"""
+    """事件未解锁时只拦截明确的专属亲近，不压掉普通日常照顾。
 
-    if not isinstance(reply, str) or not reply.strip():
-        return False
+    判定与「这段关系是否算既成亲密」统一在 `dialogue_boundaries`，
+    `character_quality_eval` 用同一个入口，避免一处拦、一处判合规（P1 #22）。
+    """
+
     event_gate = _event_gate_boundary_payload(prompt)
-    effective_stage = event_gate.get("effectiveIntimacyStage")
-    if not isinstance(effective_stage, str):
-        return False
-    if effective_stage.strip().casefold() not in {
-        "stranger",
-        "acquaintance",
-        "friend",
-    }:
+    if not event_gate_effective_stage(event_gate):
         return False
     quality = _prompt_payload(prompt, "quality_context")
     relationship_focus = quality.get("relationshipFocus")
     focus = relationship_focus if isinstance(relationship_focus, str) else ""
-    personal = diagnose_personal_affection(reply, relationship_focus=focus)
-    return bool(personal.get("personalAffectionDetected"))
+    return violates_event_gate(
+        event_gate,
+        reply,
+        detect_personal_affection=lambda text: bool(
+            diagnose_personal_affection(text, relationship_focus=focus).get(
+                "personalAffectionDetected"
+            )
+        ),
+    )
 
 
 _NATURAL_PAUSE_MARKERS = (
@@ -995,8 +866,9 @@ def _repeats_conversation_lead(prompt: list[dict[str, str]], reply: object) -> b
 
 
 def _contains_marker(text: str, markers: tuple[str, ...]) -> bool:
-    lowered = text.casefold()
-    return any(marker.casefold() in lowered for marker in markers)
+    """保留旧的私有入口，实现统一到 `dialogue_boundaries.contains_marker`。"""
+
+    return contains_marker(text, markers)
 
 
 def should_retry_for_relationship_boundary(
@@ -1008,13 +880,13 @@ def should_retry_for_relationship_boundary(
 
     if not str(npc_id).strip() or not isinstance(player_input, str):
         return False
-    if not _contains_marker(player_input, _CLOSE_INPUT_MARKERS):
+    if not contains_marker(player_input, _CLOSE_INPUT_MARKERS):
         return False
     if not isinstance(reply, str) or not reply.strip():
         return True
-    if _contains_marker(reply, _CLOSE_REPLY_MARKERS):
+    if contains_marker(reply, _CLOSE_REPLY_MARKERS):
         return False
-    if _contains_marker(reply, _GUARDED_BOUNDARY_REPLY_MARKERS):
+    if contains_marker(reply, _GUARDED_BOUNDARY_REPLY_MARKERS):
         return False
     return True
 
@@ -1091,16 +963,16 @@ def _missing_proactive_affection(
         )
         if "lead_exit_allowed" in lead_diagnostic.get("conversationLeadTags", []):
             return False
-    if _contains_marker(player_input, _CLOSE_INPUT_MARKERS):
+    if contains_marker(player_input, _CLOSE_INPUT_MARKERS):
         return False
-    if _contains_marker(text, _CLOSE_REPLY_MARKERS):
+    if contains_marker(text, _CLOSE_REPLY_MARKERS):
         return False
-    if mode == "guarded" and _contains_marker(
+    if mode == "guarded" and contains_marker(
         text,
         _GUARDED_BOUNDARY_REPLY_MARKERS,
     ):
         return False
-    if mode == "guarded" and _contains_marker(
+    if mode == "guarded" and contains_marker(
         text,
         _GUARDED_CARE_REPLY_MARKERS,
     ):
@@ -1125,12 +997,18 @@ def _reopens_after_player_close(
     prompt: list[dict[str, str]],
     reply: object,
 ) -> bool:
-    """玩家收口后，不允许 NPC 借下一步安排把对话重新拉开。"""
+    """玩家收口后，不允许 NPC 借下一步安排把对话重新拉开。
 
-    if not isinstance(reply, str) or not _contains_marker(
-        _last_player_input(prompt),
-        _CLOSE_INPUT_MARKERS,
-    ):
+    玩家侧的收口信号与「重新拉开」的动作表都来自 `dialogue_boundaries`，
+    与 conversation lead 诊断用的是同一份定义；lead 契约只是**额外**的
+    证据来源，不再是采信共享判定的前提（否则没有契约的回合会各自演化，
+    运行时放过、离线评测判失败——见 P1 #18）。
+    """
+
+    if not isinstance(reply, str):
+        return False
+    player_input = _last_player_input(prompt)
+    if not is_player_closing(player_input):
         return False
     if _conversation_lead_enabled(prompt):
         case, turn = _conversation_lead_context(prompt)
@@ -1138,7 +1016,7 @@ def _reopens_after_player_close(
             case,
             turn,
             reply,
-            player_input=_last_player_input(prompt),
+            player_input=player_input,
         )
         if "reopens_after_player_closing" in diagnostic.get(
             "conversationLeadTags", []
@@ -1146,14 +1024,7 @@ def _reopens_after_player_close(
             return True
         if "lead_exit_allowed" in diagnostic.get("conversationLeadTags", []):
             return False
-    for pattern in _CLOSE_REOPENING_PATTERNS:
-        for match in pattern.finditer(reply):
-            action_start = match.start("action")
-            preceding = reply[max(match.start(), action_start - 6) : action_start]
-            if _NEGATED_FUTURE_ACTION.search(preceding):
-                continue
-            return True
-    return False
+    return reopens_after_close(reply)
 
 
 def _warmth_score(prompt: list[dict[str, str]], reply: object) -> int:
@@ -1546,8 +1417,7 @@ def _has_repeated_opening(prompt: list[dict[str, str]], reply: object) -> bool:
     payload = _prompt_payload(prompt, "post_history_voice_guard")
     openings = _string_values(payload.get("avoidOpenings"))
     prefixes = _string_values(payload.get("avoidOpeningPrefixes"))
-    text = reply.strip()
-    return any(text.startswith(value) for value in (*openings, *prefixes))
+    return reply_opens_with_marker(reply, (*openings, *prefixes))
 
 
 def _affection_opening(value: str) -> str:
@@ -1590,9 +1460,11 @@ def _repeats_personal_affection_shape(
         "",
     )
     previous = diagnose_personal_affection(previous_reply)
-    return bool(
-        previous["personalAffectionDetected"]
-        and previous["affectionShape"] == current_shape
+    # 形状判定的唯一实现在 `dialogue_boundaries`；guard 侧没有主动类型，
+    # 因此只比形状，`character_quality_eval` 会额外传 kind（P1 #24）。
+    return bool(previous["personalAffectionDetected"]) and repeats_affection_shape(
+        current_shape,
+        previous["affectionShape"],
     )
 
 
@@ -1629,19 +1501,9 @@ def _repeats_history_speech_particle(
     prompt: list[dict[str, str]],
     reply: object,
 ) -> bool:
-    if not isinstance(reply, str):
-        return False
     payload = _prompt_payload(prompt, "voice_execution_card")
-    particles = _string_values(payload.get("avoidSpeechParticles"))
-    if not particles:
-        return False
-    return any(
-        re.search(
-            rf"(?:^|[。！？!?；;：:，,\s…]){re.escape(particle)}",
-            reply.strip(),
-        )
-        for particle in particles
-    )
+    particles = tuple(_string_values(payload.get("avoidSpeechParticles")))
+    return reply_avoids_speech_particle(reply, particles)
 
 
 def guard_response(reply: object, max_chars: int = 1000) -> GuardResult:
