@@ -279,6 +279,10 @@ def select_stage_voice_anchors(
                 )
                 and _sample_relationship_stage(sample)
             )
+            # ⚠️ 已知「四选一证据门」实际上几乎拦不住任何样本（第 146 项用实验确认）：
+            # 实测 is_model_evidence_record 连普通 dialogue 记录都返回 True，
+            # 所以这个 continue 极难触发。**保留为防御性下限**——万一上游索引
+            # 改了证据标记的口径，这里仍能兜住；不要因为“测不到”就删掉。
             if not is_stable_voice_evidence_record(sample) and not (
                 relation_stage_anchor
                 or is_model_evidence_record(sample)
@@ -330,6 +334,10 @@ def select_stage_voice_anchors(
             break
         if anchor not in selected:
             selected.append(anchor)
+    # ⚠️ 下面这一段**不可达**（第 146 项，已做变异验证）：high 与 low_or_medium 是按
+    # voiceEnergy 互补划分的，两者之并就是 ranked，所以前两个循环已经把全部候选
+    # 考虑过一遍；删掉本段后相关 31 条测试仍全绿。**保留为防御**——若将来有人改动
+    # 上面的分桶方式（例如新增一个 voiceEnergy 取值），这里仍能兜底。
     for anchor in ranked:
         if len(selected) >= capped_count:
             break
