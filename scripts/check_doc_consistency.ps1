@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   文档数字一致性检查：把"当前值只维护一处"这条约定变成可执行的断言。
 
@@ -47,13 +47,22 @@ $coverage = [regex]::Match($state, 'TOTAL (\d+)%')
 $missing = [regex]::Match($state, '缺失 (\d+) 行')
 $smapi = [regex]::Match($state, 'SMAPI \*\*(\d+) passed')
 
+# 2026-09-20 会话交接时补：把指标分成「必需」与「可选」两类。
+# 覆盖率与缺失行数要跑一次带 coverage 的全量才有，**不是每次改代码都会重测**；
+# 权威源里主动省略它们，比抄一个过时的数字诚实。所以这两项缺失只 WARN。
+# Bridge/SMAPI 测试数则必须能解析——它们是每次收尾都会跑的。
 foreach ($pair in @(
-        @{ Name = 'Bridge 测试数'; M = $bridge },
-        @{ Name = '覆盖率'; M = $coverage },
-        @{ Name = '缺失行数'; M = $missing },
-        @{ Name = 'SMAPI 测试数'; M = $smapi })) {
+        @{ Name = 'Bridge 测试数'; M = $bridge; Required = $true },
+        @{ Name = '覆盖率'; M = $coverage; Required = $false },
+        @{ Name = '缺失行数'; M = $missing; Required = $false },
+        @{ Name = 'SMAPI 测试数'; M = $smapi; Required = $true })) {
     if (-not $pair.M.Success) {
-        $failures.Add("权威源里解析不出「$($pair.Name)」——它的写法可能变了，请同步更新本脚本的正则")
+        if ($pair.Required) {
+            $failures.Add("权威源里解析不出「$($pair.Name)」——它的写法可能变了，请同步更新本脚本的正则")
+        }
+        else {
+            Write-Host "[WARN] 权威源未记录「$($pair.Name)」——跳过该项检查（它不是每次都测）"
+        }
     }
 }
 if ($failures.Count -gt 0) {
@@ -66,7 +75,13 @@ $bridgeN = $bridge.Groups[1].Value
 $coverageN = $coverage.Groups[1].Value
 $missingN = $missing.Groups[1].Value
 $smapiN = $smapi.Groups[1].Value
-Write-Host "权威源基线：SMAPI $smapiN / Bridge $bridgeN passed / 覆盖率 $coverageN% / 缺失 $missingN 行"
+$coverageText = if ($coverage.Success -and $missing.Success) {
+    " / 覆盖率 $coverageN% / 缺失 $missingN 行"
+}
+else {
+    " / 覆盖率未记录"
+}
+Write-Host "权威源基线：SMAPI $smapiN / Bridge $bridgeN passed$coverageText"
 
 # --- 1b. 权威源自身是否过时 ---------------------------------------------------
 # 这一条是 2026-09-20 05:00 补的。脚本原先只检查“各处是否与权威源一致”，

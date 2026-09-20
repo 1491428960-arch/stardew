@@ -11,6 +11,8 @@
 |---|---|
 | SMAPI 测试 | **PASS — 469 passed，0 failed**（今晚起点 306，净增 **163**）※ 比峰值 470 少 1 条：删掉了一条与 Theory 完全同义的冗余用例 |
 | Bridge 测试 | **2963 passed / 0 failed（全绿）** —— 今晚起点 1838 → **净增 1089**；原先那 5 条失败已随另一条线在 05:17 补齐 SVG 而消失 |
+
+> **会话末进展（2026-09-20 19:33）**：上表是**当晚收尾时**的数字，属历史记录，保持原样。此后又完成了语义层「同概念多实现」排查（六路审计、修 12 处 P0）与 F8/F9 气泡装饰，当前基线为 **SMAPI 496 passed / Bridge 2975 passed**——见 `docs/handoff-2026-09-20-session-end.md`。
 | Bridge 覆盖率 | **TOTAL 95%**（缺失 **511** 行）—— 今晚从 93%／715 行提升，**消灭 204 行缺失**；其中 `vertex_auth` 与 `known_characters` 已达 **100%** |
 | `compileall` | PASS（exit 0） |
 | `git diff --check` | PASS（无空白错误） |
