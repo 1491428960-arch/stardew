@@ -544,15 +544,19 @@ ul.plain b { color: var(--soft); font-weight: 600; }
             是一条标题分隔带、<code>y128–187</code> 是带纵向渐变的填充（<code>#ffcb7b → #eba867</code>）、
             底部中间 <code>(88..103, 240)</code> 还有气泡尾巴。九宫格的「中心块」正好取到那条分隔带与渐变，
             被拉伸铺满整个面板 —— 于是「外框偏移 + 颜色不对」同时出现。</li>
-        <li><b>对照（重要）</b>：<code>/test/ui</code> 的 F8 面板<b>也是</b> 64px 九宫格，
-            但它内联的是<b>另一张 192×192 的图</b>（内联 base64 长度 1094，本稿那块是 2210），
-            所以它渲染正常。<b>所以问题不是「浏览器切不出 64px 框」，是贴图用错了</b> ——
-            现状的像素级复刻请以 <code>/test/ui</code> 为准，本稿不重复造这一块。</li>
+        <li><b>对照（重要）</b>：<code>/test/ui</code> 改前也走 64px 九宫格，但它内联的是
+            <b>另一张 192×192 的图</b>（内联 base64 长度 1094，本稿那块是 2210），所以它渲染正常。
+            <b>所以问题不是「浏览器切不出 64px 框」，是贴图用错了</b>。
+            <b>⚠ 2026-09-20 本轮之后这条对照已过期</b>：实机 F8 改调 <code>DrawPanel</code>，
+            <code>/test/ui</code> 与本页现状侧都跟着走 20px 九宫格，两边的 F8 面板不再是 64px。
+            这个坑现在只活在右上角那个开关里。</li>
         <li><b>本稿的处置</b>：新设计三个界面统一走 <code>(0,256,60,60)</code> 的 20px 九宫格
             —— 那是一块<b>规整的九宫格素材</b>，与气泡、按钮同族，顺带消掉
-            <code>drawDialogueBox</code> 的 title-safe 裁切隐患。开关默认关闭，留着只为让这个坑可复现。</li>
-        <li><b>落 C# 时完全不存在这个问题</b>：F8 本来就是一句现成的
-            <code>Game1.drawDialogueBox(...)</code>，不需要自己切图。</li>
+            <code>drawDialogueBox</code> 的 title-safe 裁切隐患。开关默认关闭，留着只为让这个坑可复现。
+            <b>实机与本页现状侧后来也走到了同一条路上</b>，只是不经过这个开关。</li>
+        <li><b>落 C# 时完全不存在这个问题</b>：改前 F8 是一句现成的
+            <code>Game1.drawDialogueBox(...)</code>，不需要自己切图；改后是同样现成的
+            <code>MenuSkinDrawing.DrawPanel(...)</code>。</li>
       </ul>
     </div>
 
@@ -657,7 +661,13 @@ ul.plain b { color: var(--soft); font-weight: 600; }
       <ul class="plain">
         <li>本页面<b>只画新设计</b>，不负责「现状的像素级真实」——那是 <code>/test/ui</code> 的职责，
             它那边正在把贴图换成解包出来的真实像素。本页的现状侧用同一套逻辑做<b>可比</b>复刻，
-            数值以 <code>/test/ui</code> 为准。</li>
+            数值以 <code>/test/ui</code> 为准。
+            <b>⚠ 现状侧是「照实机」的，不是「冻结的旧样子」</b>：遮罩强度（0.28）、标题带、
+            内容区凹槽都早已跟着 C# 落地值画；2026-09-20 本轮又补上三处 —— F8 面板的<b>投影</b>、
+            角色卡改用 <code>CardTint</code>（白）、F8 / F9 的<b>输入区凹槽</b>。
+            理由与那三处同源：<code>/test/ui</code> 与 C# 都改了，现状侧若停在旧画法，
+            并排对比里就会混进「一个游戏里不存在的状态」，读的人会把那份差异算到新设计头上。
+            右上角那几个开关（含「F8 照切原版 64px 框」）保留原样，只作用在新设计栏。</li>
         <li>气泡：两侧共用回放页的 <code>_CHARACTER_FRAME_SCRIPT</code> 与
             <code>npc_bubble_elements</code> 表，本页<b>没有</b>任何气泡相关的尺寸或配色常量。
             气泡的九宫格贴图与 <code>/test/ui</code> 同源：<b>角色</b>取自
@@ -747,14 +757,17 @@ __FRAME_SCRIPT__
   const PLAYER_BUBBLE_TINT = DATA.playerBubbleTint;
   const NPC_FALLBACK_BUBBLE_TINT = DATA.npcFallbackBubbleTint;
   /**
-   * Maps\MenuTiles (0,0,256,256) —— F8 现状 `Game1.drawDialogueBox` 用的那一块。
+   * Maps\MenuTiles (0,0,256,256) —— `Game1.drawDialogueBox` 用的那一块，**只服务右上角
+   * 「F8 照切原版 64px 框」那个开关**（用来复现下面第三节那个坑）。
    *
    * ⚠ 2026-09-20 逐像素量过：这一块**不是九宫格素材**，而是一整张画好的对话气泡 ——
    * 框体在 (16,16)-(239,239)，内部 y84–107 有一条标题分隔带、y128–187 是带纵向渐变的填充、
    * 底部中间 (88..103, 240) 还有气泡尾巴。所以它在浏览器里**没法被忠实切出来**：
    * 按 64px 九宫格切，四角会把框外那 16px 透明一起带上，画出来四角是缺的。
-   * 这里保留它只是为了「与 /test/ui 的现状可比」，不宣称像素级一致 —— 落 C# 时
-   * F8 本来就是一句现成的 `Game1.drawDialogueBox(...)`，不存在切图问题。
+   *
+   * ⚠ 两块默认画法都不再走它：实机 F8 已改调 `MenuSkinDrawing.DrawPanel`（20px 九宫格，
+   * ChatInputMenu.cs:260），`/test/ui` 本轮同步；本页现状侧默认也走 MENU_TEX。
+   * 开关默认关闭，留着只为让「贴图用错会整片错位」这个坑可复现。
    */
   const DIALOGUE_TEX = {
     src: GAME_TEX.menuPanel,
@@ -1333,14 +1346,20 @@ __FRAME_SCRIPT__
     // 「统一轻遮罩」开关只作用在新设计栏，关掉 = 不做这一层（仅用于对照）。
     scrim(stage, vw, vh, (!design || OPT.scrim) ? SKIN.scrim : 0);
     // F8 用哪套框：
-    //   · 现状侧（左侧那栏）—— 用规整的 20px 九宫格 + 关掉投影，表现「drawDialogueBox 没有投影」
-    //     这一条可确定的差异。**不**照切 (0,0,256,256)，因为那块不是九宫格素材、切出来会整片错位
-    //     （见下方第三节）。现状的像素级复刻请对照 /test/ui。
+    //   · 现状侧（左侧那栏）—— 与 /test/ui、与实机一致：`Maps\MenuTiles (0,256,60,60)`
+    //     切 **20px**、白 tint、**带**投影。**不**照切 (0,0,256,256)，因为那块不是九宫格素材、
+    //     切出来会整片错位（见下方第三节）。
     //   · 新设计侧 —— 跟随开关；默认同样 20px。勾上开关才切 64px，只为把那个坑复现出来。
+    //
+    // ⚠ 本轮（2026-09-20）把现状侧的投影补上了：改前它 `noShadow: true`，用来表现
+    // 「drawDialogueBox 没有投影」这条差异；而实机 F8 已改调 `MenuSkinDrawing.DrawPanel`
+    // （ChatInputMenu.cs:260），那条差异在实机上**已经不存在**——现状侧继续关投影，
+    // 呈现的就是一个游戏里没有的状态。勾了 64px 开关那条分支仍不投影，因为它画的确实是
+    // drawDialogueBox 的行为。
     const useDialogueFrame = Boolean(design && OPT.f8frame);
     nineSlice(stage, L.panel, SKIN.panel,
       useDialogueFrame ? DIALOGUE_TEX : MENU_TEX,
-      useDialogueFrame ? { z: 1, noShadow: true, noBake: true } : { z: 1, noShadow: !design });
+      useDialogueFrame ? { z: 1, noShadow: true, noBake: true } : { z: 1 });
 
     // 标题带（ChatInputMenu.DrawHeader → MenuSkinDrawing.DrawTitleBand）：
     // 竖条 (header.X+12, header.Y+12, 4, 20) + 标题 (header.X+24, header.Y+9)
@@ -1389,7 +1408,10 @@ __FRAME_SCRIPT__
 
     if (L.profilePanel) {
       const p = L.profilePanel;
-      nineSlice(stage, p, design ? SKIN.card : [248, 240, 224], MENU_TEX, { z: 3 });
+      // 角色卡：`MenuSkinRules.CardTint = Color.White`，两栏同值 —— 卡片靠底下那层凹槽
+      // 分层，不靠自己换色。改前现状侧用的是 (248,240,224)（「消息区还是白 tint」年代的旧值），
+      // 实机 DrawProfile 已改用 CardTint（ChatInputMenu.cs:844-850），现状侧本轮跟上。
+      nineSlice(stage, p, SKIN.card, MENU_TEX, { z: 3 });
       const portraitFrame = { x: p.x + 12, y: p.y + Math.trunc((p.h - 64) / 2), w: 64, h: 64 };
       nineSlice(stage, { x: portraitFrame.x - 6, y: portraitFrame.y - 6, w: portraitFrame.w + 12, h: portraitFrame.h + 12 },
         SKIN.panel, MENU_TEX, { z: 4 });
@@ -1422,10 +1444,15 @@ __FRAME_SCRIPT__
       }
     }
 
-    // 底部：新设计里输入区是一层凹槽，输入框在其中居中
+    // 底部（顺序照 C#：先凹槽、再按钮、最后输入框）
+    // 输入区凹槽 `MenuSkinDrawing.DrawInset(b, layout.InputBox)`（ChatInputMenu.cs:824）：
+    // ⚠ 现状栏也画 —— C# 已落地这一层，现状栏是「照实机」的（与遮罩、标题带、内容区凹槽
+    //   同一条规矩）；「输入框居中」开关只关新设计栏那一层，用于对照。
+    if (!design || OPT.input) {
+      inputWell(stage, L.inputBox).dataset.inset = "input";
+    }
     if (design) {
       if (OPT.input) {
-        inputWell(stage, L.inputBox);
         const box = textBoxDesign(stage, L.inputBox);
         caret(stage, { x: box.rect.x + 16, y: box.rect.y + 8, w: 4, h: 32 });
       } else {
@@ -1512,9 +1539,13 @@ __FRAME_SCRIPT__
       if (y > area.y + bubbleAreaH - LINE_SPACING) break;
     }
 
+    // 输入区凹槽（`MenuSkinDrawing.DrawInset(b, layout.InputBox)`，GroupDialogueMenu.cs:254）：
+    // 现状栏也画（同 F8 的理由）；「输入框居中」开关只关新设计栏那一层。
+    if (!design || OPT.input) {
+      inputWell(stage, L.inputBox).dataset.inset = "groupInput";
+    }
     if (design) {
       if (OPT.input) {
-        inputWell(stage, L.inputBox);
         const box = textBoxDesign(stage, L.inputBox);
         caret(stage, { x: box.rect.x + 16, y: box.rect.y + 8, w: 4, h: 32 });
       } else {

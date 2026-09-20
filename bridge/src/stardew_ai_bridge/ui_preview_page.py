@@ -268,8 +268,8 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr>
             <td>F8 私聊</td>
             <td>面板 + 全屏压暗底、标题带（角色强调色竖条 + 「和 X 聊聊」+ 好感度状态字 + 发丝分隔线）、
-                消息区气泡（玩家靠右 / NPC 靠左带徽章与装饰边框）、
-                右侧角色面板（立绘位、名字、好感度、好感度条）、底部输入框与四个按钮、消息区提示行。
+                消息区凹槽与气泡（玩家靠右 / NPC 靠左带徽章与装饰边框）、
+                右侧角色面板（白 tint 卡片、立绘位、名字、好感度、好感度条）、底部输入区凹槽 + 输入框 + 四个按钮、消息区提示行。
                 <b>一点是实现的真实样子，不是本稿省略</b>：720p 下消息区只放得下一条消息，
                 其余要靠滚动才能看到（<code>ChatTextLayoutRules.SelectLatestThatFit</code> 的取窗逻辑）；
                 换到 1920×1080 就能看到玩家与 NPC 各一条。</td>
@@ -278,8 +278,8 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           </tr>
           <tr>
             <td>F9 群聊</td>
-            <td>面板、标题、参与者条、消息区气泡（含同角色重复发言的构图轮换）、
-                输入框与发送 / 重试 / 关闭按钮、底部提示行</td>
+            <td>面板、标题、参与者条、消息区凹槽与气泡（含同角色重复发言的构图轮换）、
+                输入区凹槽与输入框、发送 / 重试 / 关闭按钮、底部提示行</td>
             <td><code>GroupDialogueLayoutRules.Calculate</code>、<code>GroupDialogueMenu.draw</code></td>
           </tr>
           <tr>
@@ -318,6 +318,12 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
               合成结果 = 纹理填充 <code>#fdbc6e</code> × tint ÷ 255 → <code>#e6a860</code>，比面板暗一档 ——
               气泡与卡片于是从面板上「浮」起来</td><td><code>MenuSkinDrawing.DrawInset</code>、<code>MenuSkinRules.InsetTint</code> / <code>HubListArea</code>；
               调用点 <code>ChatInputMenu.draw</code>、<code>GroupDialogueMenu.draw</code>、<code>GroupDialogueHubMenu.draw</code></td></tr>
+          <tr><td>输入区凹槽（F8 / F9）</td><td>画法与上一条<b>完全相同</b>的一句 <code>MenuSkinDrawing.DrawInset(b, layout.InputBox)</code>，
+              矩形就是 <code>layout.InputBox</code> 本身（<b>不做任何内缩</b>）；1280×720 下
+              F8 = <code>(229,434,366,112)</code>、F9 = <code>(100,592,792,104)</code> ——
+              与 <code>MenuSkinRulesTests.cs:149,159</code> 的期望值逐值相同，页面 <code>data-inset</code> 锚点实测同值。
+              画在四个按钮与输入框<b>之前</b>（C# 的绘制顺序），所以按钮与输入框浮在凹槽上</td><td><code>MenuSkinDrawing.DrawInset</code>；
+              调用点 <code>ChatInputMenu.cs:824</code>（<code>DrawFooter</code> 首句）、<code>GroupDialogueMenu.cs:254</code></td></tr>
           <tr><td>三个界面的遮罩</td><td>三处都画整屏 <code>Color.Black * ScrimAlpha</code>，实测把底下的游戏画面压暗到 72%（改前 F8 是 0.42f、F9 与中心<b>完全没有</b>遮罩）</td><td><code>MenuSkinDrawing.DrawScrim</code>、<code>MenuSkinRules.cs:69</code>（ScrimAlpha = 0.28f）；调用点 <code>ChatInputMenu.cs:635</code>、<code>GroupDialogueMenu.cs:162</code>、<code>GroupDialogueHubMenu.cs:119</code></td></tr>
           <tr><td>标题带的强调色来源</td><td>角色强调色与气泡、徽章同一份数据：<code>NpcBubbleStyle.Accent</code>（由 <code>npc_bubble_elements.py</code> 的 <code>palette.accent</code> 导出）。Sophia = <code>#f292d2</code></td><td><code>MenuSkinDrawing.AccentFor</code> / <code>NpcBubbleStyle.cs:11-22,54</code></td></tr>
           <tr><td>群聊面板</td><td>w=min(1120, max(680, 视口宽-48))；h=min(720, max(430, 视口高-48))</td><td><code>GroupDialogueLayoutRules.cs:32-35</code></td></tr>
@@ -343,14 +349,22 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>说话人文字色</td><td>玩家 DarkSlateBlue；NPC 用该角色的 Accent</td><td><code>ChatBubbleDrawing.Draw</code>（说话人 DrawString）</td></tr>
           <tr><td>装饰边框外扩</td><td>Pad = 14；三套构图按 (发言次序 + kind 字符码和) % 3 轮换</td><td><code>NpcBubbleFrame.cs:21,308-317</code></td></tr>
           <tr><td>换行方式</td><td>逐**字符**断行（不按词），超宽即换行</td><td><code>ChatTextLayoutRules.cs:8-42</code></td></tr>
-          <tr><td>角色面板底色 / 立绘</td><td>drawTextureBox(Color(248,240,224))；立绘 64×64，外框再放大 6</td><td><code>ChatInputMenu.DrawProfile</code></td></tr>
+          <tr><td>角色面板底色 / 立绘</td><td>drawTextureBox(<code>MenuSkinRules.CardTint = Color.White</code>) —— 与面板<b>同色</b>；
+              卡片能「浮起来」靠的是它底下那层消息区凹槽，不是自己换色。立绘 64×64，外框再放大 6（白描边底板）。
+              ⚠ 改前这里是 <code>Color(248,240,224)</code>，是「消息区还是白 tint、卡片必须自己暗一档」年代的旧值，
+              在已有凹槽的今天会叠成两层暗</td><td><code>ChatInputMenu.DrawProfile</code>（<code>ChatInputMenu.cs:844-850</code>）、<code>MenuSkinRules.cs:35</code></td></tr>
           <tr><td>好感度条</td><td>高 10、底 (206,195,180)、填充 (181,137,191)，按 心数/10 比例</td><td><code>ChatInputMenu.DrawProfile</code>（好感度条）</td></tr>
           <tr><td>四个按钮的 tint</td><td>发送 (235,246,236)、找话题 (239,231,244)、物品 (235,240,246)、结束 (247,232,227)</td><td><code>ChatInputMenu.DrawFooter</code></td></tr>
           <tr><td>按钮绘制</td><td>drawTextureBox(tint 或 Gray) + 居中标签，禁用时文字改 DimGray</td><td><code>MenuButtonDrawing.cs:22-36</code></td></tr>
-          <tr><td>输入框</td><td>原版 <code>LooseSprites\textBox</code>（192×48）横向三片：左 16px + 中 (W-32) + 右 16px；源矩形高写的是 Height，H&gt;48 的部分被采样 clamp 到贴图末行 (57,54,65,66)，那片半透明冷阴影与面板底色相乘就是下半的米褐色</td><td class="done">2026-09-20 真贴图原样内联（base64），与游戏截图 y434-473 逐行同值</td></tr>
+          <tr><td>输入框</td><td>原版 <code>LooseSprites\textBox</code>（192×48）横向三片：左 16px + 中 (W-32) + 右 16px；源矩形高写的是 Height，H&gt;48 的部分被采样 clamp 到贴图末行 (57,54,65,66)，那片半透明冷阴影与面板底色相乘就是下半的米褐色。⚠ 实机的绘制矩形已改成 48 高的 <code>MenuSkinRules.InputBoxVisual</code>（H = 48 即 1:1 采样、那条带消失），页面仍按整个 <code>layout.InputBox</code> 画 —— 见底部「输入框的绘制矩形」一条</td><td class="done">2026-09-20 真贴图原样内联（base64），与游戏截图 y434-473 逐行同值</td></tr>
           <tr><td>菜单九宫格纹理（按钮 / 气泡 / F9 / Hub）</td><td><code>Maps\MenuTiles</code> 的 (0,256,60,60) 切 20px：四角 20×20 原样、四边拉伸、中心拉伸到 (w-40)×(h-40)；投影是同一套再画一遍、黑色 40%、整体偏移 (-8,+8)</td><td class="done">2026-09-20 真贴图原样内联，与游戏截图面板/按钮逐像素同值</td></tr>
           <tr><td>气泡的描边变体</td><td>同一块 (0,256,60,60)，但<b>描边像素的色相被归一到填充基准色</b>（逐像素保留亮度）。原贴图的描边是红橙色 <code>#b14e05</code>（B 通道只有 5）：白 tint 的面板/按钮是木框本色，可角色气泡的 tint 是紫红/靛蓝，描边乘完 B 通道仍 ≈2 —— 底色上就围了一圈橙红的边（实测边框 <code>rgb(73,13,2)</code> vs 填充 <code>rgb(104,32,36)</code>）</td><td class="done">2026-09-20 归一后边框恒为「底色的暗版本」：<code>rgb(52,16,18)</code>，边框÷填充 = (.50,.50,.50)；面板 / 按钮 / 凹槽仍用原版贴图</td></tr>
-          <tr><td>F8 面板边框</td><td>走 <code>Game1.drawDialogueBox</code>：<b>同一张</b> <code>Maps\MenuTiles</code>，但取 (0,0) 起的 <b>64px</b> 九宫格（四角 64×64、中心另画在 (x+28,y+28)），而且<b>没有投影</b></td><td class="done">2026-09-20 真贴图原样内联；「两套九宫格的关系」已查清</td></tr>
+          <tr><td>F8 面板边框</td><td>走 <code>MenuSkinDrawing.DrawPanel(b, layout.Panel)</code> —— 与 F9 / 群聊中心<b>同一条</b>
+              <code>IClickableMenu.drawTextureBox</code>：<code>Maps\MenuTiles</code> 的 (0,256,60,60) 切 <b>20px</b>、白 tint、<b>带</b>投影。
+              ⚠ 改前走的是 <code>Game1.drawDialogueBox</code>：<b>同一张</b>图的 (0,0) 起 <b>64px</b> 九宫格（四角 64×64、
+              中心另画在 (x+28,y+28)）、且<b>没有投影</b>。面板矩形改前改后一个像素未动
+              （C# 原话「面板矩形本身不变」），改的只是画法</td><td class="done">2026-09-20 实机改走 <code>MenuSkinDrawing.DrawPanel</code>
+              （<code>ChatInputMenu.cs:260</code>），页面本轮同步；两套九宫格「同图不同源矩形」的关系与改前实测值见下方说明</td></tr>
           <tr><td>颜色合成规则</td><td>最终色 = 纹理色 × tint ÷ 255（逐通道）；页面用 <code>mix-blend-mode: multiply</code> 对真贴图做同一条乘法</td><td class="done">IClickableMenu.drawTextureBox / Game1.drawDialogueBox</td></tr>
           <tr><td>游戏字体行高</td><td>LineSpacing ≈ 28px；中文全角字宽 ≈ 17.5px</td><td class="flag">⚠ 由 bubble-f9.png 三个单行气泡高度同为 84px 反推</td></tr>
         </tbody>
@@ -360,39 +374,61 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
     <div class="card">
       <h2>不确定 / 与游戏可能不一致的地方（请拿去核对）</h2>
       <ul class="plain">
-        <li><b>菜单九宫格纹理（已换成真贴图）</b>：三个界面底下的框都来自 <code>Maps\MenuTiles.xnb</code> ——
-            按钮 / 气泡 / F9 / Hub 取 (0,256,60,60) 切 20px，F8 私聊面板取 (0,0) 起 64px 九宫格。
-            <b>同图、不同源矩形</b>，这就是此前「这两套的关系未查明」的答案。贴图以 base64 内联，页面不依赖游戏目录。</li>
+        <li><b>菜单九宫格纹理（已换成真贴图）</b>：三个界面的面板 / 凹槽 / 卡片 / 按钮都来自
+            <code>Maps\MenuTiles.xnb</code> 的<b>同一个源矩形</b> <code>(0,256,60,60)</code>、切 20px，
+            只靠 tint 分档。<b>F8 面板从本轮起不再例外</b>：它改前单独走
+            <code>Game1.drawDialogueBox</code> 的 (0,0) 起 64px 九宫格，「两套九宫格同图不同源矩形」
+            正是此前列为「未查明」的那条答案；实机改走 <code>DrawPanel</code> 之后两套合成一套。
+            64px 那一套的贴图与切法已从页面删除（改前实测值见下一条）。</li>
+        <li><b>F8 面板边框（本轮已对齐实机，留档）</b>：改前页面照 <code>Game1.drawDialogueBox</code> 画
+            <code>Maps\MenuTiles</code> 的 <b>64px</b> 九宫格且<b>没有投影</b>，实测四条边框与 F9 对不上 ——
+            同一组采样点在改前 / 改后分别是：上 <code>rgb(250,147,5)</code>（改前碰巧与 F9 同值，未变）
+            / 下 <code>rgb(106,46,3) → rgb(200,123,21)</code> / 左 <code>rgb(177,78,5) → rgb(220,123,5)</code>
+            / 右 <code>rgb(220,123,5)</code>（同值）；面板外侧左下 6px 处由「无阴影」变为
+            <code>rgb(37,57,40) → rgb(21,33,24)</code>（同一张 stage 底被 <code>Color.Black * 0.4f</code> 压暗）。
+            改后 F8 的四条边框与 F9 <b>逐值相同</b>。<b>⚠ 连带作废两条</b>：本清单末尾的
+            「F8 面板框与内容的相对位置」与「面板框的底边位置」讲的都是 <code>drawDialogueBox</code>
+            的行为，实机既然不再经过它，那两条在实机上都不成立了。</li>
         <li><b>面板中央的横向明暗（已不再是手画渐变）</b>：原版是中央格被拉伸到 (w-40)×(h-40) 的结果，
             真贴图里那 20px 自带 4/8/4/4 的明暗分段，页面交给 border-image 拉伸，比例自动正确。</li>
         <li><b>输入框下半那条带（已按源码规则重画）</b>：它不是贴图里画好的第二段，也不是黑色 ——
             是 <code>TextBox.Draw</code> 的源矩形高写成 <code>Height</code> 后，H&gt;48 的采样被 clamp 到贴图末行
             <code>(57,54,65,66)</code>，那层 26% 的冷灰与暖橙面板相乘得到的米褐色。页面照抄这条规则，
-            底色用同一条 rgba 叠在面板上。</li>
+            底色用同一条 rgba 叠在面板上。
+            <b>⚠ 这条带只属于「高矩形」那种输入框</b>：实机已把绘制矩形改成 48 高的
+            <code>InputBoxVisual</code>，<code>H = 48</code> 时是 1:1 采样，那条带在实机上<b>已经消失</b>；
+            页面还画着它 —— 见下面「输入框的绘制矩形」一条。</li>
         <li><b>游戏字体</b>：游戏是位图 SpriteFont，本页面用系统中文黑体近似，字形宽度与断行位置会与原版有差；
             <code>LineSpacing ≈ 28</code> 是从「三个单行气泡高度都是 84px」反推的，不是从代码读到的常量。</li>
-        <li><b>F8 面板边框（页面未跟上实机，已知差异）</b>：页面照 <code>Game1.drawDialogueBox</code> 画 ——
-            <code>Maps\MenuTiles</code> 的 <b>64px</b> 九宫格、<b>没有投影</b>；而 2026-09-20 外壳重构后实机的
-            <code>ChatInputMenu.draw</code> 已改调 <code>MenuSkinDrawing.DrawPanel</code>，与 F9 / 群聊中心走
-            <b>同一条</b> <code>drawTextureBox</code>（同图 (0,256,60,60) 切 <b>20px</b>、白 tint、<b>带</b>投影）。
-            也就是页面上 F8 的框比实机<b>厚一圈、且少了投影</b>；下面那两条「框与内容的相对位置」也随这条一起失效。
-            （<code>/test/ui-redesign</code> 的现状栏用的是 20px 近似版，两页在这一点上不同。）</li>
+        <li><b>输入框的绘制矩形（页面未跟上实机，本轮未改 —— 影响最大的剩余差异）</b>：实机的
+            <code>TextBox</code> 用的是 <code>MenuSkinRules.InputBoxVisual(layout.InputBox)</code> ——
+            <b>左右各内缩 12、高固定 48、纵向居中</b>（<code>ChatInputMenu.cs:927-931</code>；1280×720 下
+            F8 = <code>(241,466,342,48)</code>、F9 = <code>(112,620,768,48)</code>，
+            <code>MenuSkinRulesTests.cs:150,160</code> 已把这两个值钉进测试）。页面仍然把整个
+            <code>layout.InputBox</code> 交给 <code>textBox()</code>（F8 = <code>(229,434,366,112)</code>），
+            于是照 <code>H&gt;48</code> 的 clamp 规则多画出下半那条阴影带 —— 而实机 <code>H = 48</code> 时
+            <b>那条带根本不存在</b>（1:1 采样，见 <code>MenuSkinRules.cs:127-141</code> 的
+            <code>InputBoxHeight</code> 注释）。
+            <b>连带后果</b>：本轮补的输入区凹槽在页面上<b>只露出下半一条</b>（上半 48px 被贴图 cap 盖住、
+            左右被画满的宽度盖住），而实机上凹槽在输入框四周都看得见。实测那条带
+            F8 <code>rgb(189,139,93)</code>、F9 <code>rgb(196,148,92)</code>。</li>
         <li><b>F9 提示行的位置（页面未跟上实机，已知差异）</b>：实机现在「短提示放 header 右侧、长提示才落到底部」，
             页面仍把提示画在 <code>messageArea.Bottom−28</code>。示例提示是短提示，所以页面上看到的是一条压在
             气泡下方的提示、实机则画在参与者条那一行的右端。气泡区高度（凹槽高度、画到底的断点）已按实机规则算。</li>
         <li><b>阴影（仍是近似）</b>：参数已按原版（偏移 (-8,+8)、<code>Color.Black * 0.4f</code>），但原版是
             「九宫格逐块再画一遍」，其中中心块还会向外放大 num/2 = 10px；页面用一层 drop-shadow 近似，
             框体轮廓一致，紧贴边框内侧那 10px 的差看不出来、但确实存在。</li>
-        <li><b>F8 面板框与内容的相对位置（已知差异，未改）</b>：<code>Game1.drawDialogueBox</code> 内部把九宫格
-            画在 <code>y - 64 * addedTileHeightForQuestions</code>；聊天菜单里
+        <li><b>F8 面板框与内容的相对位置（已作废，留档）</b>：改前 <code>Game1.drawDialogueBox</code> 内部把
+            九宫格画在 <code>y - 64 * addedTileHeightForQuestions</code>；聊天菜单里
             <code>addedTileHeightForQuestions</code> 恒为 -1，也就是<b>整个框相对传入矩形下移 64px</b>
-            （Game1.cs:15927-15943）。页面按 <code>layout.Panel</code> 直接画，所以实机里输入框几乎贴到面板底边，
-            页面上则留了 24px 的安全边距。要看实机那种紧凑感就得把框下移 64px，但那会牵动三个界面的所有坐标，
-            本次未改。<b>⚠ 这条随上一条一起失效</b>：实机改调 <code>DrawPanel</code> 之后不再经过
-            <code>drawDialogueBox</code>，那 64px 的偏移在实机上已经不存在了。</li>
-        <li><b>面板框的底边位置（同上一条的延伸，未查明）</b>：实机截图量到面板可见底边在 y=553、
-            顶边图案在 y=230，两个数无法用「传入矩形 + 64px 偏移」同时解释；可能与 title-safe 裁剪有关，
-            没有继续深挖。贴图本身的边框段已逐段对齐。</li>
+            （Game1.cs:15927-15943）。<b>2026-09-20 实机改调 <code>MenuSkinDrawing.DrawPanel</code> 之后
+            不再经过 <code>drawDialogueBox</code>，那 64px 的偏移在实机上已经不存在</b>；
+            页面按 <code>layout.Panel</code> 直接画，所以这一条如今与实机一致，不再是差异。</li>
+        <li><b>面板框的底边位置（已作废，留档）</b>：改前的实机截图量到面板可见底边在 y=553、
+            顶边图案在 y=230，两个数无法用「传入矩形 + 64px 偏移」同时解释，当时按 title-safe 裁剪挂账。
+            同样随 <code>DrawPanel</code> 一起作废 —— 新画法没有那层偏移，页面与实机都直接落在
+            <code>layout.Panel</code> 上（本轮实测 F8 面板可见范围 = 游戏坐标 221..1059 × 166..554，
+            与 <code>layout.Panel</code> 逐值相同）。</li>
         <li><b>输入框下半的合成方式（仍是近似）</b>：浏览器用 sRGB 的 alpha 合成，游戏由 GPU 在
             clamp 采样后混合，理论上同一公式；实测色阶有 ±1 的舍入偏差。</li>
         <li><b>光标</b>：原版是 500ms 周期闪烁的 4×32 竖条（<code>Rectangle(X+16+文字宽+2, Y+8, 4, 32)</code>），
@@ -435,7 +471,7 @@ __FRAME_SCRIPT__
   // ═══════════════════════════════════════════════════════════════════════
   // 原版贴图（base64 内联，页面自包含，不依赖游戏目录）
   //
-  // 2026-09-20：这三块从本机游戏解包目录（StardewXnbHack 1.1.2 的只读产物）原样裁出，
+  // 2026-09-20：这两块从本机游戏解包目录（StardewXnbHack 1.1.2 的只读产物）原样裁出，
   // 替换掉此前「按截图分四段反推」的色值。真伪由游戏内截图
   // artifacts/visual-tests/chat-bubble-v1/chat-bubble.png 逐像素交叉验证：
   //   · MenuTiles (0,276,20,20) 的横向 4px 段 (133,54,5)/(220,123,5)/(177,78,5)
@@ -443,18 +479,19 @@ __FRAME_SCRIPT__
   //   · textBox 的 4/4/32/4 行结构与截图输入框 y434-473 逐行同值。
   //
   //   textBox       ← LooseSprites\textBox.xnb                192×48
-  //   menuPanel     ← Maps\MenuTiles.xnb  (0,0,256,256)       Game1.drawDialogueBox 的 64×64 九宫格
   //   menuButton    ← Maps\MenuTiles.xnb  (0,256,60,60)       IClickableMenu.drawTextureBox 的 60×60 九宫格
+  //
+  // ⚠ 原本还有第三块 menuPanel（Maps\MenuTiles (0,0,256,256)，即 Game1.drawDialogueBox
+  //   用的 64×64 九宫格）：2026-09-20 实机 F8 改走 MenuSkinDrawing.DrawPanel 之后
+  //   它已无使用者，本轮连同 DIALOGUE_TEX 一并删除（见下方那段历史注释）。
   //
   // tint 的合成规则「最终色 = 纹理色 × tint ÷ 255」不变，只是现在真的对纹理做了乘法
   // （tintFilter() 的 feColorMatrix），不再用「基色 × tint」手算：
   //     · 玩家气泡 tint(226,239,246) × 面 → 截图同值
   //     · Emily   tint(35,87,78)     × 面 → 截图同值
-  //     · 角色面板 tint(248,240,224) 的边框 → 截图同值
   // ═══════════════════════════════════════════════════════════════════════
   const GAME_TEX = {
     textBox: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAAAwCAYAAABHTnUeAAABHUlEQVR42u3dMWoCQRiA0VlJoaBFSpuIkFjZGhK7WOQWOYCtF/AGOUUO4AVMSkFby8BCmpQWBoKd7ewEAmKz677X/Qs2gx+z28xk4Y9eM57GD7fTeO7vv18DVFTe6c7iuWFJqDMBIACoqyx98Hj/NInnl8FhGc/PvY1Vo7Lmizs7AAgABEDdXZ36g3Z/VJivb4ZWkdLYfW0L80++sQOAAEAAcOY3gHd+yiz9f/oGAAGAAEAAIAAQAAgAAYAAQAAgABAACAAEAAIAAYAAQAAgABAACAAEAAKAcOHnAqVnLzoniFDis0HtACAAEACc/g3w9tmaFZ/8JvcEb60iJTZK7gluuScYBAACILgn+H/pvcFQZav1x7sdAAQAAqDmjpgpJCQp8OlWAAAAAElFTkSuQmCC",
-    menuPanel: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAC60lEQVR42u3doU5bURjA8XMJqKFISKowy0xbJNgJINkDkG0JT4GlAlWN5gFwEzwACJIpkNCaOVQTEhSOlTN9jrgdpWztPb+fu2FhGff+892P27UhAAAAAAAAAAAAAAAAi6Z677/goNOOfsxM62wwfNdrdMmPmJIJAAFAqZZn/Q372yvJPX+39av2z3c267/fRstJKsn9KD1uf0ivp971c2UCgABAABD+63OA/Pf8Xz+m9/x32T1d1z09NTvg4Lb+68fnn8IsnxOYALgFAgFA8Bxg5vJ7/nwnoGz59fBtzwQAAYAAYNF3gPz3uPk93+fdHWehYFcXl+E1zwFMABAACADmfweYZG19NTluH/6onJbFNTzZT14b9vjwZAKAAEAAYAegwfId7ufRl2gCgABAACAAEAAIAAQAAgABgABAACAAEAAIAAQAAgABgABAACAAEAAIAAQAwfsC/aV404sl//urrX5lAoAAQABgByjKy4urwAQAAYAAwA5QkrEdwAQAAYAAwA5Q1g4QXQUmAAgABAB2gFDSS4HsACYACAAEAHaAokQ7gAkAAgABgB2gJOPf/j+ACQACAAGAHSAU9VogO4AJAAIAAYAdoCTRCmACgABAAGAHCJ4DYAKAAEAAYAewA2ACgABAAGAHaILo8wFMABAACADsAMHnA2ACgABAAGAHaOwOMPZaIBMABAACADuA5wCYACAAEADYAYL3BsUEAAGAAMAO0ADr308rl4EJAAIAAYAAQAAgABAACAAEAAIAAYAAQAAgABAACAAEAAIAAYAAQAAgABAACAAEAAIAAUAo8L1BHx+ekuPhyb4P7WqQ/PyaACAAEAA0fwcY3NZ//eri0llg6uvHBAABgABg/naAu1F63G2lx53N9Hij5aQ02f2o/h5/0vViAoAAQADwZjP/jNz+9kr8l/dwNFu+E/SunysTAAQAAoD52gFyB5221/cztbPBsDIBQAAgAAAAAAAAAAAAAAAAAAr3B6B8evCSlPuTAAAAAElFTkSuQmCC",
     menuButton: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADwAAAA8CAYAAAA6/NlyAAABFklEQVR42u3bLw7CMBTH8ZZAuAIKuZAAlhsgMBCuwRXQuwKWhAsQMAg0BksmQKJ2AMJG9gd0K7aQiq7b97ltWfI+ef2lE50UJeVPOl/hUK2viSx63hINK8B1r7Z+4zBXMzubugUa9dT+F0c10yxpwHXLsL7P6pk9nd0C6f37oepjSQOu+z78DItf8JarSgEe+81f/bOkAdc9w2U18LpWG74HLyYMGDBgwIAbuw/nUWy14TTNmDBgwIABA27sPhx/pNWGk4wJAwZskmEh3nY7zlMmDBiwSYYtR1gkkgkDBmyQ4Uja/ZZOJRMGDNgkw5fdlgkDBlydkmXnpYdj9Xm/Vy2Afi4ruKnXnJcG3LQMC/5bYkkDdql+JmI5UzeHc48AAAAASUVORK5CYII=",
   };
 
@@ -521,24 +558,16 @@ __FRAME_SCRIPT__
   const NPC_FALLBACK_BUBBLE_TINT = [__NPC_FALLBACK_BUBBLE_TINT__];
 
   /**
-   * MenuTiles (0,0,256,256) —— Game1.drawDialogueBox 的 64×64 九宫格。
+   * ⚠ 这里曾有一块 `DIALOGUE_TEX`：`Maps\MenuTiles (0,0,256,256)` 按 **64px** 九宫格切，
+   * 也就是 `Game1.drawDialogueBox` 用的那一套（`slice: 64`、`inner: 16`、无投影）。
    *
-   * 只有 F8 私聊面板用它（ChatInputMenu.draw 里的 MenuSkinDrawing.DrawPanel），而且**没有投影**
-   * （drawDialogueBox 里没有任何阴影绘制）。它与上面那套不是同一张切片 ——
-   * 这正是页面前一版把「两套的关系」列为未查明的答案：同图不同源矩形。
+   * 2026-09-20 外壳重构后实机 F8 已改调 `MenuSkinDrawing.DrawPanel`，与 F9 / 群聊中心
+   * 走同一条 20px 画法，那一套随之停用 —— 本轮把它连同只为它存在的
+   * `GAME_TEX.menuPanel` 贴图与 `nineSlice` 的内衬分支一并删除，不留死代码。
    *
-   * inner = 16：这张九宫格的每一格都在外沿留了 16px 透明（图案从 x16 起）。
-   * drawDialogueBox 在四角四边之前还会把中心格单独画一份、范围比 CSS 的 fill 大
-   * （Game1.cs:15924 画在 (x+28, y+28)、(w-64)×(h-64)），所以那些透明处透出的是中心格。
-   * CSS 的 fill 只覆盖 padding box，补不到边框区，面板内侧会露出一圈背景色；
-   * 因此额外垫一层只含中心格的内衬（见 nineSlice）。
+   * 两套九宫格的关系（同图、不同源矩形）与改前实测值记在页面底部
+   * 「F8 面板边框」一条里；要看那段历史不必回到旧代码。
    */
-  const DIALOGUE_TEX = {
-    src: GAME_TEX.menuPanel,
-    slice: 64,
-    inner: 16,
-    shadow: null,
-  };
   const GAME_BLACK = [0, 0, 0];
   const GAME_GRAY = [128, 128, 128];
   const DARK_SLATE_GRAY = [47, 79, 79];    // Color.DarkSlateGray
@@ -885,26 +914,11 @@ __FRAME_SCRIPT__
     const shadow = opts.noShadow ? null : tex.shadow;
     const filter = [tintFilter(tint), shadow].filter(Boolean).join(" ");
 
-    // 内衬：贴图的九宫格在外沿留了 tex.inner 的透明，drawDialogueBox 会额外补一整块中心格，
-    // 让它透出面色。CSS 的 fill 只到 padding box，所以这里先用同图取「中心格」铺一层底，
-    // 位置缩进 tex.inner —— 外沿仍保持透明（游戏里那里确实是背景）。
-    // 先 append ⇒ 在 DOM 里排在 .nine 之前 ⇒ 画在它下面。
-    if (tex.inner) {
-      const inner = rectEl(parent, {
-        x: r.x + tex.inner,
-        y: r.y + tex.inner,
-        w: Math.max(0, r.w - tex.inner * 2),
-        h: Math.max(0, r.h - tex.inner * 2),
-      });
-      inner.style.backgroundImage = `url("${tex.src}")`;
-      // 3×3 里取正中那一格：图像是元素的 3 倍，50% 定位正好落在中心格
-      inner.style.backgroundSize = "300% 300%";
-      inner.style.backgroundPosition = "50% 50%";
-      if (filter) {
-        inner.style.filter = filter;
-      }
-    }
-
+    // ⚠ 这里曾有一段「内衬」分支（`if (tex.inner)`）：只有 DIALOGUE_TEX 的 64px 切法需要它
+    // ——那张九宫格的每一格都在外沿留了 16px 透明（图案从 x16 起），而 drawDialogueBox
+    // 会额外补一整块中心格透出面色，CSS 的 fill 只到 padding box 补不到。
+    // 现在三处面板 / 凹槽 / 卡片 / 按钮全走 MENU_TEX（20px、无透明外沿），
+    // 这个分支没有使用者，本轮一并删除。
     const el = rectEl(parent, r, "nine");
     el.style.borderStyle = "solid";
     el.style.borderWidth = tex.slice + "px";
@@ -1257,9 +1271,15 @@ __FRAME_SCRIPT__
     const L = chatLayout(vw, vh);
     const s = SAMPLE.chat;
 
-    // 面板：Game1.drawDialogueBox(..., drawOnlyBox: true, ignoreTitleSafe: true)
-    // —— ChatInputMenu.draw；边框是对话盒纹理 ⚠
-    nineSlice(stage, L.panel, [255, 255, 255], DIALOGUE_TEX).style.zIndex = "1";
+    // 面板（ChatInputMenu.draw → `MenuSkinDrawing.DrawPanel(b, layout.Panel)`）：
+    // 与 F9 / 群聊中心走**同一条** `IClickableMenu.drawTextureBox` ——
+    // 同图 `Maps\MenuTiles (0,256,60,60)` 切 **20px**、白 tint、**带**投影。
+    //
+    // 改前这里走 `Game1.drawDialogueBox` 的 **64px** 切法且**没有投影**，
+    // 与另外两个界面不是一套画法：描边厚度与色阶都不同（实测下边框 rgb(106,46,3)
+    // vs F9 的 rgb(200,123,21)），是「F8 与 F9 看着不像一家人」最直接的一条。
+    // 面板矩形本身一个像素未动（C# 侧同样只换画法：`DrawPanel(b, layout.Panel)`）。
+    nineSlice(stage, L.panel, [255, 255, 255], MENU_TEX).style.zIndex = "1";
 
     // 内容区凹槽（ChatInputMenu.draw → `MenuSkinDrawing.DrawInset(b, layout.MessageArea)`，
     // 画在气泡与角色卡之前）：凹槽盖住**整个 MessageArea（含右侧角色卡）**，气泡与角色卡
@@ -1318,7 +1338,12 @@ __FRAME_SCRIPT__
     // 角色面板（ChatInputMenu.DrawProfile）
     if (L.profilePanel) {
       const p = L.profilePanel;
-      nineSlice(stage, p, [248, 240, 224], MENU_TEX).style.zIndex = "2";   // DrawProfile 的角色卡（CardTint）
+      // DrawProfile 的角色卡：`MenuSkinRules.CardTint = Color.White`（与面板同色）。
+      // 卡片之所以能「浮起来」靠的是底下那层凹槽，不是自己换色 ——
+      // 改前这里是 (248,240,224)，那是「消息区还是白 tint、卡片必须自己暗一档」年代的旧值；
+      // 凹槽落地后底层已经暗了一档，卡片再压暗就叠成两层（实测底色 rgb(238..246,170..179,97..98)
+      // 比面板的 rgb(255,197,118) 暗一大截，看着像另一块木头）。
+      nineSlice(stage, p, [255, 255, 255], MENU_TEX).style.zIndex = "2";
       const portraitFrame = { x: p.x + 12, y: p.y + Math.trunc((p.h - 64) / 2), w: 64, h: 64 }; // DrawProfile 的 portraitFrame
       nineSlice(stage, { x: portraitFrame.x - 6, y: portraitFrame.y - 6, w: portraitFrame.w + 12, h: portraitFrame.h + 12 }, [255, 255, 255], MENU_TEX).style.zIndex = "3"; // DrawProfile 的立绘白描边底板
       // ⚠ 页面没有游戏立绘素材，这里用该角色的徽章占位并标注
@@ -1350,7 +1375,13 @@ __FRAME_SCRIPT__
       if (filled > 0) rectEl(stage, { x: meter.x, y: meter.y, w: filled, h: meter.h }).style.cssText += `background:${rgb(METER_FILL)};z-index:5`;
     }
 
-    // 底部按钮与输入框（ChatInputMenu.DrawFooter）
+    // 底部（ChatInputMenu.DrawFooter；顺序照 C#：先凹槽、再四个按钮、最后输入框）
+    //   输入区凹槽：`MenuSkinDrawing.DrawInset(b, layout.InputBox)` —— 与消息区同一层画法
+    //   （同图 20px 九宫格、InsetTint、不投影），输入框在其中垂直居中。
+    //   ⚠ 页面这一步的**可见程度**与实机不同，根因是输入框绘制矩形：页面画满整个
+    //   layout.InputBox（含下半那条 clamp 阴影带），实机用 MenuSkinRules.InputBoxVisual
+    //   ——内缩 12、高 48、纵向居中，凹槽因此上下各露出一段。见底部「仍存在的差异」。
+    insetWell(stage, L.inputBox, "input");
     button(stage, L.sendButton, "发送", true, [235, 246, 236]);
     button(stage, L.topicButton, "找话题", true, [239, 231, 244]);
     button(stage, L.inventoryButton, "物品", true, [235, 240, 246]);
@@ -1418,6 +1449,10 @@ __FRAME_SCRIPT__
       if (y > area.y + bubbleAreaH - LINE_SPACING) break; // draw 的画到底 break（用气泡区实际高度）
     }
 
+    // 输入区凹槽（GroupDialogueMenu.draw:253 → `MenuSkinDrawing.DrawInset(b, layout.InputBox)`），
+    // 与 F8 同一句、同一个 tint；画在三个按钮与输入框之前（C# 的顺序）。
+    // ⚠ 可见程度同 F8：页面输入框画满 layout.InputBox（实机是 InputBoxVisual，内缩 12、高 48）。
+    insetWell(stage, L.inputBox, "groupInput");
     button(stage, L.sendButton, "发送", true);
     button(stage, L.retryButton, "重试", false);   // session.CanRetry 为假时是灰的（MenuButtonDrawing.DrawButton）
     button(stage, L.closeButton, "关闭", true);
