@@ -177,9 +177,18 @@ public static class ChatLayoutRules
             message is not null && !string.IsNullOrWhiteSpace(message.Content));
     }
 
-    public static bool ShouldDrawHeaderTitle() => false;
+    /// <summary>
+    /// 私聊标题带是否画「和 X 聊聊」。
+    ///
+    /// 2026-09-20 外壳重构：此前这里返回 <c>false</c>，于是算得出 92px 高的 header
+    /// 什么都不画，面板顶部留一条空白——那是「看着脏」的主要来源。
+    /// 现在与 F9／群聊中心共用 <see cref="MenuSkinDrawing.DrawTitleBand"/> 的那一套
+    /// （强调色竖条 + 标题 + 状态 + 发丝分隔线）。
+    /// </summary>
+    public static bool ShouldDrawHeaderTitle() => true;
 
-    public static bool ShouldDrawHeaderStatus() => false;
+    /// <summary>私聊标题带是否画右侧的好感度状态字（与标题同一行，走次级文字色）。</summary>
+    public static bool ShouldDrawHeaderStatus() => true;
 
     public static bool ShouldDrawFriendshipMeter(int? hearts) => hearts.HasValue;
 }

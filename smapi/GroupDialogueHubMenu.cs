@@ -115,23 +115,29 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
 
         RefreshLayout();
         invitationRows.Clear();
-        drawTextureBox(
+        // 遮罩与 F8／F9 统一（改前这里没有遮罩）。
+        MenuSkinDrawing.DrawScrim(b);
+        MenuSkinDrawing.DrawPanel(b, panel);
+
+        // 标题带：强调色取第一张邀约卡的第一位参与者，与卡片是同一套角色色。
+        var accentSource = visibleInvitations.Count > 0
+            ? visibleInvitations[0].Participants.FirstOrDefault()
+            : null;
+        MenuSkinDrawing.DrawTitleBand(
             b,
-            panel.X,
-            panel.Y,
-            panel.Width,
-            panel.Height,
-            Color.White);
-        b.DrawString(
-            Game1.smallFont,
+            new Rectangle(panel.X, panel.Y, panel.Width, MenuSkinRules.HubTitleBandHeight),
             "线上多人对话",
-            new Vector2(panel.X + 32, panel.Y + 24),
-            Color.Black);
+            null,
+            MenuSkinDrawing.AccentFor(accentSource));
+
+        // 列表区凹槽：卡片浮在它上面，靠底色分档分层（卡片自身的 tint 不动）。
+        // 画在卡片之前。
+        MenuSkinDrawing.DrawInset(b, MenuSkinRules.HubListArea(panel, closeButton));
 
         var y = panel.Y + 94;
         if (visibleInvitations.Count == 0)
         {
-            b.DrawString(Game1.smallFont, "目前没有未处理的邀约卡。", new Vector2(panel.X + 40, y), Color.DarkSlateGray);
+            b.DrawString(Game1.smallFont, "目前没有未处理的邀约卡。", new Vector2(panel.X + 40, y), MenuSkinRules.InkSoft);
         }
         else
         {
@@ -145,20 +151,28 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                     row.Y,
                     row.Width,
                     row.Height,
-                    Color.White);
+                    MenuSkinRules.CardTint);
                 var names = string.Join("、", invitation.ParticipantDisplayNames);
-                b.DrawString(Game1.smallFont, $"{invitation.Title} · {names}", new Vector2(row.X + 18, row.Y + 14), Color.Black);
-                b.DrawString(Game1.smallFont, $"主题：{invitation.Topic}", new Vector2(row.X + 18, row.Y + 42), Color.DarkSlateGray);
-                b.DrawString(Game1.smallFont, $"状态：{FormatStatus(invitation.Status)} · 到期第 {invitation.ExpiresTotalDays} 天", new Vector2(row.X + 18, row.Y + 66), Color.DimGray);
+                b.DrawString(Game1.smallFont, $"{invitation.Title} · {names}", new Vector2(row.X + 18, row.Y + 14), MenuSkinRules.Ink);
+                // 三行并两行：原来第三行在 +66、文字底 +94，比卡片本身（92）还低 2px，
+                // 直接被下边框切断（九宫格 slice 20 → 下内沿 = 92 − 20 = 72）。
+                // 主题与状态并到 +44 后，文字底正好 +72，不出框，而卡片矩形与
+                // 三个按钮的命中区一个都没动。
+                b.DrawString(
+                    Game1.smallFont,
+                    $"主题：{invitation.Topic} · {FormatStatus(invitation.Status)} · 到期第 {invitation.ExpiresTotalDays} 天",
+                    new Vector2(row.X + 18, row.Y + MenuSkinRules.HubCardSecondRowOffset),
+                    MenuSkinRules.InkSoft);
                 // 按钮矩形与点击判定同源：GroupInvitationActionLayoutRules。
-                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.AcceptButton(row), "接受", true);
-                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DeferButton(row), "稍后", true);
-                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DismissButton(row), "忽略", true);
+                // 两档 tint：接受=主按钮，稍后/忽略=次按钮。
+                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.AcceptButton(row), "接受", true, MenuSkinRules.PrimaryButtonTint);
+                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DeferButton(row), "稍后", true, MenuSkinRules.SecondaryButtonTint);
+                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DismissButton(row), "忽略", true, MenuSkinRules.SecondaryButtonTint);
                 y += 104;
             }
         }
 
-        MenuButtonDrawing.DrawButton(b, closeButton, "关闭", enabled: true);
+        MenuButtonDrawing.DrawButton(b, closeButton, "关闭", enabled: true, tint: MenuSkinRules.SecondaryButtonTint);
         b.DrawString(Game1.smallFont, hint, new Vector2(panel.X + 32, panel.Bottom - 112), Color.Gray);
         drawMouse(b);
     }

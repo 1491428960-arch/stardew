@@ -92,12 +92,11 @@ public class ChatInputMenu : IClickableMenu
             Game1.smallFont,
             Color.Black)
         {
-            X = layout.InputBox.X,
-            Y = layout.InputBox.Y,
-            Width = layout.InputBox.Width,
-            Height = layout.InputBox.Height,
             Text = string.Empty,
         };
+        // 输入框的绘制矩形只有一处定义（MenuSkinRules.InputBoxVisual）；
+        // 命中判定用的是 layout.InputBox，两者互不影响。
+        UpdateInputBoxBounds();
         inputBox.OnEnterPressed += OnInputEnterPressed;
         keyboardSubscriberLease = new KeyboardSubscriberLease<IKeyboardSubscriber>(
             () => Game1.keyboardDispatcher.Subscriber,
@@ -255,14 +254,12 @@ public class ChatInputMenu : IClickableMenu
         UpdateInputBoxBounds();
 
         DrawBackdrop(b);
-        Game1.drawDialogueBox(
-            layout.Panel.X,
-            layout.Panel.Y,
-            layout.Panel.Width,
-            layout.Panel.Height,
-            speaker: false,
-            drawOnlyBox: true,
-            ignoreTitleSafe: true);
+        // 面板与 F9／群聊中心走同一条调用（20px 九宫格 + 白 tint + 投影）。
+        // 改前这里是 Game1.drawDialogueBox 的 64px 切法且没有投影，
+        // 与另外两个界面不是一套画法——面板矩形本身不变。
+        MenuSkinDrawing.DrawPanel(b, layout.Panel);
+        // 内容区凹槽（含右侧角色卡）画在气泡与角色卡之前，气泡于是「浮」在凹槽上。
+        MenuSkinDrawing.DrawInset(b, layout.MessageArea);
         DrawHeader(b);
         DrawMessages(b);
         DrawFooter(b);
@@ -633,35 +630,29 @@ public class ChatInputMenu : IClickableMenu
 
     private void DrawBackdrop(SpriteBatch b)
     {
-        var viewport = Game1.viewport;
-        b.Draw(
-            Game1.fadeToBlackRect,
-            new Rectangle(0, 0, viewport.Width, viewport.Height),
-            Color.Black * 0.42f);
+        // 遮罩强度与 F9／群聊中心统一（MenuSkinRules.ScrimAlpha）；改前这里是 0.42f，
+        // 而另外两个界面完全没有遮罩。
+        MenuSkinDrawing.DrawScrim(b);
     }
 
     private void DrawHeader(SpriteBatch b)
     {
-        var title = $"和 {npc.displayName} 聊聊";
-        if (ChatLayoutRules.ShouldDrawHeaderTitle())
+        if (!ChatLayoutRules.ShouldDrawHeaderTitle())
         {
-            b.DrawString(
-                Game1.dialogueFont,
-                title,
-                new Vector2(layout.Header.X + MessagePadding, layout.Header.Y + 8),
-                Color.Black);
+            return;
         }
-        if (ChatLayoutRules.ShouldDrawHeaderStatus())
-        {
-            var relationship = GetFriendshipHearts() is { } hearts
-                ? $"原版好感度 · {hearts} 心"
-                : "原版好感度 · 未知";
-            b.DrawString(
-                Game1.smallFont,
-                relationship,
-                new Vector2(layout.Header.X + MessagePadding, layout.Header.Y + 48),
-                Color.DarkSlateGray);
-        }
+
+        var relationship = GetFriendshipHearts() is { } hearts
+            ? $"好感度 {hearts} 心"
+            : "好感度未知";
+        // 标题带：角色强调色竖条 + 「和 X 聊聊」+ 好感度 + 发丝分隔线。
+        // 强调色与气泡、徽章同一个来源；状态字走次级文字色。
+        MenuSkinDrawing.DrawTitleBand(
+            b,
+            layout.Header,
+            $"和 {npc.displayName} 聊聊",
+            ChatLayoutRules.ShouldDrawHeaderStatus() ? relationship : null,
+            MenuSkinDrawing.AccentFor(npc.Name));
     }
 
     private void DrawMessages(SpriteBatch b)
@@ -828,10 +819,14 @@ public class ChatInputMenu : IClickableMenu
 
     private void DrawFooter(SpriteBatch b)
     {
-        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", enabled: !sending, tint: new Color(235, 246, 236));
-        MenuButtonDrawing.DrawButton(b, layout.TopicButton, "找话题", enabled: !sending, tint: new Color(239, 231, 244));
-        MenuButtonDrawing.DrawButton(b, layout.InventoryButton, "物品", enabled: !sending, tint: new Color(235, 240, 246));
-        MenuButtonDrawing.DrawButton(b, layout.CloseButton, "结束", enabled: true, tint: new Color(247, 232, 227));
+        // 输入区做成凹槽，输入框（48px）在其中垂直居中。
+        MenuSkinDrawing.DrawInset(b, layout.InputBox);
+        // 按钮两档 tint：主按钮白（发送），其余退到暗一档的暖色。
+        // 改前这里是四种几乎分不清的淡色（淡绿/淡紫/淡蓝/淡粉），在橙底上只留下偏色。
+        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", enabled: !sending, tint: MenuSkinRules.PrimaryButtonTint);
+        MenuButtonDrawing.DrawButton(b, layout.TopicButton, "找话题", enabled: !sending, tint: MenuSkinRules.SecondaryButtonTint);
+        MenuButtonDrawing.DrawButton(b, layout.InventoryButton, "物品", enabled: !sending, tint: MenuSkinRules.SecondaryButtonTint);
+        MenuButtonDrawing.DrawButton(b, layout.CloseButton, "结束", enabled: true, tint: MenuSkinRules.SecondaryButtonTint);
         inputBox.Draw(b, drawShadow: true);
     }
 
@@ -843,13 +838,15 @@ public class ChatInputMenu : IClickableMenu
         }
 
         var panel = layout.ProfilePanel;
+        // 角色卡回到白 tint：它之所以现在看不出层次，是因为底层（消息区）原本也是白 tint；
+        // 有了上面那层凹槽之后自动分层，卡片自身不需要换颜色。
         drawTextureBox(
             b,
             panel.X,
             panel.Y,
             panel.Width,
             panel.Height,
-            new Color(248, 240, 224));
+            MenuSkinRules.CardTint);
 
         var portrait = npc.Portrait;
         var portraitFrame = new Rectangle(
@@ -887,7 +884,7 @@ public class ChatInputMenu : IClickableMenu
             Game1.smallFont,
             relationship,
             new Vector2(infoX, infoY + 28),
-            Color.DarkSlateGray);
+            MenuSkinRules.InkSoft);
 
         if (ChatLayoutRules.ShouldDrawFriendshipMeter(hearts))
         {
@@ -916,10 +913,13 @@ public class ChatInputMenu : IClickableMenu
 
     private void UpdateInputBoxBounds()
     {
-        inputBox.X = layout.InputBox.X;
-        inputBox.Y = layout.InputBox.Y;
-        inputBox.Width = layout.InputBox.Width;
-        inputBox.Height = layout.InputBox.Height;
+        // 只动 TextBox 的**绘制**矩形：48px 高、在输入区里居中。
+        // receiveLeftClick 仍走 layout.InputBox.Contains，点击范围不变。
+        var visual = MenuSkinRules.InputBoxVisual(layout.InputBox);
+        inputBox.X = visual.X;
+        inputBox.Y = visual.Y;
+        inputBox.Width = visual.Width;
+        inputBox.Height = visual.Height;
     }
 
     private void CleanupKeyboardSubscriber()

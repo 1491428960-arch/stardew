@@ -50,12 +50,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
         inputBox = new TextBox(Game1.content.Load<Texture2D>("LooseSprites\\textBox"), null, Game1.smallFont, Color.Black)
         {
-            X = layout.InputBox.X,
-            Y = layout.InputBox.Y,
-            Width = layout.InputBox.Width,
-            Height = layout.InputBox.Height,
             Text = string.Empty,
         };
+        // 与 F8 同源：输入框的绘制矩形只有 MenuSkinRules.InputBoxVisual 一处定义，
+        // 命中判定继续用 layout.InputBox。
+        UpdateInputBoxBounds();
         inputBox.OnEnterPressed += OnInputEnterPressed;
         keyboardSubscriberLease = new KeyboardSubscriberLease<IKeyboardSubscriber>(
             () => Game1.keyboardDispatcher.Subscriber,
@@ -157,28 +156,50 @@ public sealed class GroupDialogueMenu : IClickableMenu
         yPositionOnScreen = layout.Panel.Y;
         width = layout.Panel.Width;
         height = layout.Panel.Height;
-        inputBox.X = layout.InputBox.X;
-        inputBox.Y = layout.InputBox.Y;
-        inputBox.Width = layout.InputBox.Width;
-        inputBox.Height = layout.InputBox.Height;
+        UpdateInputBoxBounds();
 
+        // 遮罩与 F8／群聊中心统一（改前这里完全没有遮罩，三个界面「浮在画面上的高度」不一致）。
+        MenuSkinDrawing.DrawScrim(b);
         // 与线上多人对话中心一致：Game1.drawDialogueBox 仍会把自定义面板裁到
         // 原版 title-safe 区域，导致标题与参与者行落到框外；这里用九宫格纹理
         // 直接按 layout 的矩形绘制，按钮与点击坐标保持不变。
-        drawTextureBox(
+        MenuSkinDrawing.DrawPanel(b, layout.Panel);
+
+        // 标题带（竖条 + 标题 + 发丝分隔线），强调色取第一位参与者的角色色。
+        var participantNames = string.Join("、", participants.Select(item => item.DisplayName));
+        MenuSkinDrawing.DrawTitleBand(
             b,
-            layout.Panel.X,
-            layout.Panel.Y,
-            layout.Panel.Width,
-            layout.Panel.Height,
-            Color.White);
-        b.DrawString(Game1.smallFont, "线上多人对话", new Vector2(layout.Header.X + 12, layout.Header.Y + 10), Color.Black);
-        b.DrawString(Game1.smallFont, string.Join("、", participants.Select(item => item.DisplayName)), new Vector2(layout.ParticipantStrip.X, layout.ParticipantStrip.Y), Color.DarkSlateGray);
+            layout.Header,
+            "线上多人对话",
+            null,
+            MenuSkinDrawing.AccentFor(participants.Count > 0 ? participants[0].NpcId : null));
+        b.DrawString(Game1.smallFont, participantNames, new Vector2(layout.ParticipantStrip.X, layout.ParticipantStrip.Y), MenuSkinRules.InkSoft);
+
+        // 提示行放哪：**短提示**（正常态）放 header 右侧、与参与者条同一行 —— 气泡区零损失；
+        // **长提示**（"无可用回复(fb=… n=… spk=[…])" 那种排障串）放不下 header，就回落到
+        // 消息区下方。这一条是本次唯一动了气泡可用高度的分支，且只在长提示时才触发；
+        // 提示行与气泡不接收点击，两个分支都不改任何命中区。
+        // 提示为空（群聊成功回复后会清空）时按「没有东西要放」处理，不占底部留白。
+        var namesWidth = Game1.smallFont.MeasureString(participantNames).X;
+        var hintWidth = string.IsNullOrWhiteSpace(hint)
+            ? 0f
+            : Game1.smallFont.MeasureString(hint).X;
+        var hintNeedsBottomRow = MenuSkinRules.HintNeedsBottomRow(
+            !string.IsNullOrWhiteSpace(hint),
+            layout.ParticipantStrip.Width,
+            namesWidth,
+            hintWidth);
+
+        var messageArea = layout.MessageArea;
+        var bubbleAreaHeight = MenuSkinRules.MessageBubbleAreaHeight(messageArea.Height, hintInHeader: !hintNeedsBottomRow);
+        // 内容区凹槽：气泡浮在它上面（画在气泡之前）。
+        MenuSkinDrawing.DrawInset(
+            b,
+            new Rectangle(messageArea.X, messageArea.Y, messageArea.Width, bubbleAreaHeight));
 
         // 与 F8 私聊共用 ChatBubbleDrawing：换行宽度、角色配色、图标徽章
         // 只有一处定义。此前这里是一行 "{发言人}：{内容}" 纯文本，长句既不
         // 换行又会溢出面板。
-        var messageArea = layout.MessageArea;
         var bubbleLeft = messageArea.X + 12;
         var bubbleRight = messageArea.Right - 12;
         var contentWidth = ChatBubbleDrawing.ContentWidth(bubbleRight - bubbleLeft);
@@ -223,17 +244,35 @@ public sealed class GroupDialogueMenu : IClickableMenu
                 occurrence);
 
             y += drawnHeight + ChatBubbleDrawing.Gap;
-            if (y > messageArea.Bottom - Game1.smallFont.LineSpacing)
+            if (y > messageArea.Y + bubbleAreaHeight - Game1.smallFont.LineSpacing)
             {
                 break;
             }
         }
 
-        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", !sending);
-        MenuButtonDrawing.DrawButton(b, layout.RetryButton, "重试", !sending && session.CanRetry);
-        MenuButtonDrawing.DrawButton(b, layout.CloseButton, "关闭", true);
+        // 输入区凹槽 + 按钮两档 tint（发送=主，重试/关闭=次）。
+        MenuSkinDrawing.DrawInset(b, layout.InputBox);
+        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", !sending, MenuSkinRules.PrimaryButtonTint);
+        MenuButtonDrawing.DrawButton(b, layout.RetryButton, "重试", !sending && session.CanRetry, MenuSkinRules.SecondaryButtonTint);
+        MenuButtonDrawing.DrawButton(b, layout.CloseButton, "关闭", true, MenuSkinRules.SecondaryButtonTint);
         inputBox.Draw(b, drawShadow: true);
-        b.DrawString(Game1.smallFont, hint, new Vector2(layout.MessageArea.X + 12, layout.MessageArea.Bottom - 28), Color.Gray);
+        if (hintNeedsBottomRow)
+        {
+            b.DrawString(
+                Game1.smallFont,
+                hint,
+                new Vector2(messageArea.X + 12, messageArea.Y + bubbleAreaHeight + 4),
+                MenuSkinRules.InkSoft);
+        }
+        else if (!string.IsNullOrWhiteSpace(hint))
+        {
+            b.DrawString(
+                Game1.smallFont,
+                hint,
+                new Vector2(layout.ParticipantStrip.Right - hintWidth, layout.ParticipantStrip.Y + 5),
+                MenuSkinRules.InkSoft);
+        }
+
         drawMouse(b);
     }
 
@@ -457,5 +496,18 @@ public sealed class GroupDialogueMenu : IClickableMenu
             Game1.uiViewport.Width,
             Game1.uiViewport.Height);
         return GroupDialogueLayoutRules.Calculate(viewportSize.X, viewportSize.Y);
+    }
+
+    /// <summary>
+    /// 输入框的**绘制**矩形：48px 高、在输入区里居中（<see cref="MenuSkinRules.InputBoxVisual"/>）。
+    /// <c>receiveLeftClick</c> 仍走 <c>layout.InputBox.Contains</c>，点击范围不受影响。
+    /// </summary>
+    private void UpdateInputBoxBounds()
+    {
+        var visual = MenuSkinRules.InputBoxVisual(layout.InputBox);
+        inputBox.X = visual.X;
+        inputBox.Y = visual.Y;
+        inputBox.Width = visual.Width;
+        inputBox.Height = visual.Height;
     }
 }

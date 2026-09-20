@@ -161,15 +161,30 @@ public sealed class ChatLayoutRulesTests
         Assert.Throws<ArgumentOutOfRangeException>(() => ChatLayoutRules.Calculate(1280, 0));
     }
 
+    /// <summary>
+    /// 2026-09-20 外壳重构：F8 的 header 此前什么都不画（两个开关都是 false），
+    /// 面板顶部留一条 92px 的空白；现在与 F9／群聊中心共用同一套标题带。
+    /// </summary>
     [Fact]
-    public void HeaderDoesNotDrawTitle()
+    public void HeaderNowDrawsTitle()
     {
-        Assert.False(ChatLayoutRules.ShouldDrawHeaderTitle());
+        Assert.True(ChatLayoutRules.ShouldDrawHeaderTitle());
     }
 
     [Fact]
-    public void HeaderDoesNotDrawStatus()
+    public void HeaderNowDrawsStatus()
     {
-        Assert.False(ChatLayoutRules.ShouldDrawHeaderStatus());
+        Assert.True(ChatLayoutRules.ShouldDrawHeaderStatus());
+    }
+
+    /// <summary>
+    /// 标题带启用之后 header 的高度仍然不变（92）——本轮的改动不动任何几何常量，
+    /// 也就不会连带改动点击坐标。若哪天要把 header 压到 56，这条会先失败。
+    /// </summary>
+    [Fact]
+    public void HeaderHeightIsUnchangedByTheTitleBandWork()
+    {
+        // 1280×720：面板高 420 → header 高 = min(92, max(48, 420/4 = 105)) = 92
+        Assert.Equal(92, ChatLayoutRules.Calculate(1280, 720).Header.Height);
     }
 }
