@@ -16,6 +16,7 @@ from .behavior_quality import (
 from .character_quality_eval import _has_future_schedule_commitment
 from .evaluation_budget import EvaluationBudgetExceeded
 from .models import ProviderResult
+from .relationship_gating import CONVERSATION_LEAD_STAGE_ORDER
 
 
 FORMAT_RETRY_CONTENT = (
@@ -799,12 +800,8 @@ def _violates_final_role_voice_schedule(
     return _has_future_schedule_commitment(reply)
 
 
-_CONVERSATION_LEAD_STAGE_ORDER = {
-    "friend": 1,
-    "close": 2,
-    "dating": 3,
-    "married": 4,
-}
+# 表与判定统一到 relationship_gating（见那里的注释）。
+_CONVERSATION_LEAD_STAGE_ORDER = CONVERSATION_LEAD_STAGE_ORDER
 
 
 def _conversation_lead_stage(value: object) -> str:

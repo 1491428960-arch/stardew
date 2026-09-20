@@ -19,6 +19,10 @@ from .personas import (
 )
 from .relationship_world import project_relationship_context
 from .stage_policy import build_stage_policy
+from .relationship_gating import (
+    CONVERSATION_LEAD_STAGES,
+    CONVERSATION_LEAD_STAGE_ORDER,
+)
 
 
 _RELATIONSHIP_STAGES = {
@@ -46,13 +50,9 @@ _ROMANCE_ELIGIBLE_NPCS = {
 }
 _FEMALE_BACHELOR_NPCS = frozenset(FEMALE_BACHELOR_NPC_IDS)
 _CONVERSATION_LEAD_TRIAL_NPCS = frozenset(_ROMANCE_ELIGIBLE_NPCS)
-_CONVERSATION_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
-_CONVERSATION_LEAD_STAGE_ORDER = {
-    "friend": 1,
-    "close": 2,
-    "dating": 3,
-    "married": 4,
-}
+# 集合与序号统一到 relationship_gating（见那里的注释）。
+_CONVERSATION_LEAD_STAGES = CONVERSATION_LEAD_STAGES
+_CONVERSATION_LEAD_STAGE_ORDER = CONVERSATION_LEAD_STAGE_ORDER
 _INITIATIVE_EXPECTATIONS = {"none", "responsive", "proactive", "guarded"}
 _TURN_PLAN_MODES = {
     "answer_only",

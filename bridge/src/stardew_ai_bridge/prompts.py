@@ -13,7 +13,7 @@ from .behavior_quality import (
 from .evidence import has_dialogue_control_residue
 from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
-from .relationship_gating import resolve_relationship_gate
+from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate
 from .relationship_world import project_relationship_context
 from .stage_policy import apply_relationship_event_gate, build_stage_policy
 from .story_state import build_story_state
@@ -857,7 +857,8 @@ _HISTORY_PROVENANCE_INTENTS = frozenset({"chat", "topic", "item"})
 _HISTORY_PROVENANCE_STAGES = frozenset(
     {"stranger", "acquaintance", "friend", "close", "dating", "married", "parent"}
 )
-_HISTORY_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
+# 统一到 relationship_gating（此前是三处各一份的第三份副本）。
+_HISTORY_LEAD_STAGES = CONVERSATION_LEAD_STAGES
 
 
 def _history_provenance(item: Mapping[str, object]) -> dict[str, str]:

@@ -24,6 +24,15 @@ STAGE_RANK = {
     "parent": 6,
 }
 
+# 2026-09-20：“朋友及以上”这个阶段集合与它的相对顺序，此前在 guard.py 与
+# character_quality_eval.py 里**各写了一份一模一样的表**（连比较逻辑都同构），
+# prompts.py 还有第三份只含集合的副本。三处任何一处改了都会漏掉另两处，
+# 所以统一在这里派生——**相对顺序与 STAGE_RANK 天然一致，不会再漂移**。
+CONVERSATION_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
+CONVERSATION_LEAD_STAGE_ORDER = {
+    stage: STAGE_RANK[stage] for stage in ("friend", "close", "dating", "married")
+}
+
 
 @dataclass(frozen=True)
 class RelationshipEventGate:
