@@ -41,6 +41,22 @@ _NETWORK_PATTERN = re.compile(
     r"httpx|requests\.|urllib|OpenAICompatibleProvider|--provider"
 )
 
+# 2026-09-20 加：区分「本机网络」与「可能外部网络」。
+# 早期只按关键词判“网络”，于是 `urllib.request.urlopen("http://127.0.0.1:5678/...")`
+# 也被列进“无确认门”的警告里——误报会让**真正的风险条目失去可信度**。
+# 判定刻意保守：只有“代码里出现字面量本机地址、且没有远端 URL、也没有 provider 抽象”
+# 才算本机；端点若来自配置（例如 `settings.url`），仍按可能外部处理，因为那可能被改。
+_LOCAL_HOST = r"(?:127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])"
+_REMOTE_URL_PATTERN = re.compile(rf"https?://(?!{_LOCAL_HOST})")
+_CLOUD_ABSTRACTION_PATTERN = re.compile(r"OpenAICompatibleProvider|--provider\b")
+
+# 也许能打到外部的信号：出现远端 URL，或用了 provider 抽象（后者能在没有 httpx 的
+# 情况下走云端——早期审计漏掉 `run_character_quality_eval.py` 正是这个原因）。
+def _may_reach_external(code: str) -> bool:
+    return bool(
+        _REMOTE_URL_PATTERN.search(code) or _CLOUD_ABSTRACTION_PATTERN.search(code)
+    )
+
 
 def _code_without_docstrings(text: str) -> str:
     """返回去掉注释与 docstring 的代码文本。
@@ -142,7 +158,7 @@ def _report_script_guards() -> None:
     反而没有任何确认门（单 NPC 评测累计消耗约 5,514 万 tokens，是群聊的约 100 倍）。
     """
 
-    rows: list[tuple[str, bool, bool, bool, bool]] = []
+    rows: list[tuple[str, bool, bool, bool, bool, bool]] = []
     own_name = pathlib.Path(__file__).name
     for path in sorted((ROOT / "scripts").glob("*.py")):
         if path.name == own_name:
@@ -150,30 +166,35 @@ def _report_script_guards() -> None:
             continue
         # 只看**代码**：去掉注释与 docstring，避免列举模式的文档把自己匹配成风险项。
         code = _code_without_docstrings(path.read_text(encoding="utf-8"))
+        net = bool(_NETWORK_PATTERN.search(code))
         rows.append(
             (
                 path.name,
-                bool(_NETWORK_PATTERN.search(code)),
+                net,
                 bool(re.search(r"--confirm|dry[_-]?run", code)),
                 "__main__" in code,
                 bool(re.search(r"write_text|\.writelines?\b|json\.dump", code)),
+                net and _may_reach_external(code),
             )
         )
 
     print()
-    print("scripts/*.py 的安全门（网络 / 确认门 / 写盘）：")
-    risky = [row for row in rows if row[1] and not row[2]]
-    for name, net, guarded, has_main, writes in rows:
+    print("scripts/*.py 的安全门（网络 / 确认门 / 写盘 / 入口）：")
+    print("  网络列：『网络』= 可能打到外部（远端 URL 或 provider 抽象）；")
+    print("          『本机』= 只见到字面量本机端点，不出机器；『    』= 不涉及网络。")
+    print("  只有『网络』那一档才会因缺确认门而被标出；『本机』仅作信息展示。")
+    risky = [row for row in rows if row[5] and not row[2]]
+    for name, net, guarded, has_main, writes, external in rows:
         flags = [
-            "网络" if net else "    ",
+            "网络" if external else "本机" if net else "    ",
             "确认" if guarded else "    ",
             "写盘" if writes else "    ",
             "入口" if has_main else "    ",
         ]
-        mark = "  <-- 会发网络但没有确认门，请确认是否符合预期" if (net and not guarded) else ""
+        mark = "  <-- 可能打到外部但没有确认门，请确认是否符合预期" if (external and not guarded) else ""
         print(f"  {name:<40} {' '.join(flags)}{mark}")
     if not risky:
-        print("  （没有“发网络但无确认门”的脚本）")
+        print("  （没有“可能打到外部但无确认门”的脚本）")
 
 
 def main() -> int:
