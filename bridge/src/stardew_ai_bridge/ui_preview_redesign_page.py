@@ -29,6 +29,7 @@ import json
 from .group_dialogue_review_page import _CHARACTER_FRAME_SCRIPT
 from .npc_bubble_catalog import NPC_BUBBLE_ALIASES
 from .npc_bubble_elements import NPC_BUBBLE_ELEMENTS
+from .npc_bubble_texture import BUBBLE_MENU_TEX_DATA_URI
 from .ui_preview_redesign_assets import GAME_TEX, GAME_TEX_BAKED
 
 
@@ -202,20 +203,30 @@ h1 { margin: 9px 0 10px; font-size: clamp(1.4rem, 2.4vw, 1.95rem); font-weight: 
 .risk.note > b { left: 0; right: auto; color: #04202f; background: rgba(122,196,255,.92); font-weight: 600; }
 
 /* 气泡：与 /test/ui 同一套语义（group_dialogue_review_page.py:345-352）。
-   ⚠ 这两行必须与 ui_preview_page.py 的 .bubble-frame 逐字一致，否则两侧装饰对不上。
 
-   观感基线：装饰整圈收在气泡**内部**、不探出气泡 —— 以 /test/ui 的既有观感为准。
+   ⚠⚠ 装饰必须挂在 stage 上，不能 append 进气泡元素（2026-09-20 修，别再放回去）：
+   气泡元素带 tint 用的 feColorMatrix（见 tintFilter / GAME_TEX_BAKED 的回退分支），
+   CSS filter 作用于**整棵子树** —— 装饰一旦成为它的后代，绿色茎叶会被气泡 tint 逐通道
+   乘成暗紫红（实测 Sophia 现状侧叶 #7ea466 → #341c22，设计侧 tint 更极端 → 更紫）。
+   所以几何改由 drawBubble 按气泡 bounds 显式给出，与原来的 padding-box inset -34px 等价：
+     left = bounds.x - 14, top = bounds.y - 14, width = bounds.w + 28, height = bounds.h + 28
 
-   推导：.bubble-frame 的包含块是气泡的 padding box（绝对定位后代的规则），
-   气泡用 MenuTiles 九宫格（slice = 20）画边框，所以 padding box 比气泡矩形内缩 20px；
-   inset:-15px 把 frame 放在「气泡矩形内缩 5px、(w-10)×(h-10)」处，
-   svg{width:100%;height:100%} 再把 (w+28)×(h+28) 的 viewBox 等比缩进这个框并居中
-   —— 装饰于是居中收在气泡里（实测水平内缩 ~67px、垂直 ~12px，随气泡尺寸变化）。
+   ⚠ 换算依据（勿改数）：绝对定位的 inset 相对的是包含块的 **padding box**，
+     而气泡是 border-box + 20px border 的九宫格 → padding box 比气泡矩形内缩 20px。
+     想让 SVG 的 viewBox（w+28, h+28）**1:1** 铺在「气泡外扩 14px」的位置上，
+     就等价于 -(20 + 14) = **-34px**（容器 = (w-40)+68 = w+28 ✓ 与 viewBox 完全吻合）。
 
-   ⚠ 不要再改成 inset:-34px。那样 frame 尺寸恰好等于 viewBox（w+28, h+28），SVG 会 1:1
-   铺开，装饰线正好压在气泡九宫格边框的**外沿**上，与木框自己的线条重叠打架，
-   而且整圈探到气泡外面（F9 群聊里最明显）。 */
-.bubble-frame { position: absolute; inset: -15px; pointer-events: none; user-select: none; line-height: 0; }
+   z-index 5：气泡 .nine 自身是 4，文字层是 7 —— 装饰贴在气泡之上、文字之下。
+
+   ⚠ 曾经写成 inset:-15px：frame 变成 (w-10)×(h-10)，SVG 被**非等比**压进这个框
+     —— 403×84 的气泡对应 393×74 的 frame，横向缩到 91%、纵向缩到 66%，
+     装饰整圈收进气泡内 14~18px 且被压扁，观感就是「边框比气泡小了一圈」。
+
+   判据来自游戏截图（不是我们的偏好）：artifacts/visual-tests/bubble-f9-v1/bubble-f9.png 里
+     Abigail / Emily 的装饰**沿气泡边缘、并且左右上下都探到气泡外面**；
+     .tmp/ui-preview/game-f9-abigail-bubble-2x.png 是裁出来的放大图。
+     所以「装饰收在气泡内部」不是基线，是渲染错误。 */
+.bubble-frame { position: absolute; z-index: 5; pointer-events: none; user-select: none; line-height: 0; }
 .bubble-frame svg { display: block; width: 100%; height: 100%; overflow: visible; image-rendering: pixelated; }
 .bubble-badge { position: absolute; width: 24px; height: 24px; }
 .bubble-badge svg { width: 24px; height: 24px; display: block; image-rendering: pixelated; }
@@ -481,7 +492,8 @@ ul.plain b { color: var(--soft); font-weight: 600; }
             <td><span class="flag">近似</span>：① ② 与游戏同构（就是同一条乘法、同一套切法）。
                 ② 之所以预乘：滤镜在部分浏览器 / GPU 合成路径下会被忽略或按 linearRGB 计算，
                 表现就是「颜色不对」，配合 transform 缩放还可能有边框重采样错位 ——
-                预乘之后任何浏览器渲染出的都是同一组像素。气泡的 tint 是按角色动态的，仍走滤镜；
+                预乘之后任何浏览器渲染出的都是同一组像素。气泡的 tint 是按角色动态的，仍走滤镜
+                （它另用一份服务端预处理过的贴图，见 <code>npc_bubble_texture.py</code>）；
                 ③ 原版投影是<b>九宫格逐块再画一遍</b>，页面用一层滤镜近似，框体轮廓一致、
                 紧贴边框内侧约 10px 的差看不出来但确实存在</td>
           </tr>
@@ -616,7 +628,9 @@ ul.plain b { color: var(--soft); font-weight: 600; }
             它那边正在把贴图换成解包出来的真实像素。本页的现状侧用同一套逻辑做<b>可比</b>复刻，
             数值以 <code>/test/ui</code> 为准。</li>
         <li>气泡：两侧共用回放页的 <code>_CHARACTER_FRAME_SCRIPT</code> 与
-            <code>npc_bubble_elements</code> 表，本页<b>没有</b>任何气泡相关的尺寸或配色常量。</li>
+            <code>npc_bubble_elements</code> 表，本页<b>没有</b>任何气泡相关的尺寸或配色常量。
+            气泡的九宫格贴图与 <code>/test/ui</code> 同源，取自 <code>npc_bubble_texture.py</code>
+            （描边色相已归一到填充色，否则深色 tint 下会围出一圈橙红的边）。</li>
         <li>贴图：本页自带三块（<code>textBox</code> / <code>MenuTiles (0,256,60,60)</code> /
             <code>MenuTiles (0,0,256,256)</code>），从本机解包目录裁出后 base64 内联，
             <b>不 import</b> <code>ui_preview_page.py</code>，两条线互不覆盖。</li>
@@ -654,6 +668,24 @@ __FRAME_SCRIPT__
     src: GAME_TEX.menuButton,   // Maps\MenuTiles (0,256,60,60)，num = 20
     slice: 20,
     shadow: "drop-shadow(-8px 8px 0 rgba(0,0,0,.4))",
+  };
+  /**
+   * 气泡专用九宫格 —— 切法与 MENU_TEX 完全一致，只换了**描边的色相**
+   * （服务端预处理，见 npc_bubble_texture.py）。
+   *
+   * 原贴图的描边是红橙色（#b14e05，B 通道只有 5）：白 tint 的面板 / 按钮是木框本色，
+   * 但角色气泡的 tint 是紫红 / 靛蓝这类深色，描边的 B 通道乘完仍 ≈2 —— 底色上就围了
+   * 一圈橙红的边（截图实测：边框 rgb(73,13,2) vs 填充 rgb(104,32,36)）。
+   * 归一后描边恒等于「填充最终色 × 同一亮度比例」，四档明暗与圆角形状一个像素没动。
+   *
+   * ⚠ 只有气泡用这一份；面板 / 按钮 / 凹槽继续用 MENU_TEX。
+   * ⚠ 它没有预乘 tint 的版本（气泡 tint 按角色动态，命中不了 GAME_TEX_BAKED），
+   *   调用处要显式传 `noBake: true`，否则万一 tint 撞上表里的 key 会取错贴图。
+   */
+  const BUBBLE_MENU_TEX = {
+    src: DATA.bubbleTex,
+    slice: MENU_TEX.slice,
+    shadow: MENU_TEX.shadow,
   };
   /**
    * Maps\MenuTiles (0,0,256,256) —— F8 现状 `Game1.drawDialogueBox` 用的那一块。
@@ -914,7 +946,8 @@ __FRAME_SCRIPT__
     // 外壳的 tint 是固定的三四个值，贴图在服务端就把 tint 乘进像素了（GAME_TEX_BAKED），
     // 所以这些框**不带任何 filter** —— 滤镜在部分浏览器 / GPU 合成路径下会被忽略或按
     // linearRGB 计算（表现为颜色不对），配合 transform 缩放还可能有边框重采样错位。
-    // 只有气泡那种按角色动态的 tint 找不到预乘贴图，才回退到 feColorMatrix。
+    // 只有气泡那种按角色动态的 tint 找不到预乘贴图，才回退到 feColorMatrix；
+    // 气泡另用 BUBBLE_MENU_TEX（描边色相已归一），调用处传 noBake 以免误取这里的预乘贴图。
     const baked = opts.noBake ? null : GAME_TEX_BAKED[tint.join(",")];
     el.style.borderImage = `url("${baked || tex.src}") ${tex.slice} fill stretch`;
     // 凹槽不投影（drawTextureBox 的 drawShadow: false）—— 这是「干净」的关键：
@@ -959,9 +992,26 @@ __FRAME_SCRIPT__
     return nineSlice(parent, r, SKIN.inset, MENU_TEX, { noShadow: true, z: 2 });
   }
 
-  // ── 气泡（ChatBubbleDrawing.cs:68-149）：本页不改气泡的任何尺寸或配色 ─────
+  // ── 气泡（ChatBubbleDrawing.cs:68-149）：尺寸、换行、几何一律不动 ─────────
   const BUBBLE = { padding: 12, lineSpacing: 4, gap: 20, safetyMargin: 8, minWidth: 180 };
   const LINE_SPACING = 28;   // 游戏字体行高（⚠ 由气泡高度反推，与 /test/ui 同值）
+
+  /**
+   * 设计色 → tint 的反推，与 `scripts/export_npc_bubble_assets.py::bubble_to_tint` 同一公式。
+   *
+   * 气泡底色 = `drawTextureBox(MenuTiles, tint)` 的「纹理色 × tint ÷ 255」。
+   * `npc_bubble_elements.py` 的 `palette.bubble` 是**设计色**（回放页直接铺的最终色），
+   * 直接当 tint 用会被橙黄木纹乘偏 —— Sophia 的品红 (105,43,84) 会渲染成暗红 (104,31,36)，
+   * 色相从 hue 320 偏到 ≈355。C# 侧已改为导出时反推（NpcBubbleStyle 的 Bubble 现在是 tint）。
+   * 这里跟着改：**新设计侧**反推还原设计色，**现状侧**保持原样，两边正好能直接对比。
+   * 基准色 = MenuTiles (0,256,60,60) 九宫格中心块主色 #fdbc6e。
+   */
+  const BUBBLE_TEX_BASE = [253, 188, 110];
+  const bubbleTintFor = (rgb) =>
+    rgb.map((c, i) => Math.min(255, Math.round((c * 255) / BUBBLE_TEX_BASE[i])));
+
+  /** 这一遍渲染是「新设计」还是「现状复刻」—— drawBubble 靠它决定要不要反推 tint。 */
+  let CURRENT_DESIGN = false;
 
   function measureBubbleHeight(lineCount, lineSpacingPx) {          // :50-62
     const n = lineCount <= 0 ? 1 : lineCount;
@@ -979,8 +1029,12 @@ __FRAME_SCRIPT__
     const bounds = { x: isPlayer ? right - width : left, y, w: width, h: height };
 
     const style = isPlayer ? null : styleFor(npcId);
-    const bubbleTint = isPlayer ? [226, 239, 246] : parseColor(style && style.bubble, [239, 231, 244]);
-    const el = nineSlice(stage, bounds, bubbleTint, MENU_TEX, { z: 4 });
+    const rawBubble = isPlayer ? [226, 239, 246] : parseColor(style && style.bubble, [239, 231, 244]);
+    // 新设计侧复刻「导出脚本反推 tint」之后的效果：NPC 气泡呈现设计色本身。
+    const bubbleTint = (!isPlayer && CURRENT_DESIGN) ? bubbleTintFor(rawBubble) : rawBubble;
+    // 气泡专用贴图：描边色相已归一到填充色，乘完 tint 是底色的暗版本（见 BUBBLE_MENU_TEX）。
+    // noBake：这张贴图没有预乘 tint 的版本，不能落进 GAME_TEX_BAKED 的分支。
+    const el = nineSlice(stage, bounds, bubbleTint, BUBBLE_MENU_TEX, { z: 4, noBake: true });
     el.dataset.bubble = npcId || "player";
 
     const ornament = (isPlayer || !npcId) ? null : ornamentFor(npcId);
@@ -988,8 +1042,15 @@ __FRAME_SCRIPT__
       const frame = document.createElement("span");
       frame.className = "bubble-frame";
       frame.setAttribute("aria-hidden", "true");
+      // ⚠ 挂到 stage 上，不要 append 进 el：el 带 tint 的 feColorMatrix（动态气泡 tint 命中不了
+      //   GAME_TEX_BAKED，走 tintFilter 回退），filter 会连带后代一起乘，绿叶会被染成暗紫红。
+      //   几何按 bounds 显式给出，与原来「padding box + inset -34px」逐像素等价。
+      frame.style.left = (bounds.x - 14) + "px";
+      frame.style.top = (bounds.y - 14) + "px";
+      frame.style.width = (bounds.w + 28) + "px";
+      frame.style.height = (bounds.h + 28) + "px";
       frame.innerHTML = characterFrameSvg(bounds.w, bounds.h, ornament, occurrence);
-      el.append(frame);
+      stage.append(frame);
     }
 
     const showBadge = Boolean(style && glyphFor(npcId));
@@ -1443,6 +1504,7 @@ __FRAME_SCRIPT__
     stage.style.width = vw + "px";
     stage.style.height = vh + "px";
     stage.replaceChildren();
+    CURRENT_DESIGN = design;      // drawBubble 靠它决定气泡 tint 要不要反推
     if (view === "chat") return renderChat(stage, vw, vh, design);
     if (view === "group") return renderGroup(stage, vw, vh, design);
     return renderHub(stage, vw, vh, design);
@@ -1502,7 +1564,7 @@ __FRAME_SCRIPT__
         : ["pill bad", `溢出 ${result.issues.length} 处：${result.issues.slice(0, 3).join("；")}`],
     ];
     for (const note of notes.filter(Boolean)) items.push(["pill", note]);
-    items.push(["pill ok", "✔ 气泡与 /test/ui、回放页同源（本页未改气泡）"]);
+    items.push(["pill ok", "✔ 气泡与 /test/ui、回放页同源（贴图描边已归一到填充色，见 npc_bubble_texture.py）"]);
     statusbar.replaceChildren();
     for (const [cls, text] of items) {
       const el = document.createElement("span");
@@ -1577,6 +1639,8 @@ def ui_preview_redesign_page() -> str:
         "sample": _sample_payload(),
         "tex": GAME_TEX,
         "texBaked": GAME_TEX_BAKED,
+        # 气泡专用九宫格（描边色相已归一到填充色，见 npc_bubble_texture.py）
+        "bubbleTex": BUBBLE_MENU_TEX_DATA_URI,
     }
     return (
         _UI_REDESIGN_BODY
