@@ -39,6 +39,7 @@ from .group_dialogue_lab_page import group_dialogue_lab_page
 from .group_dialogue_review_page import group_dialogue_review_page
 from .ui_preview_page import ui_preview_page
 from .ui_preview_redesign_page import ui_preview_redesign_page
+from .bubble_color_page import bubble_color_page
 from .models import GroupDialogueRequest, GroupDialogueResponse
 
 
@@ -605,3 +606,10 @@ def ui_preview_redesign() -> str:
     """三个游戏内聊天界面的「外壳重构」设计稿，可与 /test/ui 并排比对。"""
 
     return ui_preview_redesign_page()
+
+
+@app.get("/test/bubble-colors", response_class=HTMLResponse)
+def bubble_colors() -> str:
+    """46 个角色的气泡底色核对：现方案（彩色木框）vs 备选（去色面板）。"""
+
+    return bubble_color_page()
