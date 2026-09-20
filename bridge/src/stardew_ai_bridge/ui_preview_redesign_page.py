@@ -931,6 +931,30 @@ __FRAME_SCRIPT__
   // 分隔线因此落在 panel.Y + 74 − 14 = panel.Y + 60（TitleRule 的 RuleBottomOffset）。
   const HUB_TITLE_BAND_HEIGHT = 74;
 
+  // MenuSkinRules.MessageBubbleAreaHeight —— smapi/MenuSkinRules.cs
+  // F9 长提示（"无可用回复(fb=… n=… spk=[…])" 那种排障串）放不下 header，回落到消息区下方并
+  // 占用 HintFallbackReserve = 30px，气泡区因此矮 30；短提示放 header 右侧，气泡区零损失。
+  // 与 /test/ui 同一份实现（两页必须逐值相同，否则凹槽底边对不上）。
+  function messageBubbleAreaHeight(messageAreaHeight, hintInHeader) {
+    return hintInHeader
+      ? messageAreaHeight
+      : Math.min(messageAreaHeight, Math.max(60, messageAreaHeight - 30));
+  }
+
+  // MenuSkinRules.HubListArea —— smapi/MenuSkinRules.cs
+  // 邀约列表凹槽：卡片浮在它上面，靠底色分档分层（卡片自身的 tint 不动）。
+  // 凹槽矩形与底部参考线共用这一处定义（此前两处各写一遍，参考线那份还漏了 max(40,…)）。
+  function hubListArea(panel, closeButton) {
+    const top = panel.y + HUB_TITLE_BAND_HEIGHT;   // HubListTopOffset = 74
+    const bottom = closeButton.y - 44;             // HubListBottomGap = 44
+    return {
+      x: panel.x + 24,                             // HubListMargin = 24
+      y: top,
+      w: Math.max(1, panel.w - 48),
+      h: Math.max(40, bottom - top),               // HubListMinimumHeight = 40
+    };
+  }
+
   const INVITATION_BUTTON = { width: 64, gap: 6, height: 52, topOffset: 18 };   // GroupInvitationActionLayoutRules.cs:15-18
   const actionRowX = (row) => row.x + row.w - INVITATION_BUTTON.width * 3 - INVITATION_BUTTON.gap * 2;
   const actionButtonAt = (row, index) => ({
@@ -1329,9 +1353,13 @@ __FRAME_SCRIPT__
         parseColor(styleFor(s.npc).accent, [176, 146, 242]));
     }
 
-    // 内容区凹槽（新设计）：整个 messageArea（含角色卡）是一层凹陷纸面
-    if (design && OPT.inset) {
-      nineSlice(stage, L.messageArea, SKIN.inset, MENU_TEX, { noShadow: true, z: 2 });
+    // 内容区凹槽（MenuSkinDrawing.DrawInset(b, layout.MessageArea)）：整个 messageArea
+    // （含右侧角色卡）是一层凹陷纸面，气泡与角色卡浮在它上面。
+    // ⚠ 现状栏也画：C# 已落地这一层，现状栏是「照实机」的（与遮罩、标题带同一条规矩）；
+    //   「内容区凹槽」开关只关新设计栏的那一层，用于对照。
+    if (!design || OPT.inset) {
+      nineSlice(stage, L.messageArea, SKIN.inset, MENU_TEX, { noShadow: true, z: 2 })
+        .dataset.inset = "message";
     }
 
     const area = L.conversationArea;
@@ -1454,12 +1482,18 @@ __FRAME_SCRIPT__
     // 这一条是这次改动里唯一动了气泡可用高度的分支，且只在长提示时才触发。
     const namesWidth = Math.ceil(measureText(s.participants.join("、")));
     const headerHintSpace = L.participantStrip.w - namesWidth - 24;
-    const hintInHeader = Boolean(design && OPT.inset && s.hint && measureText(s.hint) <= headerHintSpace);
-    const bubbleAreaH = (design && OPT.inset && !hintInHeader) ? Math.max(60, area.h - 30) : area.h;
+    // ⚠ 这一对与「内容区凹槽」开关**解耦**：C# 里提示行分支与气泡区高度都无条件算
+    //   （GroupDialogueMenu.draw → HintNeedsBottomRow / MessageBubbleAreaHeight），
+    //   凹槽高度又吃 bubbleAreaH，绑在一起会让「关掉凹槽」顺带改掉气泡区高度与断点。
+    const hintInHeader = Boolean(s.hint && measureText(s.hint) <= headerHintSpace);
+    const bubbleAreaH = messageBubbleAreaHeight(area.h, hintInHeader);
 
-    if (design && OPT.inset) {
+    // 内容区凹槽（MenuSkinDrawing.DrawInset(messageArea.X, messageArea.Y, messageArea.Width,
+    // bubbleAreaHeight)）：气泡浮在它上面；高度取气泡区实际可用高度（长提示时减 30）。
+    // 现状栏也画（同上一条理由）。
+    if (!design || OPT.inset) {
       nineSlice(stage, { x: area.x, y: area.y, w: area.w, h: bubbleAreaH },
-        SKIN.inset, MENU_TEX, { noShadow: true, z: 2 });
+        SKIN.inset, MENU_TEX, { noShadow: true, z: 2 }).dataset.inset = "groupMessage";
     }
     let y = area.y + 12;
     const seen = new Map();
@@ -1540,8 +1574,7 @@ __FRAME_SCRIPT__
         parseColor(styleFor(s.cards[0].participants[0]).accent, [176, 146, 242]));
     }
 
-    const listTop = L.panel.y + 74;
-    const listBottom = L.closeButton.y - 44;
+    const listArea = hubListArea(L.panel, L.closeButton);
 
     let y = L.panel.y + 94;
     for (const invitation of s.cards) {
@@ -1574,17 +1607,18 @@ __FRAME_SCRIPT__
       y += cardStep;
     }
 
-    if (design && OPT.inset) {
-      // 列表区凹槽：卡片浮在它上面，靠底色分档分层（卡片 tint 不用改）
-      nineSlice(stage, { x: L.panel.x + 24, y: listTop, w: L.panel.w - 48, h: Math.max(40, listBottom - listTop) },
-        SKIN.inset, MENU_TEX, { noShadow: true, z: 2 });
+    // 列表区凹槽（MenuSkinDrawing.DrawInset(b, MenuSkinRules.HubListArea(panel, closeButton))）：
+    // 卡片浮在它上面，靠底色分档分层（卡片自身的 tint 不用改）。
+    // ⚠ 现状栏也画（同 F8 / F9 的理由）；实机画在卡片之前，页面靠 z-index 分层，结果相同。
+    if (!design || OPT.inset) {
+      nineSlice(stage, listArea, SKIN.inset, MENU_TEX, { noShadow: true, z: 2 })
+        .dataset.inset = "hubList";
     }
 
     button(stage, L.closeButton, "关闭", true, design ? SKIN.btnSecondary : SKIN.btnPrimary);
     textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, s.hint, GAME_GRAY, "g-sm").style.zIndex = "5";
 
-    guides.push(["Panel", L.panel], ["CloseButton", L.closeButton],
-      ["ListInset", { x: L.panel.x + 24, y: listTop, w: L.panel.w - 48, h: listBottom - listTop }]);
+    guides.push(["Panel", L.panel], ["CloseButton", L.closeButton], ["ListInset", listArea]);
     addGuides(stage, guides);
     return `邀约卡 ${s.cards.length} 张（显示上限 GroupInvitationRules.cs:18 = 4）；新设计把三行文字并成两行，几何零改动`;
   }

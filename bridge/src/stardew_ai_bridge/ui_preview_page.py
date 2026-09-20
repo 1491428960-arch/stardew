@@ -310,6 +310,14 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>私聊标题带</td><td>竖条 <code>(header.X+12, header.Y+12, 4, 20)</code> 取角色强调色（<code>AccentFor</code>，查不到角色回退默认紫 <code>(176,146,242)</code>）；标题 <code>(header.X+24, header.Y+9)</code> 走 <code>Ink</code>；状态字 <code>(header.X+40+⌈标题宽⌉, header.Y+11)</code> 走 <code>InkSoft</code>；发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>，色 <code>(150,96,48)×0.55f</code> ——
               ⚠ 那是 XNA 的预乘写法（RGB 与 alpha 一起乘），实际是 <code>Color(82,52,26,140)</code>，
               网页上的等价写法是 <code>rgba(82,52,26,140/255)</code>（见页面里 <code>RULE_COLOR_CSS</code> 的推导）</td><td><code>MenuSkinDrawing.DrawTitleBand</code>、<code>MenuSkinRules.cs:71-123</code>（令牌 TitleBarInset 12 / TitleBarWidth 4 / TitleBarHeight 20 / TitleTextGap 12 / StatusTextGap 16 / TitleTextOffsetY −3 / StatusTextOffsetY −1 / RuleInset 12 / RuleBottomOffset 14 / RuleHeight 2、Ink / InkSoft / RuleColor）</td></tr>
+          <tr><td>内容区凹槽（三处）</td><td>与面板<b>同一个</b>源矩形 <code>(0,256,60,60)</code>、同一条 <code>drawTextureBox</code>，
+              只换 tint <code>(232,228,224)</code> 并<b>关掉投影</b>（<code>drawShadow: false</code>）；凹陷的纸面不该有影子，
+              只有浮起来的东西（面板、卡片、按钮）才投影。矩形：F8 = <code>layout.MessageArea</code>（含右侧角色卡）；
+              F9 = <code>(messageArea.X, messageArea.Y, messageArea.Width, bubbleAreaHeight)</code>；
+              中心 = <code>HubListArea = (panel.X+24, panel.Y+74, panel.W−48, closeButton.Y−44)</code>。
+              合成结果 = 纹理填充 <code>#fdbc6e</code> × tint ÷ 255 → <code>#e6a860</code>，比面板暗一档 ——
+              气泡与卡片于是从面板上「浮」起来</td><td><code>MenuSkinDrawing.DrawInset</code>、<code>MenuSkinRules.InsetTint</code> / <code>HubListArea</code>；
+              调用点 <code>ChatInputMenu.draw</code>、<code>GroupDialogueMenu.draw</code>、<code>GroupDialogueHubMenu.draw</code></td></tr>
           <tr><td>三个界面的遮罩</td><td>三处都画整屏 <code>Color.Black * ScrimAlpha</code>，实测把底下的游戏画面压暗到 72%（改前 F8 是 0.42f、F9 与中心<b>完全没有</b>遮罩）</td><td><code>MenuSkinDrawing.DrawScrim</code>、<code>MenuSkinRules.cs:69</code>（ScrimAlpha = 0.28f）；调用点 <code>ChatInputMenu.cs:635</code>、<code>GroupDialogueMenu.cs:162</code>、<code>GroupDialogueHubMenu.cs:119</code></td></tr>
           <tr><td>标题带的强调色来源</td><td>角色强调色与气泡、徽章同一份数据：<code>NpcBubbleStyle.Accent</code>（由 <code>npc_bubble_elements.py</code> 的 <code>palette.accent</code> 导出）。Sophia = <code>#f292d2</code></td><td><code>MenuSkinDrawing.AccentFor</code> / <code>NpcBubbleStyle.cs:11-22,54</code></td></tr>
           <tr><td>群聊面板</td><td>w=min(1120, max(680, 视口宽-48))；h=min(720, max(430, 视口高-48))</td><td><code>GroupDialogueLayoutRules.cs:32-35</code></td></tr>
@@ -318,7 +326,7 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>群聊消息区</td><td>(panel.X+20, header.Bottom, panel.W-40, footer.Y-header.Bottom-12)，一次最多 10 条</td><td><code>GroupDialogueLayoutRules.cs:28,50-54</code></td></tr>
           <tr><td>群聊按钮</td><td>发送 / 重试 / 关闭 各 88 宽、gap 8，贴 footer 右端</td><td><code>GroupDialogueLayoutRules.cs:56-66</code></td></tr>
           <tr><td>群聊标题 / 参与者文字</td><td>标题走与私聊<b>同一句</b> <code>DrawTitleBand(layout.Header, "线上多人对话", null, AccentFor(participants[0].NpcId))</code> → 竖条 <code>(header.X+12, header.Y+12, 4, 20)</code>、标题 <code>(header.X+24, header.Y+9)</code>、发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>；参与者行 <code>(participantStrip.X, participantStrip.Y)</code> 走 <code>InkSoft</code></td><td><code>GroupDialogueMenu.cs:170-176</code>、<code>MenuSkinDrawing.DrawTitleBand</code>（改前标题只在 <code>(header.X+12, header.Y+10)</code> 一行裸文字）</td></tr>
-          <tr><td>群聊底部提示</td><td>(messageArea.X+12, messageArea.Bottom-28)</td><td><code>GroupDialogueMenu.draw</code>（提示行分支）</td></tr>
+          <tr><td>群聊提示行</td><td>短提示（正常态）放 header 右侧 <code>(participantStrip.Right−提示宽, participantStrip.Y+5)</code> —— 气泡区零损失；长提示放不下 header 才回落到 <code>(messageArea.X+12, messageArea.Y+bubbleAreaHeight+4)</code>，气泡区因此减 <code>HintFallbackReserve = 30</code>。⚠ <b>页面仍只画回落位置那一条</b>（<code>messageArea.Bottom−28</code>，与 C# 的 <code>bubbleAreaHeight+4</code> 差 2px），属已知差异；气泡区高度本身已按同一条规则算（凹槽高度与「画到底 break」都用它）</td><td><code>GroupDialogueMenu.draw</code>（提示行分支）、<code>MenuSkinRules.HintNeedsBottomRow</code> / <code>MessageBubbleAreaHeight</code>（HintFallbackReserve 30 / MessageAreaMinimumHeight 60）</td></tr>
           <tr><td>推送气泡的起点</td><td>左 = messageArea.X+12，右 = messageArea.Right-12，首条 y = messageArea.Y+12</td><td><code>GroupDialogueMenu.draw</code>（bubbleLeft / bubbleRight）</td></tr>
           <tr><td>中心面板</td><td>w=min(1080, max(680, 视口宽-48))；h=min(680, max(440, 视口高-48))</td><td><code>GroupDialogueHubLayoutRules.cs:15-16</code></td></tr>
           <tr><td>中心标题 / 首行 / 行距</td><td>标题同样走 <code>DrawTitleBand</code>，header 是 <code>new Rectangle(panel.X, panel.Y, panel.W, HubTitleBandHeight = 74)</code> → 竖条 <code>(panel.X+12, panel.Y+12, 4, 20)</code>、标题 <code>(panel.X+24, panel.Y+9)</code>、发丝线 <code>(panel.X+12, panel.Y+60, panel.W-24, 2)</code>（74 − 14）；首行 y=panel.Y+94；每行 92 高、步进 104</td><td><code>GroupDialogueHubMenu.cs:126-131</code>、<code>MenuSkinRules.cs:237</code>（改前标题只在 <code>(panel.X+32, panel.Y+24)</code> 一行裸文字）</td></tr>
@@ -363,9 +371,15 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
             底色用同一条 rgba 叠在面板上。</li>
         <li><b>游戏字体</b>：游戏是位图 SpriteFont，本页面用系统中文黑体近似，字形宽度与断行位置会与原版有差；
             <code>LineSpacing ≈ 28</code> 是从「三个单行气泡高度都是 84px」反推的，不是从代码读到的常量。</li>
-        <li><b>F8 面板边框（已查清）</b>：私聊走 <code>Game1.drawDialogueBox</code>，用 <code>Maps\MenuTiles</code> 的
-            <b>64px</b> 九宫格、且<b>没有投影</b>；F9 / Hub 走 <code>IClickableMenu.drawTextureBox</code>，
-            用同一张图的 (0,256,60,60) 切 <b>20px</b>、带投影。</li>
+        <li><b>F8 面板边框（页面未跟上实机，已知差异）</b>：页面照 <code>Game1.drawDialogueBox</code> 画 ——
+            <code>Maps\MenuTiles</code> 的 <b>64px</b> 九宫格、<b>没有投影</b>；而 2026-09-20 外壳重构后实机的
+            <code>ChatInputMenu.draw</code> 已改调 <code>MenuSkinDrawing.DrawPanel</code>，与 F9 / 群聊中心走
+            <b>同一条</b> <code>drawTextureBox</code>（同图 (0,256,60,60) 切 <b>20px</b>、白 tint、<b>带</b>投影）。
+            也就是页面上 F8 的框比实机<b>厚一圈、且少了投影</b>；下面那两条「框与内容的相对位置」也随这条一起失效。
+            （<code>/test/ui-redesign</code> 的现状栏用的是 20px 近似版，两页在这一点上不同。）</li>
+        <li><b>F9 提示行的位置（页面未跟上实机，已知差异）</b>：实机现在「短提示放 header 右侧、长提示才落到底部」，
+            页面仍把提示画在 <code>messageArea.Bottom−28</code>。示例提示是短提示，所以页面上看到的是一条压在
+            气泡下方的提示、实机则画在参与者条那一行的右端。气泡区高度（凹槽高度、画到底的断点）已按实机规则算。</li>
         <li><b>阴影（仍是近似）</b>：参数已按原版（偏移 (-8,+8)、<code>Color.Black * 0.4f</code>），但原版是
             「九宫格逐块再画一遍」，其中中心块还会向外放大 num/2 = 10px；页面用一层 drop-shadow 近似，
             框体轮廓一致，紧贴边框内侧那 10px 的差看不出来、但确实存在。</li>
@@ -374,7 +388,8 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
             <code>addedTileHeightForQuestions</code> 恒为 -1，也就是<b>整个框相对传入矩形下移 64px</b>
             （Game1.cs:15927-15943）。页面按 <code>layout.Panel</code> 直接画，所以实机里输入框几乎贴到面板底边，
             页面上则留了 24px 的安全边距。要看实机那种紧凑感就得把框下移 64px，但那会牵动三个界面的所有坐标，
-            本次未改。</li>
+            本次未改。<b>⚠ 这条随上一条一起失效</b>：实机改调 <code>DrawPanel</code> 之后不再经过
+            <code>drawDialogueBox</code>，那 64px 的偏移在实机上已经不存在了。</li>
         <li><b>面板框的底边位置（同上一条的延伸，未查明）</b>：实机截图量到面板可见底边在 y=553、
             顶边图案在 y=230，两个数无法用「传入矩形 + 64px 偏移」同时解释；可能与 title-safe 裁剪有关，
             没有继续深挖。贴图本身的边框段已逐段对齐。</li>
@@ -533,6 +548,21 @@ __FRAME_SCRIPT__
   const METER_BG = [206, 195, 180];        // ChatInputMenu.DrawProfile（好感度条底）
   const METER_FILL = [181, 137, 191];      // ChatInputMenu.DrawProfile（好感度条填充）
   const DEFAULT_ACCENT = [176, 146, 242];  // MenuSkinDrawing.DefaultAccent（查不到角色时的系统默认紫）
+
+  /**
+   * 内容区凹槽的 tint：`MenuSkinRules.InsetTint = new Color(232, 228, 224)`（smapi/MenuSkinRules.cs）。
+   *
+   * 与面板同一个源矩形、同一条 `IClickableMenu.drawTextureBox`，只换 tint 并**关掉投影**
+   * （`MenuSkinDrawing.DrawInset` 的 `drawShadow: false`）—— 凹陷的纸面不该有影子，
+   * 只有浮起来的东西（面板、卡片、按钮）才投影。于是三层靠底色分档：
+   * 面板白 tint（最亮）→ 凹槽暗一档 → 卡片与按钮回到白 tint，气泡从凹槽上「浮」起来，
+   * 而不是在同色面板上糊成一片。
+   *
+   * 合成结果 = 纹理填充 `#fdbc6e` × tint ÷ 255 = **`#e6a860`**，比面板暗一档。
+   * 三个界面（F8 消息区、F9 消息区、群聊中心列表区）共用这一个值 —— 实机那边
+   * 也只有 `MenuSkinDrawing.DrawInset` 一处定义。
+   */
+  const INSET_TINT = [232, 228, 224];
 
   /**
    * 标题带底部那条发丝分隔线的颜色。
@@ -706,6 +736,30 @@ __FRAME_SCRIPT__
     y: row.y + INVITATION_BUTTON.topOffset, w: INVITATION_BUTTON.width, h: INVITATION_BUTTON.height,
   });
 
+  // MenuSkinRules.MessageBubbleAreaHeight —— smapi/MenuSkinRules.cs
+  // 长提示（"无可用回复(fb=… n=… spk=[…])" 那种排障串）放不下 header，回落到消息区下方并
+  // 占用 HintFallbackReserve = 30px，气泡区因此矮 30；短提示放 header 右侧，气泡区零损失。
+  // 外面那层 Math.min 只在退化视口（消息区比 MessageAreaMinimumHeight 还矮）时收口，
+  // 免得凹槽被画到消息区外面；四个预设分辨率都碰不到它。
+  function messageBubbleAreaHeight(messageAreaHeight, hintInHeader) {
+    return hintInHeader
+      ? messageAreaHeight
+      : Math.min(messageAreaHeight, Math.max(60, messageAreaHeight - 30));
+  }
+
+  // MenuSkinRules.HubListArea —— smapi/MenuSkinRules.cs
+  // 邀约列表凹槽：卡片浮在它上面，靠底色分档分层（卡片自身的 tint 不动）。
+  function hubListArea(panel, closeButton) {
+    const top = panel.y + HUB_TITLE_BAND_HEIGHT;   // HubListTopOffset = 74
+    const bottom = closeButton.y - 44;             // HubListBottomGap = 44
+    return {
+      x: panel.x + 24,                             // HubListMargin = 24
+      y: top,
+      w: Math.max(1, panel.w - 48),
+      h: Math.max(40, bottom - top),               // HubListMinimumHeight = 40
+    };
+  }
+
   // ── 文本度量 ───────────────────────────────────────────────────────────
   // ⚠ 游戏用 Game1.smallFont.MeasureString（位图字体）；网页没有同款字体，
   //   这里用 canvas 按页面实际使用的字体测量，保证「断行结果」与「DOM 渲染宽度」一致，
@@ -820,11 +874,16 @@ __FRAME_SCRIPT__
    * 着色走 feColorMatrix（见 tintFilter）；投影用 drop-shadow(-8px 8px) 复刻原版偏移，
    * 形状跟随贴图 alpha，而不是把一个整矩形压暗 —— 原版阴影是逐块画的，
    * 露在框外的只有边框轮廓。
+   *
+   * @param options 可选：`{ noShadow: true }` 关掉投影（凹槽用，见 insetWell）。
    */
-  function nineSlice(parent, r, tintColor, texture) {
+  function nineSlice(parent, r, tintColor, texture, options) {
     const tex = texture || MENU_TEX;
     const tint = tintColor || [255, 255, 255];
-    const filter = [tintFilter(tint), tex.shadow].filter(Boolean).join(" ");
+    const opts = options || {};
+    // 凹槽不投影（C# 的 drawShadow: false）—— 凹陷的纸面不该有影子。
+    const shadow = opts.noShadow ? null : tex.shadow;
+    const filter = [tintFilter(tint), shadow].filter(Boolean).join(" ");
 
     // 内衬：贴图的九宫格在外沿留了 tex.inner 的透明，drawDialogueBox 会额外补一整块中心格，
     // 让它透出面色。CSS 的 fill 只到 padding box，所以这里先用同图取「中心格」铺一层底，
@@ -853,6 +912,22 @@ __FRAME_SCRIPT__
     if (filter) {
       el.style.filter = filter;
     }
+    return el;
+  }
+
+  /**
+   * 内容区凹槽：`MenuSkinDrawing.DrawInset` —— 同图九宫格 + `MenuSkinRules.InsetTint` + **不投影**。
+   *
+   * z-index 给 1：面板也是 1，DOM 在后 ⇒ 压在面板之上；气泡、角色卡、卡片、按钮都是 ≥2
+   * ⇒ 全部浮在凹槽上（实机那边靠「先画凹槽、后画气泡/卡片」的绘制顺序达到同一效果）。
+   *
+   * `data-inset` 是给自动化核对留的锚点（与 `data-band`、`data-bubble` 同一套约定），
+   * 值标明是哪一处凹槽：`message` / `groupMessage` / `hubList`。页面渲染不受影响。
+   */
+  function insetWell(parent, r, anchor) {
+    const el = nineSlice(parent, r, INSET_TINT, MENU_TEX, { noShadow: true });
+    el.style.zIndex = "1";
+    el.dataset.inset = anchor;
     return el;
   }
 
@@ -1186,6 +1261,11 @@ __FRAME_SCRIPT__
     // —— ChatInputMenu.draw；边框是对话盒纹理 ⚠
     nineSlice(stage, L.panel, [255, 255, 255], DIALOGUE_TEX).style.zIndex = "1";
 
+    // 内容区凹槽（ChatInputMenu.draw → `MenuSkinDrawing.DrawInset(b, layout.MessageArea)`，
+    // 画在气泡与角色卡之前）：凹槽盖住**整个 MessageArea（含右侧角色卡）**，气泡与角色卡
+    // 浮在它上面 —— 这正是「气泡从同色面板上浮起来」的那一层，实机已画。
+    insetWell(stage, L.messageArea, "message");
+
     // 标题带（ChatInputMenu.DrawHeader → MenuSkinDrawing.DrawTitleBand）：
     // 角色强调色竖条 + 「和 X 聊聊」+ 好感度状态字 + 发丝分隔线。
     // 2026-09-20 外壳重构后 ShouldDrawHeaderTitle / ShouldDrawHeaderStatus 都是 true，
@@ -1306,6 +1386,19 @@ __FRAME_SCRIPT__
 
     // 消息区（GroupDialogueMenu.draw）
     const area = L.messageArea;
+    // 提示行放哪（GroupDialogueMenu.draw → `MenuSkinRules.HintNeedsBottomRow`）：
+    // 短提示（正常态）放 header 右侧、与参与者条同一行 —— 气泡区零损失；长提示放不下 header，
+    // 回落到消息区下方并占 30px。示例提示是短提示，走零损失那条（长度实测见报告）。
+    const namesWidth = Math.ceil(measureText(s.participants.join("、")));
+    const headerHintSpace = L.participantStrip.w - namesWidth - 24;   // MenuSkinRules.HeaderHintPadding
+    const hintInHeader = Boolean(s.hint) && measureText(s.hint) <= headerHintSpace;
+    const bubbleAreaH = messageBubbleAreaHeight(area.h, hintInHeader);
+
+    // 内容区凹槽（GroupDialogueMenu.draw → `MenuSkinDrawing.DrawInset(messageArea.X, messageArea.Y,
+    // messageArea.Width, bubbleAreaHeight)`）：气泡浮在它上面，画在气泡之前。
+    // 高度取**气泡区实际可用高度**（长提示时减 30），与 C# 传的 bubbleAreaHeight 同值。
+    insetWell(stage, { x: area.x, y: area.y, w: area.w, h: bubbleAreaH }, "groupMessage");
+
     const bubbleLeft = area.x + 12;        // draw 的 bubbleLeft
     const bubbleRight = area.x + area.w - 12; // draw 的 bubbleRight
     let y = area.y + 12;                   // draw 的首条 y
@@ -1322,7 +1415,7 @@ __FRAME_SCRIPT__
       if (!drawn) continue;
       drawnCount++;
       y += drawn + BUBBLE.gap;                           // draw 的 y 步进
-      if (y > area.y + area.h - LINE_SPACING) break;     // draw 的画到底 break
+      if (y > area.y + bubbleAreaH - LINE_SPACING) break; // draw 的画到底 break（用气泡区实际高度）
     }
 
     button(stage, L.sendButton, "发送", true);
@@ -1356,6 +1449,11 @@ __FRAME_SCRIPT__
     );
 
     let y = L.panel.y + 94;   // draw 的首行 y
+    // 列表区凹槽（GroupDialogueHubMenu.draw → `MenuSkinDrawing.DrawInset(b, MenuSkinRules.HubListArea(
+    // panel, closeButton))`）：卡片浮在它上面，靠底色分档分层（卡片自身的 tint 不动）。
+    // 实机画在卡片之前；页面靠 z-index 分层（凹槽 1、卡片 2），结果相同。
+    const listArea = hubListArea(L.panel, L.closeButton);
+    insetWell(stage, listArea, "hubList");
     for (const invitation of SAMPLE.hub) {
       const row = { x: L.panel.x + 32, y, w: L.panel.w - 64, h: 92 };          // draw 的卡片行矩形
       nineSlice(stage, row, [255, 255, 255], MENU_TEX).style.zIndex = "2";     // draw 的卡片 drawTextureBox
@@ -1372,7 +1470,7 @@ __FRAME_SCRIPT__
     button(stage, L.closeButton, "关闭", true);                                  // draw 的关闭按钮
     textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, SAMPLE.hubHint, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的提示行（InkSoft）
 
-    addGuides([["Panel", L.panel], ["CloseButton", L.closeButton]]);
+    addGuides([["Panel", L.panel], ["CloseButton", L.closeButton], ["ListInset", listArea]]);
     return `邀约卡 ${SAMPLE.hub.length} 张，显示上限 GroupInvitationRules.cs:18 = 4`;
   }
 
