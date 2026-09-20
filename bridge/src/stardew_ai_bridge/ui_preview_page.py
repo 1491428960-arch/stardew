@@ -262,14 +262,14 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
         <tbody>
           <tr>
             <td>F8 私聊</td>
-            <td>面板 + 全屏压暗底、消息区气泡（玩家靠右 / NPC 靠左带徽章与装饰边框）、
+            <td>面板 + 全屏压暗底、标题带（角色强调色竖条 + 「和 X 聊聊」+ 好感度状态字 + 发丝分隔线）、
+                消息区气泡（玩家靠右 / NPC 靠左带徽章与装饰边框）、
                 右侧角色面板（立绘位、名字、好感度、好感度条）、底部输入框与四个按钮、消息区提示行。
-                <b>两点是实现的真实样子，不是本稿省略</b>：① 顶部 header 画不画由
-                <code>ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus</code> 决定
-                （2026-09-20 外壳重构后两个开关都是 true，标题带会画出来）；② 720p 下消息区只放得下一条消息，
+                <b>一点是实现的真实样子，不是本稿省略</b>：720p 下消息区只放得下一条消息，
                 其余要靠滚动才能看到（<code>ChatTextLayoutRules.SelectLatestThatFit</code> 的取窗逻辑）；
                 换到 1920×1080 就能看到玩家与 NPC 各一条。</td>
-            <td><code>ChatLayoutRules.Calculate</code>、<code>ChatInputMenu.draw</code></td>
+            <td><code>ChatLayoutRules.Calculate</code>、<code>ChatInputMenu.draw</code>、
+                <code>MenuSkinDrawing.DrawTitleBand</code></td>
           </tr>
           <tr>
             <td>F9 群聊</td>
@@ -301,7 +301,9 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>私聊 header / footer</td><td>header 高 min(92, max(48, h/4))；footer 高 min(112, max(72, h/3))，贴底</td><td><code>ChatLayoutRules.cs:62-71</code></td></tr>
           <tr><td>私聊消息区 / 角色面板</td><td>消息区高 max(40, footer.Y-header.Bottom-16)；宽≥240+280+8 时右侧开 280×min(112,高) 的角色面板</td><td><code>ChatLayoutRules.cs:72-93</code></td></tr>
           <tr><td>私聊按钮</td><td>footer 宽≥600 → gap 8，发送 96、找话题 128、物品 104、结束 96，全部同高贴底</td><td><code>ChatLayoutRules.cs:95-130</code></td></tr>
-          <tr><td>私聊 header 文字</td><td>标题带 + 好感度状态字（2026-09-20 外壳重构后两个开关都是 true）</td><td><code>ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus</code></td></tr>
+          <tr><td>私聊 header 画不画</td><td>两个开关都返回 true（2026-09-20 外壳重构后）</td><td><code>ChatLayoutRules.cs:188,191</code></td></tr>
+          <tr><td>私聊标题带</td><td>竖条 <code>(header.X+12, header.Y+12, 4, 20)</code> 取角色强调色（<code>AccentFor</code>，查不到角色回退默认紫 <code>(176,146,242)</code>）；标题 <code>(header.X+24, header.Y+9)</code> 走 <code>Ink</code>；状态字 <code>(header.X+40+⌈标题宽⌉, header.Y+11)</code> 走 <code>InkSoft</code>；发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>，色 <code>(150,96,48)×0.55f</code></td><td><code>MenuSkinDrawing.DrawTitleBand</code>、<code>MenuSkinRules.cs:71-123</code>（令牌 TitleBarInset 12 / TitleBarWidth 4 / TitleBarHeight 20 / TitleTextGap 12 / StatusTextGap 16 / TitleTextOffsetY −3 / StatusTextOffsetY −1 / RuleInset 12 / RuleBottomOffset 14 / RuleHeight 2、Ink / InkSoft / RuleColor）</td></tr>
+          <tr><td>标题带的强调色来源</td><td>角色强调色与气泡、徽章同一份数据：<code>NpcBubbleStyle.Accent</code>（由 <code>npc_bubble_elements.py</code> 的 <code>palette.accent</code> 导出）。Sophia = <code>#f292d2</code></td><td><code>MenuSkinDrawing.AccentFor</code> / <code>NpcBubbleStyle.cs:11-22,54</code></td></tr>
           <tr><td>群聊面板</td><td>w=min(1120, max(680, 视口宽-48))；h=min(720, max(430, 视口高-48))</td><td><code>GroupDialogueLayoutRules.cs:32-35</code></td></tr>
           <tr><td>群聊 header / footer</td><td>header 高 min(118, 面板高)；footer 高 min(104, 面板高) 贴底、左右内缩 20</td><td><code>GroupDialogueLayoutRules.cs:42-44</code></td></tr>
           <tr><td>群聊参与者条</td><td>(header.X+20, header.Bottom-48, header.W-40, min(32, header.H-20))</td><td><code>GroupDialogueLayoutRules.cs:45-49</code></td></tr>
@@ -522,6 +524,25 @@ __FRAME_SCRIPT__
   const DARK_BUBBLE_TEXT = [243, 240, 252]; // ChatBubbleDrawing.DarkBubbleText
   const METER_BG = [206, 195, 180];        // ChatInputMenu.DrawProfile（好感度条底）
   const METER_FILL = [181, 137, 191];      // ChatInputMenu.DrawProfile（好感度条填充）
+  const DEFAULT_ACCENT = [176, 146, 242];  // MenuSkinDrawing.DefaultAccent（查不到角色时的系统默认紫）
+
+  /**
+   * 标题带底部那条发丝分隔线的颜色。
+   *
+   * C# 是 `MenuSkinRules.RuleColor = new Color(150, 96, 48) * 0.55f`。
+   * **XNA 的 `Color * float` 把 RGB 与 alpha 一起乘**（Color.cs 的 operator*）：
+   * (150,96,48,255) × 0.55 → Color(82, 52, 26, 140)。
+   * 而 SpriteBatch 的 AlphaBlend 是 `src = One / dst = InverseSourceAlpha`，
+   * tint 又是直接乘在 1×1 白纹理（Game1.fadeToBlackRect）上的 ——
+   * 于是「预乘过的颜色 + alpha 140/255」在网页上的等价写法就是下面这条 rgba。
+   *
+   * ⚠ 不要写成 `rgba(150,96,48,.55)` —— 那是「原色 + 55% 透明」，没有把预乘算进去：
+   * 叠在 #ffc576 面板上得 rgb(197,141,80)，比 C# 的 rgb(160,117,68) 亮 37 个色阶。
+   * 本页按 C# 语义实测合成色 rgb(160,118,67)，与上面的换算吻合。
+   * （设计页 ui_preview_redesign_page.py 的 SKIN.rule / ruleAlpha 用的是未预乘的写法；
+   * 两边对不上时以 C# 为准 —— 本页的定位是现状复刻。）
+   */
+  const RULE_COLOR_CSS = "rgba(82,52,26,0.549)";
 
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
   // 「纹理色 × tint ÷ 255」这条乘法现在由 tintFilter() 的 feColorMatrix 真正作用在贴图上，
@@ -851,6 +872,54 @@ __FRAME_SCRIPT__
     return el;
   }
 
+  /**
+   * 标题带：`MenuSkinDrawing.DrawTitleBand`（ChatInputMenu.DrawHeader 唯一的调用点）。
+   *
+   * 2026-09-20 外壳重构后 `ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus`
+   * 都返回 true，实机在 header 里画四样东西；本函数逐条照 `MenuSkinRules` 的设计令牌还原：
+   *
+   *   竖条   MenuSkinRules.TitleBar(header)         = (header.X+12, header.Y+12, 4, 20)，取角色强调色
+   *   标题   MenuSkinRules.TitleTextPosition(header)= (header.X+24, header.Y+9)，颜色 Ink = Color.Black
+   *   状态字 MenuSkinRules.StatusTextPosition(...)  = (header.X+40+ceil(标题宽), header.Y+11)，InkSoft = Color.DimGray
+   *   分隔线 MenuSkinRules.TitleRule(header)        = (header.X+12, header.Bottom-14, header.W-24, 2)
+   *
+   * 令牌数值：TitleBarInset 12 / TitleBarWidth 4 / TitleBarHeight 20 / TitleTextGap 12 /
+   * StatusTextGap 16 / TitleTextOffsetY -3 / StatusTextOffsetY -1 / RuleInset 12 /
+   * RuleBottomOffset 14 / RuleHeight 2（MenuSkinRules.cs:71-123）。
+   *
+   * ⚠ 状态字的 x 依赖**标题的实测宽度**（C# 是 `Game1.smallFont.MeasureString(title).X` 再
+   * `Math.Ceiling`），所以这里用页面同一套 canvas 度量 measureText —— 与断行用的是同一把尺子。
+   *
+   * @param header  C# 的 layout.Header（ChatLayoutRules.Calculate 的第 62-66 行）
+   * @param accent  角色强调色：MenuSkinDrawing.AccentFor(npc.Name)，与气泡、徽章同源
+   */
+  function titleBand(parent, header, title, status, accent) {
+    const barX = header.x + 12;                                   // TitleBarInset
+    const barY = header.y + 12;                                   // TitleBarInset（与 x 同值）
+    const bar = rectEl(parent, { x: barX, y: barY, w: 4, h: 20 }); // TitleBarWidth / TitleBarHeight
+    bar.style.background = rgb(accent);
+    bar.style.zIndex = "3";
+
+    // TitleTextPosition：横 barX + TitleTextGap(12)，纵 barY + TitleTextOffsetY(-3)
+    textAt(parent, barX + 12, barY - 3, title, GAME_BLACK).style.zIndex = "3";
+
+    if (status) {
+      // StatusTextPosition：barX + TitleTextGap(12) + ceil(标题宽) + StatusTextGap(16)，纵 barY + StatusTextOffsetY(-1)
+      const statusX = barX + 12 + Math.ceil(measureText(title)) + 16;
+      textAt(parent, statusX, barY - 1, status, DIM_GRAY, "g-sm").style.zIndex = "3";
+    }
+
+    // TitleRule：距 header 左右各内缩 RuleInset(12)、底边之上 RuleBottomOffset(14)、高 RuleHeight(2)
+    const rule = rectEl(parent, {
+      x: header.x + 12,
+      y: header.y + header.h - 14,
+      w: Math.max(1, header.w - 24),
+      h: 2,
+    });
+    rule.style.background = RULE_COLOR_CSS;
+    rule.style.zIndex = "3";
+  }
+
   // ── 气泡（ChatBubbleDrawing.Draw）──
   const BUBBLE = { padding: 12, lineSpacing: 4, gap: 20, safetyMargin: 8, minWidth: 180 }; // :20,23,29,32,35
 
@@ -1094,9 +1163,18 @@ __FRAME_SCRIPT__
     // —— ChatInputMenu.draw；边框是对话盒纹理 ⚠
     nineSlice(stage, L.panel, [255, 255, 255], DIALOGUE_TEX).style.zIndex = "1";
 
-    // header：ChatLayoutRules.ShouldDrawHeaderTitle / ShouldDrawHeaderStatus 两个开关
-    // （2026-09-20 外壳重构后都是 true，实机会画标题带；本页未复刻这一层，留空。）
-    // 勾「布局参考线」能看到这块矩形。
+    // 标题带（ChatInputMenu.DrawHeader → MenuSkinDrawing.DrawTitleBand）：
+    // 角色强调色竖条 + 「和 X 聊聊」+ 好感度状态字 + 发丝分隔线。
+    // 2026-09-20 外壳重构后 ShouldDrawHeaderTitle / ShouldDrawHeaderStatus 都是 true，
+    // 这四样实机都画；标题与状态文案逐字照 DrawHeader：
+    //   $"和 {npc.displayName} 聊聊" / hearts is null ? "好感度未知" : $"好感度 {hearts} 心"
+    // 强调色走 MenuSkinDrawing.AccentFor(npc.Name) —— 与气泡、徽章同一个来源。
+    titleBand(
+      stage, L.header,
+      `和 ${s.npc} 聊聊`,
+      s.hearts === null || s.hearts === undefined ? "好感度未知" : `好感度 ${s.hearts} 心`,
+      parseColor(styleFor(s.npc).accent, DEFAULT_ACCENT),
+    );
 
     // 消息区（ChatInputMenu.DrawMessages）
     const area = L.conversationArea;
@@ -1178,7 +1256,7 @@ __FRAME_SCRIPT__
     caret(stage, { x: L.inputBox.x + 16, y: L.inputBox.y + 8, w: 4, h: 32 });
 
     addGuides([
-      ["Panel", L.panel], ["Header（空）", L.header], ["MessageArea", L.messageArea],
+      ["Panel", L.panel], ["Header", L.header], ["MessageArea", L.messageArea],
       ["ConversationArea", L.conversationArea], ["ProfilePanel", L.profilePanel],
       ["InputBox", L.inputBox], ["Send", L.sendButton], ["Topic", L.topicButton],
       ["Inventory", L.inventoryButton], ["Close", L.closeButton],
