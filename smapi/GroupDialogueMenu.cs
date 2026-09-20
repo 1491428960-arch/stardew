@@ -175,15 +175,42 @@ public sealed class GroupDialogueMenu : IClickableMenu
         b.DrawString(Game1.smallFont, "线上多人对话", new Vector2(layout.Header.X + 12, layout.Header.Y + 10), Color.Black);
         b.DrawString(Game1.smallFont, string.Join("、", participants.Select(item => item.DisplayName)), new Vector2(layout.ParticipantStrip.X, layout.ParticipantStrip.Y), Color.DarkSlateGray);
 
-        var y = layout.MessageArea.Y + 12;
+        // 与 F8 私聊共用 ChatBubbleDrawing：换行宽度、角色配色、图标徽章
+        // 只有一处定义。此前这里是一行 "{发言人}：{内容}" 纯文本，长句既不
+        // 换行又会溢出面板。
+        var messageArea = layout.MessageArea;
+        var bubbleLeft = messageArea.X + 12;
+        var bubbleRight = messageArea.Right - 12;
+        var contentWidth = ChatBubbleDrawing.ContentWidth(bubbleRight - bubbleLeft);
+        var measure = (string value) => Game1.smallFont.MeasureString(value).X;
+        var y = messageArea.Y + 12;
         foreach (var message in visibleMessages.TakeLast(10))
         {
-            var speaker = message.SpeakerType == "player"
+            var isPlayer = message.SpeakerType == "player";
+            var speaker = isPlayer
                 ? "玩家"
                 : displayNames.GetValueOrDefault(message.SpeakerId, message.SpeakerId);
-            b.DrawString(Game1.smallFont, $"{speaker}：{message.Content}", new Vector2(layout.MessageArea.X + 12, y), message.SpeakerType == "player" ? Color.DarkSlateBlue : Color.Black);
-            y += Game1.smallFont.LineSpacing + 8;
-            if (y > layout.MessageArea.Bottom - Game1.smallFont.LineSpacing)
+            var lines = ChatTextLayoutRules.Wrap(
+                message.Content ?? string.Empty,
+                contentWidth,
+                measure);
+            if (lines.Count == 0)
+            {
+                continue;
+            }
+
+            var drawnHeight = ChatBubbleDrawing.Draw(
+                b,
+                bubbleLeft,
+                bubbleRight,
+                y,
+                speaker,
+                lines,
+                message.SpeakerId,
+                isPlayer);
+
+            y += drawnHeight + ChatBubbleDrawing.Gap;
+            if (y > messageArea.Bottom - Game1.smallFont.LineSpacing)
             {
                 break;
             }

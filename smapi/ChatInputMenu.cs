@@ -14,10 +14,10 @@ public class ChatInputMenu : IClickableMenu
 {
     private const int MessagePadding = 12;
     private const int PortraitSize = 64;
-    private const int BubblePadding = 12;
-    private const int BubbleSafetyMargin = 8;
-    private const int BubbleGap = 8;
-    private const int MessageLineSpacing = 4;
+    private const int BubblePadding = ChatBubbleDrawing.Padding;
+    private const int BubbleSafetyMargin = ChatBubbleDrawing.SafetyMargin;
+    private const int BubbleGap = ChatBubbleDrawing.Gap;
+    private const int MessageLineSpacing = ChatBubbleDrawing.LineSpacing;
     private const int ScrollBarWidth = 12;
     private const int ScrollBarGap = 8;
     private const int ScrollBarMinThumb = 24;
@@ -732,78 +732,25 @@ public class ChatInputMenu : IClickableMenu
                 contentWidth,
                 measure);
 
-            var textWidth = lines.Max(line => measure(line));
-            var bubbleWidth = Math.Clamp(
-                (int)Math.Ceiling(textWidth + (BubblePadding * 2)),
-                Math.Min(180, maxWidth),
-                maxWidth);
-            var bubbleHeight = (BubblePadding * 2)
-                + Game1.smallFont.LineSpacing
-                + MessageLineSpacing
-                + (lines.Count * Game1.smallFont.LineSpacing)
-                + ((lines.Count - 1) * MessageLineSpacing);
+            var bubbleHeight = ChatBubbleDrawing.MeasureHeight(lines.Count);
             if (y + bubbleHeight > area.Bottom - MessagePadding)
             {
                 break;
             }
 
-            var bubbleX = isPlayer
-                ? area.Right - MessagePadding - bubbleWidth
-                : area.X + MessagePadding;
-            var bubble = new Rectangle(bubbleX, y, bubbleWidth, bubbleHeight);
-
-            // 角色视觉：NPC 侧使用角色专属底色 + 图标徽章 + 特征色（数据来自
-            // astra 的群聊气泡资产）。玩家侧与未知角色保持原有观感。
-            var style = isPlayer ? null : NpcBubbleStyle.For(npc.Name);
-            var showBadge = style is not null && NpcBubbleStyle.Sheet is not null;
-            var badgeSize = NpcBubbleStyle.CellSize;
-
-            drawTextureBox(
+            // 气泡的尺寸、换行宽度、角色配色、图标徽章与文字颜色统一由
+            // ChatBubbleDrawing 决定——F9 群聊走的是同一份逻辑，不再各写一套。
+            var drawnHeight = ChatBubbleDrawing.Draw(
                 b,
-                bubble.X,
-                bubble.Y,
-                bubble.Width,
-                bubble.Height,
-                isPlayer
-                    ? new Color(226, 239, 246)
-                    : style?.Bubble ?? new Color(239, 231, 244));
-
-            var textLeft = bubble.X + BubblePadding;
-            var speakerLeft = textLeft;
-            if (showBadge)
-            {
-                b.Draw(
-                    NpcBubbleStyle.Sheet!,
-                    new Rectangle(textLeft, bubble.Y + BubblePadding, badgeSize, badgeSize),
-                    style!.SheetSource,
-                    Color.White);
-                speakerLeft = textLeft + badgeSize + 6;
-            }
-
-            var speakerColor = isPlayer
-                ? Color.DarkSlateBlue
-                : style?.Accent ?? Color.DarkMagenta;
-            b.DrawString(
-                Game1.smallFont,
+                area.X + MessagePadding,
+                area.Right - MessagePadding,
+                y,
                 speaker,
-                new Vector2(speakerLeft, bubble.Y + BubblePadding),
-                speakerColor);
-            // 深色角色气泡上黑字不可读，正文改用近白；玩家侧与未知角色维持黑字。
-            var bodyColor = isPlayer || style is null
-                ? Color.Black
-                : new Color(243, 240, 252);
-            var lineY = bubble.Y + BubblePadding + Game1.smallFont.LineSpacing + MessageLineSpacing;
-            foreach (var line in lines)
-            {
-                b.DrawString(
-                    Game1.smallFont,
-                    line,
-                    new Vector2(textLeft, lineY),
-                    bodyColor);
-                lineY += Game1.smallFont.LineSpacing + MessageLineSpacing;
-            }
+                lines,
+                npc.Name,
+                isPlayer);
 
-            y += bubbleHeight + BubbleGap;
+            y += drawnHeight + BubbleGap;
         }
 
         UpdateScrollBar(
