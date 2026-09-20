@@ -65,4 +65,6 @@
   `& $py -B -m pytest bridge/tests --cov=stardew_ai_bridge --cov-report=term-missing:skip-covered`
 - 新增脚本：`scripts/verify_project.ps1`（一键验证）、`E:\workspace\hub\scripts\time-check.ps1`（时间/阶段）
 - 诊断探针保留在 `E:\workspace\hub\.tmp\group-default-probe-20260919\`（`probe.py` / `probe2.py` / `probe3.py`）
+| B26 | **F8 支持选择对话对象** | 现在 F8 只能和“当前地点／鼠标指向的 NPC”对话（见 `NpcTargetResolver`）。用户希望能**主动选人**。需要定的点：候选范围（已认识的？当前地点的？全部？——注意 `friendshipData` 在测试档里有 47 人）、菜单形态（`GroupParticipantMenu` 已随“自由发起”一起删除，可参考 `GroupDialogueHubMenu` 的列表绘制）、以及“选完之后如何接到现有的对话链路” | 需要新菜单 + 目标解析改造；改完跑 `capture`/`topic` 视觉场景并真机确认 |
+| B27 | **F8 菜单的头像改用游戏渲染的肖像（以支持美化包）** | 用户原话：“**F8 的头像有点丑，改成和实际对话的头像一样，能够看到美化包**”。现状是 F8 菜单没有走原版对话框的肖像渲染路径，所以**肖像类 mod（如 Seasonal Cute Characters）的美化不生效**。改成复用游戏自己的肖像绘制（`NPC.Portrait` / 对话气泡的绘制方式）即可与“实际对话”一致 | 需对照原版对话框的绘制路径；改完 `capture` 场景截图对比 |
 | B25 | ~~**补齐当前默认索引的构建命令**~~ **✅ 已于第 176 项完成（见 `docs/rebuild-index.md`）** | **2026-09-20 第 175 项发现**：data/generated/ 里的默认索引 `vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json`（14.5 MB、09-18）**建构命令没有落档**——文档里只有结果与 8-26 时代的旧命令（那时索引名还是 `sve-profile-index-zh-CN.json`），而当前索引多了 `--vanilla-events-root` 等参数。**风险**：改过 `corpus.py`／`profile_index.py` 后想重建索引时，无法确定该用哪组参数，只能从工作日志里反推。 | 从 `artifacts/corpus/20260918-*` 与 `active-work.md` 第 459–463 项反推出完整命令，实测重建一次并与现有默认索引对比 SHA/统计；然后把命令写进 `docs/README.md` 或项目 `AGENTS.md` |
