@@ -52,7 +52,6 @@ public sealed class GroupInvitationGenerator
         // 也不必引入随机数——生成结果可测、可复现。
         var preferThree = candidates.Length >= GroupInvitationRules.MaxParticipants &&
                           context.CurrentTotalDays % 2 == 0;
-        foreach (var group in EnumerateGroups(candidates, preferThree))
         {
             foreach (var template in MatchingTemplates(group))
             {
