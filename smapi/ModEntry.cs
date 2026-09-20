@@ -59,28 +59,36 @@ public sealed class ModEntry : Mod
             TryOpenGroupHubForVisualTest,
             () => bridgeClient);
         GameStateCollector.ConfigureModRegistry(new SmapiModRegistryStatus(helper.ModRegistry));
-        // 角色气泡图标图集来自 DLL 内的嵌入资源。必须等 GraphicsDevice 就绪
+        // 角色气泡素材来自 DLL 内的嵌入资源。必须等 GraphicsDevice 就绪
         // （Entry 阶段常为 null），所以挂到 GameLaunched；失败只降级为纯配色，
         // 不能让一张缺失的图把整个 mod 拦在启动阶段。
-        helper.Events.GameLoop.GameLaunched += (_, _) =>
+        Texture2D? LoadSheet(string resourceName)
         {
             try
             {
                 using var stream = typeof(ModEntry).Assembly
-                    .GetManifestResourceStream("StardewAI.NPC.assets.npc_bubbles.png");
-                NpcBubbleStyle.Sheet = stream is null
+                    .GetManifestResourceStream(resourceName);
+                return stream is null
                     ? null
                     : Texture2D.FromStream(Game1.graphics.GraphicsDevice, stream);
-                if (NpcBubbleStyle.Sheet is null)
-                {
-                    Monitor.Log("角色气泡图集缺失，退回纯配色绘制。", LogLevel.Warn);
-                }
             }
             catch (Exception exception)
             {
                 Monitor.Log(
-                    $"角色气泡图集加载失败，退回纯配色绘制：{exception.Message}",
+                    $"气泡素材 {resourceName} 加载失败，退回纯配色绘制：{exception.Message}",
                     LogLevel.Warn);
+                return null;
+            }
+        }
+
+        helper.Events.GameLoop.GameLaunched += (_, _) =>
+        {
+            NpcBubbleStyle.Sheet = LoadSheet("StardewAI.NPC.assets.npc_bubbles.png");
+            NpcBubbleStyle.FrameSheet =
+                LoadSheet("StardewAI.NPC.assets.npc_bubble_frames.png");
+            if (NpcBubbleStyle.Sheet is null)
+            {
+                Monitor.Log("角色气泡图集缺失，退回纯配色绘制。", LogLevel.Warn);
             }
         };
         helper.Events.Input.ButtonPressed += OnButtonPressed;

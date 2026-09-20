@@ -184,8 +184,14 @@ public sealed class GroupDialogueMenu : IClickableMenu
         var contentWidth = ChatBubbleDrawing.ContentWidth(bubbleRight - bubbleLeft);
         var measure = (string value) => Game1.smallFont.MeasureString(value).X;
         var y = messageArea.Y + 12;
+        // 按发言人计次：边框构图随 occurrence 在三套布局间轮换（与回放页一致）。
+        // 此前一律传 0，于是同一角色多次发言的构图固定不变。
+        var seenBySpeaker = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
         foreach (var message in visibleMessages.TakeLast(10))
         {
+            var speakerKey = message.SpeakerId ?? string.Empty;
+            var occurrence = seenBySpeaker.TryGetValue(speakerKey, out var seen) ? seen : 0;
+            seenBySpeaker[speakerKey] = occurrence + 1;
             var isPlayer = message.SpeakerType == "player";
             var speaker = isPlayer
                 ? "玩家"
@@ -207,7 +213,8 @@ public sealed class GroupDialogueMenu : IClickableMenu
                 speaker,
                 lines,
                 message.SpeakerId,
-                isPlayer);
+                isPlayer,
+                occurrence);
 
             y += drawnHeight + ChatBubbleDrawing.Gap;
             if (y > messageArea.Bottom - Game1.smallFont.LineSpacing)

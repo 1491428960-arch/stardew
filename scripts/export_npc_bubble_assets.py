@@ -21,6 +21,7 @@ from stardew_ai_bridge.npc_bubble_elements import (  # noqa: E402
 )
 
 CELL = 24
+FRAME_CELL = 32
 OUT_PNG = ROOT / "smapi" / "assets" / "npc_bubbles.png"
 OUT_CS = ROOT / "smapi" / "NpcBubbleStyle.cs"
 
@@ -94,10 +95,17 @@ def write_csharp(names: list[str]) -> None:
         bubble = parse_color(palette["bubble"])
         border = parse_color(palette["border"])
         accent = parse_color(palette["accent"])
+        ornament = element["ornament"]
+        colors = ornament["colors"]
         rows.append(
             f'        ["{npc}"] = new NpcBubbleStyle({index}, '
             f'{csharp_color(bubble)}, {csharp_color(border)}, '
-            f'{csharp_color(accent)}, "{element["tone"]}"),'
+            f'{csharp_color(accent)}, "{element["tone"]}", '
+            f'{index}, "{ornament["kind"]}", '
+            f'{csharp_color(parse_color(colors["line"]))}, '
+            f'{csharp_color(parse_color(colors["highlight"]))}, '
+            f'{csharp_color(parse_color(colors["leaf"]))}, '
+            f'{csharp_color(parse_color(colors["leafHi"]))}),'
         )
 
     alias_rows = [
@@ -120,17 +128,33 @@ public sealed record NpcBubbleStyle(
     Color Bubble,
     Color Border,
     Color Accent,
-    string Tone)
+    string Tone,
+    int FrameRow,
+    string FrameKind,
+    Color FrameLine,
+    Color FrameHighlight,
+    Color FrameLeaf,
+    Color FrameLeafHi)
 {{
-    /// <summary>图集单元格边长。</summary>
+    /// <summary>图标图集的单元格边长。</summary>
     public const int CellSize = {CELL};
+
+    /// <summary>装饰零件图集的单元格边长。</summary>
+    public const int FrameCellSize = {FRAME_CELL};
 
     /// <summary>角色图标图集，由 ModEntry 启动时注入；缺失时退回纯配色绘制。</summary>
     public static Texture2D? Sheet {{ get; set; }}
 
+    /// <summary>装饰零件图集（细节造型 + 两个大物件），同样由 ModEntry 注入。</summary>
+    public static Texture2D? FrameSheet {{ get; set; }}
+
     /// <summary>该角色在图集中的单元格。</summary>
     public Rectangle SheetSource =>
         new(SheetIndex * CellSize, 0, CellSize, CellSize);
+
+    /// <summary>装饰零件单元格：0 = 细节造型，1/2 = 大物件。</summary>
+    public Rectangle FrameSource(int column) =>
+        new(column * FrameCellSize, FrameRow * FrameCellSize, FrameCellSize, FrameCellSize);
 
     private static readonly IReadOnlyDictionary<string, NpcBubbleStyle> Styles =
         new Dictionary<string, NpcBubbleStyle>(StringComparer.OrdinalIgnoreCase)

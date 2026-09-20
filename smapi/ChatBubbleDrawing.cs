@@ -22,8 +22,11 @@ internal static class ChatBubbleDrawing
     /// <summary>正文行间额外间距。</summary>
     public const int LineSpacing = 4;
 
-    /// <summary>相邻气泡之间的间距。</summary>
-    public const int Gap = 8;
+    /// <summary>
+    /// 相邻气泡之间的间距。要容得下装饰边框向外扩的 <see cref="NpcBubbleFrame.Pad"/>，
+    /// 否则相邻气泡的藤蔓/物件会叠在一起。
+    /// </summary>
+    public const int Gap = NpcBubbleFrame.Pad + 6;
 
     /// <summary>换行时预留的安全边距。</summary>
     public const int SafetyMargin = 8;
@@ -70,7 +73,8 @@ internal static class ChatBubbleDrawing
         string speaker,
         IReadOnlyList<string> lines,
         string? npcId,
-        bool isPlayer)
+        bool isPlayer,
+        int occurrence = 0)
     {
         ArgumentNullException.ThrowIfNull(b);
         if (lines is null || lines.Count == 0)
@@ -108,6 +112,12 @@ internal static class ChatBubbleDrawing
             bounds.Width,
             bounds.Height,
             isPlayer ? PlayerBubble : style?.Bubble ?? NpcFallbackBubble);
+
+        // 装饰边框贴在气泡外侧一圈；画在底色之后、文字之前。
+        if (style is not null)
+        {
+            NpcBubbleFrame.Draw(b, bounds, style, occurrence);
+        }
 
         var textLeft = bounds.X + Padding;
         var speakerLeft = textLeft;
