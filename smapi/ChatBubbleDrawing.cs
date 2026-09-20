@@ -133,10 +133,7 @@ internal static class ChatBubbleDrawing
         }
         else if (style is not null)
         {
-            // 角色专属配色已由 scripts/export_npc_bubble_assets.py 按彩色 MenuTiles
-            // 的基色反推过，这里继续走原版接口，纹理与 tint 才是配套的一对。
-            IClickableMenu.drawTextureBox(
-                b, bounds.X, bounds.Y, bounds.Width, bounds.Height, style.Bubble);
+            DrawNpcPanel(b, bounds, style);
         }
         else
         {
@@ -193,6 +190,35 @@ internal static class ChatBubbleDrawing
             Math.Min(255, (int)Math.Round(design.R * 255.0 / PanelBase.R)),
             Math.Min(255, (int)Math.Round(design.G * 255.0 / PanelBase.G)),
             Math.Min(255, (int)Math.Round(design.B * 255.0 / PanelBase.B)));
+    }
+
+    /// <summary>
+    /// 角色专属底色的气泡底。tint（<see cref="NpcBubbleStyle.Bubble"/>）仍按彩色 MenuTiles
+    /// 的填充基色 <c>#fdbc6e</c> 反推过，所以纹理与 tint 依旧是配套的一对——
+    /// 换的只是**纹理**：<see cref="NpcBubblePanelTexture"/> 那份变体把高饱和的红橙描边
+    /// 归一成了填充基色的暗版本，于是描边随 tint 与填充同比例变暗，不再是紫红底旁边
+    /// 那一圈突兀的橙红（详见 <see cref="NpcBubblePanelRules"/>）。
+    /// 变体拿不到（图形设备或贴图未就绪）时退回原图，观感与改前完全一致。
+    /// </summary>
+    private static void DrawNpcPanel(SpriteBatch b, Rectangle bounds, NpcBubbleStyle style)
+    {
+        var variant = NpcBubblePanelTexture.Variant;
+        if (variant is null)
+        {
+            IClickableMenu.drawTextureBox(
+                b, bounds.X, bounds.Y, bounds.Width, bounds.Height, style.Bubble);
+            return;
+        }
+
+        IClickableMenu.drawTextureBox(
+            b,
+            variant,
+            NpcBubblePanelTexture.Source,
+            bounds.X,
+            bounds.Y,
+            bounds.Width,
+            bounds.Height,
+            style.Bubble);
     }
 
     /// <summary>

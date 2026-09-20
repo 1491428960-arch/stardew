@@ -90,6 +90,10 @@ public sealed class ModEntry : Mod
             {
                 Monitor.Log("角色气泡图集缺失，退回纯配色绘制。", LogLevel.Warn);
             }
+
+            // 角色气泡底的描边归一变体：同样要等图形设备与 Maps\MenuTiles 就绪，
+            // 拿不到就回退原图（观感同改前），不阻塞启动。理由见 NpcBubblePanelRules。
+            NpcBubblePanelTexture.EnsureCreated(Monitor);
         };
         helper.Events.Input.ButtonPressed += OnButtonPressed;
         helper.Events.GameLoop.UpdateTicked += faceToFaceCoordinator.OnUpdateTicked;
