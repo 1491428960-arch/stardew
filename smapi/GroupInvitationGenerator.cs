@@ -22,14 +22,11 @@ public sealed class GroupInvitationGenerator
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        var pendingCount = context.ExistingInvitations.Count(invitation =>
-            invitation.Status is GroupInvitationStatus.Unread or
-                GroupInvitationStatus.Deferred or
-                GroupInvitationStatus.Accepted);
+        // 只受时间间隔约束：待处理再多也不阻止生成（用户反馈“每个刷了就得清太蠢”）。
+        // 不会无限堆积的理由见 GroupInvitationRules.ShouldGenerate 的注释。
         if (!GroupInvitationRules.ShouldGenerate(
                 context.CurrentTotalDays,
-                context.LastCreatedTotalDays,
-                pendingCount))
+                context.LastCreatedTotalDays))
         {
             return Array.Empty<GroupDialogueInvitationRecord>();
         }
@@ -52,6 +49,7 @@ public sealed class GroupInvitationGenerator
         // 也不必引入随机数——生成结果可测、可复现。
         var preferThree = candidates.Length >= GroupInvitationRules.MaxParticipants &&
                           context.CurrentTotalDays % 2 == 0;
+                          foreach (var group in EnumerateGroups(candidates, preferThree))
         {
             foreach (var template in MatchingTemplates(group))
             {

@@ -94,6 +94,40 @@ public sealed class GroupInvitationGeneratorTests
     }
 
     [Fact]
+    public void Generator_keeps_making_new_invitations_even_with_several_pending()
+    {
+        // 用户反馈：每张邀约都得清掉才能刷出新的太蠢。
+        // 现在 ShouldGenerate 只看时间间隔；不会无限堆积由过期机制保证
+        // （7 天后连 Accepted 也会过期），所以待处理多并不构成阻止理由。
+        var existing = Enumerable.Range(0, 5)
+            .Select(index => new GroupDialogueInvitationRecord
+            {
+                InvitationId = $"pending-{index}",
+                TemplateId = "neutral-public-topic",
+                Participants = new[] { $"Npc{index}", "Other" },
+                CreatedTotalDays = 18,
+                ExpiresTotalDays = 25,
+                Status = GroupInvitationStatus.Unread,
+            })
+            .ToArray();
+
+        var result = new GroupInvitationGenerator(GroupInvitationTemplates.All).Generate(
+            new GroupInvitationGenerationContext(
+                CurrentTotalDays: 20,
+                CurrentDateLabel: "Spring 20",
+                KnownParticipants: new[]
+                {
+                    new GroupParticipantCandidate("Abigail", "Abigail", true),
+                    new GroupParticipantCandidate("Emily", "Emily", true),
+                },
+                ExistingInvitations: existing,
+                RecentTopicKeys: Array.Empty<string>(),
+                LastCreatedTotalDays: 18));
+
+        Assert.Single(result);
+    }
+
+    [Fact]
     public void Generator_skips_candidates_without_a_friendship_record()
     {
         var result = new GroupInvitationGenerator(GroupInvitationTemplates.All).Generate(
@@ -115,8 +149,8 @@ public sealed class GroupInvitationGeneratorTests
 
     [Theory]
     [InlineData(19, 18, 0)]  // 距上次生成只隔 1 天 → 不生成
-    [InlineData(20, 2, 3)]  // 待处理已满 3 张 → 不生成
-    public void Generator_respects_the_interval_and_the_pending_limit(
+    [InlineData(20, 19, 0)]  // 同样只隔 1 天
+    public void Generator_waits_at_least_two_days_between_invitations(
         int currentTotalDays,
         int lastCreatedTotalDays,
         int pendingCount)

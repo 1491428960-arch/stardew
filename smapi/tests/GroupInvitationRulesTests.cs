@@ -24,11 +24,28 @@ public sealed class GroupInvitationRulesTests
     }
 
     [Fact]
-    public void New_invitation_is_allowed_only_every_two_total_days_when_pending_limit_is_not_reached()
+    public void New_invitation_is_allowed_only_every_two_total_days()
     {
-        Assert.True(GroupInvitationRules.ShouldGenerate(20, 18, pendingCount: 0));
-        Assert.False(GroupInvitationRules.ShouldGenerate(19, 18, pendingCount: 0));
-        Assert.False(GroupInvitationRules.ShouldGenerate(20, 18, pendingCount: 3));
+        Assert.True(GroupInvitationRules.ShouldGenerate(20, 18));
+        Assert.False(GroupInvitationRules.ShouldGenerate(19, 18));
+    }
+
+    [Fact]
+    public void Generating_is_never_blocked_by_pending_invitations()
+    {
+        // 用户反馈：每张都得清掉才能来新的太蠢。
+        // 现在 ShouldGenerate 只看时间间隔；不会无限堆积由过期机制保证
+        // （见 GroupDialogueExpiryTests：连 Accepted 也会在 7 天后过期）。
+        Assert.True(GroupInvitationRules.ShouldGenerate(20, 18));
+        Assert.True(GroupInvitationRules.ShouldGenerate(100, 98));
+    }
+
+    [Fact]
+    public void The_visible_limit_is_only_about_displaying()
+    {
+        // 显示上限存在只是因为它要画进固定高度的面板；
+        // 它**不**参与生成判断（那正是用户抱怨的那条旧限制）。
+        Assert.True(GroupInvitationRules.MaxVisibleInvitations >= 3);
     }
 
     [Fact]

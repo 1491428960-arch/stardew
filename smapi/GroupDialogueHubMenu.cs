@@ -67,7 +67,7 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                     invitation.CreatedTotalDays,
                     invitation.ExpiresTotalDays))
             .OrderByDescending(invitation => invitation.CreatedTotalDays)
-            .Take(GroupInvitationRules.MaxPendingInvitations)
+            .Take(GroupInvitationRules.MaxVisibleInvitations)
             .ToList();
     }
 
