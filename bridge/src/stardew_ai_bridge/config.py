@@ -7,6 +7,18 @@ import re
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+# 安全兜底文案的**唯一来源**（2026-09-20 语义层审计 P3 第 47 条）。
+#
+# 这条文案此前在四处逐字重复：这里（配置默认值）、`fallback.py` 的构造默认参数、
+# `app.py` 的 `_SAFE_FALLBACK_REPLY`，以及 C# 侧 `BridgeClient.cs` 的离线兜底。
+# 它们语义相同（上游全不可用时给玩家看的那句话）却各写一遍，改一处忘一处就会
+# 出现「Bridge 兜底和游戏兜底不一样」的静默漂移。
+#
+# 跨语言那一份无法共享代码，只能靠测试锁住一致（见
+# `bridge/tests/test_cross_language_constants.py`）。
+DEFAULT_FALLBACK_REPLY = "Rasmodia：暂时没有合适的回复，请稍后再试。"
+
 _LOCAL_ENV_KEYS = frozenset(
     {
         "BRIDGE_DIALOGUE_SESSION_PATH",
@@ -166,7 +178,7 @@ class BridgeSettings:
     )
     cloud_enabled: bool = False
     cloud_only: bool = False
-    fallback_reply: str = "Rasmodia：暂时没有合适的回复，请稍后再试。"
+    fallback_reply: str = DEFAULT_FALLBACK_REPLY
     profile_index_path: str | None = None
 
     @property

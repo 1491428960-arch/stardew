@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import ValidationError
 
-from .config import BridgeSettings, load_local_env
+from .config import DEFAULT_FALLBACK_REPLY, BridgeSettings, load_local_env
 from .character_quality_eval import quality_case_catalog
 from .fallback import FallbackProvider
 from .guard import ResponseGuard, retry_for_format_noise
@@ -130,7 +130,9 @@ group_conversation_service = GroupConversationService(
 dialogue_lab_session_store = DialogueLabSessionStore(
     resolve_dialogue_session_path(os.environ.get("BRIDGE_DIALOGUE_SESSION_PATH"))
 )
-_SAFE_FALLBACK_REPLY = "Rasmodia：暂时没有合适的回复，请稍后再试。"
+# 安全兜底文案只有 config 一个来源（2026-09-20 语义层审计 P3 第 47 条）；
+# 这个别名保留是为了不动既有调用点与测试。
+_SAFE_FALLBACK_REPLY = DEFAULT_FALLBACK_REPLY
 _WARNING_LIMIT = 20
 _DIALOGUE_FIELDS = {
     "npcId",

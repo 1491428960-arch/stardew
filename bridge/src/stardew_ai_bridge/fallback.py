@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from .config import DEFAULT_FALLBACK_REPLY
 from .models import DialogueTestRequest, ProviderResult
 
 
 class FallbackProvider:
     """所有上游 Provider 都不可用时返回的预设回复。"""
 
-    def __init__(self, reply: str = "Rasmodia：暂时没有合适的回复，请稍后再试。") -> None:
+    # 默认文案来自 config 的单一来源，别在这里再写一份字面量
+    # （2026-09-20 语义层审计 P3 第 47 条）。
+    def __init__(self, reply: str = DEFAULT_FALLBACK_REPLY) -> None:
         self.reply = reply
 
     @property

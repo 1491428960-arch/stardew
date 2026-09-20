@@ -73,7 +73,7 @@
 | 27 | **记忆「该不该进 prompt」** | 两条通道：`knowledge_facts` 按 scope + confidence + 事件门控筛；`RecentMemoryFacts` 只按时间取 6 条，**完全不看 Confidence／Importance／KnownBy**（这些字段写了但没有任何选择逻辑读） |
 | 28 | **游戏事件「是否已完成」** | **四套匹配规则**；`requiredEventId="56"` + `completed=["flashshifter.SVE:56"]` 时 3:1 分裂（当前内容侧无人触发，属潜伏） |
 | 29 | **群聊回合上限** | 四处：`turn_budget` 带 clamp、`_group_scene_instruction` 自己算不 clamp、`build_group_prompt` 用未过滤的人数、models 两处默认值语义不同 |
-| 30 | **回应质量门** | 见 #13 |
+| 30 | **回应质量门** | ✅ **已随 #13 一起解决**：群聊现在逐条过 `ResponseGuard.check`，不再是「只有一句提示词」 |
 | 31 | **`addressedTo` 约束** | 三处各判一遍（当前等价，纯维护成本） |
 
 ---
@@ -91,11 +91,20 @@
 
 **后果**：已婚有孩子的 NPC 在运行时收不到亲密引导，在评测里又被判「越界」。
 
-**两个选项**：
+**两个选项**（原始记录，保留以见决策过程）：
 1. **`parent` 继承 `married` 的亲密契约**（修 `stage_policy` 的集合）
 2. **保持现状**，只在代码里把这条口径注释清楚
 
-**这会实打实改变运行时行为，需要你定。**
+**✅ 已解决（2026-09-20 用户拍板，见 `active-work.md` 第 194 项）——走的是「比选项 1 更准」的第三条路。**
+
+用户的原话是：「parent 这个要不要我们做两种状态，普通 npc 就沿用之前的，可婚 npc 和玩家有孩子变成新状态，
+**这两种混一起感觉很麻烦啊**」——判断准确：`childrenCount > 0` 此前把两件事混成一件：
+① **这个 NPC 自己有孩子**（如 Jodi 的两个孩子，属**背景信息**）；② **我和他有了孩子**（**关系状态**，是 married 的子状态）。
+
+改法：只有「**配偶 + 有孩子**」才判 `parent`，非配偶的 `childrenCount` 不再影响阶段；新增
+`INTIMATE_STAGES = {dating, married, parent}` 作为「既成亲密关系」的唯一定义，`stage_policy` 与
+`behavior_quality` 的四处字面量改为引用它——**parent 因此恢复拿到 `affectionInitiative`**，
+运行时与评测不再打架。
 
 ---
 
