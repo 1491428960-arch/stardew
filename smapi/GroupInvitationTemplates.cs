@@ -34,6 +34,22 @@ public static class GroupInvitationTemplates
             "story",
             new[] { "Wizard", "Sophia" }),
         new GroupInvitationTemplate(
+            "adventure-trio",
+            "下矿前的准备",
+            "一次下矿计划里各自的准备与顾虑",
+            "Abigail、Sebastian 和 Maru 可以从各自的经验出发聊聊准备与担心，"
+            + "只讨论现有信息，不安排具体时间或地点。",
+            "periodic",
+            new[] { "Abigail", "Sebastian", "Maru" }),
+        new GroupInvitationTemplate(
+            "seasonal-chores",
+            "换季的琐事",
+            "换季时镇上和农场里忙的那些事",
+            "Robin、Marnie 和 Caroline 可以聊聊各自手头的活计，"
+            + "不替别人安排日程，也不承诺具体帮忙的时间。",
+            "periodic",
+            new[] { "Robin", "Marnie", "Caroline" }),
+        new GroupInvitationTemplate(
             "social-perspective",
             "不同的看法",
             "玩家与其他人相处时的不同看法",

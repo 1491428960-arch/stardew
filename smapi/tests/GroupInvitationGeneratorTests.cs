@@ -65,33 +65,32 @@ public sealed class GroupInvitationGeneratorTests
             GroupInvitationRules.BuildPairKey(existing.Participants));
     }
 
-    [Fact]
-    public void Generator_only_pairs_two_npcs_even_when_three_are_known()
+    [Theory]
+    [InlineData(20, 3)]   // 偶数天：优先三人，更有群聊感
+    [InlineData(21, 2)]   // 奇数天：退回两人
+    public void Generator_alternates_between_three_and_two_npcs_by_day(
+        int totalDays, int expectedCount)
     {
-        // 当前实现只枚举两两组合（EnumeratePairs），所以**自动生成的邀约参与者恒为 2 人**。
-        // ⚠️ 2026-09-20：F9 的「自由发起」已被移除（用户决定：选人 UI 的收益不如把预设邀约做好），
-        // 因此**三人群聊目前没有任何入口**。若要恢复三人场，正确做法是让本生成器支持三人组合，
-        // 而不是恢复那个选人菜单。
+        // 2026-09-20：F9 的「自由发起」被移除后，三人群聊失去了唯一入口，
+        // 所以改由预设邀约承担——用日期做确定性交替（偶数天三人、奇数天两人），
+        // 既避免长期只出同一种规模，也不必引入随机数。
         var result = new GroupInvitationGenerator(GroupInvitationTemplates.All).Generate(
             new GroupInvitationGenerationContext(
-                CurrentTotalDays: 20,
-                CurrentDateLabel: "Spring 20",
+                CurrentTotalDays: totalDays,
+                CurrentDateLabel: $"Spring {totalDays}",
                 KnownParticipants: new[]
                 {
+                    // 这三个角色对应新增的三人模板 adventure-trio。
                     new GroupParticipantCandidate("Abigail", "Abigail", true),
-                    new GroupParticipantCandidate("Emily", "Emily", true),
                     new GroupParticipantCandidate("Sebastian", "Sebastian", true),
+                    new GroupParticipantCandidate("Maru", "Maru", true),
                 },
                 ExistingInvitations: Array.Empty<GroupDialogueInvitationRecord>(),
                 RecentTopicKeys: Array.Empty<string>(),
-                LastCreatedTotalDays: 18));
+                LastCreatedTotalDays: totalDays - 2));
 
         var invitation = Assert.Single(result);
-        Assert.Equal(2, invitation.Participants.Count);
-        // 候选先按 npcId 字典序排好，因此取到的是最前面那一对。
-        Assert.Equal(
-            new[] { "Abigail", "Emily" },
-            invitation.Participants.ToArray());
+        Assert.Equal(expectedCount, invitation.Participants.Count);
     }
 
     [Fact]

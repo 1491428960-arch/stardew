@@ -13,6 +13,8 @@ public static class GroupInvitationRules
         "neutral-public-topic",
         "mineral-and-mystery",
         "research-follow-up",
+        "adventure-trio",
+        "seasonal-chores",
         "social-perspective",
     };
 
