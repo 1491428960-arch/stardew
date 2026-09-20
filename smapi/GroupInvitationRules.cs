@@ -19,33 +19,17 @@ public static class GroupInvitationRules
     public const int ExpirationDays = 7;
 
     /// <summary>
-    /// 存档里出现过的合法模板 ID。
-    ///
-    /// 2026-09-20：模板改为「角色组合 × 话题池」程序化生成后（上万条），
-    /// 硬编码白名单立刻过时。改成**旧 ID ∪ 模板表里现有的全部 ID**——
-    /// 这样玩家存档里已经存在的旧邀约仍然合法，新生成的也认得。
+    /// 旧版硬编码的模板 ID —— **不要删**，否则玩家存档里已经存在的旧邀约会变成“不合法”。
     /// </summary>
-    private static readonly HashSet<string> KnownTemplateIds = BuildKnownTemplateIds();
-
-    private static HashSet<string> BuildKnownTemplateIds()
+    private static readonly HashSet<string> LegacyTemplateIds = new(StringComparer.Ordinal)
     {
-        // 旧版硬编码的那几个：**不要删**，否则旧存档里的邀约会变成“不合法”。
-        var ids = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "neutral-public-topic",
-            "mineral-and-mystery",
-            "research-follow-up",
-            "adventure-trio",
-            "seasonal-chores",
-            "social-perspective",
-        };
-        foreach (var template in GroupInvitationTemplates.All)
-        {
-            ids.Add(template.TemplateId);
-        }
-
-        return ids;
-    }
+        "neutral-public-topic",
+        "mineral-and-mystery",
+        "research-follow-up",
+        "adventure-trio",
+        "seasonal-chores",
+        "social-perspective",
+    };
 
     private static readonly HashSet<string> Sources = new(StringComparer.Ordinal)
     {
@@ -126,9 +110,31 @@ public static class GroupInvitationRules
             : invitation;
     }
 
+    /// <summary>
+    /// 模板 ID 是否合法。
+    ///
+    /// 2026-09-20：模板改成按「主题 × 角色组合」**按需生成**之后，
+    /// 穷举白名单不再可行——`GroupInvitationTemplates.All` 只含两两组合，
+    /// 而生成器还会产出三人模板，于是三人邀约写入时被判“templateId is invalid”，
+    /// **抛异常导致整个 DayStarted 中断、再也不生成新邀约**（真机踩到过）。
+    /// 所以这里改成：**旧 ID 直接认，新格式按“主题前缀在主题表里”判断**。
+    /// </summary>
     public static bool IsKnownTemplateId(string? templateId)
     {
-        return !string.IsNullOrWhiteSpace(templateId) && KnownTemplateIds.Contains(templateId.Trim());
+        if (string.IsNullOrWhiteSpace(templateId))
+        {
+            return false;
+        }
+
+        var id = templateId.Trim();
+        if (LegacyTemplateIds.Contains(id))
+        {
+            return true;
+        }
+
+        var separator = id.IndexOf(':');
+        return separator > 0
+            && GroupInvitationThemes.All.ContainsKey(id[..separator]);
     }
 
     public static bool IsValidSource(string? source)

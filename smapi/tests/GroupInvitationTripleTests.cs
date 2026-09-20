@@ -150,4 +150,21 @@ public sealed class GroupInvitationTripleTests
             item => item.TemplateId == invitation.TemplateId);
         Assert.True(template.RequiredParticipants.Count <= 2);
     }
+    [Fact]
+    public void A_three_npc_invitation_survives_serialization()
+    {
+        // 回归保护（真机踩到的 bug）：模板改成按需生成后，GroupInvitationTemplates.All
+        // 只含两两组合，而生成器会产出三人模板；白名单若穷举 All，三人邀约写入时
+        // 会被判 templateId is invalid —— 抛异常导致整个 DayStarted 中断、再也不生成。
+        var invitation = Assert.Single(Generate(20, Three));
+        Assert.Equal(3, invitation.Participants.Count);
+
+        var envelope = new StoryStateEnvelope
+        {
+            GroupDialogueInvitations = new[] { invitation },
+        };
+        var json = StoryStateSerializer.Serialize(envelope);
+        Assert.Contains("groupDialogueInvitations", json, StringComparison.Ordinal);
+    }
+
 }
