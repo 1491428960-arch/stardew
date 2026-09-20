@@ -645,6 +645,11 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 .ToArray(),
             ProviderCalls = response.ProviderCalls,
             ProviderErrors = Array.Empty<string>(),
+            // 2026-09-20 修（契约审计）：这里重建响应时**漏复制了 MemoryHighlights**，
+            // 于是「Bridge 挑出值得长期记住的事实」这条链从未生效——群聊长期记忆永远不写。
+            // 之前的视觉验证用 QueueResponseForVisualTest 直接塞响应、绕过了本方法，
+            // 所以一直没暴露。
+            MemoryHighlights = response.MemoryHighlights ?? Array.Empty<string>(),
             FallbackCount = response.FallbackCount,
             LatencyMs = response.LatencyMs,
             Warnings = response.Warnings ?? Array.Empty<string>(),

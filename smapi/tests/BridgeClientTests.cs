@@ -874,4 +874,59 @@ public sealed class BridgeClientTests
             return Task.FromException<HttpResponseMessage>(exception);
         }
     }
+
+    [Fact]
+    public void Special_interaction_uses_the_protocol_value_with_underscore()
+    {
+        // 回归保护（2026-09-20 契约审计）：C# 此前用 ToString().ToLowerInvariant()，
+        // 发出 "mineraltasting"，而 Bridge 只认 "mineral_tasting" → 422 → 矿石对话静默降级。
+        var context = new ItemConversationContext(
+            itemId: "Minerals/66",
+            displayName: "紫水晶",
+            category: "mineral",
+            quality: 0,
+            action: "Eat",
+            giftTaste: 0,
+            itemKind: ItemInteractionKind.Mineral,
+            specialInteraction: ItemSpecialInteraction.MineralTasting);
+
+        Assert.Equal("mineral_tasting", context.SpecialInteraction);
+    }
+
+    [Fact]
+    public async Task Group_response_keeps_memory_highlights()
+    {
+        // 回归保护（2026-09-20 契约审计）：ValidateGroupResponse 重建响应时曾漏复制
+        // MemoryHighlights，导致群聊「挑重要的记」整条链从未生效。之前的视觉验证用
+        // QueueResponseForVisualTest 直接塞响应、绕过了这一层，所以一直没暴露。
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"strategy\":\"multi_turn\",\"channel\":\"remote\",\"provider\":\"fake\","
+                + "\"fallback\":false,\"memoryHighlights\":[\"玩家答应下周一起去矿洞\"],"
+                + "\"turns\":[{\"speakerNpcId\":\"Abigail\",\"content\":\"那就说定了。\"}],"
+                + "\"providerCalls\":1,\"providerErrors\":[],\"fallbackCount\":0,\"latencyMs\":12}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var client = new BridgeClient(
+            new HttpClient(handler),
+            new Uri("http://127.0.0.1:5678"),
+            groupStrategy: "multi_turn");
+
+        var response = await client.SendGroupAsync(
+            new GroupDialogueRequest(
+                "你们怎么看？",
+                new[]
+                {
+                    new GroupDialogueParticipant("Abigail", "Abigail"),
+                    new GroupDialogueParticipant("Emily", "Emily"),
+                },
+                "奇怪的矿石",
+                "只作为讨论方向。",
+                Array.Empty<GroupDialogueHistoryEntry>()));
+
+        Assert.Single(response.MemoryHighlights);
+        Assert.Equal("玩家答应下周一起去矿洞", response.MemoryHighlights[0]);
+    }
 }

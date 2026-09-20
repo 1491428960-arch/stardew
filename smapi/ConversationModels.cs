@@ -53,7 +53,7 @@ public sealed class ItemConversationContext
         ItemKind = itemKind.ToString().ToLowerInvariant();
         ConsumesItem = consumesItem;
         FriendshipAwarded = friendshipAwarded;
-        SpecialInteraction = specialInteraction.ToString().ToLowerInvariant();
+        SpecialInteraction = SpecialInteractionValue(specialInteraction);
     }
 
     [JsonPropertyName("itemId")]
@@ -82,6 +82,21 @@ public sealed class ItemConversationContext
 
     [JsonPropertyName("friendshipAwarded")]
     public int FriendshipAwarded { get; }
+
+    /// <summary>
+    /// 枚举 → Bridge 协议值。
+    ///
+    /// 2026-09-20 修（契约审计）：此前直接 <c>ToString().ToLowerInvariant()</c>，
+    /// 于是 <c>MineralTasting</c> 发成 <c>"mineraltasting"</c>，而 Bridge 的
+    /// <c>special_interaction</c> 只认 <c>"mineral_tasting"</c>（带下划线）——
+    /// 结果矮人与 Abigail 的矿石物品对话被 422 挡掉、退化成兜底回复。
+    /// 显式写映射，避免枚举名与协议值再次悄悄耦合。
+    /// </summary>
+    private static string SpecialInteractionValue(ItemSpecialInteraction value) => value switch
+    {
+        ItemSpecialInteraction.MineralTasting => "mineral_tasting",
+        _ => "none",
+    };
 
     [JsonPropertyName("specialInteraction")]
     public string SpecialInteraction { get; }
