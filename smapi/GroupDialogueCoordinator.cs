@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace StardewAI.NPC;
 
 public sealed class GroupDialogueCoordinator
@@ -28,6 +30,9 @@ public sealed class GroupDialogueCoordinator
         this.closeHub = closeHub;
     }
 
+    /// <summary>最近一次 OnDayStarted 的关键事实，供 ModEntry 打日志用。</summary>
+    public string LastDiagnostics { get; private set; } = "(尚未运行)";
+
     public void OnDayStarted()
     {
         var currentTotalDays = currentTotalDaysProvider();
@@ -38,13 +43,21 @@ public sealed class GroupDialogueCoordinator
             .Select(invitation => (int?)invitation.CreatedTotalDays)
             .OrderByDescending(value => value)
             .FirstOrDefault();
+        var candidates = participantProvider();
         var generated = invitationGenerator.Generate(new GroupInvitationGenerationContext(
             currentTotalDays,
             currentDateLabelProvider(),
-            participantProvider(),
+            candidates,
             invitations,
             Array.Empty<string>(),
             lastCreatedTotalDays));
+        var pending = invitations.Count(invitation =>
+            invitation.Status is GroupInvitationStatus.Unread or
+                GroupInvitationStatus.Deferred or
+                GroupInvitationStatus.Accepted);
+        LastDiagnostics =
+            $"day={currentTotalDays} lastCreated={lastCreatedTotalDays?.ToString() ?? "无"} " +
+            $"候选={candidates.Count} 记录={invitations.Count} 未处理={pending} 本次生成={generated.Count}";
         if (generated.Count == 0)
         {
             return;

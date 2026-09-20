@@ -98,7 +98,12 @@ public sealed class ModEntry : Mod
 
         try
         {
-            storyStateStore.Load(Helper.Data.ReadSaveData<string>(StoryStateSerializer.StorageKey));
+            var loaded = Helper.Data.ReadSaveData<string>(StoryStateSerializer.StorageKey);
+            storyStateStore.Load(loaded);
+            Monitor.Log(
+                $"[StardewAI.State] 已载入存档数据：key={StoryStateSerializer.StorageKey} " +
+                $"长度={loaded?.Length ?? 0} 邀约={storyStateStore.State.GroupDialogueInvitations.Count} 张",
+                LogLevel.Info);
             foreach (var warning in storyStateStore.LastWarnings)
             {
                 Monitor.Log($"故事状态已降级：{warning}", LogLevel.Warn);
@@ -117,9 +122,12 @@ public sealed class ModEntry : Mod
     {
         try
         {
-            Helper.Data.WriteSaveData(
-                StoryStateSerializer.StorageKey,
-                storyStateStore.Serialize());
+            var json = storyStateStore.Serialize();
+            Helper.Data.WriteSaveData(StoryStateSerializer.StorageKey, json);
+            Monitor.Log(
+                $"[StardewAI.State] 已写入存档数据：key={StoryStateSerializer.StorageKey} " +
+                $"长度={json.Length} 邀约={storyStateStore.State.GroupDialogueInvitations.Count} 张",
+                LogLevel.Info);
         }
         catch (Exception exception)
         {
@@ -151,6 +159,7 @@ public sealed class ModEntry : Mod
         if (Context.IsWorldReady)
         {
             groupDialogueCoordinator?.OnDayStarted();
+            Monitor.Log($"[StardewAI.Invite] {groupDialogueCoordinator?.LastDiagnostics}", LogLevel.Info);
         }
     }
 
