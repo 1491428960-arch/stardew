@@ -848,25 +848,37 @@ public class ChatInputMenu : IClickableMenu
             panel.Height,
             MenuSkinRules.CardTint);
 
-        var portrait = npc.Portrait;
+        // 头像改走**游戏原版对话框的同一条肖像路径**（规则见 NpcPortraitRules）：
+        // 贴图直接取 NPC.Portrait，源矩形按原版 DialogueBox.drawPortrait 的口径
+        // （Game1.getSourceRectForStandardTileSheet(tex, $neutral 帧, 64, 64)，越界回落 (0,0,64,64)）。
+        // 因此这里显示的就是「实际对话」里那张图，Portraits/<NPC> 一类的美化包
+        // （Content Patcher 的替换结果）不需要额外适配就会跟着生效。
+        // 改前是自己拼的 new Rectangle(0, 0, 64, 64)：标准贴图上与 $neutral 恰好同帧，
+        // 但少了原版的越界判定，贴图布局非标准时会取到贴图外的区域。
+        // 立绘位的位置与尺寸（PortraitSize = 64×64）保持改前不变。
+        var portrait = NpcPortraitRules.TryResolvePortrait(npc);
         var portraitFrame = new Rectangle(
             panel.X + MessagePadding,
             panel.Y + ((panel.Height - PortraitSize) / 2),
             PortraitSize,
             PortraitSize);
+        // 白描边底板无论有没有头像都画：它本来就是这块立绘位的「现在的观感」，
+        // 拿不到肖像时至少留下一个空位，而不是一个看不见的洞。
+        drawTextureBox(
+            b,
+            portraitFrame.X - 6,
+            portraitFrame.Y - 6,
+            portraitFrame.Width + 12,
+            portraitFrame.Height + 12,
+            Color.White);
         if (portrait is not null)
         {
-            drawTextureBox(
-                b,
-                portraitFrame.X - 6,
-                portraitFrame.Y - 6,
-                portraitFrame.Width + 12,
-                portraitFrame.Height + 12,
-                Color.White);
+            // 原版把 64×64 源帧画进 256×256 立绘位（scale 4f）；F8 的位子只有 64×64，
+            // 所以按 1:1 落图 —— 取图来源与帧序号与原版一致，只有显示尺寸不同。
             b.Draw(
                 portrait,
                 portraitFrame,
-                new Rectangle(0, 0, PortraitSize, PortraitSize),
+                NpcPortraitRules.ResolveSourceRect(portrait.Width, portrait.Height),
                 Color.White);
         }
 
