@@ -384,7 +384,9 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           </tr>
           <tr>
             <td>按钮</td>
-            <td>F8 四个按钮四种 tint（淡绿 / 淡紫 / 淡蓝 / 淡粉）；F9 与中心是白 tint</td>
+            <td><b>改前</b> F8 四个按钮四种 tint（淡绿 / 淡紫 / 淡蓝 / 淡粉）；F9 与中心是白 tint。
+                <b>本项已落地</b>：三处都收敛成两档（<code>MenuSkinRules.PrimaryButtonTint</code> /
+                <code>SecondaryButtonTint</code>），两栏画的是同一套</td>
             <td>统一成两档：<b>主按钮</b> = 白 tint，<b>次按钮</b> = 暗一档的暖色 tint，禁用 = <code>Color.Gray</code></td>
             <td>四种淡色调在橙底上产生的是<b>难以名状的偏色</b>（实测 <code>e9b566</code> / <code>edaa69</code> /
                 <code>e9b16a</code> / <code>f5ab62</code>），彼此差异小到看不出含义，只留下「脏」。
@@ -392,17 +394,21 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           </tr>
           <tr>
             <td>卡片</td>
-            <td>中心的邀约卡与面板<b>同色</b>（都是白 tint），只靠一圈描边区分；第三行「状态」压在卡片底边框上</td>
+            <td>中心的邀约卡与面板<b>同色</b>（都是白 tint），只靠一圈描边区分；<b>改前</b>第三行「状态」压在卡片底边框上。
+                <b>本项已落地</b>：实机已把三行并成两行（<code>GroupDialogueHubMenu.cs:157-165</code>），
+                现状栏也照实机画两行</td>
             <td>卡片保持白 tint（浮在凹槽上就分层了）；三行文字<b>并成两行</b>，卡片几何一点不动</td>
             <td>同色叠同色是「糊成一片」的根因；用「底色分档」比「给卡片刷个颜色」更稳。
                 文字那一项是<b>量出来的</b>：九宫格 slice 20 → 下内沿 = 高 − 20 = 72，
-                现状第三行在 +66、行高 28 → 文字底 <b>+94</b>，比卡片本身（92）还低 2px，
+                改前第三行在 +66、行高 28 → 文字底 <b>+94</b>，比卡片本身（92）还低 2px，
                 等于被下边框切断；并成两行后第二行底正好 +72，不出框也不动几何</td>
           </tr>
           <tr>
             <td>提示行</td>
-            <td>hint 画在 <code>messageArea.Bottom - 28</code>，而气泡也排到同一块高度的底部 ——
-                气泡一多，提示行就压在气泡上（F9 现状截图里能看到）</td>
+            <td><b>改前</b> hint 画在 <code>messageArea.Bottom - 28</code>，而气泡也排到同一块高度的底部 ——
+                气泡一多，提示行就压在气泡上（F9 现状截图里能看到）。
+                <b>本项已落地</b>：实机改成短提示进 header 右侧、长提示才落到底部
+                （<code>GroupDialogueMenu.cs:259-274</code>），现状栏与新设计栏都按这条分支画</td>
             <td>消息区凹槽；提示行<b>优先</b>移到 header 右侧、与参与者条同一行（右对齐、气泡区零损失）；
                 只有放不下 header 的长提示（排障串）才落到底部留白，那时气泡区减 30px</td>
             <td>「状态提示」和「对话内容」是两种信息，共用一块高度必然打架。分开后提示行位置稳定，
@@ -416,8 +422,10 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           </tr>
           <tr>
             <td>配色</td>
-            <td>三档文字色混用：<code>Color.Black</code> / <code>DarkSlateGray</code>(47,79,79) / <code>DimGray</code>(105,105,105)；
-                <b>改前</b> F8 有 42% 黑遮罩，F9 与中心没有（本项已落地：三处都走
+            <td><b>改前</b>三档文字色混用：<code>Color.Black</code> / <code>DarkSlateGray</code>(47,79,79) / <code>DimGray</code>(105,105,105)。
+                <b>本项已落地</b>：实机收敛为两档 —— <code>Ink = Black</code> / <code>InkSoft = DimGray</code>
+                （<code>MenuSkinRules.cs:51,60</code>），hub 卡片第二行与三处提示行都走 <code>InkSoft</code>。
+                另：<b>改前</b> F8 有 42% 黑遮罩，F9 与中心没有（也已落地：三处都走
                 <code>MenuSkinDrawing.DrawScrim</code>，同一个 <code>ScrimAlpha = 0.28f</code>）</td>
             <td>文字收敛为两档（<code>Black</code> + <code>DimGray</code>）；三处遮罩统一成 28%</td>
             <td><code>DarkSlateGray</code> 偏青，压在暖橙底上会发灰发脏；两档足够表达层次。
@@ -490,7 +498,9 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           <tr>
             <td>7. 文字两档</td>
             <td>把 <code>Color.DarkSlateGray</code> 的调用点改成 <code>Color.DimGray</code>（F8 状态行、头像旁好感度、
-                F9 参与者条、中心卡片「主题」行）</td>
+                F9 参与者条、中心卡片「主题」行、以及三处提示行）。
+                <b>已落地</b>：<code>MenuSkinRules.Ink = Color.Black</code> /
+                <code>InkSoft = Color.DimGray</code>（<code>MenuSkinRules.cs:51,60</code>）</td>
             <td><span class="ok">精确</span>：换枚举值</td>
           </tr>
           <tr>
@@ -586,8 +596,10 @@ ul.plain b { color: var(--soft); font-weight: 600; }
           <tr>
             <td>卡片「状态行被切断」</td>
             <td><b>三行并成两行，卡片几何一点不动</b></td>
-            <td>这是四条判据里唯一「现状明确不合格」的一项：第三行文字底 +94 比卡片本身（92）还低，
-                被下边框切断 —— 是缺陷不是风格。并成两行后第二行底 +72 正好落在内沿上</td>
+            <td>这是四条判据里唯一「改前明确不合格」的一项：第三行文字底 +94 比卡片本身（92）还低，
+                被下边框切断 —— 是缺陷不是风格。并成两行后第二行底 +72 正好落在内沿上。
+                <b>已落地</b>（<code>GroupDialogueHubMenu.cs:157-165</code> 的
+                <code>HubCardSecondRowOffset = 44</code>）</td>
             <td><b>卡片加高到 116 + 步进 128</b>：文字能保持三行，但 1280×720 与 1600×900 下
                 每屏只能放 3 张（现在 4 张），而且 <code>invitationRows</code> 与按钮命中区全变
                 —— 拿「少看一张邀约 + 点击坐标风险」换一行字的位置，我认为不划算</td>
@@ -825,8 +837,12 @@ __FRAME_SCRIPT__
     // 于是「最后一行被下边框切断」这个真正的毛病消失，而几何与点击坐标零改动。
     cardHeight: 92, cardStep: 104,
     cardRow1Y: 14,
-    cardStatusYLegacy: 66,      // 现状第三行：底 +94 > 卡片高 92 —— 文字直接画到卡片外面
-    cardRow2YDesign: 44,        // 新设计第二行（主题 + 状态并成一行）：底 +72 = 内沿，刚好
+    cardRow2YDesign: 44,        // 唯一的第二行位置（HubCardSecondRowOffset = 44）：底 +72 = 内沿，刚好
+    /**
+     * ⚠ 原来的 `cardStatusYLegacy: 66`（现状第三行）已删除：实机把三行并成了两行
+     * （`GroupDialogueHubMenu.cs:157-165`），现状栏与新设计栏现在都是 +14 / +44 两行，
+     * 卡片高 92、行步进 104、三个按钮的命中区一个都没动。
+     */
   };
 
   const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -1214,9 +1230,14 @@ __FRAME_SCRIPT__
 
   // ── 输入框 ─────────────────────────────────────────────────────────────
   /**
-   * 现状：原版 TextBox.Draw 的横向三片 + 「源矩形高写成 Height」的 clamp 产物。
-   * H > 48 时，v > 1 的采样被 GPU clamp 到贴图末行 (57,54,65,66) —— 26% 冷灰，
-   * 与暖橙面板相乘就是实测的米褐色 rgb(190,140,93)。这就是「那条深色带」。
+   * **改前**那条「深色带」的画法（原版 TextBox.Draw 的横向三片 + 「源矩形高写成 Height」
+   * 的 clamp 产物）：H > 48 时，v > 1 的采样被 GPU clamp 到贴图末行 (57,54,65,66) ——
+   * 26% 冷灰，与暖橙面板相乘就是实测的米褐色（本次实测 F8 / F9 同为 rgb(180,134,89)）。
+   *
+   * ⚠ **开关全开的默认状态下，两栏都不再用它画输入框**：实机已把绘制矩形定成
+   * `MenuSkinRules.InputBoxVisual`（内缩 12、高 48、居中），H = 48 时 1:1 采样，
+   * 那条带在实机上不存在（`MenuSkinRules.cs:127-141`）。本函数只留给
+   * 「输入区重做」开关**关掉**时做改前对照，看得到那条带在哪儿。
    */
   function textBoxLegacy(parent, r) {
     const el = rectEl(parent, r);
@@ -1232,13 +1253,19 @@ __FRAME_SCRIPT__
   }
 
   /**
-   * 新设计：输入框本体只画 48px（= 贴图高度，1:1 采样，clamp 不触发），
-   * 在输入区凹槽里垂直居中。
+   * 输入框的**绘制**矩形 = `MenuSkinRules.InputBoxVisual(wellRect)` 的逐值同构
+   * （smapi/MenuSkinRules.cs:168-172）：左右各内缩 `InputBoxHorizontalInset = 12`、
+   * 高固定 `InputBoxHeight = 48`、纵向居中，宽取 `max(InputBoxMinimumWidth = 80, w − 24)`。
    *
-   * C# 落法：`inputBox.Height = 48; inputBox.Y = layout.InputBox.Y + 32;`
-   * —— 只动 TextBox 的**绘制**矩形，`receiveLeftClick` 仍用 `layout.InputBox.Contains`。
+   * C# 的 `(h − 48) / 2` 是整数除法，这里用 `Math.trunc` 对齐。
+   * 高 48 = 贴图高度 → 1:1 采样，`TextBox.Draw` 那条 clamp 阴影带不会出现。
+   *
+   * ⚠ 只动 TextBox 的**绘制**矩形，`receiveLeftClick` 仍用 `layout.InputBox.Contains`
+   * （`ChatInputMenu.cs:927-931` / `GroupDialogueMenu.cs:502-507`）。
+   * 本页**两栏都用它**：现状栏也是「照实机」的（与遮罩、标题带、凹槽同一条规矩）。
+   * `textBoxLegacy` 只留给「输入区重做」开关关掉时做改前对照。
    */
-  function textBoxDesign(parent, wellRect) {
+  function textBoxVisual(parent, wellRect) {
     const h = 48;
     const r = {
       x: wellRect.x + 12,
@@ -1404,7 +1431,9 @@ __FRAME_SCRIPT__
       if (y + drawn > area.y + area.h - 12) break;
       y += drawn + BUBBLE.gap;
     }
-    if (s.hint) textAt(stage, area.x + 12, y, s.hint, GAME_GRAY, "g-sm").style.zIndex = "5";
+    // 提示行文字色与 F9 群聊、中心同源：三处都用 MenuSkinRules.InkSoft（ChatInputMenu.cs:754-761）。
+    // 改前这里写的是 GAME_GRAY(128,128,128)，比 InkSoft(105,105,105) 亮一档。
+    if (s.hint) textAt(stage, area.x + 12, y, s.hint, SKIN.inkSoft, "g-sm").style.zIndex = "5";
 
     if (L.profilePanel) {
       const p = L.profilePanel;
@@ -1453,7 +1482,7 @@ __FRAME_SCRIPT__
     }
     if (design) {
       if (OPT.input) {
-        const box = textBoxDesign(stage, L.inputBox);
+        const box = textBoxVisual(stage, L.inputBox);
         caret(stage, { x: box.rect.x + 16, y: box.rect.y + 8, w: 4, h: 32 });
       } else {
         textBoxLegacy(stage, L.inputBox);
@@ -1464,12 +1493,16 @@ __FRAME_SCRIPT__
       button(stage, L.inventoryButton, "物品", true, SKIN.btnSecondary);
       button(stage, L.closeButton, "结束", true, SKIN.btnSecondary);
     } else {
-      textBoxLegacy(stage, L.inputBox);
-      caret(stage, { x: L.inputBox.x + 16, y: L.inputBox.y + 8, w: 4, h: 32 });
-      button(stage, L.sendButton, "发送", true, [235, 246, 236]);
-      button(stage, L.topicButton, "找话题", true, [239, 231, 244]);
-      button(stage, L.inventoryButton, "物品", true, [235, 240, 246]);
-      button(stage, L.closeButton, "结束", true, [247, 232, 227]);
+      // 现状栏：输入框也照实机 —— MenuSkinRules.InputBoxVisual（内缩 12、高 48、纵向居中）。
+      // ⚠ 改前这里画的是 textBoxLegacy（画满整个 layout.InputBox），于是照 TextBox.Draw 的
+      //    clamp 规则多出下半那条米褐色带；实机早已把绘制矩形定成 48 高、1:1 采样，
+      //    那条带在实机上并不存在（MenuSkinRules.cs:127-141）。现状栏是「照实机」的。
+      const box = textBoxVisual(stage, L.inputBox);
+      caret(stage, { x: box.rect.x + 16, y: box.rect.y + 8, w: 4, h: 32 });
+      button(stage, L.sendButton, "发送", true, SKIN.btnPrimary);
+      button(stage, L.topicButton, "找话题", true, SKIN.btnSecondary);
+      button(stage, L.inventoryButton, "物品", true, SKIN.btnSecondary);
+      button(stage, L.closeButton, "结束", true, SKIN.btnSecondary);
     }
 
     guides.push(["Panel", L.panel], ["Header", L.header], ["MessageArea", L.messageArea],
@@ -1546,7 +1579,7 @@ __FRAME_SCRIPT__
     }
     if (design) {
       if (OPT.input) {
-        const box = textBoxDesign(stage, L.inputBox);
+        const box = textBoxVisual(stage, L.inputBox);
         caret(stage, { x: box.rect.x + 16, y: box.rect.y + 8, w: 4, h: 32 });
       } else {
         textBoxLegacy(stage, L.inputBox);
@@ -1555,8 +1588,8 @@ __FRAME_SCRIPT__
       button(stage, L.sendButton, "发送", true, SKIN.btnPrimary);
       button(stage, L.retryButton, "重试", false, SKIN.btnSecondary);
       button(stage, L.closeButton, "关闭", true, SKIN.btnSecondary);
-      // 现状：hint 在 messageArea.Bottom - 28，与最后一条气泡共用同一块高度（一多就叠）。
-      // 新设计：能放 header 就放 header（右对齐、与参与者条同一行），放不下才落到底部留白。
+      // 提示行（GroupDialogueMenu.cs:259-274）：能放 header 就放 header（右对齐、与参与者条
+      // 同一行、气泡区零损失），放不下才落到底部留白（那时气泡区减 30px）。
       if (hintInHeader) {
         const hintW = Math.ceil(measureText(s.hint));
         textAt(stage, L.participantStrip.x + L.participantStrip.w - hintW,
@@ -1565,13 +1598,20 @@ __FRAME_SCRIPT__
         textAt(stage, area.x + 12, area.y + bubbleAreaH + 4, s.hint, SKIN.inkSoft, "g-sm").style.zIndex = "5";
       }
     } else {
-      textBoxLegacy(stage, L.inputBox);
-      caret(stage, { x: L.inputBox.x + 16, y: L.inputBox.y + 8, w: 4, h: 32 });
-      button(stage, L.sendButton, "发送", true);
-      button(stage, L.retryButton, "重试", false);
-      button(stage, L.closeButton, "关闭", true);
-      textAt(stage, area.x + 12, area.y + area.h - 28, s.hint, GAME_GRAY, "g-sm").style.zIndex = "5";
-      addNote(stage, L.inputBox, "现状：输入框下面那条深色带");
+      // 现状栏：与实机一致 —— 输入框走 InputBoxVisual（不再是那条 clamp 阴影带），
+      // 按钮两档 tint，提示行短提示进 header、长提示才落底部。
+      const box = textBoxVisual(stage, L.inputBox);
+      caret(stage, { x: box.rect.x + 16, y: box.rect.y + 8, w: 4, h: 32 });
+      button(stage, L.sendButton, "发送", true, SKIN.btnPrimary);
+      button(stage, L.retryButton, "重试", false, SKIN.btnSecondary);
+      button(stage, L.closeButton, "关闭", true, SKIN.btnSecondary);
+      if (hintInHeader) {
+        const hintW = Math.ceil(measureText(s.hint));
+        textAt(stage, L.participantStrip.x + L.participantStrip.w - hintW,
+          L.participantStrip.y + 5, s.hint, SKIN.inkSoft, "g-sm").style.zIndex = "5";
+      } else {
+        textAt(stage, area.x + 12, area.y + bubbleAreaH + 4, s.hint, SKIN.inkSoft, "g-sm").style.zIndex = "5";
+      }
     }
 
     guides.push(["Panel", L.panel], ["Header", L.header], ["ParticipantStrip", L.participantStrip],
@@ -1613,27 +1653,23 @@ __FRAME_SCRIPT__
       nineSlice(stage, row, SKIN.card, MENU_TEX, { z: 3 });
       const names = invitation.participants.join("、");
       const status = `${invitation.status} · 到期第 ${invitation.expires} 天`;
-      // 行 1：标题 · 参与者（现状与两版都一样）
+      // 行 1 +14（Ink）· 行 2 +44（InkSoft）—— 见 MenuSkinRules.HubCardSecondRowOffset / GroupDialogueHubMenu.cs:156-165
       textAt(stage, row.x + 18, row.y + SKIN.cardRow1Y,
         `${invitation.title} · ${names}`, GAME_BLACK).style.zIndex = "6";
-      if (design && OPT.card) {
-        // 新设计：主题与状态**并成一行**。
-        // 这一行底 = +44 + 28 = +72，正好等于九宫格下内沿（92 − 20），不会出框。
-        textAt(stage, row.x + 18, row.y + SKIN.cardRow2YDesign,
-          `主题：${invitation.topic} · ${status}`, SKIN.inkSoft).style.zIndex = "6";
-      } else {
-        textAt(stage, row.x + 18, row.y + 42, `主题：${invitation.topic}`, SKIN.inkSoft).style.zIndex = "6";
-        // 现状：第三行在 +66，文字底 +94 —— 比卡片本身（92）还低 2px，直接被下边框切断
-        textAt(stage, row.x + 18, row.y + SKIN.cardStatusYLegacy,
-          `状态：${status}`, DIM_GRAY, "g-sm").style.zIndex = "6";
-        if (y === L.panel.y + 94) {
-          addNote(stage, { x: row.x, y: row.y + 60, w: row.w, h: 34 },
-            "现状：第三行 y=+66，文字底 +94 > 卡片高 92 —— 被下边框切断");
-        }
+      // ⚠ 「三行并两行」**实机已经落地**（GroupDialogueHubMenu.cs:157-165），所以现状栏也画两行：
+      //   改前第三行在 +66、文字底 +94，比卡片本身（92）还低 2px，被九宫格下内沿（92 − 20 = 72）
+      //   切断；并到 +44 后文字底正好 +72，不出框，而卡片矩形与按钮命中区一个都没动。
+      //   （「输入区重做」式的开关在这里只影响是否显示这条说明性对照，不再影响行数。）
+      textAt(stage, row.x + 18, row.y + SKIN.cardRow2YDesign,
+        `主题：${invitation.topic} · ${status}`, SKIN.inkSoft).style.zIndex = "6";
+      if (design && OPT.card && y === L.panel.y + 94) {
+        addNote(stage, { x: row.x, y: row.y + 52, w: row.w, h: 26 },
+          "新设计：主题与状态并成一行，文字底 +72 = 九宫格下内沿，不出框");
       }
       ["接受", "稍后", "忽略"].forEach((label, i) => {
+        // 两档 tint（GroupDialogueHubMenu.cs:168-170）：接受=主按钮，稍后/忽略=次按钮
         button(stage, actionButtonAt(row, i), label, true,
-          design ? (i === 0 ? SKIN.btnPrimary : SKIN.btnSecondary) : SKIN.btnPrimary);
+          i === 0 ? SKIN.btnPrimary : SKIN.btnSecondary);
       });
       y += cardStep;
     }
@@ -1646,12 +1682,13 @@ __FRAME_SCRIPT__
         .dataset.inset = "hubList";
     }
 
-    button(stage, L.closeButton, "关闭", true, design ? SKIN.btnSecondary : SKIN.btnPrimary);
-    textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, s.hint, GAME_GRAY, "g-sm").style.zIndex = "5";
+    // 关闭按钮也是次按钮档（GroupDialogueHubMenu.cs:175）；提示行同三处一律 InkSoft（:177）。
+    button(stage, L.closeButton, "关闭", true, SKIN.btnSecondary);
+    textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, s.hint, SKIN.inkSoft, "g-sm").style.zIndex = "5";
 
     guides.push(["Panel", L.panel], ["CloseButton", L.closeButton], ["ListInset", listArea]);
     addGuides(stage, guides);
-    return `邀约卡 ${s.cards.length} 张（显示上限 GroupInvitationRules.cs:18 = 4）；新设计把三行文字并成两行，几何零改动`;
+    return `邀约卡 ${s.cards.length} 张（显示上限 GroupInvitationRules.cs:18 = 4）；卡片文字两行 +14/+44，几何零改动`;
   }
 
   // ── 舞台装配 / 缩放 / 自检 ─────────────────────────────────────────────

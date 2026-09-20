@@ -279,15 +279,17 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr>
             <td>F9 群聊</td>
             <td>面板、标题、参与者条、消息区凹槽与气泡（含同角色重复发言的构图轮换）、
-                输入区凹槽与输入框、发送 / 重试 / 关闭按钮、底部提示行</td>
+                输入区凹槽与输入框、发送 / 重试 / 关闭按钮、提示行（短提示在参与者条右端、
+                长提示才落到消息区下方）</td>
             <td><code>GroupDialogueLayoutRules.Calculate</code>、<code>GroupDialogueMenu.draw</code></td>
           </tr>
           <tr>
             <td>群聊中心</td>
-            <td>面板、标题、四张邀约卡（标题+参与者 / 主题 / 状态）、卡上的接受·稍后·忽略按钮、关闭按钮、底部提示行。
-                卡片第三行的「状态」会压到卡片底边框上——这是游戏原样：实机截图
-                <code>artifacts/visual-tests/20260910-group-hub-r11/group-hub.png</code>
-                里同样如此（文字 y=row+66、卡片高 92 与 12px 边框内沿 row+80 相撞）。</td>
+            <td>面板、标题、四张邀约卡（标题+参与者 / 主题·状态并成一行）、卡上的接受·稍后·忽略按钮、关闭按钮、底部提示行。
+                卡片文字是<b>两行</b>（<code>+14</code> / <code>+44</code>）—— 实机已「三行并两行」
+                （<code>GroupDialogueHubMenu.cs:157-165</code>）：改前第三行在 <code>+66</code>、文字底 <code>+94</code>
+                比卡片本身（92）还低 2px，被九宫格下内沿（92 − 20 = 72）切断；并到 <code>+44</code> 后
+                文字底正好 <code>+72</code>，不出框，而卡片矩形与按钮命中区一个都没动。</td>
             <td><code>GroupDialogueHubLayoutRules.Calculate</code>、<code>GroupDialogueHubMenu.draw</code>、
                 <code>GroupInvitationActionLayoutRules.cs:15-67</code></td>
           </tr>
@@ -332,13 +334,13 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
           <tr><td>群聊消息区</td><td>(panel.X+20, header.Bottom, panel.W-40, footer.Y-header.Bottom-12)，一次最多 10 条</td><td><code>GroupDialogueLayoutRules.cs:28,50-54</code></td></tr>
           <tr><td>群聊按钮</td><td>发送 / 重试 / 关闭 各 88 宽、gap 8，贴 footer 右端</td><td><code>GroupDialogueLayoutRules.cs:56-66</code></td></tr>
           <tr><td>群聊标题 / 参与者文字</td><td>标题走与私聊<b>同一句</b> <code>DrawTitleBand(layout.Header, "线上多人对话", null, AccentFor(participants[0].NpcId))</code> → 竖条 <code>(header.X+12, header.Y+12, 4, 20)</code>、标题 <code>(header.X+24, header.Y+9)</code>、发丝线 <code>(header.X+12, header.Bottom-14, header.W-24, 2)</code>；参与者行 <code>(participantStrip.X, participantStrip.Y)</code> 走 <code>InkSoft</code></td><td><code>GroupDialogueMenu.cs:170-176</code>、<code>MenuSkinDrawing.DrawTitleBand</code>（改前标题只在 <code>(header.X+12, header.Y+10)</code> 一行裸文字）</td></tr>
-          <tr><td>群聊提示行</td><td>短提示（正常态）放 header 右侧 <code>(participantStrip.Right−提示宽, participantStrip.Y+5)</code> —— 气泡区零损失；长提示放不下 header 才回落到 <code>(messageArea.X+12, messageArea.Y+bubbleAreaHeight+4)</code>，气泡区因此减 <code>HintFallbackReserve = 30</code>。⚠ <b>页面仍只画回落位置那一条</b>（<code>messageArea.Bottom−28</code>，与 C# 的 <code>bubbleAreaHeight+4</code> 差 2px），属已知差异；气泡区高度本身已按同一条规则算（凹槽高度与「画到底 break」都用它）</td><td><code>GroupDialogueMenu.draw</code>（提示行分支）、<code>MenuSkinRules.HintNeedsBottomRow</code> / <code>MessageBubbleAreaHeight</code>（HintFallbackReserve 30 / MessageAreaMinimumHeight 60）</td></tr>
+          <tr><td>群聊提示行</td><td>短提示（正常态）放 header 右侧 <code>(participantStrip.Right−提示宽, participantStrip.Y+5)</code> —— 气泡区零损失；长提示放不下 header 才回落到 <code>(messageArea.X+12, messageArea.Y+bubbleAreaHeight+4)</code>，气泡区因此减 <code>HintFallbackReserve = 30</code>。页面本轮已按同一条分支画（改前无条件画在 <code>messageArea.Bottom−28</code>），两处都走 <code>InkSoft</code>；气泡区高度（凹槽高度与「画到底 break」）用同一个 <code>bubbleAreaHeight</code></td><td><code>GroupDialogueMenu.cs:259-274</code>（提示行分支）、<code>MenuSkinRules.HintNeedsBottomRow</code> / <code>MessageBubbleAreaHeight</code>（HintFallbackReserve 30 / MessageAreaMinimumHeight 60）</td></tr>
           <tr><td>推送气泡的起点</td><td>左 = messageArea.X+12，右 = messageArea.Right-12，首条 y = messageArea.Y+12</td><td><code>GroupDialogueMenu.draw</code>（bubbleLeft / bubbleRight）</td></tr>
           <tr><td>中心面板</td><td>w=min(1080, max(680, 视口宽-48))；h=min(680, max(440, 视口高-48))</td><td><code>GroupDialogueHubLayoutRules.cs:15-16</code></td></tr>
           <tr><td>中心标题 / 首行 / 行距</td><td>标题同样走 <code>DrawTitleBand</code>，header 是 <code>new Rectangle(panel.X, panel.Y, panel.W, HubTitleBandHeight = 74)</code> → 竖条 <code>(panel.X+12, panel.Y+12, 4, 20)</code>、标题 <code>(panel.X+24, panel.Y+9)</code>、发丝线 <code>(panel.X+12, panel.Y+60, panel.W-24, 2)</code>（74 − 14）；首行 y=panel.Y+94；每行 92 高、步进 104</td><td><code>GroupDialogueHubMenu.cs:126-131</code>、<code>MenuSkinRules.cs:237</code>（改前标题只在 <code>(panel.X+32, panel.Y+24)</code> 一行裸文字）</td></tr>
-          <tr><td>中心卡片文字</td><td>(row.X+18, row.Y+14/42/66)：标题·参与者为黑、主题为 DarkSlateGray、状态为 DimGray</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
-          <tr><td>中心按钮</td><td>接受 / 稍后 / 忽略 各 64×52、gap 6、行长 18 处对齐右端；关闭 148×56 贴右下</td><td><code>GroupInvitationActionLayoutRules.cs:15-18</code>、<code>GroupDialogueHubLayoutRules.cs:26-29</code></td></tr>
-          <tr><td>中心底部提示 / 空态</td><td>hint (panel.X+32, panel.Bottom-112)；空态 (panel.X+40, panel.Y+94)</td><td><code>GroupDialogueHubMenu.draw</code></td></tr>
+          <tr><td>中心卡片文字</td><td>两行：<code>(row.X+18, row.Y+14)</code> 标题·参与者走 <code>Ink</code>；<code>(row.X+18, row.Y+HubCardSecondRowOffset = 44)</code> 走 <code>InkSoft</code>，文案 <code>主题：{Topic} · {FormatStatus(Status)} · 到期第 {TotalDays} 天</code>。⚠ 改前是三行（+14 / +42 / +66），第三行文字底 +94 比卡片本身（92）还低 2px、被九宫格下内沿（92 − 20 = 72）切断；实机已「三行并两行」，页面本轮跟上 —— 卡片矩形（92）与三个按钮的命中区一个都没动</td><td><code>GroupDialogueHubMenu.cs:156-165</code>、<code>MenuSkinRules.cs:252</code></td></tr>
+          <tr><td>中心按钮</td><td>接受 / 稍后 / 忽略 各 64×52、gap 6、行长 18 处对齐右端；关闭 148×56 贴右下。两档 tint：接受 = 主按钮（白），稍后 / 忽略 / 关闭 = 次按钮 <code>(238,226,208)</code></td><td><code>GroupInvitationActionLayoutRules.cs:15-18</code>、<code>GroupDialogueHubMenu.cs:168-175</code></td></tr>
+          <tr><td>中心底部提示 / 空态</td><td>hint (panel.X+32, panel.Bottom-112) 走 <code>InkSoft</code>；空态 (panel.X+40, panel.Y+94)</td><td><code>GroupDialogueHubMenu.cs:140,177</code></td></tr>
           <tr><td>最多少张邀约卡</td><td>4</td><td><code>GroupInvitationRules.cs:18</code> MaxVisibleInvitations</td></tr>
           <tr><td>气泡内边距 / 行间 / 间距 / 安全边距 / 最小宽</td><td>12 / 4 / 20 / 8 / 180</td><td><code>ChatBubbleDrawing.cs:20,23,29,32,35</code></td></tr>
           <tr><td>气泡换行宽 / 高度</td><td>ContentWidth = max(80, 可用宽-24-8)；高 = 24 + LineSpacing + 4 + n×LineSpacing + (n-1)×4</td><td><code>ChatBubbleDrawing.ContentWidth / MeasureHeight</code></td></tr>
@@ -354,9 +356,9 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
               ⚠ 改前这里是 <code>Color(248,240,224)</code>，是「消息区还是白 tint、卡片必须自己暗一档」年代的旧值，
               在已有凹槽的今天会叠成两层暗</td><td><code>ChatInputMenu.DrawProfile</code>（<code>ChatInputMenu.cs:844-850</code>）、<code>MenuSkinRules.cs:35</code></td></tr>
           <tr><td>好感度条</td><td>高 10、底 (206,195,180)、填充 (181,137,191)，按 心数/10 比例</td><td><code>ChatInputMenu.DrawProfile</code>（好感度条）</td></tr>
-          <tr><td>四个按钮的 tint</td><td>发送 (235,246,236)、找话题 (239,231,244)、物品 (235,240,246)、结束 (247,232,227)</td><td><code>ChatInputMenu.DrawFooter</code></td></tr>
+          <tr><td>四个按钮的 tint</td><td>两档（<code>MenuSkinRules.cs:38,46</code>）：发送 = 主按钮 <code>PrimaryButtonTint = Color.White</code>；找话题 / 物品 / 结束 = 次按钮 <code>SecondaryButtonTint = (238,226,208)</code>。⚠ 改前页面是四种几乎分不清的淡色：发送 (235,246,236)、找话题 (239,231,244)、物品 (235,240,246)、结束 (247,232,227)</td><td><code>ChatInputMenu.DrawFooter</code>、<code>MenuSkinRules.PrimaryButtonTint</code> / <code>SecondaryButtonTint</code></td></tr>
           <tr><td>按钮绘制</td><td>drawTextureBox(tint 或 Gray) + 居中标签，禁用时文字改 DimGray</td><td><code>MenuButtonDrawing.cs:22-36</code></td></tr>
-          <tr><td>输入框</td><td>原版 <code>LooseSprites\textBox</code>（192×48）横向三片：左 16px + 中 (W-32) + 右 16px；源矩形高写的是 Height，H&gt;48 的部分被采样 clamp 到贴图末行 (57,54,65,66)，那片半透明冷阴影与面板底色相乘就是下半的米褐色。⚠ 实机的绘制矩形已改成 48 高的 <code>MenuSkinRules.InputBoxVisual</code>（H = 48 即 1:1 采样、那条带消失），页面仍按整个 <code>layout.InputBox</code> 画 —— 见底部「输入框的绘制矩形」一条</td><td class="done">2026-09-20 真贴图原样内联（base64），与游戏截图 y434-473 逐行同值</td></tr>
+          <tr><td>输入框</td><td>原版贴图 <code>LooseSprites\textBox</code>（192×48）横向三片：左 16px + 中 (W-32) + 右 16px；源矩形高写的是 Height，H&gt;48 的部分会被采样 clamp 到贴图末行 (57,54,65,66)。⚠ 实机的绘制矩形是 <code>MenuSkinRules.InputBoxVisual</code>（内缩 12、高 48、纵向居中，H = 48 即 1:1 采样、那条带<b>不出现</b>），页面本轮已跟上 —— 传进去的是 <code>inputBoxVisual(layout.InputBox)</code>，那条米褐色带不再绘制</td><td class="done">2026-09-20 真贴图原样内联（base64），与游戏截图 y434-473 逐行同值</td></tr>
           <tr><td>菜单九宫格纹理（按钮 / 气泡 / F9 / Hub）</td><td><code>Maps\MenuTiles</code> 的 (0,256,60,60) 切 20px：四角 20×20 原样、四边拉伸、中心拉伸到 (w-40)×(h-40)；投影是同一套再画一遍、黑色 40%、整体偏移 (-8,+8)</td><td class="done">2026-09-20 真贴图原样内联，与游戏截图面板/按钮逐像素同值</td></tr>
           <tr><td>气泡的描边变体</td><td>同一块 (0,256,60,60)，但<b>描边像素的色相被归一到填充基准色</b>（逐像素保留亮度）。原贴图的描边是红橙色 <code>#b14e05</code>（B 通道只有 5）：白 tint 的面板/按钮是木框本色，可角色气泡的 tint 是紫红/靛蓝，描边乘完 B 通道仍 ≈2 —— 底色上就围了一圈橙红的边（实测边框 <code>rgb(73,13,2)</code> vs 填充 <code>rgb(104,32,36)</code>）</td><td class="done">2026-09-20 归一后边框恒为「底色的暗版本」：<code>rgb(52,16,18)</code>，边框÷填充 = (.50,.50,.50)；面板 / 按钮 / 凹槽仍用原版贴图</td></tr>
           <tr><td>F8 面板边框</td><td>走 <code>MenuSkinDrawing.DrawPanel(b, layout.Panel)</code> —— 与 F9 / 群聊中心<b>同一条</b>
@@ -391,30 +393,40 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
             的行为，实机既然不再经过它，那两条在实机上都不成立了。</li>
         <li><b>面板中央的横向明暗（已不再是手画渐变）</b>：原版是中央格被拉伸到 (w-40)×(h-40) 的结果，
             真贴图里那 20px 自带 4/8/4/4 的明暗分段，页面交给 border-image 拉伸，比例自动正确。</li>
-        <li><b>输入框下半那条带（已按源码规则重画）</b>：它不是贴图里画好的第二段，也不是黑色 ——
+        <li><b>输入框下半那条带（页面已不再绘制）</b>：它不是贴图里画好的第二段，也不是黑色 ——
             是 <code>TextBox.Draw</code> 的源矩形高写成 <code>Height</code> 后，H&gt;48 的采样被 clamp 到贴图末行
-            <code>(57,54,65,66)</code>，那层 26% 的冷灰与暖橙面板相乘得到的米褐色。页面照抄这条规则，
-            底色用同一条 rgba 叠在面板上。
+            <code>(57,54,65,66)</code>，那层 26% 的冷灰与暖橙面板相乘得到的米褐色。
             <b>⚠ 这条带只属于「高矩形」那种输入框</b>：实机已把绘制矩形改成 48 高的
-            <code>InputBoxVisual</code>，<code>H = 48</code> 时是 1:1 采样，那条带在实机上<b>已经消失</b>；
-            页面还画着它 —— 见下面「输入框的绘制矩形」一条。</li>
+            <code>InputBoxVisual</code>，<code>H = 48</code> 是 1:1 采样，那条带在实机上<b>不存在</b>；
+            页面本轮也改成传 <code>inputBoxVisual(layout.InputBox)</code>，米褐色带随之消失：
+            同一个采样点在改前 / 改后分别是 F8 <code>rgb(180,134,89) → rgb(249,186,102)</code>、
+            F9 <code>rgb(180,134,89) → rgb(249,186,102)</code> ——
+            改后该点落在 48 高输入框的贴图本体上，不再是那条 clamp 阴影。<b>见下面「输入框的绘制矩形」一条</b>。</li>
         <li><b>游戏字体</b>：游戏是位图 SpriteFont，本页面用系统中文黑体近似，字形宽度与断行位置会与原版有差；
             <code>LineSpacing ≈ 28</code> 是从「三个单行气泡高度都是 84px」反推的，不是从代码读到的常量。</li>
-        <li><b>输入框的绘制矩形（页面未跟上实机，本轮未改 —— 影响最大的剩余差异）</b>：实机的
-            <code>TextBox</code> 用的是 <code>MenuSkinRules.InputBoxVisual(layout.InputBox)</code> ——
+        <li><b>输入框的绘制矩形（本轮已跟上实机）</b>：实机的 <code>TextBox</code> 用的是
+            <code>MenuSkinRules.InputBoxVisual(layout.InputBox)</code> ——
             <b>左右各内缩 12、高固定 48、纵向居中</b>（<code>ChatInputMenu.cs:927-931</code>；1280×720 下
             F8 = <code>(241,466,342,48)</code>、F9 = <code>(112,620,768,48)</code>，
-            <code>MenuSkinRulesTests.cs:150,160</code> 已把这两个值钉进测试）。页面仍然把整个
+            <code>MenuSkinRulesTests.cs:150,160</code> 已把这两个值钉进测试）。<b>改前</b>页面把整个
             <code>layout.InputBox</code> 交给 <code>textBox()</code>（F8 = <code>(229,434,366,112)</code>），
-            于是照 <code>H&gt;48</code> 的 clamp 规则多画出下半那条阴影带 —— 而实机 <code>H = 48</code> 时
-            <b>那条带根本不存在</b>（1:1 采样，见 <code>MenuSkinRules.cs:127-141</code> 的
-            <code>InputBoxHeight</code> 注释）。
-            <b>连带后果</b>：本轮补的输入区凹槽在页面上<b>只露出下半一条</b>（上半 48px 被贴图 cap 盖住、
-            左右被画满的宽度盖住），而实机上凹槽在输入框四周都看得见。实测那条带
-            F8 <code>rgb(189,139,93)</code>、F9 <code>rgb(196,148,92)</code>。</li>
-        <li><b>F9 提示行的位置（页面未跟上实机，已知差异）</b>：实机现在「短提示放 header 右侧、长提示才落到底部」，
-            页面仍把提示画在 <code>messageArea.Bottom−28</code>。示例提示是短提示，所以页面上看到的是一条压在
-            气泡下方的提示、实机则画在参与者条那一行的右端。气泡区高度（凹槽高度、画到底的断点）已按实机规则算。</li>
+            于是照 <code>H&gt;48</code> 的 clamp 规则多画出下半那条阴影带
+            （F8 与 F9 的 <code>(412,500)</code> 改前同为 <code>rgb(180,134,89)</code>）——
+            而实机 <code>H = 48</code> 时<b>那条带根本不存在</b>
+            （1:1 采样，见 <code>MenuSkinRules.cs:127-141</code> 的 <code>InputBoxHeight</code> 注释）。
+            <b>本轮改法</b>：新增 <code>inputBoxVisual(r)</code>（C# 那条公式的逐值同构），
+            调用点传它、光标位置一并跟着走，<code>H&gt;48</code> 的 clamp 分支因此在页面上不可达。
+            <b>改后实测</b>：输入框元素 <code>(241,466,342,48)</code> / <code>(112,620,768,48)</code>
+            与 C# 逐值相同；<code>(412,500)</code> 处 <code>rgb(180,134,89) → rgb(249,186,102)</code>；
+            输入框下方 <code>(412,520)</code> <code>rgb(180,134,83) → rgb(223,162,89)</code>（= 露出来的凹槽）。
+            <b>连带效果</b>：输入区凹槽在输入框<b>四周</b>都露出来了（改前上半 48px 被贴图 cap 盖住、
+            左右被画满的宽度盖住，只露下半一条）——<code>(412,460)</code> 改前是贴图 cap
+            <code>rgb(249,186,102)</code>、改后是凹槽 <code>rgb(232,176,104)</code>。</li>
+        <li><b>F9 提示行的位置（本轮已跟上实机）</b>：实机「短提示放 header 右侧、长提示才落到底部」，
+            <b>改前</b>页面把提示无条件画在 <code>messageArea.Bottom−28</code>（与 C# 的
+            <code>bubbleAreaHeight + 4</code> 差 2px），与最后一条气泡抢同一块高度。
+            示例提示是短提示，所以改后它与参与者条同一行、右端对齐
+            （<code>participantStrip.Right − 提示宽, participantStrip.Y + 5</code>，颜色 <code>InkSoft</code>）。</li>
         <li><b>阴影（仍是近似）</b>：参数已按原版（偏移 (-8,+8)、<code>Color.Black * 0.4f</code>），但原版是
             「九宫格逐块再画一遍」，其中中心块还会向外放大 num/2 = 10px；页面用一层 drop-shadow 近似，
             框体轮廓一致，紧贴边框内侧那 10px 的差看不出来、但确实存在。</li>
@@ -429,8 +441,9 @@ ul.plain b { color: #f0b58a; font-weight: 600; }
             同样随 <code>DrawPanel</code> 一起作废 —— 新画法没有那层偏移，页面与实机都直接落在
             <code>layout.Panel</code> 上（本轮实测 F8 面板可见范围 = 游戏坐标 221..1059 × 166..554，
             与 <code>layout.Panel</code> 逐值相同）。</li>
-        <li><b>输入框下半的合成方式（仍是近似）</b>：浏览器用 sRGB 的 alpha 合成，游戏由 GPU 在
-            clamp 采样后混合，理论上同一公式；实测色阶有 ±1 的舍入偏差。</li>
+        <li><b>输入框下半的合成方式（已不适用，留档）</b>：页面改传 48 高的视觉矩形之后，
+            clamp 那条路径不再触发，这条近似也就不存在了。旧版是浏览器用 sRGB 的 alpha 合成、
+            游戏由 GPU 在 clamp 采样后混合，理论上同一公式，实测色阶有 ±1 的舍入偏差。</li>
         <li><b>光标</b>：原版是 500ms 周期闪烁的 4×32 竖条（<code>Rectangle(X+16+文字宽+2, Y+8, 4, 32)</code>），
             页面画静态不闪烁版本，位置取空文本时。</li>
         <li><b>NPC 立绘</b>：页面没有游戏素材，角色面板里的 64×64 位置用角色徽章占位并标注。</li>
@@ -577,6 +590,28 @@ __FRAME_SCRIPT__
   const METER_BG = [206, 195, 180];        // ChatInputMenu.DrawProfile（好感度条底）
   const METER_FILL = [181, 137, 191];      // ChatInputMenu.DrawProfile（好感度条填充）
   const DEFAULT_ACCENT = [176, 146, 242];  // MenuSkinDrawing.DefaultAccent（查不到角色时的系统默认紫）
+
+  /**
+   * 按钮的两档 tint（`MenuSkinRules.cs:38,46`）：
+   *   PrimaryButtonTint   = Color.White        → (255,255,255)，发送 / 接受 / 关闭
+   *   SecondaryButtonTint = new(238, 226, 208) → (238,226,208)，找话题 / 物品 / 结束 / 重试 / 稍后 / 忽略
+   *
+   * ⚠ 改前 F8 的四个按钮是四种几乎分不清的淡色：发送 (235,246,236)、找话题 (239,231,244)、
+   * 物品 (235,240,246)、结束 (247,232,227)，彼此差异小到读不出含义，只留下「脏」。
+   * 收敛成两档之后「发送」自然突出，其余退到后面。
+   */
+  const PRIMARY_BUTTON_TINT = [255, 255, 255];
+  const SECONDARY_BUTTON_TINT = [238, 226, 208];
+
+  /**
+   * 输入框的**绘制**矩形令牌（`MenuSkinRules.cs:141,144,158,168-172`）：
+   *   InputBoxHeight = 48、InputBoxHorizontalInset = 12、InputBoxMinimumWidth = 80，
+   *   `InputBoxVisual(r) = (r.X + 12, r.Y + trunc((r.H − 48) / 2), max(80, r.W − 24), 48)`。
+   * 见 `inputBoxVisual()` —— 命中判定用的仍是 `layout.InputBox`，页面不加判定。
+   */
+  const INPUT_BOX_HEIGHT = 48;
+  const INPUT_BOX_HORIZONTAL_INSET = 12;
+  const INPUT_BOX_MINIMUM_WIDTH = 80;
 
   /**
    * 内容区凹槽的 tint：`MenuSkinRules.InsetTint = new Color(232, 228, 224)`（smapi/MenuSkinRules.cs）。
@@ -1150,6 +1185,30 @@ __FRAME_SCRIPT__
 
   // ── 输入框（原版 LooseSprites\textBox，ChatInputMenu 构造函数里 new TextBox、DrawFooter 里 inputBox.Draw）──
   /**
+   * `MenuSkinRules.InputBoxVisual(layout.InputBox)` 的逐值同构（smapi/MenuSkinRules.cs:168-172）：
+   *
+   *   InputBoxVisual(r) = (r.X + 12, r.Y + trunc((r.H − 48) / 2), max(80, r.W − 24), 48)
+   *
+   * 输入框的**绘制**矩形：在输入区凹槽里左右各内缩 `InputBoxHorizontalInset = 12`、
+   * 纵向居中、高固定 `InputBoxHeight = 48`。1280×720 下 F8 = (241,466,342,48)、
+   * F9 = (112,620,768,48) —— 与 `MenuSkinRulesTests.cs:150,160` 的期望值逐值相同。
+   *
+   * ⚠ C# 的 `(h - 48) / 2` 是**整数除法**（向零取整），这里用 `Math.trunc` 对齐；
+   * 高 48 同时意味着贴图 1:1 采样，`TextBox.Draw` 那条 clamp 阴影带不会出现。
+   *
+   * 与 C# 一样，这只产出**绘制**矩形：命中判定仍用 `layout.InputBox`（页面不做判定，
+   * 但 guides 里两个矩形都画出来，肉眼可核对「视觉矩形内含于命中区」）。
+   */
+  function inputBoxVisual(r) {
+    return {
+      x: r.x + INPUT_BOX_HORIZONTAL_INSET,
+      y: r.y + Math.trunc((r.h - INPUT_BOX_HEIGHT) / 2),
+      w: Math.max(INPUT_BOX_MINIMUM_WIDTH, r.w - INPUT_BOX_HORIZONTAL_INSET * 2),
+      h: INPUT_BOX_HEIGHT,
+    };
+  }
+
+  /**
    * 与 StardewValley.Menus.TextBox.Draw 同构。
    *
    * 原版把这个 192×48 的贴图当**横向三片**用（三次 spriteBatch.Draw）：
@@ -1171,20 +1230,33 @@ __FRAME_SCRIPT__
    * 这里照抄规则：底色铺贴图 y47 行那层 rgba(57,54,65,.2588)，上半 min(48,H) 用三片式贴图盖住。
    * 中块取 slice 的 x16..175；源码取的是 x16..19 那 4px，但贴图每一行在这段内同色，
    * 横向拉伸的结果逐像素相同。
+   *
+   * ⚠ **本函数现在只会收到 `inputBoxVisual()` 的返回值（H = 48）**，`H > 48` 那条 clamp 路径
+   * 因此不可达 —— 实机早就把绘制矩形改成了 48 高（`MenuSkinRules.InputBoxHeight`），
+   * 1:1 采样下那条带**在实机上根本不存在**（`MenuSkinRules.cs:127-141` 的注释）。
+   * 页面前一版把整个 `layout.InputBox`（F8 是 366×112）交给它，于是照 clamp 规则多画出
+   * 下半那条米褐色带（实测采样点 (412,500)：F8 与 F9 都是 rgb(180,134,89)）——
+   * 就是「输入框下面那条深色带」。
+   * 保留 H>48 的分支只为忠实复刻 `TextBox.Draw` 的语义（与 `InputBoxMinimumWidth` 那条
+   * 不可达的防呆分支同一理由），页面实际渲染不再经过它。
    */
   function textBox(parent, r) {
     const el = rectEl(parent, r);
     el.style.zIndex = "3";
-    // 贴图只盖到 cap 的高度；再往下的部分是同一条 clamp 阴影，所以底色从 cap 下沿才开始铺。
+    // 贴图只盖到 cap 的高度；H > 48 时再往下的部分是同一条 clamp 阴影，所以底色从 cap 下沿才开始铺。
     // 否则 cap 里那 4px 半透明阴影行会再和底色叠一次，比原版暗一档。
-    const capHeight = Math.min(48, r.h);
-    // 横向也只在贴图真正有阴影的列上铺：贴图末行 x0..7 与 x188..191 是透明的，
-    // 游戏里那两条 clamp 后仍然是透明（透出面板），所以底色从 8px 起、到 W-4 止。
-    el.style.backgroundImage =
-      `linear-gradient(to bottom, rgba(0,0,0,0) 0 ${capHeight}px, rgba(57,54,65,.2588) ${capHeight}px 100%)`;
-    el.style.backgroundRepeat = "no-repeat";
-    el.style.backgroundSize = "calc(100% - 12px) 100%";
-    el.style.backgroundPosition = "8px 0";
+    const capHeight = Math.min(INPUT_BOX_HEIGHT, r.h);
+    if (r.h > INPUT_BOX_HEIGHT) {
+      // ⚠ 不可达分支：调用点只传 inputBoxVisual() 的 48 高矩形（见函数头注释）。
+      // 保留它只为忠实复刻 TextBox.Draw 在「高矩形」下的行为 —— 那条米褐色带正是这样来的。
+      // 横向也只在贴图真正有阴影的列上铺：贴图末行 x0..7 与 x188..191 是透明的，
+      // 游戏里那两条 clamp 后仍然是透明（透出面板），所以底色从 8px 起、到 W-4 止。
+      el.style.backgroundImage =
+        `linear-gradient(to bottom, rgba(0,0,0,0) 0 ${capHeight}px, rgba(57,54,65,.2588) ${capHeight}px 100%)`;
+      el.style.backgroundRepeat = "no-repeat";
+      el.style.backgroundSize = "calc(100% - 12px) 100%";
+      el.style.backgroundPosition = "8px 0";
+    }
     const cap = document.createElement("div");
     cap.className = "abs";
     cap.style.left = "0";
@@ -1377,23 +1449,23 @@ __FRAME_SCRIPT__
 
     // 底部（ChatInputMenu.DrawFooter；顺序照 C#：先凹槽、再四个按钮、最后输入框）
     //   输入区凹槽：`MenuSkinDrawing.DrawInset(b, layout.InputBox)` —— 与消息区同一层画法
-    //   （同图 20px 九宫格、InsetTint、不投影），输入框在其中垂直居中。
-    //   ⚠ 页面这一步的**可见程度**与实机不同，根因是输入框绘制矩形：页面画满整个
-    //   layout.InputBox（含下半那条 clamp 阴影带），实机用 MenuSkinRules.InputBoxVisual
-    //   ——内缩 12、高 48、纵向居中，凹槽因此上下各露出一段。见底部「仍存在的差异」。
+    //   （同图 20px 九宫格、InsetTint、不投影），矩形就是 `layout.InputBox` 本身（不内缩）。
+    //   输入框浮在凹槽上，用的是 MenuSkinRules.InputBoxVisual —— 内缩 12、高 48、纵向居中，
+    //   于是凹槽在输入框四周都露出一段（改前页面画满整个 layout.InputBox，凹槽只露下半条）。
     insetWell(stage, L.inputBox, "input");
-    button(stage, L.sendButton, "发送", true, [235, 246, 236]);
-    button(stage, L.topicButton, "找话题", true, [239, 231, 244]);
-    button(stage, L.inventoryButton, "物品", true, [235, 240, 246]);
-    button(stage, L.closeButton, "结束", true, [247, 232, 227]);
-    textBox(stage, L.inputBox);
-    caret(stage, { x: L.inputBox.x + 16, y: L.inputBox.y + 8, w: 4, h: 32 });
+    button(stage, L.sendButton, "发送", true, PRIMARY_BUTTON_TINT);
+    button(stage, L.topicButton, "找话题", true, SECONDARY_BUTTON_TINT);
+    button(stage, L.inventoryButton, "物品", true, SECONDARY_BUTTON_TINT);
+    button(stage, L.closeButton, "结束", true, SECONDARY_BUTTON_TINT);
+    const box = inputBoxVisual(L.inputBox);
+    textBox(stage, box);
+    caret(stage, { x: box.x + 16, y: box.y + 8, w: 4, h: 32 });
 
     addGuides([
       ["Panel", L.panel], ["Header", L.header], ["MessageArea", L.messageArea],
       ["ConversationArea", L.conversationArea], ["ProfilePanel", L.profilePanel],
-      ["InputBox", L.inputBox], ["Send", L.sendButton], ["Topic", L.topicButton],
-      ["Inventory", L.inventoryButton], ["Close", L.closeButton],
+      ["InputBox", L.inputBox], ["InputBoxVisual", box], ["Send", L.sendButton],
+      ["Topic", L.topicButton], ["Inventory", L.inventoryButton], ["Close", L.closeButton],
     ]);
     return fitNote;
   }
@@ -1451,19 +1523,31 @@ __FRAME_SCRIPT__
 
     // 输入区凹槽（GroupDialogueMenu.draw:253 → `MenuSkinDrawing.DrawInset(b, layout.InputBox)`），
     // 与 F8 同一句、同一个 tint；画在三个按钮与输入框之前（C# 的顺序）。
-    // ⚠ 可见程度同 F8：页面输入框画满 layout.InputBox（实机是 InputBoxVisual，内缩 12、高 48）。
+    // 输入框同样按 MenuSkinRules.InputBoxVisual 画（内缩 12、高 48、居中）。
     insetWell(stage, L.inputBox, "groupInput");
-    button(stage, L.sendButton, "发送", true);
-    button(stage, L.retryButton, "重试", false);   // session.CanRetry 为假时是灰的（MenuButtonDrawing.DrawButton）
-    button(stage, L.closeButton, "关闭", true);
-    textBox(stage, L.inputBox);
-    caret(stage, { x: L.inputBox.x + 16, y: L.inputBox.y + 8, w: 4, h: 32 });
-    textAt(stage, area.x + 12, area.y + area.h - 28, s.hint, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的提示行分支（MenuSkinRules.InkSoft）
+    button(stage, L.sendButton, "发送", true, PRIMARY_BUTTON_TINT);
+    button(stage, L.retryButton, "重试", false, SECONDARY_BUTTON_TINT); // 不可用时 tint 走 GAME_GRAY（MenuButtonDrawing）
+    button(stage, L.closeButton, "关闭", true, SECONDARY_BUTTON_TINT);
+    const box = inputBoxVisual(L.inputBox);
+    textBox(stage, box);
+    caret(stage, { x: box.x + 16, y: box.y + 8, w: 4, h: 32 });
+    // 提示行（GroupDialogueMenu.draw:259-274 → `MenuSkinRules.HintNeedsBottomRow`）：
+    // 短提示放 header 右侧、与参与者条同一行（气泡区零损失）；
+    // 长提示（"无可用回复(fb=… n=… spk=[…])" 那种排障串）放不下 header，才回落到
+    // 消息区下方 `(messageArea.X + 12, messageArea.Y + bubbleAreaHeight + 4)`。
+    // 改前页面无条件画在 messageArea.Bottom − 28，与最后一条气泡抢同一块高度。
+    if (hintInHeader) {
+      const hintWidth = Math.ceil(measureText(s.hint));
+      textAt(stage, L.participantStrip.x + L.participantStrip.w - hintWidth,
+        L.participantStrip.y + 5, s.hint, DIM_GRAY, "g-sm").style.zIndex = "3";
+    } else {
+      textAt(stage, area.x + 12, area.y + bubbleAreaH + 4, s.hint, DIM_GRAY, "g-sm").style.zIndex = "3";
+    }
 
     addGuides([
       ["Panel", L.panel], ["Header", L.header], ["ParticipantStrip", L.participantStrip],
       ["MessageArea", L.messageArea], ["Footer", L.footer], ["InputBox", L.inputBox],
-      ["Send", L.sendButton], ["Retry", L.retryButton], ["Close", L.closeButton],
+      ["InputBoxVisual", box], ["Send", L.sendButton], ["Retry", L.retryButton], ["Close", L.closeButton],
     ]);
     return `一次最多 10 条气泡（GroupDialogueLayoutRules.cs:28），当前画了 ${drawnCount} 条`;
   }
@@ -1493,16 +1577,23 @@ __FRAME_SCRIPT__
       const row = { x: L.panel.x + 32, y, w: L.panel.w - 64, h: 92 };          // draw 的卡片行矩形
       nineSlice(stage, row, [255, 255, 255], MENU_TEX).style.zIndex = "2";     // draw 的卡片 drawTextureBox
       const names = invitation.participants.join("、");
-      textAt(stage, row.x + 18, row.y + 14, `${invitation.title} · ${names}`, GAME_BLACK).style.zIndex = "3";      // draw 的标题行（Ink）
-      textAt(stage, row.x + 18, row.y + 42, `主题：${invitation.topic}`, DIM_GRAY).style.zIndex = "3";      // draw 的主题行（InkSoft）
-      textAt(stage, row.x + 18, row.y + 66, `状态：${invitation.status} · 到期第 ${invitation.expires} 天`, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的状态行（InkSoft）
+      // 卡片两行（GroupDialogueHubMenu.cs:156-165）：
+      //   行 1  +14 → Ink（标题 · 参与者）
+      //   行 2  +44 → InkSoft，`主题：{Topic} · {FormatStatus(Status)} · 到期第 {TotalDays} 天`
+      // ⚠ 「三行并两行」是实机已落地的改动：改前第三行在 +66、文字底 +94，比卡片本身（92）
+      //   还低 2px，被九宫格下内沿（92 − 20 = 72）切断。并到 +44 后文字底正好 +72，不出框，
+      //   而卡片矩形（92）与三个按钮的命中区一个都没动。页面此前仍画三行 —— 那条「游戏原样」
+      //   的说法已经不再成立。
+      textAt(stage, row.x + 18, row.y + 14, `${invitation.title} · ${names}`, GAME_BLACK).style.zIndex = "3";      // 行 1（MenuSkinRules.Ink）
+      textAt(stage, row.x + 18, row.y + 44, `主题：${invitation.topic} · ${invitation.status} · 到期第 ${invitation.expires} 天`, DIM_GRAY).style.zIndex = "3"; // 行 2（HubCardSecondRowOffset = 44，InkSoft）
       ["接受", "稍后", "忽略"].forEach((label, i) => {                          // draw 的三个按钮（GroupInvitationActionLayoutRules）
-        button(stage, actionButtonAt(row, i), label, true);
+        // 两档 tint（GroupDialogueHubMenu.cs:168-170）：接受=主按钮，稍后/忽略=次按钮
+        button(stage, actionButtonAt(row, i), label, true, i === 0 ? PRIMARY_BUTTON_TINT : SECONDARY_BUTTON_TINT);
       });
       y += 104;                                                                // draw 的行步进
     }
 
-    button(stage, L.closeButton, "关闭", true);                                  // draw 的关闭按钮
+    button(stage, L.closeButton, "关闭", true, SECONDARY_BUTTON_TINT);           // draw 的关闭按钮（次按钮档）
     textAt(stage, L.panel.x + 32, L.panel.y + L.panel.h - 112, SAMPLE.hubHint, DIM_GRAY, "g-sm").style.zIndex = "3"; // draw 的提示行（InkSoft）
 
     addGuides([["Panel", L.panel], ["CloseButton", L.closeButton], ["ListInset", listArea]]);
