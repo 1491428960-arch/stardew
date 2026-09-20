@@ -18,4 +18,10 @@
     <Compile Remove="artifacts/**/*.cs" />
     <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.1.1" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- 角色气泡图标图集：嵌入 DLL，避免依赖 mod 目录的文件部署
+         （本项目的部署脚本只复制 DLL 与 manifest.json）。 -->
+    <EmbeddedResource Include="assets/npc_bubbles.png" />
+  </ItemGroup>
 </Project>

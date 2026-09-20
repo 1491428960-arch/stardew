@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 
 namespace StardewAI.NPC;
@@ -73,7 +75,7 @@ public sealed class StoryStateStore
         var trimmed = content.Trim();
         var memory = new MemoryRecord
         {
-            MemoryId = $"group:{owner.ToLowerInvariant()}:{trimmed.GetHashCode()}",
+            MemoryId = BuildGroupMemoryId(owner, trimmed),
             OwnerNpcId = owner,
             Kind = "fact",
             Content = trimmed.Length <= MaxMemoryHighlightLength
@@ -557,5 +559,21 @@ public sealed class StoryStateStore
         }
 
         return value.Trim();
+    }
+
+    /// <summary>
+    /// 群聊长期记忆的稳定 id。
+    ///
+    /// 2026-09-20 修（语义层审计）：此前用 <c>trimmed.GetHashCode()</c>——
+    /// .NET 的字符串哈希**跨进程随机化**，游戏重启后同一条高亮的 id 就变了，
+    /// 于是 <c>memories.All(m =&gt; m.MemoryId != id)</c> 判不出重复、**同一条事实
+    /// 会被反复写进存档**。改用与 <c>ConversationStateRules.BuildMemoryId</c>
+    /// 同一种做法（SHA256 前 24 个十六进制位），跨进程稳定。
+    /// </summary>
+    private static string BuildGroupMemoryId(string owner, string content)
+    {
+        var input = $"{owner.ToLowerInvariant()}\n{content}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return $"group:{owner.ToLowerInvariant()}:{Convert.ToHexString(hash)[..24]}";
     }
 }

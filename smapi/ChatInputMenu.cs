@@ -751,28 +751,55 @@ public class ChatInputMenu : IClickableMenu
                 ? area.Right - MessagePadding - bubbleWidth
                 : area.X + MessagePadding;
             var bubble = new Rectangle(bubbleX, y, bubbleWidth, bubbleHeight);
+
+            // 角色视觉：NPC 侧使用角色专属底色 + 图标徽章 + 特征色（数据来自
+            // astra 的群聊气泡资产）。玩家侧与未知角色保持原有观感。
+            var style = isPlayer ? null : NpcBubbleStyle.For(npc.Name);
+            var showBadge = style is not null && NpcBubbleStyle.Sheet is not null;
+            var badgeSize = NpcBubbleStyle.CellSize;
+
             drawTextureBox(
                 b,
                 bubble.X,
                 bubble.Y,
                 bubble.Width,
                 bubble.Height,
-                isPlayer ? new Color(226, 239, 246) : new Color(239, 231, 244));
+                isPlayer
+                    ? new Color(226, 239, 246)
+                    : style?.Bubble ?? new Color(239, 231, 244));
 
-            var speakerColor = isPlayer ? Color.DarkSlateBlue : Color.DarkMagenta;
+            var textLeft = bubble.X + BubblePadding;
+            var speakerLeft = textLeft;
+            if (showBadge)
+            {
+                b.Draw(
+                    NpcBubbleStyle.Sheet!,
+                    new Rectangle(textLeft, bubble.Y + BubblePadding, badgeSize, badgeSize),
+                    style!.SheetSource,
+                    Color.White);
+                speakerLeft = textLeft + badgeSize + 6;
+            }
+
+            var speakerColor = isPlayer
+                ? Color.DarkSlateBlue
+                : style?.Accent ?? Color.DarkMagenta;
             b.DrawString(
                 Game1.smallFont,
                 speaker,
-                new Vector2(bubble.X + BubblePadding, bubble.Y + BubblePadding),
+                new Vector2(speakerLeft, bubble.Y + BubblePadding),
                 speakerColor);
+            // 深色角色气泡上黑字不可读，正文改用近白；玩家侧与未知角色维持黑字。
+            var bodyColor = isPlayer || style is null
+                ? Color.Black
+                : new Color(243, 240, 252);
             var lineY = bubble.Y + BubblePadding + Game1.smallFont.LineSpacing + MessageLineSpacing;
             foreach (var line in lines)
             {
                 b.DrawString(
                     Game1.smallFont,
                     line,
-                    new Vector2(bubble.X + BubblePadding, lineY),
-                    Color.Black);
+                    new Vector2(textLeft, lineY),
+                    bodyColor);
                 lineY += Game1.smallFont.LineSpacing + MessageLineSpacing;
             }
 
