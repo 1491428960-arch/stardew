@@ -37,6 +37,8 @@ from .dialogue_lab_session import DialogueLabSessionStore, normalize_session
 from .group_conversation import GroupConversationService
 from .group_dialogue_lab_page import group_dialogue_lab_page
 from .group_dialogue_review_page import group_dialogue_review_page
+from .ui_preview_page import ui_preview_page
+from .ui_preview_redesign_page import ui_preview_redesign_page
 from .models import GroupDialogueRequest, GroupDialogueResponse
 
 
@@ -589,3 +591,17 @@ def group_dialogue_lab() -> str:
 @app.get("/test/group/review", response_class=HTMLResponse)
 def group_dialogue_review(batch: str | None = None) -> str:
     return group_dialogue_review_page(quality_artifact_root, batch=batch)
+
+
+@app.get("/test/ui", response_class=HTMLResponse)
+def ui_preview() -> str:
+    """三个游戏内聊天界面的浏览器复刻稿（不读运行数据，纯静态渲染）。"""
+
+    return ui_preview_page()
+
+
+@app.get("/test/ui-redesign", response_class=HTMLResponse)
+def ui_preview_redesign() -> str:
+    """三个游戏内聊天界面的「外壳重构」设计稿，可与 /test/ui 并排比对。"""
+
+    return ui_preview_redesign_page()
