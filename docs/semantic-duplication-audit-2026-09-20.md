@@ -38,21 +38,20 @@
 | 3 | **心数 2 时阶段判错**——`providers` 用 `>=3`、其它三处用 `>=2`，走 stranger 的短答与不主动策略。夹具只喂 3／4 心，所以没照到 | `providers.py:419` 等四处 |
 | 4 | **`providers` 忽略显式 `relationshipStage`**，自己重新推导一遍 | `providers.py:396-421` |
 | 5 | **「朋友及以上」阶段集合的第四份字面量**（上一轮我误称「三处已统一」） | `stage_policy.py:889` |
+| 13 | **群聊完全没有回复质量门**——舞台动作／Markdown／提示词泄露会原样进对白、甚至进长期记忆 | `group_conversation.guard_group_turns` 逐条过 `ResponseGuard.check`，丢弃不合格那条（**不把整场拖进 fallback**） |
+| 14 | **群聊开场对 `guard` 完全不可见**——只有私聊的 topic 契约算开场 | `guard.is_opening_prompt` 统一开场信号（私聊 topic 契约／群聊卡 + 没有玩家消息），`_missing_topic_grounding` → `missing_opening_grounding` |
+| 6 · 7 | **`recentFacts`／`relationshipWorld` 进不了群聊多轮 prompt**（SMAPI 一直在发） | 第 194 项：`build_group_messages` 注入场景卡 |
+| 8 | **群聊 `warnings` 超 20 条 → pydantic 校验失败 → 端点 500** | 第 194 项：`group_conversation.limit_warnings` 两边共用 |
+| 9 | **`build_group_voice_cards` 读错 key**（`identity` vs `npcIdentity`）→ 声线卡三项永远为空 | 第 194 项：改 key 名（`prompts.py:3108`） |
+| 11 | **`usage` 合并两套口径**（群聊保守、私聊累加） | 第 194 项：统一到保守口径 |
+| 12 | **记忆去重用 `string.GetHashCode()`**（.NET 跨进程随机化 → 重启后去重失效） | 第 194 项：改用稳定 SHA256 |
+| 15 | **`objectiveRelationships` 形状不匹配**（C# 有向边 vs Python 单对象 + `extra="forbid"` → 422） | 第 194 项：在同一 normalizer 里折叠 from/to |
 
 ### ⬜ 待修（都确认是 bug，修法明确）
 
 | # | 症状 | 修法 |
 |---|---|---|
-| 6 | **`recentFacts` 从不进入群聊 prompt**——单轮路径有、多轮路径没有。SMAPI 一直在发这个字段 | 给 `build_group_messages` 加参数并注入场景卡（与已修的 invitation 同形） |
-| 7 | **群聊 `relationshipWorld` 同样进不了 prompt** | 同上 |
-| 8 | **群聊 `warnings` 超过 20 条 → pydantic 校验失败 → 端点 500**（私聊有 `_limit_warnings` 截断，群聊没有） | 群聊复用 `_limit_warnings` |
-| 9 | **`build_group_voice_cards` 读错 key**——读 `context["identity"]`，实际写的是 `context["npcIdentity"]` → tone／sentencePattern／signatureMoves **永远为空**，声线卡与其 docstring 声明的五项不符 | 改 key 名（`prompts.py:3108`） |
 | 10 | **同一请求里参与者上下文被构建两次**，而其中一份的产物在主路径被丢弃（纯浪费） | 主路径跳过 voice card 构建 |
-| 11 | **`usage` 合并两套口径**——群聊 `_merge_usage` 要求全字段非 None，任一缺失整体置 None；私聊逐字段累加。同一上游，一个给合计一个给 null | 把 `app.py` 的实现提为公共函数 |
-| 12 | **记忆去重用 `string.GetHashCode()`**——.NET 跨进程随机化，**重启后同一条高亮 id 变化 → 去重失效 → 重复写入** | 改用稳定哈希（`ConversationStateRules` 用的是 SHA256） |
-| 13 | **群聊完全没有回复质量门**——私聊有 `response_guard.check` + 安全兜底替换，群聊只有一句提示词。输出舞台动作／Markdown／名字前缀时没有任何拦截 | 按 turn 逐条 check（注意别把整场拖进 fallback） |
-| 14 | **群聊开场对 `guard` 完全不可见**——`_is_topic_prompt` 只认 `topic_response_contract`／`topic_trigger`，群聊开场不追加占位 user 消息 | 统一开场信号（需真机确认上游对「末尾为 system」的容忍度） |
-| 15 | **`objectiveRelationships` 形状不匹配**——C# 发有向边（`fromNpcId`/`toNpcId`），Python 要 `npcId` 单对象 + `extra="forbid"` → 422 → 兜底。`mediation`／`jealousy` 有专门的 normalizer，**唯独它没有** | 在同一个 normalizer 里折叠 from/to |
 
 ---
 

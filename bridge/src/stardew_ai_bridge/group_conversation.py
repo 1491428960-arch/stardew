@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from time import perf_counter
 
+from .guard import ResponseGuard, missing_opening_grounding
 from .models import (
     DialogueTestRequest,
     GroupDialogueRequest,
@@ -427,6 +428,55 @@ def _normalize_memory_highlights(value: object) -> list[str]:
     return highlights
 
 
+def guard_group_turns(
+    turns: list[GroupTurn],
+    guard: ResponseGuard,
+    *,
+    prompt: list[dict[str, str]] | None = None,
+) -> tuple[list[GroupTurn], list[str]]:
+    """逐条过通用质量门，返回保留下来的对白与警告。
+
+    2026-09-20（语义层审计 #13）：群聊此前没有任何内容拦截。这里刻意**丢掉**
+    不合格的那一条，而不是像私聊那样整条回落到安全文案——群聊有多位发言人，
+    少一个人开口比让整场变成一句通用台词自然，也不会把内容问题伪装成
+    provider 降级（``fallback=True`` 的语义是上游失败，SMAPI 按整场失败处理）。
+
+    传入 ``prompt`` 时同时检查「开场白把缺失前情推给玩家」（#14）。
+    """
+
+    kept: list[GroupTurn] = []
+    warnings: list[str] = []
+    for turn in turns:
+        decision = guard.check(turn.content)
+        if not decision.accepted:
+            warnings.append(f"response_guard: {decision.reason}")
+            continue
+        if prompt is not None and missing_opening_grounding(prompt, decision.text):
+            warnings.append("response_guard: opaque_opening")
+            continue
+        if decision.text != turn.content:
+            turn = turn.model_copy(update={"content": decision.text})
+        kept.append(turn)
+    return kept, warnings
+
+
+def guard_memory_highlights(
+    highlights: list[str],
+    guard: ResponseGuard,
+) -> tuple[list[str], list[str]]:
+    """长期记忆候选同样过门：它会写进存档，污染面比单条对白更长。"""
+
+    kept: list[str] = []
+    warnings: list[str] = []
+    for item in highlights:
+        decision = guard.check(item)
+        if not decision.accepted:
+            warnings.append(f"response_guard: {decision.reason}")
+            continue
+        kept.append(decision.text)
+    return kept, warnings
+
+
 def parse_multi_turn_payload(
     reply: str,
     *,
@@ -501,10 +551,16 @@ class GroupConversationService:
             ]
             | None
         ) = None,
+        response_guard: ResponseGuard | None = None,
     ) -> None:
         self.provider_router = provider_router
         self.voice_card_provider = voice_card_provider
         self.prompt_provider = prompt_provider
+        # 2026-09-20（语义层审计 #13）：群聊此前**完全没有**回复质量门——私聊有
+        # `response_guard.check` 加安全兜底替换，群聊只有一句提示词，于是舞台动作
+        # （`（笑）`）、Markdown、提示词泄露都会原样进对白。这里与私聊共用同一个
+        # `ResponseGuard`（它无状态，只带 max_chars）。
+        self.response_guard = response_guard if response_guard is not None else ResponseGuard()
 
     def _participant_prompts(
         self,
@@ -601,17 +657,30 @@ class GroupConversationService:
                     warnings.extend(retried.warnings)
                 if failure:
                     provider_errors.append(failure)
-                turns.extend(parsed)
-                for item in memory:
+                guarded_turns, turn_warnings = guard_group_turns(
+                    parsed, self.response_guard, prompt=messages
+                )
+                guarded_memory, memory_warnings = guard_memory_highlights(
+                    memory, self.response_guard
+                )
+                warnings.extend([*turn_warnings, *memory_warnings])
+                turns.extend(guarded_turns)
+                for item in guarded_memory:
                     if item not in memory_highlights:
                         memory_highlights.append(item)
                 continue
-            turns.append(
-                GroupTurn(
-                    speakerNpcId=participant.npc_id,
-                    content=result.reply,
-                )
+            guarded_turns, turn_warnings = guard_group_turns(
+                [
+                    GroupTurn(
+                        speakerNpcId=participant.npc_id,
+                        content=result.reply,
+                    )
+                ],
+                self.response_guard,
+                prompt=messages,
             )
+            warnings.extend(turn_warnings)
+            turns.extend(guarded_turns)
 
         if request.strategy == "multi_turn" and not provider_errors and not turns:
             provider_errors.append("multi_turn 没有可用对白")

@@ -817,7 +817,10 @@ def _multi_turn_reply_with_memory(memory: object, *, turns: object | None = None
         else [
             {
                 "speakerNpcId": "Abigail",
-                "content": "我最近在鼓捣游戏里那个新 boss。",
+                # 2026-09-20：群聊补上回复质量门后，含英文词的句子会被拦
+                # （与私聊同一条 `ResponseGuard.check`），这里换成纯中文，
+                # 因为本用例要验的是 memory 透传，不是内容过滤。
+                "content": "我最近在鼓捣游戏里那个新关卡。",
                 "addressedTo": ["Emily"],
             }
         ],
@@ -948,7 +951,7 @@ def test_multi_turn_service_exposes_memory_highlights_on_the_response() -> None:
 def test_multi_turn_service_keeps_memory_from_the_retry_that_succeeded() -> None:
     provider = RecordingProvider(
         [
-            "我最近在鼓捣游戏里那个新 boss。",  # 不是 JSON，触发一次重试
+            "我最近在鼓捣游戏里那个新关卡。",  # 不是 JSON，触发一次重试
             _multi_turn_reply_with_memory(["玩家答应周末去葡萄园。"]),
         ]
     )

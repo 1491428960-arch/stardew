@@ -540,6 +540,52 @@ def _is_topic_prompt(prompt: list[dict[str, str]]) -> bool:
     )
 
 
+# 群聊两条组装路径各自的场景卡名：build_group_messages / build_group_prompt。
+_GROUP_PROMPT_NAMES = frozenset({"group_scene", "group_conversation"})
+
+
+def _group_scene_opening(prompt: list[dict[str, str]]) -> bool | None:
+    """读群聊场景卡显式声明的 ``is_opening``；没有该字段或不可解析时返回 None。"""
+
+    for message in prompt:
+        if message.get("name") != "group_scene":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            return None
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(payload, Mapping) and isinstance(payload.get("is_opening"), bool):
+            return bool(payload["is_opening"])
+        return None
+    return None
+
+
+def is_opening_prompt(prompt: list[dict[str, str]]) -> bool:
+    """统一的「NPC 主动开场」信号——私聊与群聊各有一种载体。
+
+    2026-09-20（语义层审计 #14）：此前只有私聊的 topic 契约算开场，而群聊开场
+    （玩家一句话没说、由 NPC 起头）在 guard 眼里与普通回合没有区别，于是
+    「开场白把缺失的前情推给玩家」这类问题在群聊里完全没有拦。
+
+    私聊：``topic_response_contract``／``topic_trigger`` 存在。
+    群聊：群聊卡存在，且**没有任何玩家消息**——两条组装路径在开场时都不追加
+    user 消息（``build_group_messages`` 还会在场景卡里显式写 ``is_opening``，
+    有该字段时优先采信）。
+    """
+
+    if _is_topic_prompt(prompt):
+        return True
+    if not any(message.get("name") in _GROUP_PROMPT_NAMES for message in prompt):
+        return False
+    explicit = _group_scene_opening(prompt)
+    if explicit is not None:
+        return explicit
+    return not any(str(message.get("role")) == "user" for message in prompt)
+
+
 _OPAQUE_TOPIC_OPENING = re.compile(
     r"^\s*(?:那件事|那首歌|那张(?:唱片|纸)|那个(?:事|东西|人)?|最近那个|"
     r"后来(?:呢|怎么样)?|你还记得(?:吗|吧)?)"
@@ -563,10 +609,14 @@ _TOPIC_GROUNDING_MARKERS = (
 )
 
 
-def _missing_topic_grounding(prompt: list[dict[str, str]], reply: object) -> bool:
-    """只拦截主动开场中明显把缺失前情推给玩家的指代。"""
+def missing_opening_grounding(prompt: list[dict[str, str]], reply: object) -> bool:
+    """只拦截主动开场中明显把缺失前情推给玩家的指代。
 
-    if not _is_topic_prompt(prompt) or not isinstance(reply, str):
+    开场信号由 :func:`is_opening_prompt` 统一给出（私聊 topic 契约／群聊开场），
+    所以同一条规则在群聊开场里同样生效。
+    """
+
+    if not is_opening_prompt(prompt) or not isinstance(reply, str):
         return False
     if any(
         message.get("name") == "conversation_history"
@@ -1153,7 +1203,7 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
         and _has_affection_priority_opening(prompt, reply)
     )
     restatement_clean = int(not _is_mirror_restatement(prompt, reply))
-    topic_grounding_clean = int(not _missing_topic_grounding(prompt, reply))
+    topic_grounding_clean = int(not missing_opening_grounding(prompt, reply))
     style_clean = int(
         not _has_repeated_opening(prompt, reply)
         and not _repeats_history_speech_particle(prompt, reply)
@@ -1252,7 +1302,7 @@ def retry_for_format_noise(
             issue = "prompt_echo"
             retry_kind = "topic_leakage"
             retry_content = TOPIC_LEAKAGE_RETRY_CONTENT
-        elif issue is None and _missing_topic_grounding(prompt, current.reply):
+        elif issue is None and missing_opening_grounding(prompt, current.reply):
             issue = "opaque_opening"
             retry_kind = "topic_grounding"
             retry_content = TOPIC_GROUNDING_RETRY_CONTENT
