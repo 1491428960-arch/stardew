@@ -21,9 +21,7 @@ public sealed class GroupDialogueHubLayoutRulesTests
     {
         var layout = GroupDialogueHubLayoutRules.Calculate(1280, 720);
 
-        Assert.True(layout.FreeStartButton.Bottom <= layout.Panel.Bottom);
         Assert.True(layout.CloseButton.Bottom <= layout.Panel.Bottom);
-        Assert.True(layout.FreeStartButton.Left >= layout.Panel.Left);
         Assert.True(layout.CloseButton.Right <= layout.Panel.Right);
     }
 }

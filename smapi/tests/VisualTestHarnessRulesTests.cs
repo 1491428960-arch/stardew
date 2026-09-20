@@ -173,7 +173,7 @@ public sealed class VisualTestHarnessRulesTests
     [Fact]
     public void EnabledEnvironmentAcceptsGroupFlowActions()
     {
-        foreach (var action in new[] { "group-accept", "group-free" })
+        foreach (var action in new[] { "group-accept" })
         {
             var options = VisualTestHarnessRules.Parse(
                 new Dictionary<string, string?>

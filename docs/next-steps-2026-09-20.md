@@ -6,7 +6,7 @@
 ## A. 需要你拍板或动手
 
 ### A1. 正式环境部署 ✅ **已于 2026-09-20 完成**（用户授权后部署并经真机验证，见第 164／168／170 项）
-- **做什么**：把 `smapi/bin/Debug/net6.0/StardewAI.NPC.dll` 装进正式 `Mods`，用你自己的存档跑一遍群聊（F9 → 接受邀约或自由发起 → 发消息）。
+- **做什么**：把 `smapi/bin/Debug/net6.0/StardewAI.NPC.dll` 装进正式 `Mods`，用你自己的存档跑一遍群聊（F9 → 接受邀约 → 发消息）。
 - **为什么**：至今所有游戏内证据都来自 FastTest 隔离 profile + 测试存档 `test_447101921`；正式 Mods、正式存档、正式 Bridge 组合一次都没跑过。
 - **怎么验证**：游戏内能看到多人各说一句、邀约状态变化、`SMAPI-latest.txt` 无异常；如需机读证据可用 `/api/quality/results` 或诊断文件。
 - **前置/成本**：需要你点头（红线）；约 10 分钟；**注意部署前先确认 Bridge 已重启到最新代码**（见 B1）。
@@ -28,7 +28,7 @@
 | # | 事项 | 为什么值得做 | 验证方式 |
 |---|---|---|---|
 | B1 | ~~**重启 5678 让今晚的修复生效**~~ **✅ 已于第 154 项完成（2026-09-20 05:16:54）** | **当前状态**：新进程 **PID 92512**，`/health` 正常，**14 条路由全部加载**（含 `/test/group/review`——那个阻塞性 import 修复的直接证据）。**重启时踩到的一个坑值得记住**：另一条线正在重构 `npc_bubble_*.py`，规格侧引用 **75** 个物件而实现侧只有 **67** 个 SVG，`npc_bubble_elements.py` 的**模块级循环会硬失败**（`KeyError`），**Bridge 完全起不来**——**旧进程能跑只因它启动得早**。**判据**：`python -c "import stardew_ai_bridge.app"` 不报错才能重启；**不必等那条线把重构做完**（规格 96 物件是长期目标），只需“当前引用的都存在”。本条最初描述：运行中的进程仍是 22:53 的旧代码；import 阻塞已修好，现在重启是安全的 | ——（已完成，保留作历史：重启命令见 `.dsh/memory/commands.md`） |
-| B2 | `GroupParticipantMenu` 只列前 8 位候选且无提示 | 认识超过 8 位 NPC 的存档里，后面的角色选不进群聊（`candidates.Take(8)`），属真实体验限制 | 改 UI 后必须真机截图（`group-free` 场景） |
+| B2 | ~~`GroupParticipantMenu` 只列前 8 位候选且无提示~~ **✅ 已于第 182 项通过移除「自由发起」解决** | 认识超过 8 位 NPC 的存档里，后面的角色选不进群聊（`candidates.Take(8)`），属真实体验限制 | 改 UI 后必须真机截图（`group-free` 场景） |
 | B3 | 覆盖率低点补测 | **已核实为分散分支而非成片空白**：函数级已完整（`scripts/find_uncovered_functions.py` 核对后**整段未覆盖的函数为 0 个**，第 31 项补了最后 1 个）。**2026-09-20 凌晨已据覆盖率地图补了 15 项**：Bridge TOTAL 93% → **95%**，缺失行 715 → **511**（消灭 204 行）；`vertex_auth` 与 `known_characters` 达 **100%**。行级当前值统一看 `.dsh/memory/current-state.md` | 各模块定向 pytest；重跑 `pytest --cov=stardew_ai_bridge --cov-report=term-missing:skip-covered` 定位下一批 |
 | B4 | ~~清理死代码~~ **✅ 已于第 180 项删除（`test_page.py`，102 行）** | `bridge/src/stardew_ai_bridge/test_page.py`（102 行 `TEST_PAGE_HTML`）全仓库无引用者 | 删除前先全仓 grep 确认无引用（已做过一次） |
 | B5 | 五个菜单的 `DrawButton` 重复实现（**建议暂不做**） | 实测共 **5 处**：`GroupDialogueHubMenu` / `GroupDialogueMenu` / `GroupParticipantMenu` / `InventoryItemPicker` 四者实现**完全相同**（白底、禁用变灰），`ChatInputMenu` 另有彩色 `tint` 参数。若做，需引入 `ActionButtonMenuBase`（按钮底纹依赖 `IClickableMenu.drawTextureBox`，它是 protected static，普通静态类调不到）。**不建议在无法真机验证时做**：收益仅约 32 行重复，却要改 4～5 个 UI 类（含核心聊天界面），按钮渲染出错无法被单测发现 | 改完必须跑一次游戏内视觉场景（`group-hub`/`group-free`）确认按钮外观与点击坐标都没变 |

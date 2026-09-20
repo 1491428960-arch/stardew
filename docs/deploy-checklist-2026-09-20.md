@@ -77,7 +77,7 @@ Copy-Item "$src\StardewAI.NPC.deps.json" "$game\Mods\StardewAI.NPC\" -Force
 
 1. 启动游戏，看 SMAPI 日志（`%APPDATA%\StardewValley\ErrorLogs\SMAPI-latest.txt`）：Mod 正常加载、无异常。
 2. **F8 单 NPC 对话**：发一句，确认有回复、无 fallback。
-3. **F9 群聊**：接受一张邀约或自由发起（选 2～3 人），发一句，确认**多人依次回应**（`multi_turn` 生效）而不是只有一人说一句。
+3. **F9 群聊**：接受一张邀约，发一句，确认**两位 NPC 依次回应**（`multi_turn` 生效）而不是只有一人说一句。
 4. 若要看机读证据：Bridge 侧日志与 `artifacts/` 下的新批次；游戏侧可对照 `SMAPI-latest.txt` 中 Mod 的日志行。
 5. 想切回一人一轮：GMCM 里把 `GroupDialogueStrategy` 改成 `turn_based`。
 

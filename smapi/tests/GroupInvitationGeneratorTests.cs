@@ -68,8 +68,10 @@ public sealed class GroupInvitationGeneratorTests
     [Fact]
     public void Generator_only_pairs_two_npcs_even_when_three_are_known()
     {
-        // 当前实现只枚举两两组合（EnumeratePairs），所以**自动生成的邀约参与者恒为 2 人**；
-        // 三人群聊要走 F9 的“自由发起”。若将来支持自动生成三人邀约，这条测试会提醒改动。
+        // 当前实现只枚举两两组合（EnumeratePairs），所以**自动生成的邀约参与者恒为 2 人**。
+        // ⚠️ 2026-09-20：F9 的「自由发起」已被移除（用户决定：选人 UI 的收益不如把预设邀约做好），
+        // 因此**三人群聊目前没有任何入口**。若要恢复三人场，正确做法是让本生成器支持三人组合，
+        // 而不是恢复那个选人菜单。
         var result = new GroupInvitationGenerator(GroupInvitationTemplates.All).Generate(
             new GroupInvitationGenerationContext(
                 CurrentTotalDays: 20,

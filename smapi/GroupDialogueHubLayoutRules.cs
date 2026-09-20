@@ -4,7 +4,6 @@ namespace StardewAI.NPC;
 
 public sealed record GroupDialogueHubLayout(
     Rectangle Panel,
-    Rectangle FreeStartButton,
     Rectangle CloseButton);
 
 public static class GroupDialogueHubLayoutRules
@@ -34,7 +33,6 @@ public static class GroupDialogueHubLayoutRules
         var buttonY = panel.Bottom - 76;
         return new GroupDialogueHubLayout(
             panel,
-            new Rectangle(panel.X + 32, buttonY, 220, 56),
             new Rectangle(panel.Right - 180, buttonY, 148, 56));
     }
 }

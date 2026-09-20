@@ -14,13 +14,12 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
     private Rectangle panel;
     private readonly List<GroupDialogueInvitationRecord> visibleInvitations;
     private readonly List<Rectangle> invitationRows = new();
-    private Rectangle freeStartButton;
     private Rectangle closeButton;
-    private string hint = "选择一张邀约卡，或自由发起一场线上群聊。";
+    private string hint = "选择一张邀约卡参与群聊。";
     private bool closed;
 
     internal GroupDialogueHubLayout VisualTestLayout =>
-        new(panel, freeStartButton, closeButton);
+        new(panel, closeButton);
 
     /// <summary>视觉测试/诊断用：邀约卡行坐标（每帧 draw 时重建）。</summary>
     internal IReadOnlyList<Rectangle> VisualTestInvitationRows => invitationRows;
@@ -83,17 +82,6 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
         if (closeButton.Contains(x, y))
         {
             Close();
-            return;
-        }
-
-        if (freeStartButton.Contains(x, y))
-        {
-            Game1.activeClickableMenu = new GroupParticipantMenu(
-                participantProvider(),
-                bridgeClient,
-                storyStateStore,
-                Close);
-            closed = true;
             return;
         }
 
@@ -176,7 +164,6 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             }
         }
 
-        DrawButton(b, freeStartButton, "自由发起", enabled: true);
         DrawButton(b, closeButton, "关闭", enabled: true);
         b.DrawString(Game1.smallFont, hint, new Vector2(panel.X + 32, panel.Bottom - 112), Color.Gray);
         drawMouse(b);
@@ -256,7 +243,6 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             Game1.uiViewport.Height);
         var layout = GroupDialogueHubLayoutRules.Calculate(viewportSize.X, viewportSize.Y);
         panel = layout.Panel;
-        freeStartButton = layout.FreeStartButton;
         closeButton = layout.CloseButton;
         xPositionOnScreen = panel.X;
         yPositionOnScreen = panel.Y;

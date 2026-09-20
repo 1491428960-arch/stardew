@@ -119,7 +119,7 @@ if (-not $OutputPath) { throw 'OutputPath 不能为空。' }
 
 Assert-FileName -Value $SaveName -Name 'SaveName'
 Assert-FileName -Value $ScenarioId -Name 'ScenarioId'
-if ($ActionId -notin @('capture', 'topic', 'group-hub', 'group-message', 'group-send', 'group-accept', 'group-free')) { throw 'ActionId 只支持 capture、topic、group-hub、group-message、group-send、group-accept 或 group-free。' }
+if ($ActionId -notin @('capture', 'topic', 'group-hub', 'group-message', 'group-send', 'group-accept')) { throw 'ActionId 只支持 capture、topic、group-hub、group-message、group-send 或 group-accept。' }
 if ($TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 3600) { throw 'TimeoutSeconds 必须在 1 到 3600 秒之间。' }
 if (($BackBufferWidth -eq 0) -xor ($BackBufferHeight -eq 0)) {
     throw 'BackBufferWidth 和 BackBufferHeight 必须同时设置。'

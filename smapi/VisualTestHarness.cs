@@ -44,8 +44,6 @@ public static class VisualTestHarnessRules
     public const string GroupSendActionId = "group-send";
     /// <summary>F9 全流程之一：多人对话中心 → 点接受邀约卡 → 群聊菜单。</summary>
     public const string GroupAcceptActionId = "group-accept";
-    /// <summary>F9 全流程之二：多人对话中心 → 自由发起 → 选参与者 → 群聊菜单。</summary>
-    public const string GroupFreeActionId = "group-free";
     public const string WideContentScenarioId = "chat-profile-strip-wide-content";
 
     /// <summary>真实发送场景用的玩家消息：写得像日常闲聊，避免触发任何特殊分支。</summary>
@@ -238,10 +236,10 @@ public static class VisualTestHarnessRules
         VisualTestManifest.ValidateFileName(scenarioId);
         var actionId = GetValue(environment, ActionVariable, DefaultActionId)
             .ToLowerInvariant();
-        if (actionId is not DefaultActionId and not TopicActionId and not GroupHubActionId and not GroupMessageActionId and not GroupSendActionId and not GroupAcceptActionId and not GroupFreeActionId)
+        if (actionId is not DefaultActionId and not TopicActionId and not GroupHubActionId and not GroupMessageActionId and not GroupSendActionId and not GroupAcceptActionId)
         {
             throw new ArgumentException(
-                $"{ActionVariable} 只支持 {DefaultActionId}、{TopicActionId}、{GroupHubActionId}、{GroupMessageActionId}、{GroupSendActionId}、{GroupAcceptActionId} 或 {GroupFreeActionId}。",
+                $"{ActionVariable} 只支持 {DefaultActionId}、{TopicActionId}、{GroupHubActionId}、{GroupMessageActionId}、{GroupSendActionId} 或 {GroupAcceptActionId}。",
                 nameof(environment));
         }
         var backBufferWidth = ParseDimension(environment, BackBufferWidthVariable);
@@ -751,13 +749,7 @@ public sealed class VisualTestHarness
 
         if (options.ActionId == VisualTestHarnessRules.GroupAcceptActionId)
         {
-            OpenGroupFlow(acceptInvitation: true);
-            return;
-        }
-
-        if (options.ActionId == VisualTestHarnessRules.GroupFreeActionId)
-        {
-            OpenGroupFlow(acceptInvitation: false);
+            OpenGroupFlow();
             return;
         }
 
@@ -973,10 +965,10 @@ public sealed class VisualTestHarness
 
     /// <summary>
     /// F9 全流程场景：走真实生产入口打开线上多人对话中心，再按真实的点击路径
-    /// 走完“接受邀约卡”或“自由发起 → 选参与者”。全程不发起 Bridge 请求，
+    /// 走完“接受邀约卡 → 群聊菜单”。全程不发起 Bridge 请求，
     /// 只验证菜单流转、参与者名单与邀约状态。
     /// </summary>
-    private void OpenGroupFlow(bool acceptInvitation)
+    private void OpenGroupFlow()
     {
         // 直接 SaveGame.Load 的路径下，存档加载晚于长稳定回退闸门（实测闸门在
         // tick 1861 打开，SaveLoaded 在 1865 才到），而 OnSaveLoaded 会用存档里的
@@ -1021,11 +1013,9 @@ public sealed class VisualTestHarness
 
             activeMenu = hub;
             menuOpened = true;
-            groupFlowStage = acceptInvitation ? "hub-accept" : "hub-free";
+            groupFlowStage = "hub-accept";
             monitor.Log(
-                acceptInvitation
-                    ? "视觉测试 F9 全流程：已打开多人对话中心，等待点击邀约卡的“接受”。"
-                    : "视觉测试 F9 全流程：已打开多人对话中心，等待点击“自由发起”。",
+                "视觉测试 F9 全流程：已打开多人对话中心，等待点击邀约卡的“接受”。",
                 LogLevel.Info);
         }
         catch (Exception exception)
@@ -1086,58 +1076,6 @@ public sealed class VisualTestHarness
                 return;
             }
 
-            case "hub-free":
-            {
-                if (activeMenuFrames < 3 || activeMenu is not GroupDialogueHubMenu hub)
-                {
-                    return;
-                }
-
-                var freeStart = hub.VisualTestLayout.FreeStartButton;
-                groupFlowStage = "participant";
-                activeMenuFrames = 0;
-                monitor.Log(
-                    $"视觉测试 F9 全流程：点击“自由发起”，x={freeStart.Center.X}；y={freeStart.Center.Y}",
-                    LogLevel.Info);
-                hub.receiveLeftClick(freeStart.Center.X, freeStart.Center.Y);
-                PromoteGroupFlowMenu();
-                return;
-            }
-
-            case "participant":
-            {
-                if (activeMenuFrames < 3 || activeMenu is not GroupParticipantMenu participantMenu)
-                {
-                    return;
-                }
-
-                var candidateRows = participantMenu.VisualTestCandidateRows;
-                if (candidateRows.Count < 2)
-                {
-                    Fail($"视觉测试 F9 全流程：参与者候选只有 {candidateRows.Count} 个，无法选出 2 人。");
-                    return;
-                }
-
-                foreach (var row in candidateRows.Take(2))
-                {
-                    participantMenu.receiveLeftClick(row.Center.X, row.Center.Y);
-                }
-
-                var selected = participantMenu.VisualTestSelectedIds.Count;
-                groupFlowSummary =
-                    $"自由发起：候选 {candidateRows.Count} 行，已选 {selected} 人（{string.Join("、", participantMenu.VisualTestSelectedIds)}）";
-                monitor.Log($"视觉测试 F9 全流程：{groupFlowSummary}", LogLevel.Info);
-                // 选好人但先停在这一步：参与者菜单此前从未被截过图。
-                CaptureIntermediateFrame("participants");
-
-                var start = participantMenu.VisualTestStartButton;
-                groupFlowStage = "dialogue";
-                activeMenuFrames = 0;
-                participantMenu.receiveLeftClick(start.Center.X, start.Center.Y);
-                PromoteGroupFlowMenu();
-                return;
-            }
-
             case "dialogue":
             {
                 if (activeMenuFrames < 3 || activeMenu is not GroupDialogueMenu dialogue)
@@ -1163,9 +1101,6 @@ public sealed class VisualTestHarness
         {
             case GroupDialogueMenu dialogue:
                 activeMenu = dialogue;
-                return;
-            case GroupParticipantMenu participant:
-                activeMenu = participant;
                 return;
             case GroupDialogueHubMenu hub:
                 activeMenu = hub;
@@ -1238,8 +1173,7 @@ public sealed class VisualTestHarness
 
     private void WriteGroupFlowDiagnostics(string outputDirectory)
     {
-        if (options.ActionId is not VisualTestHarnessRules.GroupAcceptActionId and
-            not VisualTestHarnessRules.GroupFreeActionId)
+        if (options.ActionId is not VisualTestHarnessRules.GroupAcceptActionId)
         {
             return;
         }
@@ -1373,8 +1307,7 @@ public sealed class VisualTestHarness
             }
         }
 
-        if (options.ActionId is VisualTestHarnessRules.GroupAcceptActionId or
-            VisualTestHarnessRules.GroupFreeActionId)
+        if (options.ActionId is VisualTestHarnessRules.GroupAcceptActionId)
         {
             AdvanceGroupFlow();
             if (!actionTriggered && !completed)
@@ -1524,8 +1457,7 @@ public sealed class VisualTestHarness
             }
         }
 
-        if (options.ActionId is VisualTestHarnessRules.GroupAcceptActionId or
-            VisualTestHarnessRules.GroupFreeActionId)
+        if (options.ActionId is VisualTestHarnessRules.GroupAcceptActionId)
         {
             // F9 全流程：走到群聊菜单才算完成，中途截图由流程自己负责。
             if (!actionTriggered)
@@ -1747,7 +1679,6 @@ public sealed class VisualTestHarness
                 height = Game1.graphics.GraphicsDevice.PresentationParameters.BackBufferHeight,
             },
             panel = ToDiagnosticRectangle(layout.Panel),
-            freeStartButton = ToDiagnosticRectangle(layout.FreeStartButton),
             closeButton = ToDiagnosticRectangle(layout.CloseButton),
         };
         var path = Path.Combine(outputDirectory, $"{options.ScenarioId}-diagnostics.json");

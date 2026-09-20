@@ -553,7 +553,6 @@ public sealed class ModEntry : Mod
     private void CloseGroupMenu()
     {
         if (Game1.activeClickableMenu is GroupDialogueHubMenu or
-            GroupParticipantMenu or
             GroupDialogueMenu)
         {
             Game1.activeClickableMenu.exitThisMenuNoSound();

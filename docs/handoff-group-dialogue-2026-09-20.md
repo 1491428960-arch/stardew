@@ -20,7 +20,7 @@
 | 回合预算 | **未显式指定时按在场人数给**（2 人→2、3 人→3，上限 4）；显式传 `turnCount` 时照用 |
 | 记忆（内存层） | `BridgeClient.historyByNpc`，每人 6 条、重启即失；一次群聊**只占 1 条**合并记录，只记本人发言 |
 | 记忆（存档层） | 只写 Bridge 挑出的 `memoryHighlights`（1～3 条重要事实/约定，闲聊不写），**在场每个 NPC 各一条** |
-| F9 入口 | 多人对话中心：接受邀约卡 → 进群聊菜单；或自由发起 → 选 2～3 名已认识的 NPC → 进群聊菜单 |
+| F9 入口 | 多人对话中心：接受邀约卡 → 进群聊菜单。（**2026-09-20 移除了「自由发起」**，理由见 §7） |
 | 频道 | 固定 `channel=remote`，不传送 NPC、不改日程、不写线下见面的措辞 |
 
 **为什么策略默认值很关键**：2026-09-19 之前 `BridgeClient.SendGroupAsync()` 把策略**硬编码成 `turn_based`**，导致 09-18 以来十几批 `multi_turn` Prompt 调优（v4～v21）**从未进入游戏**，游戏里每次群聊只有一个人说一句。修复后真机验证 `turns=2`（两人各一句）、三人场 `turns=3`。
@@ -50,7 +50,6 @@
 | `group-message` | 否 | 模拟响应 → 会话 → 存档长期记忆写入 |
 | `group-send` | 是 | 真实发一次群聊请求：内存层一条式记忆、参与者各自 gameState 转发 |
 | `group-accept` | 否 | F9 全流程：点邀约卡"接受" → 群聊菜单 |
-| `group-free` | 否 | F9 全流程：自由发起 → 选参与者（中途截图）→ 群聊菜单 |
 
 用法：`pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\start_visual_test.ps1 -ActionId <场景> -ScenarioId <名> -OutputPath 'artifacts\visual-tests\<新目录>' -TimeoutSeconds 240`
 产物：`<名>.png`（菜单截图）、`<名>.json`（manifest：回合数、记忆计数等）、`<名>-diagnostics.json`、`audio-mute.json`。
