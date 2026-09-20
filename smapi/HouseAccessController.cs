@@ -360,10 +360,12 @@ public sealed class HouseAccessController : IDisposable
 
             // Preserve the vanilla method's warp destination and collision
             // handling, but remove only the time/NPC gate for this call.
-            openTime = 600;
-            closeTime = 2600;
-            npcName = null;
-            minFriendship = -1;
+            // 放行参数取自 ResidentialDoorGateRules：与 performAction 上游改写
+            // action token 的那条路径共用同一份定义（审计 #42）。
+            openTime = ResidentialDoorGateRules.RelaxedOpenTime;
+            closeTime = ResidentialDoorGateRules.RelaxedCloseTime;
+            npcName = ResidentialDoorGateRules.RelaxedRequiredNpcArgument;
+            minFriendship = ResidentialDoorGateRules.RelaxedMinimumFriendshipArgument;
             monitor.Log(
                 $"住宅门放行：{locationName} tile={tile.X},{tile.Y} " +
                 $"NPC={string.Join(",", context.ResidentNpcIds)} 原因={decision.Reason}",

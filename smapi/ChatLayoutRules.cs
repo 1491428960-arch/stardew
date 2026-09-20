@@ -18,7 +18,7 @@ public sealed record ChatLayout(
 
 public static class ChatLayoutRules
 {
-    private const int SafeMargin = 24;
+    private const int SafeMargin = MenuPanelRules.SafeMargin;
     private const int MinimumPanelWidth = 760;
     private const int MinimumPanelHeight = 420;
     private const int FooterHeight = 112;
@@ -52,11 +52,12 @@ public static class ChatLayoutRules
             (int)Math.Round(viewportHeight * 0.55f),
             minimumHeight,
             availableHeight);
-        var panel = new Rectangle(
-            (viewportWidth - panelWidth) / 2,
-            (viewportHeight - panelHeight) / 2,
+        var panel = MenuPanelRules.CenteredInViewport(
+            viewportWidth,
+            viewportHeight,
             panelWidth,
-            panelHeight);
+            panelHeight,
+            floorOriginAtZero: false);
 
         var header = new Rectangle(
             panel.X + SafeMargin,
@@ -141,6 +142,21 @@ public static class ChatLayoutRules
             closeButton);
     }
 
+    /// <summary>
+    /// 消息区**该显示哪些消息**的唯一过滤实现（2026-09-20 语义层审计 #36）。
+    ///
+    /// 此前同一段「丢掉 null 与纯空白内容」的过滤在本类与
+    /// <see cref="ChatInputMenu"/> 的绘制里各写一份，本方法又零调用、成了死规则；
+    /// 现在绘制侧也走这里，过滤只此一处。
+    /// </summary>
+    public static IReadOnlyList<ChatDisplayMessage> VisibleMessages(
+        IEnumerable<ChatDisplayMessage> messages)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+
+        return FilterVisible(messages).ToArray();
+    }
+
     public static IReadOnlyList<ChatDisplayMessage> VisibleMessages(
         IEnumerable<ChatDisplayMessage> messages,
         int maximumCount)
@@ -151,10 +167,14 @@ public static class ChatLayoutRules
             return Array.Empty<ChatDisplayMessage>();
         }
 
-        return messages
-            .Where(message => message is not null && !string.IsNullOrWhiteSpace(message.Content))
-            .TakeLast(maximumCount)
-            .ToArray();
+        return FilterVisible(messages).TakeLast(maximumCount).ToArray();
+    }
+
+    private static IEnumerable<ChatDisplayMessage> FilterVisible(
+        IEnumerable<ChatDisplayMessage> messages)
+    {
+        return messages.Where(message =>
+            message is not null && !string.IsNullOrWhiteSpace(message.Content));
     }
 
     public static bool ShouldDrawHeaderTitle() => false;

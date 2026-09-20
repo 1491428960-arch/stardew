@@ -200,14 +200,6 @@ public sealed record OpenLoopRecord
 
 public sealed record InteractionProgress
 {
-    private static readonly HashSet<string> MajorStages = new(StringComparer.Ordinal)
-    {
-        "恋爱",
-        "订婚/结婚",
-        "婚后",
-        "育儿",
-    };
-
     [JsonPropertyName("npcId")]
     public string NpcId { get; init; } = string.Empty;
 
@@ -242,7 +234,7 @@ public sealed record InteractionProgress
         {
             NpcId = npcId.Trim(),
             Stage = stage.Trim(),
-            RequiredSessions = MajorStages.Contains(stage.Trim()) ? 5 : 4,
+            RequiredSessions = RelationshipStageRules.IsMajorStage(stage) ? 5 : 4,
         };
     }
 }

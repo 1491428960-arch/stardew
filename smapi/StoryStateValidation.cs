@@ -2,13 +2,6 @@ namespace StardewAI.NPC;
 
 public static class StoryStateValidation
 {
-    private static readonly HashSet<string> RelationshipTypes = new(StringComparer.Ordinal)
-    {
-        "dating",
-        "engaged",
-        "married",
-    };
-
     private static readonly HashSet<string> VisibilityValues = new(StringComparer.Ordinal)
     {
         "known",
@@ -142,7 +135,7 @@ public static class StoryStateValidation
             errors.Add("subjectNpcId is required");
         }
 
-        if (!RelationshipTypes.Contains(view.RelationType))
+        if (!RelationshipTypeRules.IsSupported(view.RelationType))
         {
             errors.Add("relationType is invalid");
         }

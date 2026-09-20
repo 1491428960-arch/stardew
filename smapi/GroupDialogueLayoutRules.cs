@@ -14,32 +14,31 @@ public sealed record GroupDialogueLayout(
 
 public static class GroupDialogueLayoutRules
 {
-    private const int SafeMargin = 24;
+    private const int SafeMargin = MenuPanelRules.SafeMargin;
     private const int FooterHeight = 104;
     private const int HeaderHeight = 118;
     private const int ActionGap = 8;
 
+    /// <summary>
+    /// 消息区一次最多画几条历史消息。与私聊侧按高度取窗口（
+    /// <see cref="ChatTextLayoutRules.SelectLatestThatFit"/>）不同，群聊用固定条数上限。
+    /// 抽成常量只是让这个「显示哪些消息」的口径有个名字，数值与行为不变
+    /// （2026-09-20 语义层审计 #36）。
+    /// </summary>
+    public const int MaxVisibleMessages = 10;
+
     public static GroupDialogueLayout Calculate(int viewportWidth, int viewportHeight)
     {
-        if (viewportWidth <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(viewportWidth));
-        }
-
-        if (viewportHeight <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(viewportHeight));
-        }
-
         var panelWidth = Math.Min(1120, Math.Max(680, viewportWidth - (SafeMargin * 2)));
         var panelHeight = Math.Min(720, Math.Max(430, viewportHeight - (SafeMargin * 2)));
         panelWidth = Math.Min(panelWidth, Math.Max(1, viewportWidth - (SafeMargin * 2)));
         panelHeight = Math.Min(panelHeight, Math.Max(1, viewportHeight - (SafeMargin * 2)));
-        var panel = new Rectangle(
-            Math.Max(0, (viewportWidth - panelWidth) / 2),
-            Math.Max(0, (viewportHeight - panelHeight) / 2),
+        var panel = MenuPanelRules.CenteredInViewport(
+            viewportWidth,
+            viewportHeight,
             panelWidth,
-            panelHeight);
+            panelHeight,
+            floorOriginAtZero: true);
         var header = new Rectangle(panel.X, panel.Y, panel.Width, Math.Min(HeaderHeight, panel.Height));
         var footerY = Math.Max(header.Bottom, panel.Bottom - Math.Min(FooterHeight, panel.Height));
         var footer = new Rectangle(panel.X + 20, footerY, Math.Max(1, panel.Width - 40), Math.Max(1, panel.Bottom - footerY));

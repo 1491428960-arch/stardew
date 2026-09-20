@@ -24,4 +24,19 @@ public sealed class GroupDialogueHubLayoutRulesTests
         Assert.True(layout.CloseButton.Bottom <= layout.Panel.Bottom);
         Assert.True(layout.CloseButton.Right <= layout.Panel.Right);
     }
+
+    /// <summary>
+    /// 审计 #38：面板放置改用 <see cref="MenuPanelRules.CenteredInViewport"/> 之后，
+    /// 多人对话中心的面板矩形必须与改动前逐值相同（边距由字面量 48 改为共享常量 ×2）。
+    /// </summary>
+    [Fact]
+    public void Panel_rectangle_is_unchanged_after_the_shared_placement_refactor()
+    {
+        Assert.Equal(
+            new Rectangle(100, 24, 1080, 672),
+            GroupDialogueHubLayoutRules.Calculate(1280, 720).Panel);
+        Assert.Equal(
+            new Rectangle(100, 108, 1080, 680),
+            GroupDialogueHubLayoutRules.Calculate(1280, 896).Panel);
+    }
 }

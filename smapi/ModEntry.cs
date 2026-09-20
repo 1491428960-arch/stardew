@@ -552,10 +552,9 @@ public sealed class ModEntry : Mod
         // SMAPI's normal SaveLoaded/Context.IsWorldReady flag is not raised.
         // The harness invokes this only after the same game-mode/player/location
         // readiness check used to open its other real menus.
-        var gameReady = VisualTestHarnessRules.IsGameReady(
-            Game1.gameMode,
-            Game1.player is not null,
-            Game1.currentLocation is not null);
+        // 取值与 harness 内部共用 VisualTestHarnessRules.IsGameReadyFromGameState
+        // （审计 #41：此前两处各拼一次同一批游戏状态）。
+        var gameReady = VisualTestHarnessRules.IsGameReadyFromGameState();
         if (Game1.activeClickableMenu is TitleMenu titleMenu)
         {
             // Direct SaveGame.Load leaves the title menu attached even after
@@ -607,7 +606,7 @@ public sealed class ModEntry : Mod
             return Array.Empty<GroupParticipantCandidate>();
         }
 
-        var friendshipData = ReadMember(Game1.player, "friendshipData");
+        var friendshipData = FriendshipDataAccessor.ReadData(Game1.player);
         var known = KnownNpcResolver.Resolve(
             FriendshipDataAccessor.Keys(friendshipData),
             npcId =>
@@ -618,25 +617,6 @@ public sealed class ModEntry : Mod
         return known
             .Select(npc => new GroupParticipantCandidate(npc.NpcId, npc.DisplayName, true))
             .ToArray();
-    }
-
-    private static object? ReadMember(object source, string memberName)
-    {
-        try
-        {
-            var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-            var property = source.GetType().GetProperty(memberName, flags);
-            if (property is not null)
-            {
-                return property.GetValue(source);
-            }
-
-            return source.GetType().GetField(memberName, flags)?.GetValue(source);
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private HouseAccessOptions GetHouseAccessOptions()
@@ -727,7 +707,7 @@ public sealed class ModEntry : Mod
                 Npc = npc,
                 Candidate = new NpcTargetCandidate(
                     npc.Name,
-                    HasFriendshipRecord(npc.Name) ||
+                    FriendshipDataAccessor.HasRecord(Game1.player, npc.Name) ||
                         TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord(npc.Name),
                     ReferenceEquals(npc.currentLocation, location),
                     Vector2.Distance(Game1.player.Position, npc.Position) / Game1.tileSize,
@@ -748,30 +728,6 @@ public sealed class ModEntry : Mod
                     selected.NpcId,
                     StringComparison.OrdinalIgnoreCase) &&
                 item.Candidate.Distance == selected.Distance).Npc;
-    }
-
-    private static bool HasFriendshipRecord(string? npcId)
-    {
-        if (string.IsNullOrWhiteSpace(npcId) || Game1.player is null)
-        {
-            return false;
-        }
-
-        try
-        {
-            var flags = System.Reflection.BindingFlags.Public |
-                System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance;
-            var playerType = Game1.player.GetType();
-            var property = playerType.GetProperty("friendshipData", flags);
-            var data = property?.GetValue(Game1.player) ??
-                playerType.GetField("friendshipData", flags)?.GetValue(Game1.player);
-            return FriendshipDataAccessor.ContainsKey(data, npcId);
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private sealed class SmapiModRegistryStatus : IModRegistryStatus

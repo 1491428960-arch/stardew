@@ -8,27 +8,20 @@ public sealed record GroupDialogueHubLayout(
 
 public static class GroupDialogueHubLayoutRules
 {
+    private const int SafeMargin = MenuPanelRules.SafeMargin;
+
     public static GroupDialogueHubLayout Calculate(int viewportWidth, int viewportHeight)
     {
-        if (viewportWidth <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(viewportWidth));
-        }
-
-        if (viewportHeight <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(viewportHeight));
-        }
-
-        var panelWidth = Math.Min(1080, Math.Max(680, viewportWidth - 48));
-        var panelHeight = Math.Min(680, Math.Max(440, viewportHeight - 48));
-        panelWidth = Math.Min(panelWidth, Math.Max(1, viewportWidth - 48));
-        panelHeight = Math.Min(panelHeight, Math.Max(1, viewportHeight - 48));
-        var panel = new Rectangle(
-            Math.Max(0, (viewportWidth - panelWidth) / 2),
-            Math.Max(0, (viewportHeight - panelHeight) / 2),
+        var panelWidth = Math.Min(1080, Math.Max(680, viewportWidth - (SafeMargin * 2)));
+        var panelHeight = Math.Min(680, Math.Max(440, viewportHeight - (SafeMargin * 2)));
+        panelWidth = Math.Min(panelWidth, Math.Max(1, viewportWidth - (SafeMargin * 2)));
+        panelHeight = Math.Min(panelHeight, Math.Max(1, viewportHeight - (SafeMargin * 2)));
+        var panel = MenuPanelRules.CenteredInViewport(
+            viewportWidth,
+            viewportHeight,
             panelWidth,
-            panelHeight);
+            panelHeight,
+            floorOriginAtZero: true);
 
         var buttonY = panel.Bottom - 76;
         return new GroupDialogueHubLayout(

@@ -96,15 +96,16 @@ public static class DoorActionParser
             return false;
         }
 
-        actionTokens![4] = "600";
-        actionTokens[5] = "2600";
+        // 放行参数只有一份定义：ResidentialDoorGateRules（审计 #42）。
+        actionTokens![4] = ResidentialDoorGateRules.RelaxedOpenTime.ToString(CultureInfo.InvariantCulture);
+        actionTokens[5] = ResidentialDoorGateRules.RelaxedCloseTime.ToString(CultureInfo.InvariantCulture);
         if (actionTokens.Length >= 7)
         {
-            actionTokens[6] = string.Empty;
+            actionTokens[6] = ResidentialDoorGateRules.RelaxedRequiredNpcToken;
         }
         if (actionTokens.Length >= 8)
         {
-            actionTokens[7] = "0";
+            actionTokens[7] = ResidentialDoorGateRules.RelaxedMinimumFriendshipToken;
         }
 
         return true;

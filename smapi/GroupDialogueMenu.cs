@@ -187,15 +187,21 @@ public sealed class GroupDialogueMenu : IClickableMenu
         // 按发言人计次：边框构图随 occurrence 在三套布局间轮换（与回放页一致）。
         // 此前一律传 0，于是同一角色多次发言的构图固定不变。
         var seenBySpeaker = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
-        foreach (var message in visibleMessages.TakeLast(10))
+        foreach (var message in visibleMessages.TakeLast(GroupDialogueLayoutRules.MaxVisibleMessages))
         {
             var speakerKey = message.SpeakerId ?? string.Empty;
             var occurrence = seenBySpeaker.TryGetValue(speakerKey, out var seen) ? seen : 0;
             seenBySpeaker[speakerKey] = occurrence + 1;
             var isPlayer = message.SpeakerType == "player";
+            // 名单里查得到就用显示名，查不到退回 ID 本身。
+            // 与改前的 displayNames.GetValueOrDefault(message.SpeakerId, message.SpeakerId) 同义；
+            // 换成 TryGetValue 只为消掉 Dictionary<string,string> 与 <string?,string?> 之间的
+            // 可空性推断警告，取值不变。
             var speaker = isPlayer
                 ? "玩家"
-                : displayNames.GetValueOrDefault(message.SpeakerId, message.SpeakerId);
+                : displayNames.TryGetValue(speakerKey, out var displayName)
+                    ? displayName
+                    : speakerKey;
             var lines = ChatTextLayoutRules.Wrap(
                 message.Content ?? string.Empty,
                 contentWidth,

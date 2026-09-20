@@ -1,13 +1,12 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace StardewAI.NPC;
 
 public static class ConversationStateRules
 {
-    private const int MaxMemoryCount = 200;
-    private const int MaxMemoryTextLength = 240;
+    // 上限与截断都来自 MemoryRules（审计 #44：此前两份实现靠注释人工同步）。
+    private const int MaxMemoryCount = MemoryRules.MaxCount;
+    private const int MaxMemoryTextLength = MemoryRules.MaxTextLength;
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
 
     public static StoryStateEnvelope RecordConversation(
@@ -39,7 +38,9 @@ public static class ConversationStateRules
                 MemoryId = memoryId,
                 OwnerNpcId = npcId,
                 Kind = "fact",
-                Content = Truncate($"玩家说：“{message}”；NPC回应：“{reply}”", MaxMemoryTextLength),
+                Content = MemoryRules.Truncate(
+                    $"玩家说：“{message}”；NPC回应：“{reply}”",
+                    MaxMemoryTextLength),
                 Source = MemorySource.PlayerChat,
                 Confidence = 0.75,
                 GameDate = gameDate,
@@ -98,26 +99,9 @@ public static class ConversationStateRules
         string message,
         string reply)
     {
-        var input = $"{npcId}\n{gameDate}\n{message}\n{reply}";
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-        return $"chat:{npcId}:{Convert.ToHexString(hash)[..24]}";
-    }
-
-    private static string Truncate(string value, int maxLength)
-    {
-        if (value.Length <= maxLength)
-        {
-            return value;
-        }
-
-        // 不要把 UTF-16 代理对切成两半：孤立的代理项会被序列化成替换字符，
-        // 让写进存档的记忆文本出现乱码。
-        var length = maxLength;
-        if (char.IsHighSurrogate(value[length - 1]))
-        {
-            length -= 1;
-        }
-
-        return value[..length];
+        return MemoryRules.BuildId(
+            kind: "chat",
+            owner: npcId,
+            payload: $"{npcId}\n{gameDate}\n{message}\n{reply}");
     }
 }

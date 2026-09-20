@@ -14,6 +14,17 @@ public sealed class NpcKissAnimationController
 
     public bool IsActive => activeKiss is not null;
 
+    /// <summary>
+    /// 开始一次亲吻动画。
+    ///
+    /// 2026-09-20（语义层审计 #33）：这里此前把「能不能亲」的条件**又判了一遍**
+    /// （菜单/事件/节日/玩家能否行动/同地点…），与
+    /// <see cref="KissInteractionRules.CanTriggerKiss"/> 各有一份，且两份条件集不同
+    /// （这里没有 sameDay 与 npcNearby，靠调用方先判来掩盖）。
+    /// 现在门槛只由 <see cref="KissInteractionRules.CanTriggerKiss"/> 判一次，
+    /// 调用方（<see cref="FaceToFaceConversationCoordinator"/>）判定通过后才调用本方法；
+    /// 这里只保留控制器自身的运行时前置：不能并发，玩家与地点必须存在。
+    /// </summary>
     public bool TryStart(
         StardewNpc npc,
         Action<StardewNpc> onCompleted)
@@ -25,15 +36,7 @@ public sealed class NpcKissAnimationController
         if (activeKiss is not null ||
             player is null ||
             Game1.currentLocation is null ||
-            npc.currentLocation is null ||
-            !ReferenceEquals(player.currentLocation, npc.currentLocation) ||
-            Game1.activeClickableMenu is not null ||
-            Game1.eventUp ||
-            Game1.isFestival() ||
-            !player.CanMove ||
-            player.UsingTool ||
-            player.isRidingHorse() ||
-            player.IsSitting())
+            npc.currentLocation is null)
         {
             return false;
         }

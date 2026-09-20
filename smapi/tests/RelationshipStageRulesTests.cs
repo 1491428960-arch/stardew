@@ -75,4 +75,47 @@ public sealed class RelationshipStageRulesTests
     {
         Assert.Throws<ArgumentNullException>(() => RelationshipStageRules.Resolve(null!));
     }
+
+    /// <summary>
+    /// 审计 #43：重大阶段白名单下沉到阶段名域之后，只认域内确实会产出的名字；
+    /// 原先混在里面的死条目「订婚/结婚」不再出现（域名里从来没有它）。
+    /// </summary>
+    [Theory]
+    [InlineData("恋爱", true)]
+    [InlineData("婚后", true)]
+    [InlineData("育儿", true)]
+    [InlineData("订婚/结婚", false)]
+    [InlineData("亲近", false)]
+    [InlineData("朋友", false)]
+    [InlineData("熟悉", false)]
+    [InlineData("初识", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Major_stages_are_exactly_the_domain_names_that_need_five_sessions(
+        string? stage,
+        bool expected)
+    {
+        Assert.Equal(expected, RelationshipStageRules.IsMajorStage(stage));
+    }
+
+    /// <summary>
+    /// 阶段键白名单（原在 KissInteractionRules 里内联）收敛到阶段名域之后，
+    /// 只有 <see cref="RelationshipStageRules.ResolveKey"/> 能产出的亲密三键通过。
+    /// </summary>
+    [Theory]
+    [InlineData("dating", true)]
+    [InlineData("married", true)]
+    [InlineData("parent", true)]
+    [InlineData("DATING", true)]
+    [InlineData(" dating ", true)]
+    [InlineData("friend", false)]
+    [InlineData("close", false)]
+    [InlineData("stranger", false)]
+    [InlineData(null, false)]
+    public void Established_romantic_stage_keys_match_the_previous_whitelist(
+        string? stageKey,
+        bool expected)
+    {
+        Assert.Equal(expected, RelationshipStageRules.IsEstablishedRomantic(stageKey));
+    }
 }

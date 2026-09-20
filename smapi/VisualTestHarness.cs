@@ -97,6 +97,22 @@ public static class VisualTestHarnessRules
             hasLoadedGame;
     }
 
+    /// <summary>
+    /// 从 Game1 现况取「世界就绪」的三项判据。
+    ///
+    /// 2026-09-20（语义层审计 #41）：同一批取值（gameMode / player / location）
+    /// 此前在 <see cref="ModEntry"/> 的视觉测试入口与 harness 内部各拼一次，
+    /// 且填进的是同一个「worldReady」形参位。现在拼装只此一处；
+    /// 是否额外要求 <c>hasLoadedGame</c> 由调用方决定（两个入口的差异是有意的）。
+    /// </summary>
+    public static bool IsGameReadyFromGameState()
+    {
+        return IsGameReady(
+            Game1.gameMode,
+            Game1.player is not null,
+            Game1.currentLocation is not null);
+    }
+
     public static bool CanOpenMenu(
         bool loadGateSatisfied,
         bool fadeClear,
@@ -669,11 +685,8 @@ public sealed class VisualTestHarness
 
     private static bool IsGameReady()
     {
-        return VisualTestHarnessRules.IsGameReady(
-            Game1.gameMode,
-            Game1.player is not null,
-            Game1.currentLocation is not null,
-            GetGameLoadFlag("hasLoadedGame"));
+        return VisualTestHarnessRules.IsGameReadyFromGameState() &&
+            GetGameLoadFlag("hasLoadedGame");
     }
 
     private static bool GetGameLoadFlag(string fieldName)

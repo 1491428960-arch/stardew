@@ -34,13 +34,15 @@ public sealed class InventoryItemPicker : IClickableMenu
         this.onCanceled = onCanceled ?? throw new ArgumentNullException(nameof(onCanceled));
 
         var viewport = Game1.viewport;
-        var panelWidth = Math.Min(1040, Math.Max(760, viewport.Width - 48));
-        var panelHeight = Math.Min(620, Math.Max(500, viewport.Height - 48));
-        panel = new Rectangle(
-            (viewport.Width - panelWidth) / 2,
-            (viewport.Height - panelHeight) / 2,
+        var margin = MenuPanelRules.SafeMargin * 2;
+        var panelWidth = Math.Min(1040, Math.Max(760, viewport.Width - margin));
+        var panelHeight = Math.Min(620, Math.Max(500, viewport.Height - margin));
+        panel = MenuPanelRules.CenteredInViewport(
+            viewport.Width,
+            viewport.Height,
             panelWidth,
-            panelHeight);
+            panelHeight,
+            floorOriginAtZero: false);
         xPositionOnScreen = panel.X;
         yPositionOnScreen = panel.Y;
         width = panel.Width;

@@ -65,6 +65,63 @@ public sealed class ChatLayoutRulesTests
             visible.Select(message => message.Content).ToArray());
     }
 
+    /// <summary>
+    /// 审计 #36：绘制路径不再自带一份过滤条件，而是调用这里的无上限重载。
+    /// </summary>
+    [Fact]
+    public void VisibleMessagesWithoutALimitKeepsEveryNonBlankEntryInOrder()
+    {
+        var messages = new ChatDisplayMessage?[]
+        {
+            new("npc", "第一条"),
+            null,
+            new("player", " "),
+            new("npc", "第二条"),
+            new("player", "\t\n"),
+            new("npc", "第三条"),
+        };
+
+        var visible = ChatLayoutRules.VisibleMessages(messages!);
+
+        Assert.Equal(
+            new[] { "第一条", "第二条", "第三条" },
+            visible.Select(message => message.Content).ToArray());
+    }
+
+    [Fact]
+    public void VisibleMessagesWithoutALimitReturnsNothingForAnEmptyHistory()
+    {
+        Assert.Empty(ChatLayoutRules.VisibleMessages(Array.Empty<ChatDisplayMessage>()));
+        Assert.Empty(ChatLayoutRules.VisibleMessages(
+            new[] { new ChatDisplayMessage("npc", "   ") }));
+    }
+
+    [Fact]
+    public void VisibleMessagesWithANonPositiveLimitStillValidatesItsInput()
+    {
+        Assert.Empty(ChatLayoutRules.VisibleMessages(
+            new[] { new ChatDisplayMessage("npc", "第一条") },
+            0));
+
+        Assert.Throws<ArgumentNullException>(
+            () => ChatLayoutRules.VisibleMessages(null!, 3));
+        Assert.Throws<ArgumentNullException>(
+            () => ChatLayoutRules.VisibleMessages((IEnumerable<ChatDisplayMessage>)null!));
+    }
+
+    /// <summary>
+    /// 审计 #38：面板放置改用 <see cref="MenuPanelRules.CenteredInViewport"/> 之后，
+    /// 私聊面板矩形必须与改动前逐值相同。
+    /// </summary>
+    [Fact]
+    public void Panel_rectangle_is_unchanged_after_the_shared_placement_refactor()
+    {
+        // 改前算式：宽 = clamp(round(1280*0.68), min(760, 1232), 1232) = 870
+        //           高 = clamp(round(720*0.55), min(420, 672), 672) = 420
+        //           原点 = ((1280-870)/2, (720-420)/2)
+        Assert.Equal(new Rectangle(205, 150, 870, 420), ChatLayoutRules.Calculate(1280, 720).Panel);
+    }
+
     [Fact]
     public void CompactViewportKeepsInputAndActionsSeparated()
     {

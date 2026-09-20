@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json.Serialization;
 
 namespace StardewAI.NPC;
@@ -50,16 +48,11 @@ public sealed class StoryStateStore
             usedFallback));
     }
 
-    /// <summary>长期记忆单条长度上限，与 ConversationStateRules.MaxMemoryTextLength 保持一致。</summary>
-    private const int MaxMemoryHighlightLength = 240;
-
-    /// <summary>长期记忆总量上限，与 ConversationStateRules.MaxMemoryCount 保持一致。</summary>
-    private const int MaxMemoryHighlightCount = 200;
-
     /// <summary>
     /// 写入一条长期记忆（例如群聊里挑出的重要事实或约定）。
     /// 与 RecordConversation 的区别是它不绑定一问一答格式，只承载一句简短陈述；
-    /// 按 MemoryId 去重，并维持与单聊记忆相同的总量上限。
+    /// 按 MemoryId 去重，并维持与单聊记忆相同的总量/单条长度上限——
+    /// 两者都取自 <see cref="MemoryRules"/>，不再各写一份常量。
     /// </summary>
     public void RecordMemoryHighlight(string npcId, string content, string gameDate)
     {
@@ -78,9 +71,7 @@ public sealed class StoryStateStore
             MemoryId = BuildGroupMemoryId(owner, trimmed),
             OwnerNpcId = owner,
             Kind = "fact",
-            Content = trimmed.Length <= MaxMemoryHighlightLength
-                ? trimmed
-                : trimmed[..MaxMemoryHighlightLength],
+            Content = MemoryRules.Truncate(trimmed, MemoryRules.MaxTextLength),
             Source = MemorySource.PlayerChat,
             Confidence = 0.75,
             GameDate = gameDate.Trim(),
@@ -100,9 +91,9 @@ public sealed class StoryStateStore
         }
 
         memories.Add(memory);
-        if (memories.Count > MaxMemoryHighlightCount)
+        if (memories.Count > MemoryRules.MaxCount)
         {
-            memories = memories.TakeLast(MaxMemoryHighlightCount).ToList();
+            memories = memories.TakeLast(MemoryRules.MaxCount).ToList();
         }
 
         Replace(State with { Memories = memories });
@@ -372,7 +363,7 @@ public sealed class StoryStateStore
         var viewer = RequireText(viewerNpcId, nameof(viewerNpcId));
         var subject = RequireText(subjectNpcId, nameof(subjectNpcId));
         var type = RequireText(relationType, nameof(relationType));
-        if (!RelationshipTypes.Contains(type))
+        if (!RelationshipTypeRules.IsSupported(type))
         {
             throw new ArgumentException("关系类型无效。", nameof(relationType));
         }
@@ -513,13 +504,6 @@ public sealed class StoryStateStore
         LastWarnings = Array.Empty<string>();
     }
 
-    private static readonly HashSet<string> RelationshipTypes = new(StringComparer.Ordinal)
-    {
-        "dating",
-        "engaged",
-        "married",
-    };
-
     private static readonly HashSet<string> AcceptanceOutcomes = new(StringComparer.Ordinal)
     {
         "accepted",
@@ -562,18 +546,15 @@ public sealed class StoryStateStore
     }
 
     /// <summary>
-    /// 群聊长期记忆的稳定 id。
-    ///
-    /// 2026-09-20 修（语义层审计）：此前用 <c>trimmed.GetHashCode()</c>——
-    /// .NET 的字符串哈希**跨进程随机化**，游戏重启后同一条高亮的 id 就变了，
-    /// 于是 <c>memories.All(m =&gt; m.MemoryId != id)</c> 判不出重复、**同一条事实
-    /// 会被反复写进存档**。改用与 <c>ConversationStateRules.BuildMemoryId</c>
-    /// 同一种做法（SHA256 前 24 个十六进制位），跨进程稳定。
+    /// 群聊长期记忆的稳定 id。前缀与载荷形态与单聊不同（群聊按「所有者 + 一句陈述」去重），
+    /// 但哈希构造与位数统一走 <see cref="MemoryRules.BuildId"/>。
     /// </summary>
     private static string BuildGroupMemoryId(string owner, string content)
     {
-        var input = $"{owner.ToLowerInvariant()}\n{content}";
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-        return $"group:{owner.ToLowerInvariant()}:{Convert.ToHexString(hash)[..24]}";
+        var normalizedOwner = owner.ToLowerInvariant();
+        return MemoryRules.BuildId(
+            kind: "group",
+            owner: normalizedOwner,
+            payload: $"{normalizedOwner}\n{content}");
     }
 }

@@ -31,17 +31,13 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
     /// <summary>视觉测试/诊断用：当前提示文本（能区分“已暂缓/已忽略/已失效”）。</summary>
     internal string VisualTestHint => hint;
 
-    private const int ActionButtonWidth = 64;
-    private const int ActionButtonGap = 6;
-
     /// <summary>
-    /// 邀约卡上“接受”按钮的矩形。坐标定义与 <see cref="HandleInvitationClick"/>
-    /// 共用同一组常量，避免视觉测试另算一份而漂移。
+    /// 邀约卡上“接受”按钮的矩形。几何定义与 <see cref="HandleInvitationClick"/>、
+    /// 绘制共用 <see cref="GroupInvitationActionLayoutRules"/>，不再各算一份。
     /// </summary>
     internal static Rectangle VisualTestAcceptButton(Rectangle row)
     {
-        var actionX = row.Right - (ActionButtonWidth * 3) - (ActionButtonGap * 2);
-        return new Rectangle(actionX, row.Y, ActionButtonWidth, row.Height);
+        return GroupInvitationActionLayoutRules.AcceptHitArea(row);
     }
 
     public GroupDialogueHubMenu(
@@ -154,12 +150,10 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                 b.DrawString(Game1.smallFont, $"{invitation.Title} · {names}", new Vector2(row.X + 18, row.Y + 14), Color.Black);
                 b.DrawString(Game1.smallFont, $"主题：{invitation.Topic}", new Vector2(row.X + 18, row.Y + 42), Color.DarkSlateGray);
                 b.DrawString(Game1.smallFont, $"状态：{FormatStatus(invitation.Status)} · 到期第 {invitation.ExpiresTotalDays} 天", new Vector2(row.X + 18, row.Y + 66), Color.DimGray);
-                var actionWidth = 64;
-                var actionGap = 6;
-                var actionX = row.Right - (actionWidth * 3) - (actionGap * 2);
-                MenuButtonDrawing.DrawButton(b, new Rectangle(actionX, row.Y + 18, actionWidth, 52), "接受", true);
-                MenuButtonDrawing.DrawButton(b, new Rectangle(actionX + actionWidth + actionGap, row.Y + 18, actionWidth, 52), "稍后", true);
-                MenuButtonDrawing.DrawButton(b, new Rectangle(actionX + ((actionWidth + actionGap) * 2), row.Y + 18, actionWidth, 52), "忽略", true);
+                // 按钮矩形与点击判定同源：GroupInvitationActionLayoutRules。
+                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.AcceptButton(row), "接受", true);
+                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DeferButton(row), "稍后", true);
+                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DismissButton(row), "忽略", true);
                 y += 104;
             }
         }
@@ -171,20 +165,8 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
 
     private void HandleInvitationClick(GroupDialogueInvitationRecord invitation, Rectangle row, int pointerX)
     {
-        var actionWidth = ActionButtonWidth;
-        var actionGap = ActionButtonGap;
-        var actionX = row.Right - (actionWidth * 3) - (actionGap * 2);
-        var status = pointerX switch
-        {
-            _ when pointerX >= actionX && pointerX < actionX + actionWidth => GroupInvitationStatus.Accepted,
-            _ when pointerX >= actionX + actionWidth + actionGap && pointerX < actionX + ((actionWidth + actionGap) * 2) => GroupInvitationStatus.Deferred,
-            _ when pointerX >= actionX + ((actionWidth + actionGap) * 2) => GroupInvitationStatus.Dismissed,
-            _ => GroupInvitationStatus.Accepted,
-        };
-        if (pointerX < actionX)
-        {
-            status = GroupInvitationStatus.Accepted;
-        }
+        // 与绘制同一份几何：pointerX 落在哪个按钮上由规则类判定。
+        var status = GroupInvitationActionLayoutRules.ResolvePointerAction(row, pointerX);
         if (status is GroupInvitationStatus.Deferred or GroupInvitationStatus.Dismissed)
         {
             if (storyStateStore.TrySetGroupInvitationStatus(invitation.InvitationId, status))

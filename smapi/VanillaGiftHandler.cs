@@ -37,7 +37,7 @@ public static class VanillaGiftHandler
         ArgumentNullException.ThrowIfNull(farmer);
         ArgumentNullException.ThrowIfNull(ledger);
 
-        if (!HasFriendshipRecord(farmer, npc.Name) ||
+        if (!FriendshipDataAccessor.HasRecord(farmer, npc.Name) ||
             !ledger.TryClaim(npc.Name, gameDay))
         {
             return 0;
@@ -68,20 +68,5 @@ public static class VanillaGiftHandler
         {
             farmer.ActiveObject = previousActiveObject;
         }
-    }
-
-    private static bool HasFriendshipRecord(Farmer farmer, string npcId)
-    {
-        var flags = System.Reflection.BindingFlags.Public |
-            System.Reflection.BindingFlags.NonPublic |
-            System.Reflection.BindingFlags.Instance;
-        var property = farmer.GetType().GetProperty("friendshipData", flags);
-        var data = property?.GetValue(farmer);
-        if (data is null)
-        {
-            data = farmer.GetType().GetField("friendshipData", flags)?.GetValue(farmer);
-        }
-
-        return FriendshipDataAccessor.ContainsKey(data, npcId);
     }
 }

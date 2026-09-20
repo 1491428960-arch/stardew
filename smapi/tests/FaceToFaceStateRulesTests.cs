@@ -62,23 +62,91 @@ public sealed class FaceToFaceStateRulesTests
     [Fact]
     public void Repeat_chat_requires_the_same_day_nearby_npc_and_empty_menu()
     {
-        Assert.True(FaceToFaceStateRules.CanStartRepeatChat(
-            worldReady: true,
-            menuOpen: false,
-            sameDay: true,
-            sameLocation: true,
-            npcNearby: true,
-            eventUp: false,
-            festival: false));
+        var ready = new FaceToFaceGate(
+            WorldReady: true,
+            MenuOpen: false,
+            SameDay: true,
+            SameLocation: true,
+            NpcNearby: true,
+            EventUp: false,
+            Festival: false);
+
+        Assert.True(FaceToFaceStateRules.CanStartRepeatChat(ready));
 
         Assert.False(FaceToFaceStateRules.CanStartRepeatChat(
-            worldReady: true,
-            menuOpen: false,
-            sameDay: false,
-            sameLocation: true,
-            npcNearby: true,
-            eventUp: false,
-            festival: false));
+            ready with { SameDay = false }));
+    }
+
+    /// <summary>
+    /// 等价性证据（审计 #34）：续聊门槛改成 <see cref="FaceToFaceGate"/> 之后，
+    /// 对全部 2^7 种取值组合的判定必须与改动前那条 7 项合取逐项一致。
+    /// </summary>
+    [Fact]
+    public void Repeat_chat_gate_matches_the_original_seven_term_conjunction_for_every_combination()
+    {
+        for (var mask = 0; mask < (1 << 7); mask++)
+        {
+            var gate = new FaceToFaceGate(
+                WorldReady: Bit(mask, 0),
+                MenuOpen: Bit(mask, 1),
+                SameDay: Bit(mask, 2),
+                SameLocation: Bit(mask, 3),
+                NpcNearby: Bit(mask, 4),
+                EventUp: Bit(mask, 5),
+                Festival: Bit(mask, 6));
+
+            // 改动前的实现：
+            // return worldReady && !menuOpen && sameDay && sameLocation && npcNearby &&
+            //     !eventUp && !festival;
+            var expected = gate.WorldReady &&
+                !gate.MenuOpen &&
+                gate.SameDay &&
+                gate.SameLocation &&
+                gate.NpcNearby &&
+                !gate.EventUp &&
+                !gate.Festival;
+
+            Assert.Equal(expected, FaceToFaceStateRules.CanStartRepeatChat(gate));
+        }
+    }
+
+    /// <summary>
+    /// 亲吻与续聊的「七项共同条件」必须是同一个判定：同一个 gate 下，
+    /// 亲吻只是在它之上再加四个玩家动作条件（审计 #33 的重复门槛已消除）。
+    /// </summary>
+    [Fact]
+    public void Kiss_and_repeat_chat_share_the_same_gate_verdict()
+    {
+        for (var mask = 0; mask < (1 << 7); mask++)
+        {
+            var gate = new FaceToFaceGate(
+                WorldReady: Bit(mask, 0),
+                MenuOpen: Bit(mask, 1),
+                SameDay: Bit(mask, 2),
+                SameLocation: Bit(mask, 3),
+                NpcNearby: Bit(mask, 4),
+                EventUp: Bit(mask, 5),
+                Festival: Bit(mask, 6));
+
+            var repeatChat = FaceToFaceStateRules.CanStartRepeatChat(gate);
+            var kiss = KissInteractionRules.CanTriggerKiss(
+                gate,
+                playerCanMove: true,
+                usingTool: false,
+                ridingHorse: false,
+                sitting: false);
+
+            Assert.Equal(repeatChat, kiss);
+        }
+    }
+
+    private static bool Bit(int mask, int index) => (mask & (1 << index)) != 0;
+
+    [Fact]
+    public void Repeat_chat_nearby_distance_is_a_named_single_constant()
+    {
+        // 数值与改前 IsNearby 里的字面量 2.5f 一致（审计 #35 只抽名字，不改判定）。
+        Assert.Equal(2.5f, FaceToFaceStateRules.RepeatChatNearbyDistanceInTiles);
     }
 
     [Fact]

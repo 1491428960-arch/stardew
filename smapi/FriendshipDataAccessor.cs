@@ -13,6 +13,43 @@ public static class FriendshipDataAccessor
                                                 BindingFlags.NonPublic |
                                                 BindingFlags.Instance;
 
+    /// <summary>
+    /// 读取玩家对象上的 <c>friendshipData</c> 集合（属性优先、字段兜底）。
+    /// 反射写法只此一处：此前它有四个调用点各写一份（审计 #40 的「改反射策略要改三处」）。
+    /// </summary>
+    public static object? ReadData(object? player)
+    {
+        if (player is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var playerType = player.GetType();
+            return playerType.GetProperty("friendshipData", InstanceFlags)?.GetValue(player) ??
+                playerType.GetField("friendshipData", InstanceFlags)?.GetValue(player);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 某个玩家对象（Farmer）是否已存在该 NPC 的好感度记录。
+    ///
+    /// 2026-09-20（语义层审计 #40）：本方法此前在 <see cref="ModEntry"/> 与
+    /// <see cref="VanillaGiftHandler"/> 里各有一份同名同义的实现（各自用反射读
+    /// <c>friendshipData</c>），改反射策略要改三处。现在只此一处。
+    /// 取保守口径：反射失败即视为没有记录，不向上抛。
+    /// </summary>
+    public static bool HasRecord(object? player, string? npcId)
+    {
+        return !string.IsNullOrWhiteSpace(npcId) &&
+            ContainsKey(ReadData(player), npcId);
+    }
+
     public static bool ContainsKey(object? data, string? key)
     {
         if (data is null || string.IsNullOrWhiteSpace(key))

@@ -125,15 +125,7 @@ public sealed class FaceToFaceConversationCoordinator
                 interactionTile,
                 Game1.tileSize);
         if (!FaceToFaceStateRules.CanStartRepeatChat(
-                worldReady: Context.IsWorldReady,
-                menuOpen: Game1.activeClickableMenu is not null,
-                sameDay: FaceToFaceStateRules.IsSameGameDay(
-                    lastChatDay,
-                    Game1.Date.TotalDays),
-                sameLocation: sameLocation,
-                npcNearby: npcNearby,
-                eventUp: Game1.eventUp,
-                festival: Game1.isFestival()) ||
+                CaptureGate(lastChatDay, sameLocation, npcNearby)) ||
             !npcTargeted ||
             conversationService is null)
         {
@@ -350,21 +342,37 @@ public sealed class FaceToFaceConversationCoordinator
     {
         var player = Game1.player;
         return KissInteractionRules.CanTriggerKiss(
-            worldReady: Context.IsWorldReady,
-            menuOpen: Game1.activeClickableMenu is not null,
-            sameDay: FaceToFaceStateRules.IsSameGameDay(
+            CaptureGate(
                 kissDay,
-                Game1.Date.TotalDays),
-            sameLocation: ReferenceEquals(
-                candidate.currentLocation,
-                Game1.currentLocation),
-            npcNearby: IsNearby(candidate),
-            eventUp: Game1.eventUp,
-            festival: Game1.isFestival(),
+                sameLocation: ReferenceEquals(
+                    candidate.currentLocation,
+                    Game1.currentLocation),
+                npcNearby: IsNearby(candidate)),
             playerCanMove: player?.CanMove == true,
             usingTool: player?.UsingTool == true,
             ridingHorse: player?.isRidingHorse() == true,
             sitting: player?.IsSitting() == true);
+    }
+
+    /// <summary>
+    /// 面对面交互门槛的**唯一取值点**：续聊与亲吻共用同一批游戏状态，
+    /// 不再各自把七个值拼一遍（审计 #34）。判定本身在 <see cref="FaceToFaceGate"/>。
+    /// </summary>
+    private static FaceToFaceGate CaptureGate(
+        int? rememberedDay,
+        bool sameLocation,
+        bool npcNearby)
+    {
+        return new FaceToFaceGate(
+            WorldReady: Context.IsWorldReady,
+            MenuOpen: Game1.activeClickableMenu is not null,
+            SameDay: FaceToFaceStateRules.IsSameGameDay(
+                rememberedDay,
+                Game1.Date.TotalDays),
+            SameLocation: sameLocation,
+            NpcNearby: npcNearby,
+            EventUp: Game1.eventUp,
+            Festival: Game1.isFestival());
     }
 
     private void OnKissCompleted(StardewNpc kissedNpc)
@@ -404,6 +412,6 @@ public sealed class FaceToFaceConversationCoordinator
     private static bool IsNearby(StardewNpc candidate)
     {
         var distance = Vector2.Distance(candidate.Position, Game1.player.Position);
-        return distance <= Game1.tileSize * 2.5f;
+        return distance <= Game1.tileSize * FaceToFaceStateRules.RepeatChatNearbyDistanceInTiles;
     }
 }

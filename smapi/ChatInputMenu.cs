@@ -667,9 +667,9 @@ public class ChatInputMenu : IClickableMenu
     private void DrawMessages(SpriteBatch b)
     {
         var area = layout.ConversationArea;
-        var history = messages
-            .Where(message => message is not null && !string.IsNullOrWhiteSpace(message.Content))
-            .ToArray();
+        // 「哪些消息可见」只有一份实现（ChatLayoutRules.VisibleMessages），
+        // 不再在这里另写一次同样的过滤条件。
+        var history = ChatLayoutRules.VisibleMessages(messages);
         var maxWidth = Math.Max(
             80,
             area.Width
@@ -689,7 +689,7 @@ public class ChatInputMenu : IClickableMenu
             area.Height - (MessagePadding * 2) - BubbleSafetyMargin);
         var latestWindow = ChatTextLayoutRules.SelectLatestThatFit(
             history,
-            history.Length == 0 ? 1 : history.Length,
+            history.Count == 0 ? 1 : history.Count,
             availableHeight,
             BubbleGap,
             message =>
@@ -699,7 +699,7 @@ public class ChatInputMenu : IClickableMenu
                     + (lineCount * Game1.smallFont.LineSpacing)
                     + ((lineCount - 1) * MessageLineSpacing);
             });
-        scrollMaxStartIndex = Math.Max(0, history.Length - latestWindow.Count);
+        scrollMaxStartIndex = Math.Max(0, history.Count - latestWindow.Count);
         if (followLatest)
         {
             scrollStartIndex = scrollMaxStartIndex;
@@ -755,7 +755,7 @@ public class ChatInputMenu : IClickableMenu
 
         UpdateScrollBar(
             area,
-            history.Length,
+            history.Count,
             Math.Max(1, latestWindow.Count),
             scrollStartIndex);
         DrawScrollBar(b);
