@@ -828,6 +828,74 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
+    public async Task RecentHistory_keeps_more_than_the_model_window_without_changing_it()
+    {
+        // F8 面板要「往上翻」：回看档案比发给模型的窗口长，
+        // 但请求体里的 history 一字不变——显示层不许影响模型看到的内容。
+        var handler = new RecordingHandler(index => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                $"{{\"reply\":\"回复{index}\",\"provider\":\"fake\",\"fallback\":false}}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        for (var index = 0; index < 8; index++)
+        {
+            await client.SendAsync("Abigail", $"问题{index}");
+        }
+
+        using var lastRequest = JsonDocument.Parse(handler.RequestBodies[^1]);
+        var sent = lastRequest.RootElement.GetProperty("history").EnumerateArray().ToArray();
+        Assert.Equal(6, sent.Length);
+        Assert.Equal("问题4", sent[0].GetProperty("content").GetString());
+        Assert.Equal("回复6", sent[^1].GetProperty("content").GetString());
+
+        var recalled = client.RecentHistory("Abigail");
+        Assert.Equal(16, recalled.Count);
+        Assert.Equal("问题0", recalled[0].Content);
+        Assert.Equal("回复7", recalled[^1].Content);
+    }
+
+    [Fact]
+    public async Task RecentHistory_carries_group_summaries_for_their_own_speaker_only()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"strategy\":\"multi_turn\",\"channel\":\"remote\",\"provider\":\"fake\",\"fallback\":false,"
+                + "\"turns\":[{\"speakerNpcId\":\"Abigail\",\"content\":\"我觉得挺好。\"}],"
+                + "\"providerCalls\":1,\"providerErrors\":[],\"fallbackCount\":0,\"latencyMs\":5}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var client = new BridgeClient(
+            new HttpClient(handler),
+            new Uri("http://127.0.0.1:5678"),
+            groupStrategy: "multi_turn");
+
+        await client.SendGroupAsync(
+            new GroupDialogueRequest(
+                "你们怎么看？",
+                new[]
+                {
+                    new GroupDialogueParticipant("Abigail", "Abigail"),
+                    new GroupDialogueParticipant("Emily", "Emily"),
+                },
+                null,
+                null,
+                Array.Empty<GroupDialogueHistoryEntry>()));
+
+        // 群聊记录按「本人发言合并成一条」留在各自的回看档案里，F8 面板也翻得到；
+        // 没说话的那位不留记录。
+        var abigail = Assert.Single(client.RecentHistory("Abigail"));
+        Assert.Contains("群里玩家说", abigail.Content);
+        Assert.Empty(client.RecentHistory("Emily"));
+    }
+
+    [Fact]
     public void Constructor_rejects_non_loopback_endpoint()
     {
         using var httpClient = new HttpClient(new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)));

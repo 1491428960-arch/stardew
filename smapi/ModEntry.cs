@@ -28,6 +28,9 @@ public sealed class ModEntry : Mod
     private StardewNpc? testNpc;
     private FrameRateSampler? frameRateSampler;
     private GroupDialogueCoordinator? groupDialogueCoordinator;
+    // 当前存档已读到的回看档案原文。重建 BridgeClient（改配置、重新载入存档）时用它回灌，
+    // 免得一次配置变更就把玩家翻得到的历史抹掉；回标题时清空，避免串到下一个存档。
+    private string? chatHistoryArchiveJson;
 
     public override void Entry(IModHelper helper)
     {
@@ -151,6 +154,10 @@ public sealed class ModEntry : Mod
             Monitor.Log($"读取故事状态失败，已使用空状态：{exception.Message}", LogLevel.Warn);
         }
 
+        // 回看档案必须在 ApplyConfig 之后读：上面那次 ApplyConfig 可能刚重建了 BridgeClient，
+        // 而档案是灌进客户端内存的。
+        LoadChatHistoryArchive();
+
         EnsureTestNpc();
     }
 
@@ -170,6 +177,8 @@ public sealed class ModEntry : Mod
             Monitor.Log($"保存故事状态失败，已跳过本次写入：{exception.Message}", LogLevel.Warn);
         }
 
+        SaveChatHistoryArchive();
+
         var testNpcLifecycle = TestNpcPlacementRules.GetLifecyclePolicy();
         if (testNpcLifecycle.ResetRepeatTargetBeforeSave)
         {
@@ -186,6 +195,89 @@ public sealed class ModEntry : Mod
         if (TestNpcPlacementRules.GetLifecyclePolicy().RecreateAfterSave)
         {
             EnsureTestNpc();
+        }
+    }
+
+    /// <summary>
+    /// 当前存档的文件夹名（SMAPI 的 <c>Constants.SaveFolderName</c>，形如 <c>农场名_123456789</c>）。
+    /// 存档数据本身就存在当前存档里，这个标识是第二道保险：万一数据落到别的存档上，
+    /// 读回时能认出来并丢掉。实际比对的是其中不随改名变化的存档 ID
+    /// （见 <see cref="ChatHistoryArchive.SaveIdFromFolderName"/>）。
+    /// 载入存档前或取不到存档信息时为 null。
+    /// </summary>
+    private static string? CurrentSaveFolderName => Constants.SaveFolderName;
+
+    /// <summary>
+    /// 载入**回看档案**（F8 面板「往上翻」的那一份）。读不到就空手开局——
+    /// 老存档没有这份数据是常态，不是错误。
+    ///
+    /// 时机选 SaveLoaded：只有到这一步存档才算载入（SMAPI 的存档数据 API 在此之前会直接抛异常），
+    /// 而玩家随时可能按 F8，档案必须在他第一次按键之前就装进内存。
+    /// </summary>
+    private void LoadChatHistoryArchive()
+    {
+        if (bridgeClient is null)
+        {
+            return;
+        }
+
+        var saveFolder = CurrentSaveFolderName;
+        try
+        {
+            var json = Helper.Data.ReadSaveData<string>(ChatHistoryArchive.StorageKey);
+            var loaded = bridgeClient.LoadDisplayHistory(json, saveFolder);
+            chatHistoryArchiveJson = json;
+            Monitor.Log(
+                $"[StardewAI.History] 已载入回看档案：key={ChatHistoryArchive.StorageKey} " +
+                $"存档={saveFolder ?? "<unknown>"} NPC={loaded.History.Count} " +
+                $"条={loaded.MessageCount} 长度={json?.Length ?? 0}",
+                LogLevel.Info);
+            foreach (var warning in loaded.Warnings)
+            {
+                Monitor.Log($"回看档案已降级：{warning}", LogLevel.Warn);
+            }
+        }
+        catch (Exception exception)
+        {
+            // 读不到就空手开局：不能因为一份历史把存档载入搞崩
+            // （非主玩家、存档尚未载入等情况下 SMAPI 会直接抛异常）。
+            chatHistoryArchiveJson = null;
+            bridgeClient.LoadDisplayHistory(null, saveFolder);
+            Monitor.Log($"读取回看档案失败，已从空档案开始：{exception.Message}", LogLevel.Warn);
+        }
+    }
+
+    /// <summary>
+    /// 把**回看档案**写进当前存档。
+    ///
+    /// 时机选 Saving（与故事状态同一处）：它在游戏真正落盘之前触发，写入的数据随存档一起被序列化，
+    /// 所以「手动保存」「睡觉过夜」「退出到标题」三条路都覆盖得到；DayEnding 只在睡觉时触发
+    /// （白天直接退游戏就丢），SaveCreating 只在新档创建时触发一次（那时还没有任何历史）。
+    ///
+    /// 这里**不**在每追加一条对话时就写：写一次的代价是把整份档案序列化成约 1 MB 文本
+    /// （见 ChatHistoryArchiveTests 的满档实测），一天下来几十轮对话就是几十次白干；
+    /// 而 SMAPI 的 WriteSaveData 写的是内存里的 CustomData，本来也不落盘，多写毫无收益。
+    /// </summary>
+    private void SaveChatHistoryArchive()
+    {
+        if (bridgeClient is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var json = bridgeClient.SerializeDisplayHistory(CurrentSaveFolderName);
+            Helper.Data.WriteSaveData(ChatHistoryArchive.StorageKey, json);
+            chatHistoryArchiveJson = json;
+            Monitor.Log(
+                $"[StardewAI.History] 已写入回看档案：key={ChatHistoryArchive.StorageKey} " +
+                $"长度={json.Length}",
+                LogLevel.Info);
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"保存回看档案失败，已跳过本次写入：{exception.Message}", LogLevel.Warn);
         }
     }
 
@@ -226,6 +318,7 @@ public sealed class ModEntry : Mod
         bridgeClient?.Dispose();
         bridgeClient = null;
         storyStateStore.Reset();
+        chatHistoryArchiveJson = null;
     }
 
     private void OnRendered(object? sender, RenderedEventArgs e)
@@ -532,6 +625,9 @@ public sealed class ModEntry : Mod
         if (bridgeClient is not null)
         {
             conversationService = new ConversationService(bridgeClient, storyStateStore);
+            // 新客户端的内存是空的：把当前存档已读到的回看档案灌回去。
+            // 在游戏里改配置（会走到这里）不该把玩家翻得到的历史弄丢。
+            bridgeClient.LoadDisplayHistory(chatHistoryArchiveJson, CurrentSaveFolderName);
         }
         faceToFaceCoordinator?.UpdateService(conversationService);
     }

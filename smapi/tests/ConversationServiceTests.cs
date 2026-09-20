@@ -252,6 +252,17 @@ public sealed class ConversationServiceTests
         }
     }
 
+    [Fact]
+    public void RecentMessages_is_empty_for_a_transport_that_keeps_no_history()
+    {
+        // 回看是可选能力：轻量 transport 走 IConversationTransport 的默认实现（返回空），
+        // 面板照常打开，只是没有历史可铺。
+        var service = new ConversationService(new FakeTransport(), new StoryStateStore());
+
+        Assert.Empty(service.RecentMessages("Rasmodia"));
+        Assert.Empty(service.RecentMessages("  "));
+    }
+
     private static NpcGameState TestNpcState()
     {
         return new NpcGameState

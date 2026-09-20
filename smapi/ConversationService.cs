@@ -101,6 +101,16 @@ public sealed class ConversationService : IDisposable
         // 当前请求的取消由菜单持有的 CancellationTokenSource 负责；此方法用于统一生命周期调用点。
     }
 
+    /// <summary>
+    /// 只读回看：该 NPC 最近的历史对话，映射成面板消息（角色与条数规则见
+    /// <see cref="ChatHistoryRules"/>）。F8 面板打开时铺进消息区，之后新消息继续追加；
+    /// 这条路径不发送任何请求，也不会改变发给模型的那份窗口。
+    /// </summary>
+    public IReadOnlyList<ChatDisplayMessage> RecentMessages(string npcId)
+    {
+        return ChatHistoryRules.ToDisplayMessages(transport.RecentHistory(npcId));
+    }
+
     public void Dispose()
     {
         disposed = true;

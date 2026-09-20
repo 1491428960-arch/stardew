@@ -228,7 +228,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     public static readonly Uri DefaultEndpoint = new("http://127.0.0.1:5678");
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
     private const int MaxHistoryItems = 6;
-    private const int MaxHistoryContentLength = 240;
+    private const int MaxHistoryContentLength = ChatHistoryRules.MaxContentLength;
     private const int MaxMessageLength = 2000;
     private const int MaxRecentFactLength = 240;
     private const int MaxRecentFactItems = 20;
@@ -246,6 +246,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     private readonly string groupStrategy = ModConfig.MultiTurnGroupStrategy;
     private readonly object memoryLock = new();
     private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> historyByNpc = new();
+    // 回看档案：F8 面板「往上翻」看的那一份，比发送窗口长（ChatHistoryRules.MaxDisplayMessages）。
+    // 与 historyByNpc 并存、各裁各的；这份**不参与任何请求**，只被 RecentHistory 读出去。
+    private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> displayHistoryByNpc = new();
     private readonly Dictionary<string, NpcGameState> previousStateByNpc = new();
 
     public BridgeClient(
@@ -537,6 +540,105 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     }
 
     /// <summary>
+    /// 只读回看入口：某位 NPC 最近真实发生过的对话（玩家与 NPC 都在，群聊摘要也在），
+    /// 供 F8 面板打开时铺进消息区。读的是**回看档案**，与发给模型的 6 条窗口无关：
+    /// 那份窗口一字不动，这里只是把它保留得更久一点给玩家翻。
+    /// </summary>
+    public IReadOnlyList<BridgeDialogueHistoryItem> RecentHistory(string npcId)
+    {
+        var normalized = npcId?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return Array.Empty<BridgeDialogueHistoryItem>();
+        }
+
+        lock (memoryLock)
+        {
+            return displayHistoryByNpc
+                .Where(pair => string.Equals(pair.Key, normalized, StringComparison.OrdinalIgnoreCase))
+                .Select(pair => pair.Value.ToArray())
+                .FirstOrDefault() ?? Array.Empty<BridgeDialogueHistoryItem>();
+        }
+    }
+
+    /// <summary>
+    /// 把**回看档案**编成存档载荷（见 <see cref="ChatHistoryArchive"/>）。
+    /// 只导出 F8 面板那一份：发给模型的 6 条窗口本就是它的尾部子集，重复存没有意义，
+    /// 也免得将来有人误以为窗口能靠存档恢复。
+    /// </summary>
+    /// <param name="saveFolder">当前存档的文件夹名；写入时会被归一化成存档 ID 存下来。</param>
+    public string SerializeDisplayHistory(string? saveFolder)
+    {
+        lock (memoryLock)
+        {
+            var snapshot = displayHistoryByNpc.ToDictionary(
+                pair => pair.Key,
+                pair => (IReadOnlyList<BridgeDialogueHistoryItem>)pair.Value.ToArray(),
+                StringComparer.Ordinal);
+            return ChatHistoryArchive.Serialize(snapshot, saveFolder);
+        }
+    }
+
+    /// <summary>
+    /// 用存档里的回看档案**替换**内存里的那一份（读不到就是清空，不是合并——
+    /// 载入另一个存档时必须把上一个存档的记录清干净）。
+    ///
+    /// 只动回看档案：发给模型的 <c>historyByNpc</c> 一字不动，
+    /// <c>previousStateByNpc</c> 这类运行时推导状态也不受影响。
+    /// </summary>
+    public ChatHistoryArchiveLoadResult LoadDisplayHistory(string? json, string? saveFolder)
+    {
+        var loaded = ChatHistoryArchive.Load(json, saveFolder);
+        lock (memoryLock)
+        {
+            displayHistoryByNpc.Clear();
+            foreach (var pair in loaded.History)
+            {
+                displayHistoryByNpc[pair.Key] = pair.Value.ToList();
+            }
+        }
+
+        return loaded;
+    }
+
+    /// <summary>
+    /// 记一条历史：**发送窗口**（发给模型，<see cref="MaxHistoryItems"/> 条）与
+    /// **回看档案**（F8 面板，<see cref="ChatHistoryRules.MaxDisplayMessages"/> 条）
+    /// 各存一份、各自裁剪。两份存的是同一个不可变对象，文本不重复占内存。
+    /// </summary>
+    private void AppendHistory(string npcId, BridgeDialogueHistoryItem item)
+    {
+        var sendWindow = EnsureHistory(historyByNpc, npcId);
+        sendWindow.Add(item);
+        TrimHistory(sendWindow, MaxHistoryItems);
+
+        var displayLog = EnsureHistory(displayHistoryByNpc, npcId);
+        displayLog.Add(item);
+        TrimHistory(displayLog, ChatHistoryRules.MaxDisplayMessages);
+    }
+
+    private static List<BridgeDialogueHistoryItem> EnsureHistory(
+        Dictionary<string, List<BridgeDialogueHistoryItem>> store,
+        string npcId)
+    {
+        if (!store.TryGetValue(npcId, out var history))
+        {
+            history = new List<BridgeDialogueHistoryItem>();
+            store[npcId] = history;
+        }
+
+        return history;
+    }
+
+    private static void TrimHistory(List<BridgeDialogueHistoryItem> history, int maxItems)
+    {
+        if (history.Count > maxItems)
+        {
+            history.RemoveRange(0, history.Count - maxItems);
+        }
+    }
+
+    /// <summary>
     /// 群聊结束后，把每个参与者自己说过的内容**合并成一条**写进它自己的记忆。
     /// 只记本人发言：别人的话不进这一份记忆；一次群聊最多占一条，
     /// 免得随口聊的把私聊记忆挤出 6 条窗口。
@@ -574,12 +676,6 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                     continue;
                 }
 
-                if (!historyByNpc.TryGetValue(npcId, out var history))
-                {
-                    history = new List<BridgeDialogueHistoryItem>();
-                    historyByNpc[npcId] = history;
-                }
-
                 var stage = participant.GameState is null
                     ? null
                     : RelationshipStageRules.ResolveKey(participant.GameState);
@@ -587,17 +683,12 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 var summary = string.IsNullOrWhiteSpace(playerMessage)
                     ? $"群里我说：“{joined}”"
                     : $"群里玩家说：“{playerMessage.Trim()}”；我回应：“{joined}”";
-                history.Add(new BridgeDialogueHistoryItem
+                AppendHistory(npcId, new BridgeDialogueHistoryItem
                 {
                     Role = "assistant",
                     Content = Truncate(summary, MaxHistoryContentLength),
                     RelationshipStage = stage,
                 });
-
-                if (history.Count > MaxHistoryItems)
-                {
-                    history.RemoveRange(0, history.Count - MaxHistoryItems);
-                }
             }
         }
     }
@@ -745,15 +836,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
 
         lock (memoryLock)
         {
-            if (!historyByNpc.TryGetValue(npcId, out var history))
-            {
-                history = new List<BridgeDialogueHistoryItem>();
-                historyByNpc[npcId] = history;
-            }
-
             if (intent != ConversationIntent.Topic)
             {
-                history.Add(new BridgeDialogueHistoryItem
+                AppendHistory(npcId, new BridgeDialogueHistoryItem
                 {
                     Role = "user",
                     Content = Truncate(message, MaxHistoryContentLength),
@@ -761,17 +846,14 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                     RelationshipStage = relationshipStage,
                 });
             }
-            history.Add(new BridgeDialogueHistoryItem
+
+            AppendHistory(npcId, new BridgeDialogueHistoryItem
             {
                 Role = "assistant",
                 Content = Truncate(result.Reply, MaxHistoryContentLength),
                 Intent = intent,
                 RelationshipStage = relationshipStage,
             });
-            if (history.Count > MaxHistoryItems)
-            {
-                history.RemoveRange(0, history.Count - MaxHistoryItems);
-            }
 
             if (currentState is not null)
             {

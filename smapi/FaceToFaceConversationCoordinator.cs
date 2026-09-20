@@ -298,6 +298,7 @@ public sealed class FaceToFaceConversationCoordinator
             conversationService,
             storyStateStore,
             OnChatClosed,
+            initialMessages: conversationService.RecentMessages(speaker.Name),
             conversationChannel: ConversationChannel.FaceToFace,
             shareFriendshipLedger: shareFriendshipLedger);
     }
@@ -394,11 +395,15 @@ public sealed class FaceToFaceConversationCoordinator
             return;
         }
 
+        // 打开时先把已累积的历史铺进消息区（只读回看），之后本次会话的新消息继续往后追加。
+        // 历史来自 SMAPI 侧的记忆，读多少、怎么映射见 ChatHistoryRules；
+        // 发给模型的窗口不受影响。
         Game1.activeClickableMenu = new ChatInputMenu(
             target,
             conversationService,
             storyStateStore,
             OnChatClosed,
+            initialMessages: conversationService.RecentMessages(target.Name),
             conversationChannel: ConversationChannel.FaceToFace,
             shareFriendshipLedger: shareFriendshipLedger);
     }
