@@ -140,6 +140,10 @@ def _case(
     history: tuple[dict[str, str], ...] = (),
     gender_presentation: str = "",
     intent: str = "chat",
+    # 该案例声明的「角色已经历过的剧情事件」。刻意**不给默认值**：空元组在
+    # 事件锁里表示「这些事件都没发生」，会被收窄到 acquaintance；
+    # 「忘记声明」与「声明为空」必须是两件事，所以每条案例都要自己写清楚。
+    completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     if len(turns) != 3:
         raise ValueError(f"关系世界观案例必须有三轮：{case_id}")
@@ -168,6 +172,7 @@ def _case(
         story_progress=story_progress,
         gender_presentation=gender_presentation,
         relationship_world=relationship_world,
+        completed_event_ids=completed_event_ids,
         turns=turns,
     )
 
@@ -176,6 +181,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     # 五例局部知情：普通恋爱不自动同步，suspected 不能被说成事实。
     _case(
         case_id="relationship-wizard-view-gap",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -203,6 +209,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sophia-view-gap",
+        completed_event_ids=("8185291", "8185292", "8185293"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -230,6 +237,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-shane-view-gap",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -258,6 +266,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sebastian-view-gap",
+        completed_event_ids=("2794460", "384883", "27"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -286,6 +295,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-alex-view-gap",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -316,6 +326,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     # 五例一对一调解：每个 NPC 独立保有 accepted / conditional / not_ready。
     _case(
         case_id="relationship-wizard-mediation",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -341,6 +352,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sophia-mediation",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -366,6 +378,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-shane-mediation",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -392,6 +405,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sebastian-mediation",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -418,6 +432,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-alex-mediation",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -446,6 +461,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     # 五例 NPC 主动提起嫉妒：婚礼公开，NPC 忠于主角，但会对主角的复数关系产生自己的感受。
     _case(
         case_id="relationship-wizard-jealousy-recovery",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -481,6 +497,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sophia-jealousy-recovery",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -516,6 +533,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-shane-jealousy-recovery",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -552,6 +570,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sebastian-jealousy-recovery",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -588,6 +607,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-alex-jealousy-recovery",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -627,6 +647,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     # 玩家主动说明和恢复案例继续保留，作为行为对照。
     _case(
         case_id="relationship-wizard-npc-initiated-jealousy",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -689,6 +710,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sophia-npc-initiated-jealousy",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -751,6 +773,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-shane-npc-initiated-jealousy",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -814,6 +837,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-sebastian-npc-initiated-jealousy",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -877,6 +901,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="relationship-alex-npc-initiated-jealousy",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -944,6 +969,22 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
 def _feminine_male_relationship_cases() -> tuple[CharacterQualityCase, ...]:
     """为新增女性化男性恋爱角色补齐四类关系视角案例。"""
 
+    # 这批案例由循环生成，`completed_event_ids` 无法写成字面量，于是把
+    # 每个 (角色, 登记档位) 的链逐条列在这里。每个 ID 都逐个来自
+    # `relationship_gating._EVENT_GATES` 的同名档位；Sam 没有登记链，
+    # 显式写空元组表示「该角色没有与关系阶段绑定的剧情事件」，
+    # 不是「忘了写」。
+    confirmed_event_chains: dict[tuple[str, str], tuple[str, ...]] = {
+        # Elliott：_EVENT_GATES["Elliott"] 的 friend / close 档
+        ("Elliott", "friend"): ("39", "40", "423502"),
+        ("Elliott", "close"): ("39", "40", "423502", "1848481"),
+        # Harvey：_EVENT_GATES["Harvey"] 的 friend / close 档
+        ("Harvey", "friend"): ("56", "57", "58"),
+        ("Harvey", "close"): ("56", "57", "58", "571102"),
+        ("Sam", "friend"): (),
+        ("Sam", "close"): (),
+    }
+
     specs = (
         ("elliott", "Elliott", "Sam", "Harvey", "Sophia", "remote", "海边小屋"),
         ("harvey", "Harvey", "Elliott", "Sam", "Shane", "face_to_face", "诊所休息室"),
@@ -962,6 +1003,7 @@ def _feminine_male_relationship_cases() -> tuple[CharacterQualityCase, ...]:
                 source_mods=("vanilla", "female-bachelors"),
                 relationship_stage="friend",
                 channel=channel,
+                completed_event_ids=confirmed_event_chains[(npc_id, "friend")],
                 turns=(
                     _turn("turn-1", f"你知道 {known_npc} 最近是不是在和谁约会？", ("不知道", "不清楚"), "unknown_view", "未知视角只能承认不知道，不能把客观关系表当成当前 NPC 的记忆。"),
                     _turn("turn-2", f"有人说 {suspected_npc} 可能在谈恋爱，我不想把传闻当真的。", ("可能", "传闻"), "suspected_view", "把传闻保留为不确定信息，不替其他 NPC 确认关系。"),
@@ -993,6 +1035,7 @@ def _feminine_male_relationship_cases() -> tuple[CharacterQualityCase, ...]:
                 source_mods=("vanilla", "female-bachelors"),
                 relationship_stage=mediation_stage,
                 channel=mediation_channel,
+                completed_event_ids=confirmed_event_chains[(npc_id, "close")],
                 turns=(
                     _turn("turn-1", f"我想直接告诉你：我也想和 {mediation_target} 交往。", ("直接", "交往"), "mediation", "当前 NPC 只接住玩家自己的关系事实，并讨论自己的边界，不替目标 NPC 发言。", relationship_actor="player", relationship_target_npc_id=mediation_target),
                     _turn("turn-2", "我想先听你自己的边界，不把别人的选择算到你头上。", ("边界", "选择"), "mediation", "调解范围只属于当前 NPC 与玩家，不扩散到其他伴侣。"),
@@ -1021,6 +1064,7 @@ def _feminine_male_relationship_cases() -> tuple[CharacterQualityCase, ...]:
                 relationship_stage="married",
                 channel=channel,
                 intent="topic",
+                completed_event_ids=confirmed_event_chains[(npc_id, "close")],
                 turns=(
                     _turn("turn-1", "", (known_npc, "关系", "在意"), "jealousy", f"空 topic 首轮由 {npc_id} 主动提起自己知道的关系不安，只谈自己的感受，不替 {known_npc} 发言。", relationship_actor="npc", intent="topic", initiative_expectation="proactive", initiative_kind="affection_signal"),
                     _turn("turn-2", f"我听到了。{known_npc} 的事不等于你的感受可以被放一边，你直接说。", (known_npc, "感受", "直接"), "jealousy", "玩家保持对其他关系的忠诚，同时接住当前 NPC 自己的不安。", intent="chat"),
@@ -1049,6 +1093,7 @@ def _feminine_male_relationship_cases() -> tuple[CharacterQualityCase, ...]:
                 relationship_stage="married",
                 channel="face_to_face" if channel == "remote" else "remote",
                 intent="topic",
+                completed_event_ids=confirmed_event_chains[(npc_id, "close")],
                 turns=(
                     _turn("turn-1", "", (suspected_npc, "关系", "不安"), "jealousy", f"空 topic 首轮由 {npc_id} 主动提起与 {suspected_npc} 相关的关系不安；不把对方写成 {npc_id} 的恋爱对象，也不替对方发言。", relationship_actor="npc", intent="topic", initiative_expectation="proactive", initiative_kind="affection_signal"),
                     _turn("turn-2", f"我没有要你替谁做决定，只是想知道你有没有听见我的在意。", ("决定", "听见", "在意"), "jealousy", "当前 NPC 只说明自己的需要，保持对玩家的忠诚。", intent="chat"),

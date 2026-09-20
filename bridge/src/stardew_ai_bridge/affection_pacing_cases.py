@@ -65,6 +65,10 @@ def _case(
     adult_consensual: bool = False,
     romance_eligible: bool = True,
     gender_presentation: str = "",
+    # 该案例声明的「角色已经历过的剧情事件」。刻意**不给默认值**：空元组在
+    # 事件锁里表示「这些事件都没发生」，会被收窄到 acquaintance；
+    # 「忘记声明」与「声明为空」必须是两件事，所以每条案例都要自己写清楚。
+    completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     if len(turns) != 3:
         raise ValueError(f"亲密节奏案例必须有三轮：{case_id}")
@@ -91,6 +95,7 @@ def _case(
         adult_consensual=adult_consensual,
         romance_eligible=romance_eligible,
         relationship_context=relationship_context,
+        completed_event_ids=completed_event_ids,
         history=history,
         expected_terms=first_turn.expected_terms,
         forbidden_terms=first_turn.forbidden_terms,
@@ -109,6 +114,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     # Wizard / Rasmodia：普通夜晚、明确索要、研究兴趣，以及朋友阶段对照。
     _case(
         case_id="pacing-wizard-ordinary-evening",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -128,6 +134,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-wizard-explicit-love-request",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -148,6 +155,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-wizard-research-followup",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -169,6 +177,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-wizard-friend-records",
+        completed_event_ids=("1000075", "1724096"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -190,6 +199,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     # Sophia：酒窖分享、明确索要、葡萄园兴趣和朋友阶段对照。
     _case(
         case_id="pacing-sophia-cellar-sharing",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -211,6 +221,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sophia-explicit-love-request",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -231,6 +242,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sophia-vineyard-evening",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -250,6 +262,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sophia-friend-painting",
+        completed_event_ids=("8185291", "8185292", "8185293"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -271,6 +284,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     # Shane：低落、收口、普通鸡舍，以及朋友阶段实际关心对照。
     _case(
         case_id="pacing-shane-low-mood",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -290,6 +304,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-shane-closeout",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -309,6 +324,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-shane-ordinary-coop",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -328,6 +344,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-shane-friend-care",
+        completed_event_ids=("611944", "3910674", "3910975"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -350,6 +367,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     # Sebastian：音乐靠近、明确索要、摩托车安排，以及朋友阶段对照。
     _case(
         case_id="pacing-sebastian-music-approach",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -369,6 +387,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sebastian-explicit-love-request",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -390,6 +409,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sebastian-bike-plan",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -410,6 +430,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sebastian-friend-music",
+        completed_event_ids=("2794460", "384883", "27"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -432,6 +453,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     # Alex：训练打趣、明确索要、普通晚间安排，以及朋友阶段对照。
     _case(
         case_id="pacing-alex-training-tease",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -451,6 +473,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-alex-explicit-love-request",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -472,6 +495,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-alex-evening-plan",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -492,6 +516,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-alex-friend-training",
+        completed_event_ids=("20", "2481135", "2119820"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -516,6 +541,7 @@ AFFECTION_PACING_CASES: tuple[CharacterQualityCase, ...] = (
 _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     _case(
         case_id="pacing-elliott-studio-share",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -538,6 +564,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-elliott-dating-letter",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -560,6 +587,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-elliott-close-sketch",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -579,6 +607,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-elliott-friend-writing",
+        completed_event_ids=("39", "40", "423502"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -599,6 +628,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-harvey-clinic-care",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -621,6 +651,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-harvey-dating-check",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -643,6 +674,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-harvey-close-coffee",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -662,6 +694,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-harvey-friend-clinic",
+        completed_event_ids=("56", "57", "58"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -682,6 +715,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sam-band-share",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -704,6 +738,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sam-dating-recording",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -726,6 +761,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sam-close-skate",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -745,6 +781,7 @@ _FEMININE_MALE_AFFECTION_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="pacing-sam-friend-music",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -343,6 +344,57 @@ def test_evaluation_and_runtime_share_the_same_event_gate_decision() -> None:
         ],
         reply,
     ) is True
+
+
+def _event_gate_case(completed_event_ids: tuple[str, ...]) -> object:
+    """#22 续：Shane 的事件链只到 `completed_event_ids` 为止的评测案例。
+
+    2026-09-20 补数据后，`shane-close-boundary` 自身已带完整的 close 档链
+    （`611944 / 3910674 / 3910975 / 3900074`）；这里显式传入进度覆盖它，
+    让「锁住 / 解锁」成为唯一变量。
+    """
+
+    return replace(
+        character_quality_eval.case_by_id("shane-close-boundary"),
+        relationship_stage="dating",
+        friendship_hearts=8,
+        expected_terms=(),
+        completed_event_ids=completed_event_ids,
+    )
+
+
+def test_quality_score_fails_a_reply_that_crosses_the_event_gate() -> None:
+    """#22：事件锁未解锁时的主动亲密必须计入离线评测**不合格**。
+
+    运行时 guard 会因同一判定触发重试，离线评测此前只打标签、不影响
+    `passed`——于是同一条回复一处拦、一处判合规。2026-09-20 用户口径：
+    「不同阶段的不同说话方式是核心体验的一部分」，越界不是风格问题。
+    """
+
+    # 只完成 acquaintance 事件，friend／close 事件链仍未完成 → 事件锁收窄亲密权限。
+    case = _event_gate_case(("611944",))
+
+    score = character_quality_eval.score_character_reply(
+        case,
+        "这件事我只想先告诉你。",
+    )
+
+    assert "event_gate_intimacy" in score["tags"]
+    assert score["passed"] is False
+
+
+def test_quality_score_accepts_the_same_reply_once_the_event_gate_is_unlocked() -> None:
+    """对照：事件链接通后同一句话不再越界，说明失败只来自事件锁。"""
+
+    case = _event_gate_case(("611944", "3910674", "3910975", "3900074"))
+
+    score = character_quality_eval.score_character_reply(
+        case,
+        "这件事我只想先告诉你。",
+    )
+
+    assert "event_gate_intimacy" not in score["tags"]
+    assert score["passed"] is True
 
 
 # --- #23 开场／口头颗粒 -----------------------------------------------------

@@ -76,6 +76,10 @@ def _case(
     turns: tuple[CharacterQualityTurn, ...],
     progression: str,
     boundary: str,
+    # 该案例声明的「角色已经历过的剧情事件」。刻意**不给默认值**：空元组在
+    # 事件锁里表示「这些事件都没发生」，会被收窄到 acquaintance；
+    # 「忘记声明」与「声明为空」必须是两件事，所以每条案例都要自己写清楚。
+    completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     base = _BASE_CASES[npc_id]
     if len(turns) != 5:
@@ -106,6 +110,7 @@ def _case(
         relationship_context=relationship_context,
         expected_terms=first_turn.expected_terms,
         forbidden_terms=first_turn.forbidden_terms,
+        completed_event_ids=completed_event_ids,
         game_state=(
             ("season", "秋"),
             ("date", "秋 18 日"),
@@ -123,6 +128,7 @@ def _case(
 DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     _case(
         case_id="deep-flirt-intimate-wizard-married",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         npc_id="Wizard",
         relationship_stage="married",
         friendship_hearts=10,
@@ -143,6 +149,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-sophia-married",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         npc_id="Sophia",
         relationship_stage="married",
         friendship_hearts=10,
@@ -163,6 +170,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-shane-dating",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         npc_id="Shane",
         relationship_stage="dating",
         friendship_hearts=8,
@@ -183,6 +191,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-sebastian-married",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         npc_id="Sebastian",
         relationship_stage="married",
         friendship_hearts=10,
@@ -203,6 +212,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-alex-married",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         npc_id="Alex",
         relationship_stage="married",
         friendship_hearts=10,
@@ -223,6 +233,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-elliott-married",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         npc_id="Elliott",
         relationship_stage="married",
         friendship_hearts=10,
@@ -243,6 +254,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-harvey-married",
+        completed_event_ids=("56", "57", "58", "571102"),
         npc_id="Harvey",
         relationship_stage="married",
         friendship_hearts=10,
@@ -263,6 +275,7 @@ DEEP_FLIRT_INTIMATE_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _case(
         case_id="deep-flirt-intimate-sam-married",
+        completed_event_ids=(),
         npc_id="Sam",
         relationship_stage="married",
         friendship_hearts=10,

@@ -859,7 +859,11 @@ def test_quality_score_accepts_music_and_room_synonyms_from_sebastian() -> None:
     if case_by_id is None or score_character_reply is None:
         pytest.fail("质量评测模块尚未实现")
 
+    # 2026-09-20：`event_gate_intimacy` 参与 `passed` 判定后，婚后案例必须显式
+    # 给出已完成事件链。案例数据已在同一天补齐（`sebastian-married-music` 自带
+    # Sebastian 的 close 档链），所以这里直接用案例自身的声明，不再手工 replace。
     case = case_by_id("sebastian-married-music")
+    assert case.completed_event_ids == ("2794460", "384883", "27", "29")
     turns = case.dialogue_turns()
     first = score_character_reply(
         case,
@@ -874,6 +878,7 @@ def test_quality_score_accepts_music_and_room_synonyms_from_sebastian() -> None:
         player_input=turns[2].message,
     )
 
+    assert "event_gate_intimacy" not in first["tags"]
     assert first["passed"] is True
     assert third["passed"] is True
 
@@ -1812,7 +1817,10 @@ def test_high_stage_cases_carry_story_events_and_feminine_overlay_metadata() -> 
         pytest.fail("高阶段案例元数据尚未实现")
 
     shane = case_by_id("shane-close-boundary")
-    assert shane.completed_event_ids == ("vanilla:shane-heart-6",)
+    # 2026-09-20：这里此前声明的是内容库别名 `vanilla:shane-heart-6`，它不在
+    # `relationship_gating._EVENT_GATES["Shane"]` 里，事件锁认不出来。改成该角色
+    # close 档的游戏事件 ID 链（8 心必然走完 2/4/6/8 心事件）。
+    assert shane.completed_event_ids == ("611944", "3910674", "3910975", "3900074")
 
     for case_id in (
         "shane-dating-boundary",

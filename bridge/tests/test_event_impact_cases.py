@@ -24,8 +24,13 @@ def test_event_impact_suite_has_control_and_completed_event_pairs() -> None:
         after = by_condition["after"]
         assert before.event_condition == "before"
         assert after.event_condition == "after"
+        # before 有意保持空事件状态：它测的就是「事件没发生」那一侧。
         assert before.completed_event_ids == ()
-        assert after.completed_event_ids == (after.event_id,)
+        # after 声明的是「被测事件 + 该角色 close 档完整登记链」。
+        # 2026-09-20 前这里只声明单个被测事件，事件锁会把已婚 10 心的案例
+        # 收窄到 acquaintance，把「事件记忆差异」误判成「亲密越界」。
+        assert after.event_id in after.completed_event_ids
+        assert len(after.completed_event_ids) >= 3
         assert before.event_id == after.event_id
         assert before.dialogue_turns() == after.dialogue_turns()
         assert before.follow_up_mode == after.follow_up_mode == "fixed"

@@ -17,6 +17,17 @@ EVENT_IMPACT_SUITE_ID = "topic-start-event-impact"
 
 
 EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
+    # 每条 spec 的 `after_event_ids` 是该 pair 在 after 侧声明的完整事件集合：
+    # 该角色 close 档的登记链（逐字来自 `relationship_gating._EVENT_GATES`），
+    # 外加本案例要对照的那个事件（若它不在登记链里）。
+    #
+    # 为什么不能只写被测事件：案例声明的是已婚 + 10 心，事件锁会用
+    # `completed_event_ids` 反推解锁档位，只写单个事件就意味着「2/4/6/8 心的
+    # 关系事件都没发生」，角色被压回 acquaintance——那不是本套件要测的
+    # 「事件记忆差异」，而是关系状态被写错。
+    #
+    # before 侧固定声明空元组：before 的语义就是「这个事件还没发生」，
+    # 属于有意保留的对照组（见 `_build_case` 的注释）。
     {
         "pair_id": "wizard-112",
         "event_id": "112",
@@ -26,6 +37,11 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
             "嗯？你找到了一个写着未知语言的金色卷轴？真有意思……",
             "他们自称‘祝尼魔’……这些神秘的精灵……",
         ),
+        # 112 是 `112/n seenJunimoNote`（Wizard 的祝尼魔卷轴剧情事件，条件里
+        # 没有好感度），属于「登记链之外、但确实存在」的事件素材，
+        # 按 `_EVENT_GATES` 的登记口径不参与关系阶段解锁，所以放在链尾。
+        # 1000075 / 1724096 / 1724097 来自 `_EVENT_GATES["Wizard"]` 的 close 档。
+        "after_event_ids": ("1000075", "1724096", "1724097", "112"),
         "status": "resolved",
     },
     {
@@ -37,6 +53,9 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
             "蓝色母鸡和教 Jas 照料它们",
             "想给 Jas 留下东西，也想证明自己能做出贡献",
         ),
+        # 3900074（`3900074/f Shane 2000/e 2118991/p Shane`，8 心）本身就在
+        # `_EVENT_GATES["Shane"]` 的 close 档里，所以这里就是那条链。
+        "after_event_ids": ("611944", "3910674", "3910975", "3900074"),
         "status": "resolved",
     },
     {
@@ -48,6 +67,10 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
             "我正要出发呢。上来……我想给你看样东西。",
             "山谷让我觉得能逃避一切，而且你是我唯一带来的人",
         ),
+        # 384882 是 `384882/f Sebastian 2500/t 2000 2400`（10 心），高于登记表
+        # 最高档 close（8 心），因此不在链里，按上述口径放在链尾。
+        # 2794460 / 384883 / 27 / 29 来自 `_EVENT_GATES["Sebastian"]` 的 close 档。
+        "after_event_ids": ("2794460", "384883", "27", "29", "384882"),
         "status": "resolved",
     },
     {
@@ -59,6 +82,8 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
             "享受天气并邀请玩家试玩",
             "接球、训练，目标是成为职业格球选手",
         ),
+        # 20（`20/f Alex 500/z winter/p Alex/w sunny`，2 心）是 close 链的第一环。
+        "after_event_ids": ("20", "2481135", "2119820", "288847"),
         "status": "resolved",
     },
     {
@@ -70,6 +95,8 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
             "我写了八个小时的书，正需要休息",
             "在酒吧用麦芽酒或葡萄酒举杯庆祝",
         ),
+        # 40（`40/f Elliott 1000/p Gus/t 1500 2200`，4 心）是 close 链的第二环。
+        "after_event_ids": ("39", "40", "423502", "1848481"),
         "status": "resolved",
     },
     {
@@ -81,6 +108,8 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
             "让 George 深呼吸并转身接受检查",
             "减少食盐、适量锻炼；我是你的医生",
         ),
+        # 56（`56/f Harvey 500/p George`，2 心）是 close 链的第一环。
+        "after_event_ids": ("56", "57", "58", "571102"),
         "status": "resolved",
     },
     {
@@ -91,6 +120,17 @@ EVENT_IMPACT_SPECS: tuple[dict[str, object], ...] = (
         "evidence": (
             "{{i18n:Sophia.IntroEvent.01}}",
             "{{i18n:Sophia.IntroEvent.02}}",
+        ),
+        # 8185290 是 `8185290/w sunny/c 1/t 600 1500/z winter/z fall/y 1/f Sophia 50`
+        # （好感度只要 50 点），低于登记表最低档 acquaintance（8185291，500 点），
+        # 因此不在链里，按上述口径放在链尾。
+        # 8185291 / 8185292 / 8185293 / 8185295 来自 `_EVENT_GATES["Sophia"]` 的 close 档。
+        "after_event_ids": (
+            "8185291",
+            "8185292",
+            "8185293",
+            "8185295",
+            "8185290",
         ),
         "status": "unresolved_i18n",
     },
@@ -158,11 +198,14 @@ def _build_case(
     pair_id = str(spec["pair_id"])
     event_id = str(spec["event_id"])
     event_evidence = tuple(str(item) for item in spec["evidence"])
+    after_event_ids = tuple(str(item) for item in spec["after_event_ids"])
     neutral_case = _neutralize_case(base_case)
     return replace(
         neutral_case,
         case_id=f"event-impact-{pair_id}-{condition}",
-        completed_event_ids=(event_id,) if condition == "after" else (),
+        # before 声明空元组是有意的：这一侧要测的正是「事件没发生时角色不该
+        # 凭空谈这段经历」，所以它必须保持事件锁收紧的状态（对照 C 类）。
+        completed_event_ids=after_event_ids if condition == "after" else (),
         event_pair_id=pair_id,
         event_id=event_id,
         event_condition=condition,

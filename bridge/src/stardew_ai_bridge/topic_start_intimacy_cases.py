@@ -66,6 +66,10 @@ def _topic_case(
     flirt_intensity: str = "direct",
     romance_eligible: bool = True,
     adult_consensual: bool = True,
+    # 该案例声明的「角色已经历过的剧情事件」。刻意**不给默认值**：
+    # 空元组在事件锁里表示「这些事件都没发生」，会被收窄到 acquaintance；
+    # 忘记声明与声明为空必须是两件事，所以每条案例都要自己写清楚。
+    completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     return CharacterQualityCase(
         case_id=case_id,
@@ -85,6 +89,7 @@ def _topic_case(
         adult_consensual=adult_consensual,
         romance_eligible=romance_eligible,
         relationship_context=relationship_context,
+        completed_event_ids=completed_event_ids,
         game_state=_state(
             season="秋",
             date="秋 18 日",
@@ -125,6 +130,7 @@ def _target(
     second_expectation: str = "proactive",
     third_expectation: str = "proactive",
     continuation_mode: str = "anchored",
+    completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     if continuation_mode == "anchored":
         if second_message == "嗯，你继续说。":
@@ -147,6 +153,7 @@ def _target(
         topic_keywords=first_terms,
         continuation_mode=continuation_mode,
         gender_presentation=gender_presentation,
+        completed_event_ids=completed_event_ids,
         turns=(
             _turn(
                 "turn-1",
@@ -192,6 +199,7 @@ def _control(
     story: str,
     context: str,
     gender_presentation: str = "",
+    completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     return _topic_case(
         case_id=case_id,
@@ -239,6 +247,7 @@ def _control(
         flirt_intensity="none",
         romance_eligible=False,
         adult_consensual=False,
+        completed_event_ids=completed_event_ids,
     )
 
 
@@ -246,6 +255,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     # Rasmodia：克制、古雅，但关系成立后明确表达偏爱。
     _target(
         case_id="topic-wizard-dating-moonlight",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -266,6 +276,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-wizard-dating-tea",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -289,6 +300,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-wizard-married-lantern",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -309,6 +321,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-wizard-married-study",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -331,6 +344,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-wizard-married-dinner",
+        completed_event_ids=("1000075", "1724096", "1724097"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -352,6 +366,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     # Sophia：温柔、羞涩、俏皮，把亲密落在酒和绘画上。
     _target(
         case_id="topic-sophia-dating-grapes",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -372,6 +387,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sophia-dating-painting",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -395,6 +411,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sophia-married-cellar",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -417,6 +434,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sophia-married-studio",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -437,6 +455,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sophia-married-vineyard",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -458,6 +477,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     # Shane：保持疲惫和防备，但在状态正常时主动照顾和提出相处安排。
     _target(
         case_id="topic-shane-dating-coop",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -480,6 +500,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-shane-dating-rest",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -505,6 +526,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-shane-married-pizza",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -529,6 +551,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-shane-married-home",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -554,6 +577,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     # Sebastian：少话、别扭，用音乐、摩托车和具体靠近表达亲密。
     _target(
         case_id="topic-sebastian-dating-mixtape",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -575,6 +599,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sebastian-dating-rooftop",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -599,6 +624,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sebastian-married-bike",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -620,6 +646,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sebastian-married-basement",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -643,6 +670,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sebastian-married-game",
+        completed_event_ids=("2794460", "384883", "27", "29"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -665,6 +693,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     # Alex：自信、直接、会夸回和逗回，亲密落到行动。
     _target(
         case_id="topic-alex-dating-beach",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -687,6 +716,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-alex-dating-gym",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -710,6 +740,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-alex-married-dinner",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -731,6 +762,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-alex-married-evening",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -754,6 +786,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-alex-married-beach",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -776,6 +809,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     # 低亲密对照：相同的空 topic 入口只能打开普通话题。
     _control(
         case_id="topic-control-wizard-friend-records",
+        completed_event_ids=("1000075", "1724096"),
         profile_key="wizard_rasmodia",
         npc_id="Wizard",
         display_name="Rasmodia",
@@ -791,6 +825,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-sophia-friend-vineyard",
+        completed_event_ids=("8185291", "8185292", "8185293"),
         profile_key="sophia",
         npc_id="Sophia",
         display_name="Sophia",
@@ -806,6 +841,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-shane-acquaintance-coop",
+        completed_event_ids=("611944",),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -822,6 +858,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-shane-friend-rest",
+        completed_event_ids=("611944", "3910674", "3910975"),
         profile_key="shane",
         npc_id="Shane",
         display_name="Shane",
@@ -838,6 +875,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-sebastian-friend-music",
+        completed_event_ids=("2794460", "384883", "27"),
         profile_key="sebastian",
         npc_id="Sebastian",
         display_name="Sebastian",
@@ -854,6 +892,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-alex-friend-training",
+        completed_event_ids=("20", "2481135", "2119820"),
         profile_key="alex",
         npc_id="Alex",
         display_name="Alex",
@@ -870,6 +909,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-marnie-acquaintance-ranch",
+        completed_event_ids=(),
         profile_key="marnie",
         npc_id="Marnie",
         display_name="Marnie",
@@ -885,6 +925,7 @@ TOPIC_START_INTIMACY_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-linus-friend-mountain",
+        completed_event_ids=(),
         profile_key="linus",
         npc_id="Linus",
         display_name="Linus",
@@ -905,6 +946,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     # Elliott：从纸张、海面和作品分享进入亲密话题。
     _target(
         case_id="topic-elliott-dating-poem",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -926,6 +968,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-elliott-dating-sea",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -947,6 +990,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-elliott-married-studio",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -968,6 +1012,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-elliott-married-letter",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -989,6 +1034,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-elliott-married-reading",
+        completed_event_ids=("39", "40", "423502", "1848481"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -1010,6 +1056,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-elliott-friend-writing",
+        completed_event_ids=("39", "40", "423502"),
         profile_key="elliott",
         npc_id="Elliott",
         display_name="Elliott",
@@ -1027,6 +1074,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     # Harvey：先确认状态，再以实际照料和温和的共同动作表达亲近。
     _target(
         case_id="topic-harvey-dating-rest",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -1048,6 +1096,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-harvey-dating-coffee",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -1069,6 +1118,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-harvey-married-clinic",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -1090,6 +1140,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-harvey-married-check-in",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -1111,6 +1162,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-harvey-married-heartbeat",
+        completed_event_ids=("56", "57", "58", "571102"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -1132,6 +1184,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-harvey-friend-clinic",
+        completed_event_ids=("56", "57", "58"),
         profile_key="harvey",
         npc_id="Harvey",
         display_name="Harvey",
@@ -1149,6 +1202,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     # Sam：音乐、排练和行动感组成轻快但不幼稚的主动开场。
     _target(
         case_id="topic-sam-dating-song",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -1170,6 +1224,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sam-dating-skate",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -1191,6 +1246,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sam-married-band",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -1212,6 +1268,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sam-married-recording",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -1233,6 +1290,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _target(
         case_id="topic-sam-married-room",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",
@@ -1254,6 +1312,7 @@ _FEMININE_MALE_TOPIC_CASES: tuple[CharacterQualityCase, ...] = (
     ),
     _control(
         case_id="topic-control-sam-friend-band",
+        completed_event_ids=(),
         profile_key="sam",
         npc_id="Sam",
         display_name="Sam",

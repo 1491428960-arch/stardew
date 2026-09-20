@@ -112,6 +112,14 @@ def _neutralize_case(case: CharacterQualityCase) -> CharacterQualityCase:
         ),
         # 空列表是有意写入 gameState 的：它表示“已确认没有完成事件”，
         # 与完全没有提供 completedEventIds 的未知状态不同。
+        #
+        # 2026-09-20（用户拍板新增 event_gate_intimacy 参与 passed 判定后）：
+        # 这一侧的 `completed_event_ids=()` 同样是有意保留的——before 的语义
+        # 就是「事件链尚未完成」，它是事件锁的对照组，不能按已婚 10 心去补
+        # close 档链；补了就没有「事件前」这个变量了。
+        # 全量案例里只有这里的 7 个 before 与 topic-start-event-impact 的
+        # 7 个 before 允许保持锁定（回归保护见
+        # tests/test_event_gate_case_data.py）。
         game_state=(("completedEventIds", []),),
         completed_event_ids=(),
         turns=_FIXED_TURNS,
