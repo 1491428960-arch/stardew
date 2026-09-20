@@ -70,6 +70,19 @@ public sealed class BridgeDialogueHistoryItem
     public string? RelationshipStage { get; init; }
 }
 
+/// <summary>
+/// 示例记录（<see cref="SampleChatHistory"/>）注入或清理的结果：涉及几位 NPC、多少条消息。
+/// 与"回看档案总共多少条"不是一回事 —— 这里只数带标记的那些。
+/// </summary>
+public readonly record struct SampleHistoryChange(int NpcCount, int MessageCount)
+{
+    public static SampleHistoryChange None => default;
+
+    public bool IsEmpty => NpcCount == 0 || MessageCount == 0;
+
+    public override string ToString() => $"NPC={NpcCount} 条={MessageCount}";
+}
+
 public sealed class BridgeDialogueResponse
 {
     [JsonPropertyName("reply")]
@@ -599,6 +612,117 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         }
 
         return loaded;
+    }
+
+    /// <summary>
+    /// 把一批**示例记录**（<see cref="SampleChatHistory"/>）灌进回看档案，供玩家验收
+    /// 「F8 往上翻历史」与「记录随存档持久化」——他自己还没聊过几句，没有历史可翻。
+    ///
+    /// 三条边界：
+    /// 1. **只动回看档案**：发给模型的 <c>historyByNpc</c> 一字不改。示例是给玩家翻的，
+    ///    不是 NPC 真实经历过的事，所以 NPC 不会"记得"玩家没说过的话；
+    /// 2. **重复注入不翻倍**：同一位 NPC 上先按标记（见 <see cref="SampleChatHistory.IsSample"/>）
+    ///    清掉上一批，再追加这一批；玩家真实聊过的记录一条不动；
+    /// 3. **规格与真实记录一致**：与 <see cref="AppendHistory"/> 一样裁到
+    ///    <see cref="ChatHistoryRules.MaxDisplayMessages"/> 条，所以超量注入（压力用例）
+    ///    同样会丢掉最旧的那一截。
+    ///
+    /// 落盘不由这里负责：示例进了内存档案之后，玩家正常保存（SMAPI 的 Saving）时会与
+    /// 真实记录一起被 <see cref="SerializeDisplayHistory"/> 写进当前存档。
+    /// </summary>
+    public SampleHistoryChange InjectSampleHistory(
+        IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>? samples)
+    {
+        if (samples is null || samples.Count == 0)
+        {
+            return SampleHistoryChange.None;
+        }
+
+        lock (memoryLock)
+        {
+            var npcCount = 0;
+            var messageCount = 0;
+            foreach (var pair in samples)
+            {
+                var npcId = pair.Key?.Trim();
+                if (string.IsNullOrWhiteSpace(npcId))
+                {
+                    continue;
+                }
+
+                var log = EnsureHistory(displayHistoryByNpc, npcId);
+                log.RemoveAll(SampleChatHistory.IsSample);
+
+                var added = (pair.Value ?? Array.Empty<BridgeDialogueHistoryItem>())
+                    .Where(item => item is not null && !string.IsNullOrWhiteSpace(item.Content))
+                    .ToList();
+                if (added.Count == 0)
+                {
+                    if (log.Count == 0)
+                    {
+                        displayHistoryByNpc.Remove(npcId);
+                    }
+
+                    continue;
+                }
+
+                log.AddRange(added);
+                TrimHistory(log, ChatHistoryRules.MaxDisplayMessages);
+                npcCount++;
+                messageCount += added.Count;
+            }
+
+            return new SampleHistoryChange(npcCount, messageCount);
+        }
+    }
+
+    /// <summary>
+    /// 清掉内存档案里的示例记录（只按标记删，玩家真实聊过的记录一条不动），
+    /// 返回移除的条数。
+    ///
+    /// 清完要**再保存一次**（睡觉过夜、退出到标题或手动保存都行）：存档里那份是上一次
+    /// 保存时写下的，只有等下一次保存把它覆盖掉才算真正清干净。
+    /// </summary>
+    public int ClearSampleHistory()
+    {
+        lock (memoryLock)
+        {
+            var removed = 0;
+            foreach (var npcId in displayHistoryByNpc.Keys.ToArray())
+            {
+                var log = displayHistoryByNpc[npcId];
+                removed += log.RemoveAll(SampleChatHistory.IsSample);
+                if (log.Count == 0)
+                {
+                    displayHistoryByNpc.Remove(npcId);
+                }
+            }
+
+            return removed;
+        }
+    }
+
+    /// <summary>只读：内存档案里还剩多少示例记录，用来在日志里说清"现在是什么状态"。</summary>
+    public SampleHistoryChange CountSampleHistory()
+    {
+        lock (memoryLock)
+        {
+            var npcCount = 0;
+            var messageCount = 0;
+            foreach (var log in displayHistoryByNpc.Values)
+            {
+                var count = log.Count(SampleChatHistory.IsSample);
+                if (count == 0)
+                {
+                    continue;
+                }
+
+                npcCount++;
+                messageCount += count;
+            }
+
+            return new SampleHistoryChange(npcCount, messageCount);
+        }
     }
 
     /// <summary>

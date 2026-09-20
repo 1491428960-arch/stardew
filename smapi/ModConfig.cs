@@ -25,6 +25,20 @@ public sealed class ModConfig
     public bool EnableDialogue { get; set; } = true;
 
     /// <summary>
+    /// 是否在 FarmHouse 床边注入那个运行时克隆 NPC（显示名带「（测试）」后缀、
+    /// 内部名固定为 <see cref="TestNpcPlacementRules.InternalName"/>）。
+    ///
+    /// **默认关闭**：这个克隆体不在角色表里，既没有专属配色也没有气泡装饰，
+    /// 留在农舍里只会干扰「装饰到底修好没有」的判断；婚后角色本来就都在屋里，
+    /// 需要陪测时直接跟真角色对话即可。
+    ///
+    /// 打开它只有两种场合：玩家自己把这一项改成 true，或视觉 harness 正在运行
+    /// （它自带的 <see cref="VisualTestHarnessRules.EnabledVariable"/> 会强制打开，
+    /// 见 <see cref="TestNpcPlacementRules.ShouldInject"/>）。
+    /// </summary>
+    public bool InjectTestNpc { get; set; }
+
+    /// <summary>
     /// 是否记录 Rendered 事件的窗口帧率，用于游戏内性能诊断；普通运行默认关闭。
     /// </summary>
     public bool EnablePerformanceDiagnostics { get; set; }
@@ -77,6 +91,7 @@ public sealed class ModConfig
             DialogueKey = normalizedDialogueKey,
             GroupDialogueKey = normalizedGroupDialogueKey,
             EnableDialogue = EnableDialogue,
+            InjectTestNpc = InjectTestNpc,
             EnablePerformanceDiagnostics = EnablePerformanceDiagnostics,
             EnableHouseAccess = EnableHouseAccess,
             AllowMixedBuildingAccess = AllowMixedBuildingAccess,

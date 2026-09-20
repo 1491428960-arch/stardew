@@ -154,4 +154,25 @@ public sealed class ModConfigTests
 
         Assert.True(normalized.EnablePerformanceDiagnostics);
     }
+
+    /// <summary>
+    /// 床边那个「（测试）」克隆体默认不再注入：它不在角色表里，没有专属配色与气泡，
+    /// 婚后角色本来就都在农舍里，留着只会干扰判断。
+    /// </summary>
+    [Fact]
+    public void Test_npc_injection_is_off_by_default()
+    {
+        Assert.False(new ModConfig().InjectTestNpc);
+        Assert.False(ModConfig.CreateDefault().InjectTestNpc);
+        // Normalize 会重建对象：漏带这一项就等于每次保存配置都把开关悄悄打开。
+        Assert.False(new ModConfig().Normalize().InjectTestNpc);
+    }
+
+    [Fact]
+    public void Normalize_preserves_explicit_test_npc_injection()
+    {
+        var normalized = new ModConfig { InjectTestNpc = true }.Normalize();
+
+        Assert.True(normalized.InjectTestNpc);
+    }
 }

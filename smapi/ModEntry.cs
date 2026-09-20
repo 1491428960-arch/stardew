@@ -19,6 +19,23 @@ public sealed class ModEntry : Mod
     private ConversationService? conversationService;
     private KeybindList dialogueKey = new(SButton.F8);
     private KeybindList groupDialogueKey = new(SButton.F9);
+
+    /// <summary>
+    /// 开发用示例记录的三组按键（内容与边界见 <see cref="SampleChatHistory"/>）。
+    /// 键位写死、不进 config：它是验收工具，不该出现在玩家的配置面板里；
+    /// 带 Ctrl 是刻意的——单键容易误触，而误触会把示例灌进玩家自己的存档
+    /// （虽然 Ctrl+F9 能一键清掉，但不误触更好）。
+    /// </summary>
+    private static readonly KeybindList SampleHistoryKey =
+        new(new Keybind(SButton.LeftControl, SButton.F8));
+
+    private static readonly KeybindList SampleHistoryStressKey =
+        new(new Keybind(SButton.LeftControl, SButton.LeftShift, SButton.F8));
+
+    private static readonly KeybindList SampleHistoryClearKey =
+        new(new Keybind(SButton.LeftControl, SButton.F9));
+
+    private const string SampleHistoryCommand = "ainpc_sample";
     private readonly StoryStateStore storyStateStore = new();
     private readonly ShareFriendshipLedger shareFriendshipLedger = new();
     private readonly EventAuditObserver eventAuditObserver = new();
@@ -99,6 +116,13 @@ public sealed class ModEntry : Mod
             NpcBubblePanelTexture.EnsureCreated(Monitor);
         };
         helper.Events.Input.ButtonPressed += OnButtonPressed;
+        // 开发用示例记录：SMAPI 控制台命令与上面那三组按键共用同一份实现。
+        // 命令需要 Console Commands（SMAPI 安装包自带）；按键那一路不依赖任何东西。
+        helper.ConsoleCommands.Add(
+            SampleHistoryCommand,
+            "开发用：往 F8 回看档案注入示例聊天记录（只进内存，玩家保存后才随存档落盘）。"
+                + $"用法：{SampleHistoryCommand} [inject|stress [npcId]|clear|status]，不带参数等于 inject。",
+            OnSampleHistoryCommand);
         helper.Events.GameLoop.UpdateTicked += faceToFaceCoordinator.OnUpdateTicked;
         helper.Events.Player.Warped += OnPlayerWarped;
         helper.Events.Display.MenuChanged += faceToFaceCoordinator.OnMenuChanged;
@@ -372,7 +396,10 @@ public sealed class ModEntry : Mod
             return;
         }
 
-        if (!config.EnableDialogue)
+        // 关掉对话、或没打开测试 NPC 注入时，都走同一条清理路径：
+        // 关闭注入不只是「不生成」，还要把旧版本可能已经序列化进存档的
+        // 那个克隆体移掉——否则老档里那个「（测试）」角色会一直留在农舍里。
+        if (!config.EnableDialogue || !ShouldInjectTestNpc())
         {
             RemoveTestNpc();
             return;
@@ -475,6 +502,23 @@ public sealed class ModEntry : Mod
         }
     }
 
+    /// <summary>
+    /// 是否注入床边测试 NPC：配置开关（<see cref="ModConfig.InjectTestNpc"/>，默认关闭）
+    /// 或视觉 harness 正在运行。
+    ///
+    /// harness 用的是它本来就有的 <see cref="VisualTestHarnessRules.EnabledVariable"/> 变量，
+    /// 由 <c>scripts/start_visual_test.ps1</c> 在启动 SMAPI 前设进进程环境，
+    /// 所以 harness 不需要额外写 config，行为与改动前一致。
+    /// </summary>
+    private bool ShouldInjectTestNpc()
+    {
+        return TestNpcPlacementRules.ShouldInject(
+            config.InjectTestNpc,
+            VisualTestHarnessRules.IsEnabled(
+                Environment.GetEnvironmentVariable(
+                    VisualTestHarnessRules.EnabledVariable)));
+    }
+
     private static void PreserveInjectedTestNpcAppearance(
         StardewNpc npc,
         TestNpcAppearancePolicy appearance)
@@ -552,6 +596,15 @@ public sealed class ModEntry : Mod
             () => "Enable dialogue",
             () => "是否启用 AI NPC 对话。",
             "EnableDialogue");
+        api.AddBoolOption(
+            ModManifest,
+            () => config.InjectTestNpc,
+            value => config.InjectTestNpc = value,
+            () => "Inject bedside test NPC",
+            () => "在农舍床边放一个名为「XX（测试）」的克隆 NPC，用于床边陪测。"
+                + "默认关闭：它不在角色表里，没有专属配色和气泡装饰，"
+                + "婚后角色都在屋里时直接跟真角色聊即可。",
+            "InjectTestNpc");
         api.AddBoolOption(
             ModManifest,
             () => config.EnableHouseAccess,
@@ -632,6 +685,31 @@ public sealed class ModEntry : Mod
             bridgeClient.LoadDisplayHistory(chatHistoryArchiveJson, CurrentSaveFolderName);
         }
         faceToFaceCoordinator?.UpdateService(conversationService);
+        RefreshTestNpcForCurrentConfig();
+    }
+
+    /// <summary>
+    /// 配置刚变过（GMCM 里改开关、重置配置）时让测试 NPC 立刻跟上：
+    /// 否则玩家在面板里关掉注入之后，农舍里那个克隆体要等到下次载入存档才消失。
+    /// 未载入存档时什么都不做——<see cref="Context.IsWorldReady"/> 为假时
+    /// 连 Game1 都还没就绪，等 SaveLoaded 那次 <see cref="EnsureTestNpc"/> 自然会处理。
+    /// 两个方法各自幂等：已在场就不会重复生成，不在场也不会报错。
+    /// </summary>
+    private void RefreshTestNpcForCurrentConfig()
+    {
+        if (!Context.IsWorldReady)
+        {
+            return;
+        }
+
+        if (ShouldInjectTestNpc())
+        {
+            EnsureTestNpc();
+        }
+        else
+        {
+            RemoveTestNpc();
+        }
     }
 
     private bool TryOpenGroupHub()
@@ -739,6 +817,30 @@ public sealed class ModEntry : Mod
 
     private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
     {
+        // 示例记录入口放在最前面：这三组键都带 Ctrl，命中后要把 F8 / F9 吃掉，
+        // 免得同一次按键又去开对话或群聊面板。先查更具体的 Ctrl+Shift+F8，再查 Ctrl+F8
+        // —— 前者的按键集合是后者的超集，反过来的话压力注入永远轮不到。
+        if (SampleHistoryStressKey.JustPressed())
+        {
+            Helper.Input.Suppress(e.Button);
+            InjectSampleHistory(stress: true);
+            return;
+        }
+
+        if (SampleHistoryClearKey.JustPressed())
+        {
+            Helper.Input.Suppress(e.Button);
+            ClearSampleHistory();
+            return;
+        }
+
+        if (SampleHistoryKey.JustPressed())
+        {
+            Helper.Input.Suppress(e.Button);
+            InjectSampleHistory(stress: false);
+            return;
+        }
+
         if (e.Button.IsActionButton() && Context.IsWorldReady)
         {
             houseAccessController?.TraceInteractionTarget(
@@ -830,6 +932,129 @@ public sealed class ModEntry : Mod
                     selected.NpcId,
                     StringComparison.OrdinalIgnoreCase) &&
                 item.Candidate.Distance == selected.Distance).Npc;
+    }
+
+    /// <summary>
+    /// 开发用：往内存里的回看档案灌一批示例聊天记录
+    /// （内容与边界见 <see cref="SampleChatHistory"/>）。
+    ///
+    /// 这里**只改内存**：存档文件一个字节都不动，落盘交给玩家自己那次保存
+    /// （<see cref="OnSaving"/> 会把回看档案连同真实记录一起写进当前存档）。
+    /// 玩家按 Ctrl+F8 触发；控制台 <c>ainpc_sample inject|stress</c> 走同一条路。
+    /// </summary>
+    private void InjectSampleHistory(bool stress, string? npcId = null)
+    {
+        if (bridgeClient is null || !Context.IsWorldReady)
+        {
+            var reason = bridgeClient is null ? "对话功能未开启" : "还没进入存档";
+            Monitor.Log($"[StardewAI.Sample] 未注入示例记录：{reason}。", LogLevel.Warn);
+            NotifyPlayer($"示例记录未注入：{reason}");
+            return;
+        }
+
+        var samples = stress
+            ? SampleChatHistory.BuildStress(
+                string.IsNullOrWhiteSpace(npcId) ? SampleChatHistory.StressNpcId : npcId.Trim())
+            : SampleChatHistory.Build();
+        var change = bridgeClient.InjectSampleHistory(samples);
+        Monitor.Log(
+            $"[StardewAI.Sample] 已注入示例聊天记录：{change}；角色={string.Join("/", samples.Keys)}；" +
+            (stress
+                ? $"压力注入 {SampleChatHistory.StressMessageCount} 条（超出回看上限的部分已按规则裁掉）"
+                : "常规注入") +
+            "。只进内存回看档案：发给模型的窗口不受影响；保存后随存档落盘。",
+            LogLevel.Info);
+        NotifyPlayer(stress
+            ? $"已注入压力示例：{change}；翻到最上面应是「{SampleChatHistory.StressFirstKeptStamp}」"
+            : $"已注入示例聊天记录：{change}；按 F8 往上翻，Ctrl+F9 清除");
+    }
+
+    /// <summary>
+    /// 开发用：清掉内存档案里的示例记录（玩家真实聊过的记录一条不动）。
+    /// 清完要**再保存一次**才算把存档里那份也覆盖掉 —— 存档里写的是上一次保存的内容。
+    /// </summary>
+    private void ClearSampleHistory()
+    {
+        if (bridgeClient is null)
+        {
+            Monitor.Log("[StardewAI.Sample] 未清除示例记录：对话功能未开启。", LogLevel.Warn);
+            NotifyPlayer("示例记录未清除：对话功能未开启");
+            return;
+        }
+
+        var removed = bridgeClient.ClearSampleHistory();
+        Monitor.Log(
+            removed == 0
+                ? "[StardewAI.Sample] 内存里没有示例记录可清。"
+                : $"[StardewAI.Sample] 已清除示例记录 {removed} 条（玩家真实聊天记录一条未动）。"
+                    + "要让存档里那份也消失，请再保存一次（睡觉过夜、退出到标题或手动保存）。",
+            LogLevel.Info);
+        NotifyPlayer(removed == 0
+            ? "内存里没有示例记录可清"
+            : $"已清除示例记录 {removed} 条；再保存一次才会从存档里消失");
+    }
+
+    /// <summary>开发用：把内存回看档案的现状打一行日志（示例多少条、各角色共多少条）。</summary>
+    private void LogSampleHistoryStatus()
+    {
+        if (bridgeClient is null)
+        {
+            Monitor.Log("[StardewAI.Sample] 对话功能未开启，没有回看档案可查。", LogLevel.Warn);
+            return;
+        }
+
+        var samples = bridgeClient.CountSampleHistory();
+        var perNpc = string.Join(
+            "；",
+            SampleChatHistory.NpcIds.Select(
+                npcId => $"{npcId}={bridgeClient.RecentHistory(npcId).Count}"));
+        Monitor.Log(
+            $"[StardewAI.Sample] 内存回看档案：示例 {samples}；各角色档案总条数 {perNpc}；" +
+            $"存档={CurrentSaveFolderName ?? "<unknown>"}。",
+            LogLevel.Info);
+    }
+
+    /// <summary>控制台命令 <c>ainpc_sample</c> 的分发：与按键共用上面三个方法。</summary>
+    private void OnSampleHistoryCommand(string command, string[] args)
+    {
+        _ = command;
+        var action = args.Length == 0 ? "inject" : args[0].Trim().ToLowerInvariant();
+        switch (action)
+        {
+            case "inject":
+                InjectSampleHistory(stress: false);
+                break;
+            case "stress":
+                InjectSampleHistory(stress: true, args.Length > 1 ? args[1] : null);
+                break;
+            case "clear":
+                ClearSampleHistory();
+                break;
+            case "status":
+                LogSampleHistoryStatus();
+                break;
+            default:
+                Monitor.Log(
+                    $"用法：{SampleHistoryCommand} [inject|stress [npcId]|clear|status]；不带参数等于 inject。",
+                    LogLevel.Info);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 给玩家一条屏幕提示。按键是"盲操作"——光写日志他在游戏里看不见。
+    /// 提示失败不影响注入本身（HUD 队列属于游戏对象，极端情况下可能拒绝）。
+    /// </summary>
+    private void NotifyPlayer(string message)
+    {
+        try
+        {
+            Game1.addHUDMessage(new HUDMessage(message, HUDMessage.newQuest_type));
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"[StardewAI.Sample] 屏幕提示失败（不影响注入）：{exception.Message}", LogLevel.Trace);
+        }
     }
 
     private sealed class SmapiModRegistryStatus : IModRegistryStatus

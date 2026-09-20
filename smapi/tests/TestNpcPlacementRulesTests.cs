@@ -79,4 +79,54 @@ public sealed class TestNpcPlacementRulesTests
             expected,
             TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord(npcId));
     }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public void Test_npc_is_injected_only_when_the_switch_or_the_harness_asks_for_it(
+        bool configured,
+        bool harnessRunning,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            TestNpcPlacementRules.ShouldInject(configured, harnessRunning));
+    }
+
+    /// <summary>
+    /// 默认配置（开关关闭）且 harness 没在跑 → 不注入。
+    /// 这条是「进游戏看农舍里没有那个（测试）角色」的直接判据。
+    /// </summary>
+    [Fact]
+    public void Default_configuration_does_not_inject_the_test_npc()
+    {
+        var config = new ModConfig();
+
+        Assert.False(TestNpcPlacementRules.ShouldInject(
+            config.InjectTestNpc,
+            VisualTestHarnessRules.IsEnabled(
+                Environment.GetEnvironmentVariable(VisualTestHarnessRules.EnabledVariable))));
+    }
+
+    /// <summary>
+    /// 视觉 harness 不需要改 config：它本来就设 <c>STARDEW_AI_NPC_VISUAL_TEST=1</c>，
+    /// 这一个变量就足以把注入打开，harness 行为与改动前一致。
+    /// </summary>
+    [Theory]
+    [InlineData("1", true)]
+    [InlineData("true", true)]
+    [InlineData(null, false)]
+    [InlineData("0", false)]
+    public void Visual_harness_environment_variable_opens_the_injection(
+        string? harnessVariable,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            TestNpcPlacementRules.ShouldInject(
+                injectTestNpcConfigured: false,
+                visualTestHarnessRunning: VisualTestHarnessRules.IsEnabled(harnessVariable)));
+    }
 }

@@ -58,4 +58,80 @@ public sealed class NpcTargetResolverTests
 
         Assert.Null(resolved);
     }
+
+    /// <summary>
+    /// 复现「按 F8 默认连上那个（测试）克隆体」的现象。
+    ///
+    /// 克隆体是**唯一**能靠 <see cref="TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord"/>
+    /// 在没有好感度记录的情况下进入候选池的 NPC，而它又被生成在玩家床边（离玩家最近），
+    /// 于是距离优先的排序把它排到了真角色前面。
+    /// </summary>
+    [Fact]
+    public void Bedside_test_npc_steals_the_F8_target_from_a_farther_real_npc()
+    {
+        var resolved = NpcTargetResolver.SelectFriendshipTarget(new[]
+        {
+            FarmhouseCandidate(
+                TestNpcPlacementRules.InternalName,
+                distance: 3f,
+                hasFriendshipRecord: false),
+            FarmhouseCandidate("Abigail", distance: 8f),
+        });
+
+        Assert.Equal(TestNpcPlacementRules.InternalName, resolved?.NpcId);
+    }
+
+    /// <summary>
+    /// 关掉注入后（克隆体不再进候选池，农舍里只剩真角色），
+    /// F8 选中的是最近的那个真角色——婚后角色都在屋里，随手一按就能对上人。
+    /// </summary>
+    [Fact]
+    public void Without_the_test_npc_F8_selects_the_nearest_real_npc()
+    {
+        var resolved = NpcTargetResolver.SelectFriendshipTarget(new[]
+        {
+            FarmhouseCandidate("Abigail", distance: 8f),
+            FarmhouseCandidate("Emily", distance: 12f),
+        });
+
+        Assert.Equal("Abigail", resolved?.NpcId);
+    }
+
+    /// <summary>
+    /// 克隆体在场也不是无条件优先：真角色站得更近时选真角色。
+    /// 它抢走目标靠的是「距离最近 + 无记录也能进池」，不是名字特权。
+    /// </summary>
+    [Fact]
+    public void A_closer_real_npc_still_beats_the_bedside_test_npc()
+    {
+        var resolved = NpcTargetResolver.SelectFriendshipTarget(new[]
+        {
+            FarmhouseCandidate(
+                TestNpcPlacementRules.InternalName,
+                distance: 6f,
+                hasFriendshipRecord: false),
+            FarmhouseCandidate("Abigail", distance: 2f),
+        });
+
+        Assert.Equal("Abigail", resolved?.NpcId);
+    }
+
+    /// <summary>
+    /// 与 <c>ModEntry.ResolveFriendshipTarget</c> 同一套候选构造：原始好感度记录
+    /// （克隆体**没有**记录）经 <see cref="TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord"/>
+    /// 的豁免规则折算成候选的 <c>HasFriendshipRecord</c>；同在农舍、距离已知、鼠标未指向它。
+    /// </summary>
+    private static NpcTargetCandidate FarmhouseCandidate(
+        string npcId,
+        float distance,
+        bool hasFriendshipRecord = true)
+    {
+        return new NpcTargetCandidate(
+            npcId,
+            HasFriendshipRecord: hasFriendshipRecord ||
+                TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord(npcId),
+            IsInCurrentLocation: true,
+            Distance: distance,
+            IsInteractionTarget: false);
+    }
 }
