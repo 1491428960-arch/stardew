@@ -23,6 +23,9 @@ def _session() -> dict[str, object]:
             }
         ],
         "history": [{"role": "user", "content": "你好"}],
+        # 请求路径开关是会话状态的一部分（决定下一次请求发哪套 prompt），
+        # 因此会话文件与它的契约测试一起带上这个字段。
+        "compactPrompt": True,
         "lastDiagnostics": {
             "provider": "local",
             "latencyMs": 42,

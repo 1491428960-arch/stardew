@@ -27,6 +27,9 @@ def empty_session() -> dict[str, object]:
         "messages": [],
         "history": [],
         "lastDiagnostics": None,
+        # 请求路径开关：True = 按游戏端发紧凑 prompt（游戏端 BridgeClient 的默认），
+        # False = 走完整卡组仅供对照。默认勾选，老会话文件缺这个键时也按 True 恢复。
+        "compactPrompt": True,
     }
 
 
@@ -141,11 +144,15 @@ def normalize_session(value: Any) -> dict[str, object]:
         if isinstance(raw_history, list)
         else []
     )
+    # 路径开关跟着会话走：它决定下一次请求发给模型的 prompt 形态，属于会话状态。
+    # 缺字段（老会话文件）或类型不对一律回默认的游戏端路径 —— 与页面默认勾选一致。
+    compact_prompt = value.get("compactPrompt")
     return {
         "version": SESSION_VERSION,
         "messages": messages,
         "history": history,
         "lastDiagnostics": _normalize_diagnostics(value.get("lastDiagnostics")),
+        "compactPrompt": compact_prompt if isinstance(compact_prompt, bool) else True,
     }
 
 

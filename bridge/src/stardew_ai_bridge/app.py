@@ -371,6 +371,26 @@ def get_raw_dialogue(npcId: str = "") -> dict[str, object]:
     return profile_index_store.dialogue_reference(npcId)
 
 
+def _request_compact_flag(payload: Mapping[str, object]) -> bool:
+    """请求体的紧凑路径标记——按 `DialogueTestRequest` 的同一个字段口径解析。
+
+    `/api/dialogue/test` 与 `/api/context/preview` 都从这里取值，保证
+    「上下文预览显示的路径」就是「实际发给模型的那条路径」。
+    参数不合法时返回 False：那种请求在 `/api/dialogue/test` 上会直接 422，
+    根本走不到发 prompt，因此预览按完整路径显示不会掩盖任何真实请求。
+    """
+
+    filtered = {
+        key: payload[key]
+        for key in _DIALOGUE_FIELDS
+        if key in payload
+    }
+    try:
+        return DialogueTestRequest.model_validate(filtered).compact_prompt
+    except ValidationError:
+        return False
+
+
 def _build_context(
     payload: Mapping[str, object],
     *,
@@ -391,6 +411,9 @@ def _build_context(
     player_input = payload.get("message", "")
     if is_topic_request:
         player_input = ""
+    # 调用方显式传入时以它为准（`/api/dialogue/test` 传的是校验后的
+    # `DialogueTestRequest.compact_prompt`）；不传的调用方目前只有群聊，
+    # 它的内部 payload 不带这个键，因此固定走完整卡组——与游戏端群聊一致。
     runtime_compact = (
         compact_prompt
         if compact_prompt is not None
@@ -434,7 +457,8 @@ def _retry_for_format_noise(
 
 @app.post("/api/context/preview")
 def preview_context(payload: dict[str, object]) -> dict[str, object]:
-    context, prompt = _build_context(payload)
+    compact_prompt = _request_compact_flag(payload)
+    context, prompt = _build_context(payload, compact_prompt=compact_prompt)
     identity = context["npcIdentity"]
     response: dict[str, object] = {
         "npcId": identity["npcId"],
@@ -443,6 +467,9 @@ def preview_context(payload: dict[str, object]) -> dict[str, object]:
         "modSources": context["modSources"],
         "recentFacts": context["recentFacts"],
         "history": context["history"],
+        # 回显本轮预览走的是哪条路径：页面与人工复核都靠它确认
+        # 「预览的那份 prompt」与「实发的那份 prompt」同源。
+        "compactPrompt": compact_prompt,
         "promptSummary": [
             {"role": message["role"], "name": message["name"]}
             for message in prompt

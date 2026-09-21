@@ -1864,6 +1864,8 @@ def test_external_lab_session_api_filters_sensitive_fields(monkeypatch) -> None:
         "messages": payload["messages"],
         "history": payload["history"],
         "lastDiagnostics": payload["lastDiagnostics"],
+        # 请求路径开关（默认走游戏端紧凑路径）也是会话契约的一部分。
+        "compactPrompt": True,
     }
     assert "should-not-persist" not in repr(store.value)
 
@@ -1902,7 +1904,7 @@ def test_external_lab_session_api_round_trips_saved_session(monkeypatch) -> None
 
     assert saved.status_code == 200
     assert loaded.status_code == 200
-    assert loaded.json() == payload
+    assert loaded.json() == {**payload, "compactPrompt": True}
 
 
 def test_external_lab_session_api_clears_local_session(monkeypatch) -> None:
