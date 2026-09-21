@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from stardew_ai_bridge.corpus import (
     build_dialogue_corpus,
     classify_dialogue_target,
@@ -679,3 +681,129 @@ def test_clean_dialogue_variants_splits_numeric_stardew_branch_headers() -> None
         for variant in variants
         for marker in ("Wed_01_02", "Wed_01_01", "Wed_01_03")
     )
+
+
+# --- 解析失败的警告要说清"丢的是不是台词"（2026-09-22 第 6 批） ---------------
+#
+# 起因：查 Birdie 为什么 0 条语料时发现，这个导出器的 warnings 原先只有一句
+# `无法解析 JSON：xxx（JSONDecodeError）`，与"一个配方表读不出来"完全同级 ——
+# 10 条失败警告混在一起，**看不出哪条真的要命**。
+#
+# 改法（第 5 批报告 §1.4 的方案 C）只加一句"这文件里本来有多少对白 Target"，
+# 零索引重建、零语义变更。方案 A（加 `Data/ExtraDialogue` 入口）与
+# 方案 B（让 CP 的 `Data/ExtraDialogue` Target 可用）本轮都不做，理由写在
+# `corpus._read_payload` 上方的注释里。
+
+
+def test_dialogue_loss_note_names_the_real_dialogue_file(tmp_path: Path) -> None:
+    """文件**本身**就是对白/事件文件时，直接说"台词全丢"，不去数 Target。"""
+
+    from stardew_ai_bridge.corpus import _dialogue_loss_note
+
+    dialogue = tmp_path / "Shane.zh-CN.json"
+    dialogue.write_text("{}", encoding="utf-8")
+
+    assert "台词全部丢失" in _dialogue_loss_note(
+        dialogue, "Characters/Dialogue/Shane.zh-CN.json"
+    )
+    assert "台词全部丢失" in _dialogue_loss_note(dialogue, "Data/Events/Farm.zh-CN.json")
+    assert "台词全部丢失" in _dialogue_loss_note(dialogue, "Data/ExtraDialogue.zh-CN.json")
+
+
+def test_dialogue_loss_note_counts_deduped_dialogue_targets(tmp_path: Path) -> None:
+    """Content Patcher 文件：数**去重后**的对白 Target，且不收事件 patch。
+
+    两个口径都在这里钉住（它们各自都有实际代价，见 `_read_payload` 上方注释）：
+
+    * **去重** —— 按出现次数数会把 Krobus.json 的 3 个报成 14 个，而这条警告
+      的全部意义就是让人一眼判断"要不要紧"，夸大比漏报更坏；
+    * **不收 `Data/Events`** —— CP 往 `Data/Events` 写的 patch 走事件路径，
+      `classify_dialogue_target` 不认它，解析成功也不会进索引；把它算成
+      "这次失败丢掉的台词"会让 SVE 的 `code/Other/Monsters.json` 从 0 跳到 52。
+    """
+
+    from stardew_ai_bridge.corpus import _dialogue_loss_note
+
+    path = tmp_path / "Krobus.json"
+    path.write_text(
+        # 故意留一个未闭合的结构，让它**真的**解析不了（`_load_json` 对注释、
+        # 尾随逗号、BOM、单引号都有容错，得用结构性错误）
+        '{\n  "Changes": [\n'
+        '    { "Action": "EditData", "Target": "Characters/Dialogue/Lance" },\n'
+        '    { "Action": "EditData", "Target": "Characters/Dialogue/Wizard" },\n'
+        '    { "Action": "EditData", "Target": "Characters/Dialogue/Lance" },\n'
+        '    { "Action": "EditData", "Target": "Data/Events/Farm" },\n'
+        '    { "Action": "EditData", "Target": "Data/Crops" },\n',
+        encoding="utf-8",
+    )
+
+    note = _dialogue_loss_note(path, "code/NPCs/Krobus.json")
+
+    assert "2 个对白 Target" in note, note  # Lance 重复了两次，去重后是 2
+    assert "4 个不同 Target" in note, note  # Lance／Wizard／Data\/Events\/Farm／Data\/Crops
+    assert "Data/Events" not in note.replace("全文共", "")  # 事件 patch 不进"对白"计数
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        # 有 Target、但一个都不是对白：说清"0 个"，顺带给出全文 Target 总数
+        ('{ "Changes": [ { "Target": "Data/Crops" }', "该文件里有 0 个对白 Target（全文共 1 个不同 Target）"),
+        # 连 Target 都没有（比如一个被写坏的数据表）：不提 Target 这个词
+        ('{ "Data": ', "该文件里没有对白 Target"),
+    ],
+)
+def test_dialogue_loss_note_separates_recipes_from_lost_lines(
+    tmp_path: Path, content: str, expected: str
+) -> None:
+    """一个配方表读不出来，和丢了一整份对白，警告要能分开。"""
+
+    from stardew_ai_bridge.corpus import _dialogue_loss_note
+
+    path = tmp_path / "Crops.json"
+    path.write_text(content, encoding="utf-8")
+
+    assert _dialogue_loss_note(path, "code/Items/Crops.json") == expected
+
+
+def test_unparsable_dialogue_file_reaches_the_corpus_warning(tmp_path: Path) -> None:
+    """端到端：警告文案真的落到 `build_dialogue_corpus` 的 warnings 里。"""
+
+    vanilla_root = tmp_path / "vanilla"
+    dialogue = vanilla_root / "Characters" / "Dialogue"
+    dialogue.mkdir(parents=True)
+    (dialogue / "Shane.zh-CN.json").write_text('{ "Mon": ', encoding="utf-8")
+
+    corpus = build_dialogue_corpus(vanilla_root=vanilla_root)
+
+    parse_warnings = [
+        warning for warning in corpus["warnings"] if "无法解析 JSON" in warning
+    ]
+
+    assert len(parse_warnings) == 1, corpus["warnings"]
+    assert "Characters/Dialogue/Shane.zh-CN.json" in parse_warnings[0]
+    assert "台词全部丢失" in parse_warnings[0]
+
+
+def test_unparsable_content_patcher_file_reports_its_dialogue_targets(
+    tmp_path: Path,
+) -> None:
+    """端到端：CP 文件的警告带上"本该收进索引的有几个对白 Target"。"""
+
+    mod_root = tmp_path / "mod"
+    (mod_root / "code").mkdir(parents=True)
+    _write_json(mod_root / "manifest.json", {"UniqueID": "Test.Mod"})
+    (mod_root / "code" / "Krobus.json").write_text(
+        '{\n  "Changes": [\n'
+        '    { "Action": "EditData", "Target": "Characters/Dialogue/Wizard" },\n',
+        encoding="utf-8",
+    )
+
+    corpus = build_dialogue_corpus(mod_roots=[mod_root])
+
+    parse_warnings = [
+        warning for warning in corpus["warnings"] if "无法解析 JSON" in warning
+    ]
+
+    assert len(parse_warnings) == 1, corpus["warnings"]
+    assert "该文件里有 1 个对白 Target" in parse_warnings[0]

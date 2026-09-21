@@ -296,3 +296,127 @@ def test_wordlist_still_declares_nine_facets_in_the_same_order() -> None:
 @pytest.mark.parametrize(("name", "pattern"), list(_LIFE_FACET_PATTERNS))
 def test_every_facet_pattern_compiles(name: str, pattern: str) -> None:
     re.compile(pattern)
+
+
+# --- 5. 第 6 批扩容（2026-09-22）：6 个词、1 处收窄、4 条救活 ------------------
+#
+# 这一批与第 3 批的性质不同：第 3 批是**审计驱动**（扫出 69 条判不出面的素材，
+# 补词去救活它们）；第 6 批是**对白驱动** —— 第 5 批为了不扩词表，把三条原话
+# 改写成"词表认得的说法"（「气候」→「天气」、「姐妹」→「妹妹」），本批把词表
+# 补上、把原话还回去。所以它的验收口径是两句：
+#
+# * **零漂移**：对现有 277 条 `preferredTopics` 逐条重跑，救活 0、漂移 0、丢失 0
+#   （第 5 批已经把它们改写成规避词表的说法了，所以这里本来就没有可救的）；
+# * **还回原话之后判得对**：下面第 3 组逐句钉住那 4 条被规避的原话。
+#
+# 唯一的收窄是「爱好和平」（动词读音）—— 单义检查在全库 16 条「爱好」用例里
+# 抓到的唯一一处多义，按第 3 批的先例**只排除这一个紧邻搭配**。
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 家人朋友：配偶与姐妹。Birdie 的核心剧情就是"海盗的妻子"，
+        # 而"姐妹"是 Emily 的原话用词（第 5 批被迫改写成"妹妹"）
+        ("我丈夫是那艘沉船的船长。", "家人朋友"),
+        ("我妻子也知道我不是一个普通人。", "家人朋友"),
+        ("我和海莉是姐妹，这事我跟你说过吗？", "家人朋友"),
+        # 天气季节：气候与暖和
+        ("这里的气候全年温暖宜人……", "天气季节"),
+        ("这里的天气一年到头都暖和。", "天气季节"),
+        # 爱好或消遣
+        ("要是自己有个什么爱好就好了。", "爱好或消遣"),
+    ],
+)
+def test_sixth_batch_words_land_on_their_intended_facet(text: str, expected: str) -> None:
+    assert _facet_of_topic(text) == expected, f"{text} 没落到 {expected}"
+
+
+def test_hobby_peace_is_a_verb_not_a_hobby() -> None:
+    """**本批唯一的收窄**：「爱好」另有一个动词读音（"爱好和平"）。
+
+    单义检查在全库 16 条「爱好」用例里抓到这一处 —— 它指的是"爱好和平"，
+    与"兴趣"无关。按第 3 批的先例只排除这一个紧邻搭配（`爱好(?!和平)`）。
+    """
+
+    text = "这个岛上的居民很爱好和平，不会对我们构成威胁。"
+
+    assert "爱好或消遣" not in _facet_hits(text), "「爱好和平」又被当成兴趣了"
+    assert _facet_of_topic(text) == "镇上或邻里"  # 它本来该落的面
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "这是我的一个秘密爱好……我已经练习好几个月了。",
+        "几年前，我开始把画画作为爱好。",
+        "亲爱的，我知道你会说我是个红酒狂热爱好者……",
+    ],
+)
+def test_real_hobby_still_matches_after_the_narrowing(text: str) -> None:
+    """收窄的另一侧：真正的"爱好／爱好者"照旧命中。"""
+
+    assert "爱好或消遣" in _facet_hits(text), text
+
+
+@pytest.mark.parametrize(
+    ("text", "main", "trap"),
+    [
+        # 「暖和」13 条用例的语义全是温度，但它对**主面**的影响必须逐条核对：
+        # 这一句里"烤"已经在更靠前的"吃喝"面命中了，所以天气面抢不走主面
+        ("你看起来打湿了一点？为何不在火边烤暖和一点？", "吃喝", "天气季节"),
+        # 「爱好」加在最后一个面，对任何已命中别的面的句子都没有主面影响
+        ("几年前，我开始把画画作为爱好。", "工作或手艺", "爱好或消遣"),
+        (
+            "亲爱的，我知道你会说我是个红酒狂热爱好者，但你应该考虑在节日汤里加一点…",
+            "吃喝",  # "汤"在吃喝面（第 2 位）先命中；"热"（天气，第 3 位）抢不走
+            "爱好或消遣",
+        ),
+        # 「丈夫」「妻子」加在"家人朋友"（第 5 位），不许抢走更靠前的面
+        ("嗯，你是对的。我也担心我的妻子和孩子。", "家人朋友", None),
+    ],
+)
+def test_sixth_batch_words_never_steal_the_main_facet(
+    text: str, main: str, trap: str | None
+) -> None:
+    """新词只能让判定更宽，**不许改变任何已有句子的主面**。
+
+    这一条是"只允许救活与判得更准，不允许已有素材失去识别"的逐句版本：
+    `_facet_of_topic` 按声明顺序取第一个命中，所以一个加在**靠前面**的词
+    （「气候」「暖和」在天气面＝第 3 位）有能力把后面几个面的主面抢走。
+    实测 277 条素材里 0 条发生这种漂移，这里把最容易出事的三类句子钉死。
+    """
+
+    assert _facet_of_topic(text) == main
+    if trap:
+        assert _facet_of_topic(text) != trap
+
+
+# 第 5 批为了规避词表而改写掉的原话：词表补上之后，它们判得对了吗。
+REVIVED_BY_RESTORING_THE_ORIGINAL_LINES = {
+    # Emily：原话里"姐妹"不在词表，改写成了「海莉是我妹妹」。
+    # 还要注意主面：原话含"你说过"（→"玩家自己"），是**更靠后**的面，
+    # 所以「姐妹」一进来主面就从"玩家自己"换成"家人朋友" —— 这条判得更准。
+    ("Emily", "我和海莉是姐妹，这事我跟你说过吗？"): "家人朋友",
+    # Birdie：原话里的"气候"不在词表，改写成了「这里的天气一年到头都暖和」
+    ("Birdie", "孩子，这里的气候全年温暖宜人……很适合我这把老骨头……"): "天气季节",
+    # Birdie 的家人面：任务 130「海盗的妻子」，此前整面判不出来
+    ("Birdie", "我丈夫是那艘沉船的船长。"): "家人朋友",
+    # Pam：原话判不出爱好面，第 5 批没有采用
+    ("Pam", "要是自己有个什么爱好就好了。"): "爱好或消遣",
+}
+
+
+@pytest.mark.parametrize(
+    ("npc_id", "sentence", "expected"),
+    [(npc, sentence, facet) for (npc, sentence), facet in REVIVED_BY_RESTORING_THE_ORIGINAL_LINES.items()],
+)
+def test_original_lines_revived_by_the_sixth_batch(npc_id: str, sentence: str, expected: str) -> None:
+    """这四条就是第 6 批扩词表的**全部收益**，逐句钉住。
+
+    参数里的 `npc_id` 只为可读性（说明这句话是谁说的），断言本身在句子层面 ——
+    其中只有 Emily 与 Birdie 的原话真的进了素材（Pam 那条不在本轮改动面内，
+    这里验的是"词表已经能认出它了"）。
+    """
+
+    assert _facet_of_topic(sentence) == expected, f"{npc_id} 的这条原话没落到 {expected}"

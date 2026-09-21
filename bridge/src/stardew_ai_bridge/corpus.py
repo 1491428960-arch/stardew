@@ -284,7 +284,15 @@ def clean_dialogue_variants(text: str) -> list[str]:
 
 
 def classify_dialogue_target(target: str) -> tuple[str, str]:
-    """从 Content Patcher target 得到 NPC ID 和证据类型。"""
+    """从 Content Patcher target 得到 NPC ID 和证据类型。
+
+    这里**刻意**只认 `Characters/Dialogue`（以及按文件名恢复的
+    `MarriageDialogue` / `RoommateDialogue`），不认 `Data/ExtraDialogue`。
+    SVE 往 `Data/ExtraDialogue` 写的那 18 条（Summit 事件、Gunther 卧室台词等）
+    因此被 `continue` 跳过 —— 那是**已知缺口**，但补它属于"让事件场景台词
+    进入语气证据池"，语义上要不要收需要用户拍板，本轮不动。详见
+    `_read_payload` 上方的方案 A／B／C 说明。
+    """
 
     normalised = str(target).replace("\\", "/").strip("/")
     if normalised.casefold().startswith(_DIALOGUE_PREFIX):
@@ -685,12 +693,86 @@ def _dedupe_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [by_sample_id[sample_id] for sample_id in order]
 
 
+# --- 解析失败时"丢的到底是什么"（2026-09-22 第 6 批） -------------------------
+#
+# 起因：查 Birdie 为什么 0 条语料时发现，这个导出器的 warnings 只有一句
+# `无法解析 JSON：xxx`，与"一个配方表读不出来"完全同级。而真正的情况是
+# **`Data/ExtraDialogue` 谁都不扫**——她的 15 条台词一声不响地没了，
+# 10 条失败警告混在一起，看不出哪条真的要命。
+#
+# 同一个缺口有三个修法（第 5 批报告 §1.4 的三选一）：
+#
+# * **A. 加第三个 vanilla 入口** —— `build_dialogue_corpus` 增
+#   `vanilla_extra_dialogue_root` 之类的参数、按 `<NPC><数字>` / `<NPC>_<后缀>`
+#   两种键名形状归 npcId。**本轮不做**：它会改变全库语料 records，必须重建
+#   14.9 MB 的真机索引；而且"要不要把 `Data/ExtraDialogue` 里那些无主键
+#   （`PurchasedItem_*` / `NewChild_*`）也收进来"要先拍板。
+# * **B. 让 Content Patcher 的 `Data/ExtraDialogue` Target 可用** —— 在
+#   `classify_dialogue_target` 里加一个 `Data/ExtraDialogue` 分支，用 Entries
+#   键名归 NPC（能复活 SVE 写进那里的 18 条）。**本轮也不做**，两个理由：
+#   同样要重建索引；而且那条路上的文本是**事件场景台词**，收进来会混进
+#   `styleSamples`（语气证据），与"日常对白"的语义不同 —— 这一条要用户拍板。
+# * **C. 让解析失败看得见**（**本轮做了**）—— 失败时附一句"这文件里本来
+#   有多少对白 Target"。零重建、零语义变更，只把已有的静默丢弃变成可读。
+#
+# 下面两个判据只做**粗筛**：目的是把"丢台词"和"丢别的东西"分开，不复刻
+# `classify_dialogue_target` 的精确规则（此刻 JSON 已经解析不了了）。两条口径：
+#
+# * **对白 Target** = 值里含 `dialogue`（`Characters/Dialogue/*`、`Data/ExtraDialogue`）。
+#   **刻意不收 `Data/Events`**：CP 往 `Data/Events` 写的 patch 走事件路径，而
+#   `classify_dialogue_target` 不认它 —— 这类 Target 解析成功也不会进索引，
+#   把它们算成"这次解析失败丢掉的台词"会把警告夸大（实测 SVE 的
+#   `code/Other/Monsters.json` 会因此从 0 跳到 52）。真要把事件台词收进来，
+#   那是与方案 B 同一类决策，得先拍板。
+# * 计数按**去重后的不同 Target 值**，与第 5 批 `.tmp/facet-coverage/b5_json_scan.py`
+#   的口径一致 —— 按出现次数数会把 Krobus.json 的 3 个对白 Target 报成 14 个，
+#   而这条警告的全部意义就是让人一眼判断"要不要紧"，夸大比漏报更坏。
+_DIALOGUE_FILE_MARKERS: tuple[str, ...] = (
+    "characters/dialogue",
+    "data/extradialogue",
+    "data/events",
+    "marriagedialogue",
+    "roommatedialogue",
+)
+_DIALOGUE_TARGET_MARKERS: tuple[str, ...] = ("dialogue",)
+_TARGET_VALUE_PATTERN = re.compile(r'"Target"\s*:\s*"([^"]*)"')
+
+
+def _dialogue_loss_note(path: Path, relative: str) -> str:
+    """解析失败时，从**原始文本**里估一句"这文件本来带多少台词"。
+
+    任何异常都退化成空串：这里是在解释失败原因，不能反过来把导出器弄崩。
+    """
+
+    normalised = relative.replace("\\", "/").casefold()
+    if any(marker in normalised for marker in _DIALOGUE_FILE_MARKERS):
+        return "该文件本身就是对白/事件文件，里面的台词全部丢失"
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    targets = sorted(set(_TARGET_VALUE_PATTERN.findall(raw)))
+    if not targets:
+        return "该文件里没有对白 Target"
+    hits = sum(
+        1
+        for target in targets
+        if any(
+            marker in target.replace("\\", "/").casefold()
+            for marker in _DIALOGUE_TARGET_MARKERS
+        )
+    )
+    return f"该文件里有 {hits} 个对白 Target（全文共 {len(targets)} 个不同 Target）"
+
+
 def _read_payload(path: Path, root: Path, warnings: list[str]) -> Mapping[str, Any] | None:
     relative = _relative_path(path, root)
     try:
         return _load_json(path)
     except Exception as exc:  # noqa: BLE001 - exporter must continue past one bad asset
-        warnings.append(f"无法解析 JSON：{relative}（{type(exc).__name__}）")
+        note = _dialogue_loss_note(path, relative)
+        suffix = f"—— {note}" if note else ""
+        warnings.append(f"无法解析 JSON：{relative}（{type(exc).__name__}）{suffix}")
         return None
 
 
@@ -737,7 +819,14 @@ def build_dialogue_corpus(
     locale: str = "zh-CN",
     vanilla_locale: str | None = None,
 ) -> dict[str, Any]:
-    """从已解包 vanilla 对白、事件和 Content Patcher 根目录构建语料。"""
+    """从已解包 vanilla 对白、事件和 Content Patcher 根目录构建语料。
+
+    vanilla 侧只有**两个入口**：解包的 `Characters/Dialogue/*.json`（用文件名
+    stem 当 npcId）与解包的 `Data/Events/*.json`（从事件脚本提参与者）。
+    `Data/ExtraDialogue` **谁都不扫** —— Birdie 这类 `CanSocialize: FALSE`
+    的 NPC 台词全放在那里，于是表现为"她没有台词"。补第三个入口是方案 A，
+    会改变全库语料、需要重建索引，本轮不做（详见 `_read_payload` 上方的说明）。
+    """
 
     corpus: dict[str, Any] = {
         "schemaVersion": 1,

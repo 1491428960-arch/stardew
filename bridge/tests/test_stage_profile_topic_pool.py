@@ -173,4 +173,4 @@ def test_other_roles_topic_pools_are_restored_too() -> None:
 
     assert wizard["topicPool"] == ["长期目标", "过去的选择", "共同承担的风险"]
     assert leah["topicPool"] == ["共同看作品", "自然与材料", "彼此如何提供支持"]
-    assert birdie["topicPool"] == ["安全钓鱼", "简单手作", "家庭记忆"]
+    assert birdie["topicPool"] == ["岛上的花草", "能吃的果子和鱼", "怎么慢慢走"]

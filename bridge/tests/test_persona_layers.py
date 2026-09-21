@@ -70,7 +70,7 @@ SPECIAL_VANILLA_BATCH = (
     ("Leo", "he", "him", "his", "岛屿", "鹦鹉"),
     ("Gunther", "he", "him", "his", "博物馆", "文物"),
     ("Marlon", "he", "him", "his", "冒险者公会", "矿洞"),
-    ("Birdie", "she", "her", "her", "岛屿生活", "手作"),
+    ("Birdie", "she", "her", "her", "岛屿生活", "海滩"),
 )
 
 

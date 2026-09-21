@@ -974,6 +974,9 @@ FIVE_FACET_ROLES = frozenset(
         # 第 5 批（16 个角色收尾）：除 Birdie 停在 4 面、Marlon 挖不动之外全部到 5 面
         "Abigail", "Caroline", "Emily", "George", "Gus", "Haley", "Harvey", "Jodi",
         "Marnie", "Sam", "Sebastian", "Shane", "Vincent",
+        # 第 6 批：Birdie 从 4 面到 5 面 —— 词表补上「气候」「丈夫」之后，
+        # 第 5 批为规避词表而改写的两条素材**换回原话**，家人面随之落地。
+        "Birdie",
     }
 )
 
@@ -1079,9 +1082,13 @@ def test_birdie_material_comes_from_extra_dialogue_not_the_index() -> None:
     影响面已核算：45 个 persona 角色里**只有她一个**被漏（`Rasmodia` 也是 0 条，但它经
     `canonical_npc_id()` 归一到 `Wizard`，语料在 Wizard 名下）。
 
-    这条断言钉住两件事：**她的 5 条素材确实来自那 15 句原话**（不是编的），
-    以及**她的面数没有掉回 4 面以下**——防止有人按"索引里没有 = 没素材"的口径
+    这条断言钉住两件事：**她的素材确实来自那几句原话**（不是编的），
+    以及**她的面数没有掉回 5 面以下**——防止有人按"索引里没有 = 没素材"的口径
     把她清理掉。
+
+    第 6 批更新（2026-09-22）：词表补上「气候」「丈夫」之后，第 5 批为规避词表
+    而做的两处改写**换回了她的原话**，并补上"海盗的妻子"这条核心剧情对应的家人面，
+    于是她从 4 面升到 **5 面**（条数 5 → 6，仍是 6 条上限内的满格）。
     """
 
     found = [
@@ -1092,17 +1099,145 @@ def test_birdie_material_comes_from_extra_dialogue_not_the_index() -> None:
     assert len(found) == 1, f"Birdie 应该只在 vanilla.json 里有一份，实际 {len(found)} 份"
 
     topics = found[0]
-    assert len(topics) == 5, f"Birdie 的素材条数变了：{topics}"
+    assert len(topics) == 6, f"Birdie 的素材条数变了：{topics}"
 
     facets = {_facet_of_topic(topic) for topic in topics} - {None}
-    assert facets == {"吃喝", "天气季节", "过去的回忆", "爱好或消遣"}, (
+    assert facets == {"吃喝", "天气季节", "过去的回忆", "爱好或消遣", "家人朋友"}, (
         f"Birdie 的面覆盖变了：{sorted(facets)}"
     )
-    # 这四条逐条对应 `Data/ExtraDialogue.zh-CN.json` 的原话
+    # 逐条对应 `Data/ExtraDialogue.zh-CN.json` 的原话
     assert "早餐那碗芋泥和一杯鲜榨芒果汁" in topics  # Birdie4
     assert "每天都要在海滩上散步，看看冲上岸的新东西" in topics  # Birdie5
     assert "很久以前，岛上住着矮人" in topics  # Birdie1
-    assert "这里的天气一年到头都暖和" in topics  # Birdie17（「气候」改写成词表收的「天气」）
+    # Birdie17 的**原话**（第 6 批把「天气」换回「气候」，不再改写字面）
+    assert "这里的气候全年温暖宜人" in topics
+    # 任务 130「海盗的妻子」：她的核心剧情，也是家人面唯一的依据
+    assert "我丈夫是那艘沉船的船长" in topics
+
+
+# --- 13. 2026-09-22 第 6 批：人设必须与角色**真原话**一致 ---------------------
+#
+# 第 5 批查清 Birdie 的语料缺口时，顺手发现她的 persona 与真人**互相矛盾**：
+# 那份人设是"当年没有语料时推出来的"，`tone` 说她喜欢**钓鱼**（她其实只散步）、
+# `signatureMoves` 写她"**不先寒暄**、不从天气谈起、提到自己用名字不用'我'"
+# （而她的原话是「孩子，我从来没想过还能在岛上看见新面孔」「**我**每天早上的
+# 早餐是……」「孩子，这里的**气候**全年温暖宜人……」），`addressing.player`
+# 写"朋友"（原话一律叫"**孩子**"），`sourceRefs` 指向**不存在**的
+# `Characters/Dialogue/Birdie`。
+#
+# 用户的验收口径是"**像这个人该说的话**"——人设与她的原话一致是这条的底线。
+# 下面这条哨兵钉住"改回去"的几种写法：任何一条重新出现就说明人设又漂了。
+_BIRDIE_REJECTED_PHRASES = (
+    "钓鱼",  # 她 15 条日常对白 + 2 段事件脚本里一次都没提过钓鱼
+    "手作",  # 只有「它是我造的」一句勉强沾边，不足以当特征
+    "针线",
+    "不先寒暄",  # 她恰恰是先寒暄的那个（Birdie0 / Birdie22）
+    "用名字而不用",  # 她自称"我"（Birdie4 / Birdie6 / Birdie12）
+)
+
+
+def _persona_profile(npc_id: str):
+    """返回该角色在 data/personas 里的 (文件名, profile)；多份时返回全部。"""
+
+    out = []
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for name, profile in (payload.get("personas") or {}).items():
+            if canonical_npc_id(name) == npc_id:
+                out.append((path.name, profile or {}))
+    return out
+
+
+def test_birdie_persona_matches_her_actual_lines() -> None:
+    """Birdie 的人设与她 15 条原话 + 2 段事件脚本一致（第 6 批重写）。"""
+
+    found = _persona_profile("Birdie")
+    assert len(found) == 1, f"Birdie 的 persona 份数变了：{[name for name, _ in found]}"
+
+    fname, profile = found[0]
+    text = json.dumps(profile, ensure_ascii=False)
+
+    for phrase in _BIRDIE_REJECTED_PHRASES:
+        assert phrase not in text, f"{fname} 的 Birdie 人设里又出现了「{phrase}」"
+
+    # 原话一律叫"孩子"（英文 dear）——不是"朋友"
+    assert profile["addressing"]["player"] == "孩子"
+    assert "朋友" not in profile["addressing"]["player"]
+
+
+def test_birdie_source_refs_point_at_real_game_files() -> None:
+    """`sourceRefs` 必须指向**真实存在**的位置。
+
+    改前写的是 `Characters/Dialogue/Birdie` —— 那个文件**根本不存在**，
+    她的台词在 `Data/ExtraDialogue.<locale>.json`（15 条，键名 `Birdie0`…`Birdie_NoGift`），
+    另有 2 段事件脚本在 `Strings/Locations.<locale>.json` 的
+    `IslandSecret_Event_Birdie*` 键里。这条断言不碰文件系统（测试环境未必装着游戏），
+    只钉住"那个不存在的路径不许回来"。
+    """
+
+    found = _persona_profile("Birdie")
+    _fname, profile = found[0]
+
+    refs = [
+        ref
+        for fact in profile.get("knowledgeFacts") or []
+        for ref in fact.get("sourceRefs") or []
+    ]
+
+    assert refs, "Birdie 的 knowledgeFacts 必须有 sourceRefs"
+    assert "Characters/Dialogue/Birdie" not in refs, "那个文件不存在（第 5 批查清）"
+    assert any(ref.startswith("Data/ExtraDialogue") for ref in refs), (
+        f"没有一条 sourceRef 指向她台词的真位置：{refs}"
+    )
+
+
+# --- 14. 2026-09-22 第 6 批：Shane 的救赎线换回来了，面数不降 -----------------
+#
+# 第 5 批为了让 Shane 补上三个新面，删掉了「戒掉坏习惯后的日常」——那是他
+# **救赎线的核心**，是本批唯一承认的取舍争议。第 6 批的改法不是把它原样加回来
+# （那条判不出生活面，会挤掉一个**有面**条目、把 5 面压到 4 面），而是换成
+# 有面写法「改喝苏打水以后的日子」——出处在 `Data/Events/AnimalShop.zh-CN.json`
+# 的 `3910974`（他自己的原话：「现在我已经改喝苏打水了」）。
+#
+# 让位的是**同属吃喝面**的「微波炉做的披萨卷」，不是那条无面人设核心
+# 「值得信任的人」：无面核心是"每角色至多一条"里那一条，删它等于重犯第 5 批的错。
+SHANE_REDEMPTION_TOPIC = "改喝苏打水以后的日子"
+
+
+def test_shane_redemption_line_is_back_without_losing_a_facet() -> None:
+    """救赎线回来了，而且面数仍然是 5 —— 两件事一起钉住。"""
+
+    found = _persona_profile("Shane")
+    assert found, "找不到 Shane 的 persona"
+
+    for fname, profile in found:
+        topics = profile["voiceStyle"]["preferredTopics"]
+
+        assert SHANE_REDEMPTION_TOPIC in topics, f"{fname} 里没有救赎线素材"
+        assert _facet_of_topic(SHANE_REDEMPTION_TOPIC) == "吃喝"
+        # 让位的是同面的披萨卷，不是那条无面人设核心
+        assert "值得信任的人" in topics, f"{fname} 把无面人设核心换掉了"
+        assert _facet_of_topic("值得信任的人") is None
+
+        facets = {_facet_of_topic(topic) for topic in topics} - {None}
+        assert facets == {"工作或手艺", "吃喝", "家人朋友", "天气季节", "自己的状态或烦恼"}
+        assert len(topics) == 6, f"{fname} 的素材条数越过了上限：{topics}"
+
+
+def test_shane_material_is_identical_across_both_persona_files() -> None:
+    """同一角色的多份 persona 必须同步 —— 第 4 批在 Wizard 上踩过这个坑。
+
+    Shane 同时出现在 `vanilla.json` 与 `female-bachelors.json`；两份不同步时
+    实际行为取决于加载顺序，改一份看不出问题、真机上却时好时坏。
+    """
+
+    found = _persona_profile("Shane")
+    assert len(found) == 2, f"Shane 应该有 2 份 persona，实际 {len(found)}"
+
+    material = {fname: profile["voiceStyle"]["preferredTopics"] for fname, profile in found}
+    distinct = {tuple(topics) for topics in material.values()}
+
+    assert len(distinct) == 1, f"两份 Shane 的素材不同步：{material}"
 
 
 def test_roles_still_below_three_facets_are_recorded() -> None:
