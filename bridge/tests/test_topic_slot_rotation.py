@@ -111,12 +111,17 @@ def _card(messages: list[dict[str, str]], name: str) -> dict:
 
 
 def test_slot_bans_the_repeated_facet_and_names_another_one() -> None:
-    """用户要的两半都要在：**禁什么** + **改去哪一面**。"""
+    """用户要的两半都要在：**禁什么** + **改去哪一面**。
+
+    2026-09-22：禁令的**说法**换成"别再以这一面做新的落点"，并在它前面加了一句
+    「先接住上一轮的具体东西、从它拉一根线过去」（用户抱怨的"硬拐"）。
+    断言跟着换成新句；「禁什么 + 去哪一面」这两半本身没变。
+    """
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert "不要再出现这一面" in slot["instruction"]
+    assert "别再以这一面做新的落点" in slot["instruction"]
     assert "都不算换" in slot["instruction"]  # 「换物件/换时段/换个说法」都不算
     assert slot["suggestedFacet"] == "镇上或邻里"
     assert slot["suggestedTopic"] in SOPHIA_TOPICS
@@ -221,7 +226,7 @@ def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
     assert slot["bannedFacet"] == "工作或手艺"
     assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
     blob = json.dumps(messages, ensure_ascii=False)
-    assert "本轮不要再出现这一面" in blob
+    assert "别再以这一面做新的落点" in blob
 
 
 def test_slot_reaches_the_provider_through_the_http_route(
@@ -267,7 +272,7 @@ def test_slot_reaches_the_provider_through_the_http_route(
 def test_without_the_slot_the_prompt_never_tells_the_model_to_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """对照实验：把槽位机制关掉，prompt 里**没有任何**"这一面不要再出现"的指令。
+    """对照实验：把槽位机制关掉，prompt 里**没有任何**"别再落这一面"的指令。
 
     这正是旧版连着 6 轮不换的机制原因 —— 落点池只给候选，没给禁令。
     两次渲染的差集证明：禁用语**只来自** `topicSlot`，不是别处的既有文案。
@@ -291,8 +296,8 @@ def test_without_the_slot_the_prompt_never_tells_the_model_to_stop(
         PromptBuilder().build(context, body["message"], compact=True), ensure_ascii=False
     )
 
-    assert "本轮不要再出现这一面" in with_slot
-    assert "本轮不要再出现这一面" not in without_slot
+    assert "别再以这一面做新的落点" in with_slot
+    assert "别再以这一面做新的落点" not in without_slot
     assert "topicSlot" in with_slot and "topicSlot" not in without_slot
     # 关掉机制后，"酒" 仍然在 prompt 里（素材与 roleGuidance 都还在）——
     # 也就是说旧版**没有任何东西**阻止模型继续谈酒。
@@ -427,6 +432,11 @@ def test_instruction_spares_the_object_the_player_named() -> None:
 
     索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的酒、酒窖、喝一口等当前
     对象」——不加豁免，两条硬指令会在同一张卡里互相封口，等于把"两层打架"搬个位置。
+
+    2026-09-22：豁免的**后半句**换了。旧版是「但接住之后不要由你往这一面延伸」——
+    在"玩家还想聊原来那个"的场景里，这句恰恰是拦路的（她接住一句就不能再往下说）。
+    新版改成"他要是继续追问这一面，就顺着他的方向聊"，配合代码层的"玩家点名被禁面
+    就整轮撤回槽位"，才是完整的"主动权在她、方向盘在玩家手里"。
     """
 
     instruction = rotation_topic_slot(
@@ -434,7 +444,8 @@ def test_instruction_spares_the_object_the_player_named() -> None:
     )["instruction"]
 
     assert "玩家本轮自己点名的对象仍要接住" in instruction
-    assert "不要由你往这一面延伸" in instruction
+    assert "顺着他的方向聊" in instruction
+    assert "不要由你往这一面延伸" not in instruction
 
 
 def test_suggestion_falls_back_to_a_used_but_unbanned_facet() -> None:

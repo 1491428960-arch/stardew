@@ -337,6 +337,63 @@ _LIFE_FACET_PATTERNS: tuple[tuple[str, str], ...] = (
 _FACET_LOOKBACK = 3
 _FACET_REPEAT_THRESHOLD = 2
 
+# --- 玩家回短句信号（2026-09-22） ---------------------------------------------
+#
+# 用户的诉求不是"再加一个按钮"，而是把**换话题的主动权交给 NPC**：
+#
+#   「我个人是希望把这个主动权交到 NPC 手里，而不是一个话题聊到头了我点一下
+#     '找话题'，这个度怎么把握」
+#
+# 所以触发换面的信号不能只有"同一面反复出现"（那是**她**说腻了），还要有
+# "**玩家**没接住"（玩家只回「嗯」——他在等她说点别的）。后者才是"主动权在她"。
+#
+# 判据刻意**窄**：短（净字 ≤6）**且**整句由空转词拼成。三条防误判：
+#
+# ① 「嗯，你说得对」**不算敷衍**。它不是"短 + 含敷衍词"就判——那样这句会被误伤。
+#    真判据是"整句能被空转词表**完整切分**"，也就是句子里**没有任何实词**；
+#    `你说得对` 切不出来，于是这一轮不换面。
+# ② **明确拒绝**（"我不想聊这个"）与**主动要求换**（"换个话题"）都不是敷衍：
+#    前者是玩家在划边界，机械换面等于没听见；后者玩家已经把指令给了，
+#    代码再补一个"她主动换面"的槽位是多余的第二层。两者都不走"敷衍"判定。
+# ③ **长度闸不放开**：长句就算全是语气词，也说明玩家还在给内容。
+_SHORT_REPLY_MAX_CHARS = 6
+
+# 空转词表：能**完整切分**一条短回复才算敷衍。按长度倒序排列（正则交替取最长匹配）。
+_PLAYER_FILLER_TOKENS: tuple[str, ...] = tuple(
+    sorted(
+        (
+            "原来是这样", "原来如此", "是这样啊", "这样啊", "我知道了", "了解",
+            "收到", "懂了", "确实", "真的", "是嘛", "是吗", "好的", "好吧",
+            "可以", "嗯", "哦", "噢", "喔", "呃", "额", "唉", "诶", "欸", "啊",
+            "呀", "哈", "嘿", "是", "对", "好", "行", "吗", "吧", "呢", "了",
+            "的", "那", "这", "么", "嘛", "ok",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+_PLAYER_FILLER_FULL_PATTERN = re.compile(
+    "^(?:" + "|".join(re.escape(token) for token in _PLAYER_FILLER_TOKENS) + ")+$"
+)
+
+# 玩家**在划边界**：不想继续刚才那件事。这不是敷衍，交给 `boundaryMode` 收口——
+# 角色该给出边界并停下，而不是像没听见一样换台。
+_PLAYER_REFUSAL_MARKERS: tuple[str, ...] = (
+    "不想聊", "不想说", "不想谈", "不想讨论", "不聊了", "不聊这个", "别聊",
+    "别说这个", "别再说", "别问", "不要问", "别提", "没什么好说", "算了",
+    "闭嘴", "烦不烦",
+)
+# 玩家**主动要求换**：指令已经给了，NPC 照着换个方向即可。
+_PLAYER_TOPIC_REQUEST_MARKERS: tuple[str, ...] = (
+    "换个话题", "换一个话题", "换话题", "说点别的", "聊点别的", "说别的",
+    "聊别的", "谈点别的",
+)
+
+# 引用上一轮回复时的长度上限。整句会把 instruction 推向 `_compact_stage_policy`
+# 的 300 字截断线 —— 而断在句子中间的指令比短一点的指令差得多。
+_BRIDGE_ANCHOR_LIMIT = 16
+_PLAYER_QUOTE_LIMIT = 12
+
 
 def _facet_hits(text: object) -> set[str]:
     """一句话命中了哪些生活面。命中即算，不做互斥裁决——宽松判定下宁可多禁一次。"""
@@ -393,16 +450,103 @@ def narrow_topic_pool(
     return [topic for topic in topics if _facet_of_topic(topic) != banned]
 
 
+def _player_reply_text(value: object) -> str:
+    """玩家一条回复的可用文本（首尾空白去掉，其余原样保留）。"""
+
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _reply_digest(value: object) -> str:
+    """只留汉字与字母数字：长度判定与"整句由空转词拼成"的判定都基于它。
+
+    标点与空白不参与 —— 「嗯……」「嗯，」和「嗯」是同一句话。
+    """
+
+    return re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", value).casefold()
+
+
+def _is_player_refusal(text: str) -> bool:
+    """玩家在划边界（不想继续刚才那件事）。**不是**敷衍，见常量区那三条防误判。"""
+
+    return any(marker in text for marker in _PLAYER_REFUSAL_MARKERS)
+
+
+def _is_player_topic_request(text: str) -> bool:
+    """玩家明确点名要换话题。"""
+
+    return any(marker in text for marker in _PLAYER_TOPIC_REQUEST_MARKERS)
+
+
+def _is_short_filler_reply(text: str) -> bool:
+    """很短**且**整句由空转词拼成 —— 两条都满足才算"玩家没接住"。
+
+    "很短"用净字数（≦ ``_SHORT_REPLY_MAX_CHARS``）；"敷衍"用完整切分，
+    所以「嗯，你说得对」不算（它带着一个实义判断）。
+    """
+
+    digest = _reply_digest(text)
+    if not digest or len(digest) > _SHORT_REPLY_MAX_CHARS:
+        return False
+    return bool(_PLAYER_FILLER_FULL_PATTERN.match(digest))
+
+
+def _bridge_anchor(reply: object) -> str:
+    """上一轮回复里可被引用的那半句，作为关联过渡的引用起点。
+
+    取法是"**完整的短句，凑不满就停**"：先按句末标点取首句，超长再按逗号切分句、
+    累积到 ``_BRIDGE_ANCHOR_LIMIT`` 为止。硬截会产生「是啊，葡萄园的收成很好，
+    我又酿了」这种**腰斩**的引用 —— 让模型"从它拉一根线"，而它自己都是一句断话。
+    """
+
+    text = _player_reply_text(reply)
+    if not text:
+        return ""
+    first = re.split(r"[。！？!?；;\n]", text)[0].strip("，,、:： ")
+    if not first:
+        first = text
+    if len(first) <= _BRIDGE_ANCHOR_LIMIT:
+        return first
+    anchor = ""
+    for part in re.split(r"[，,、]", first):
+        part = part.strip()
+        if not part:
+            continue
+        if not anchor:
+            if len(part) > _BRIDGE_ANCHOR_LIMIT:
+                # 第一个分句就超长：没有更好的选择，硬截。
+                anchor = part[:_BRIDGE_ANCHOR_LIMIT]
+                break
+            anchor = part
+            continue
+        if len(anchor) + len(part) + 1 > _BRIDGE_ANCHOR_LIMIT:
+            break
+        anchor = f"{anchor}，{part}"
+    return anchor
+
+
 def rotation_topic_slot(
     preferred_topics: object = None,
     *,
     recent_replies: object = (),
+    player_replies: object = (),
 ) -> dict[str, Any]:
-    """按最近轮次的落点算一个「本轮必须换面」的硬槽位；不需要换时返回空 dict。
+    """按最近轮次算一个「本轮换面」的硬槽位；不需要换时返回空 dict。
 
     ``recent_replies`` 是**时间正序**的 NPC 回复文本（调用方从 history 里取 assistant 项）。
-    只有"最近 ``_FACET_LOOKBACK`` 轮里同一个生活面出现 ``_FACET_REPEAT_THRESHOLD``
-    次以上"时才产出槽位 —— 平时零成本，不进 prompt。
+    ``player_replies`` 是同一份 history 里**玩家的**回复文本，同样时间正序；调用方
+    省略时行为与 2026-09-21 版完全一致（只有"同面重复"这一个触发条件）。
+
+    三个触发理由，**最多两个同时成立**：
+
+    * ``facetRepeat``：最近 ``_FACET_LOOKBACK`` 轮里同一个生活面出现
+      ``_FACET_REPEAT_THRESHOLD`` 次。这是"**她**说腻了"。
+    * ``playerShortReply``：玩家最近一条回复很短且是敷衍类。这是"**玩家**没接住"，
+      也是"主动权在 NPC 手里"的信号源 —— 不用玩家去点"找话题"。
+    * ``playerAsksNewTopic``：玩家明确要求换个话题。
+
+    两条**不产出槽位**的路径（都写在常量区的防误判里）：玩家在划边界
+    （``_PLAYER_REFUSAL_MARKERS``，交给 `boundaryMode` 收口）；玩家本轮自己
+    把话带回了被禁的那个面 —— 见下面对"撤回"的说明。
     """
 
     replies = [
@@ -410,7 +554,20 @@ def rotation_topic_slot(
         for item in (recent_replies if isinstance(recent_replies, (list, tuple)) else ())
         if isinstance(item, str) and item.strip()
     ][-_FACET_LOOKBACK:]
-    if len(replies) < _FACET_REPEAT_THRESHOLD:
+    player_texts = [
+        text
+        for text in (
+            _player_reply_text(item)
+            for item in (player_replies if isinstance(player_replies, (list, tuple)) else ())
+        )
+        if text
+    ]
+    # 只认**最近一条**玩家回复：上一轮敷衍、这一轮认真说了话，不该再补一次换面。
+    player_text = player_texts[-1] if player_texts else ""
+
+    # ① 玩家在划边界：**整轮不产出槽位**。玩家正在划线，NPC 却像没听见一样换台，
+    #    读起来既不尊重也不像本人；边界该由 `boundaryMode` 收口。
+    if player_text and _is_player_refusal(player_text):
         return {}
 
     per_reply = [_facet_hits(item) for item in replies]
@@ -423,7 +580,10 @@ def rotation_topic_slot(
     repeated = {
         facet for facet, count in counts.items() if count >= _FACET_REPEAT_THRESHOLD
     }
-    if not repeated:
+
+    short_reply = bool(player_text) and _is_short_filler_reply(player_text)
+    asks_new_topic = bool(player_text) and _is_player_topic_request(player_text)
+    if not repeated and not short_reply and not asks_new_topic:
         return {}
 
     # 多个面同时重复时（一句话常同时命中"工作"与"天气"）只压一个：优先压
@@ -438,10 +598,29 @@ def rotation_topic_slot(
     # 一个确定的"，而声明顺序是把「工作或手艺」排在第一位的那份优先级表 ——
     # 语义上"素材占比相同时，先压更靠前的那一面"。
     facet_order = {name: index for index, (name, _) in enumerate(_LIFE_FACET_PATTERNS)}
-    banned = max(
-        repeated,
-        key=lambda facet: (topic_facets.count(facet), -facet_order.get(facet, 0)),
+    banned = (
+        max(
+            repeated,
+            key=lambda facet: (topic_facets.count(facet), -facet_order.get(facet, 0)),
+        )
+        if repeated
+        else ""
     )
+
+    # ② **撤回**：玩家本轮自己把话带回了被禁的那个面 —— 整轮不产出槽位。
+    #
+    # 这是用户点名要保住的那条（"主动权在她，但方向盘在你手里"）的**代码落点**：
+    # 她刚主动换出去，玩家说「那批新酿到底怎么样了？」，此时若照旧换面，就是
+    # "她想聊什么就聊什么"；撤回之后禁令与收窄一起失效，`roleGuidance` 的落点池
+    # 里酒的素材**还在**，她回来时有东西可落。
+    #
+    # 为什么不是"接住但不许延伸"：那只改了措辞，`narrow_topic_pool` 仍然把这一面
+    # 的素材从她的池子里抽走 —— 接住了也接不下去。
+    #
+    # 判据复用 `_LIFE_FACET_PATTERNS`（不另建词表）：玩家这条话**落在被禁的那个
+    # 生活面上**就算。只聊别的面不算，否则"玩家说了任何实质内容"都会取消换面。
+    if banned and player_text and banned in _facet_hits(player_text):
+        return {}
 
     # 建议去哪个面：优先该角色**自己素材里就有**、最近没用过、且不与禁令同面的那一条。
     #
@@ -466,33 +645,88 @@ def rotation_topic_slot(
     if not suggested_topic:
         suggested_topic, suggested_facet = _pick(allow_used=True)
 
-    # 措辞两处按新窗口调整：
-    # ① "最近N轮都在谈" → "最近N轮里有M轮在谈"：窗口 3、阈值 2 之后不再是"每轮都"；
-    # ② 补一句**玩家点名豁免**。索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的
-    #    酒、酒窖、喝一口等当前对象」——不加这句，禁令会对玩家自己抛出的对象下封口令，
-    #    等于把"两层打架"从一个地方搬到另一个地方。压的是 NPC **主动**选落点。
-    instruction = (
-        f"最近{len(replies)}轮里有{counts.get(banned, 0)}轮在谈「{banned}」这一面；"
-        f"本轮不要再出现这一面的对象、动作或说法（玩家本轮自己点名的对象仍要接住，"
-        f"但接住之后不要由你往这一面延伸；换一个物件、换一个时段，"
-        f"或换个说法讲同一件事都不算换）。"
-    )
-    if suggested_topic:
-        instruction += (
-            f"改从「{suggested_facet}」这一面挑一件具体的、能落到对白里的小事来说"
-            f"（例如「{suggested_topic}」这个方向），只说一件，不要罗列。"
+    # 措辞（2026-09-22 重写）。三处按本次口径调整：
+    #
+    # ① **换面必须带关联过渡**（用户抱怨的"硬拐"）。旧版是一句纯封口：
+    #    「本轮不要再出现这一面的对象、动作或说法」——模型照做的方式就是**另起一件
+    #    事**，中间没有那条线。新版把上一轮回复的**首句原文**引进来当作起点，
+    #    要求"先接住那里面的具体东西，再从它拉一根线过去"。
+    #    引用由**代码**摘（`_bridge_anchor`），不让模型自己回忆：compact 路径下模型
+    #    只看得见 4 条 history，而槽位算在完整 history 上。
+    # ② **玩家点名豁免升级**。旧版后半句「接住之后不要由你往这一面延伸」在"玩家还想
+    #    聊原来的"场景里恰恰是拦路的。新版改成"他要是继续追问这一面，就顺着他的
+    #    方向聊"——主动权在角色（由她拉线换面），方向盘在玩家（他拉回来她就跟）。
+    # ③ **理由句与触发一致**：没有 `facetRepeat` 时不许出现"最近N轮里有M轮在谈"，
+    #    否则模型读到的理由与真实触发不符（B 触发时那一面并没有被禁）。
+    anchor = _bridge_anchor(replies[-1]) if replies else ""
+    player_quote = player_text[:_PLAYER_QUOTE_LIMIT]
+    parts: list[str] = []
+    if banned:
+        parts.append(
+            f"最近{len(replies)}轮里有{counts.get(banned, 0)}轮在谈「{banned}」这一面；"
+        )
+    if short_reply:
+        parts.append(f"玩家最近只回了「{player_quote}」几个字，没接住你的话头；")
+    if asks_new_topic:
+        parts.append(f"玩家明确要你换个话题（他刚说：「{player_quote}」）；")
+    if anchor:
+        parts.append(
+            f"上一轮你说过：「{anchor}」。本轮先接住那里面的具体东西，"
+            "再从它拉一根线过去、换到别的面，不要凭空跳过去。"
+        )
+    # 没有 anchor（history 里压根没有她的上一轮，例如玩家开口第一句就是「嗯」）时
+    # **不写**过渡句：没有可拉的那根线，"先接住上一轮的…"是一句读不通的指令。
+    if banned:
+        parts.append(
+            "别再以这一面做新的落点（玩家本轮自己点名的对象仍要接住；"
+            "他要是继续追问这一面，就顺着他的方向聊，别为了换面绕开它）；"
+            "换物件、换时段或换个说法讲同一件事都不算换。"
         )
     else:
-        instruction += (
+        # 没有重复面可禁（B/C 理由）：要的是"换个落点"，不是封口——凭空禁一面会把
+        # 玩家正在聊的东西一起压掉。
+        parts.append("本轮由你主动把话头换一次，不要再绕着刚才那一面打转。")
+    if suggested_topic:
+        # 「建议的面最近刚用过」是**素材缺口**下的常态，不是 bug：索菲亚 4 条素材
+        # 只覆盖两个面（工作／镇上），对话到第三轮就穷尽，`_pick` 的第一轮（不许
+        # 用过的面）必然选空、退化到第二轮。此时若照旧说"改从这一面挑一件小事"，
+        # 模型很可能把**刚才那件事**再说一遍 —— 那是"换了面"字面成立、体感没换。
+        # 措辞因此分成两支：面是新的时候说"改从这一面"，面刚用过时说"**另一件**事"。
+        if suggested_facet in used:
+            parts.append(
+                f"改从「{suggested_facet}」这一面挑**另一件**具体的、能落到对白里的"
+                f"小事来说（例如「{suggested_topic}」这个方向，但不要重复刚才那件），"
+                "只说一件，不要罗列。"
+            )
+        else:
+            parts.append(
+                f"改从「{suggested_facet}」这一面挑一件具体的、能落到对白里的小事来说"
+                f"（例如「{suggested_topic}」这个方向），只说一件，不要罗列。"
+            )
+    else:
+        parts.append(
             "换到另一个生活面（吃喝、天气季节、镇上或邻里、家人朋友、玩家自己、"
             "自己的状态或烦恼、过去的回忆、爱好或消遣）挑一件具体的、"
             "能落到对白里的小事来说，只说一件，不要罗列。"
         )
+    instruction = "".join(parts)
+
+    triggers = [
+        name
+        for name, active in (
+            ("facetRepeat", bool(banned)),
+            ("playerShortReply", short_reply),
+            ("playerAsksNewTopic", asks_new_topic),
+        )
+        if active
+    ]
 
     slot: dict[str, Any] = {
-        "bannedFacet": banned,
         "instruction": instruction,
+        "trigger": "+".join(triggers),
     }
+    if banned:
+        slot["bannedFacet"] = banned
     if suggested_topic:
         slot["suggestedFacet"] = suggested_facet
         slot["suggestedTopic"] = suggested_topic

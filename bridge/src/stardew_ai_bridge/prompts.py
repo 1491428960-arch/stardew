@@ -1473,12 +1473,27 @@ class ContextBuilder:
         # 素材来源是下面那份 `pool_preferred_topics`（与 persona_core 同源），
         # 不是 `stage_policy` 里的某个键 —— 后者从来没有写过这个键（见
         # `test_topic_slot_rotation.py` 钉住的第二点）。
+        # 2026-09-22：**同时**把玩家那一侧的话交给槽位。第一个触发理由是"她说腻了"
+        # （最近几轮同一面重复），第二个是"玩家没接住"（他只回「嗯」几个字）——
+        # 后者才是用户要的"主动权在 NPC 手里"：不用玩家去点「找话题」。
+        #
+        # 这里刻意用**完整** history（上限 `_HISTORY_LIMIT`），而不是
+        # `PromptBuilder.build` 里给模型看的那 4 条窗口
+        # （`-(4 if compact else _PROMPT_HISTORY_LIMIT)`）：游戏端 history
+        # 实发 6 条（`BridgeClient.MaxHistoryItems`），玩家最近一句一定在里面；
+        # 即便连点两次「找话题」（topic 请求不写 user 项）让最后 4 条全是
+        # assistant，槽位这边照样找得到。
         topic_slot = rotation_topic_slot(
             pool_preferred_topics,
             recent_replies=[
                 item["content"]
                 for item in history
                 if item.get("role") == "assistant" and item.get("content")
+            ],
+            player_replies=[
+                item["content"]
+                for item in history
+                if item.get("role") == "user" and item.get("content")
             ],
         )
 
@@ -2976,6 +2991,13 @@ def _compact_stage_policy(
         banned = _text(topic_slot.get("bannedFacet"), limit=40)
         if banned:
             slot["bannedFacet"] = banned
+        # 2026-09-22：`trigger`（`facetRepeat` / `playerShortReply` /
+        # `playerAsksNewTopic` 的组合）也要过白名单。它是线上唯一能看出**这次是
+        # 哪个理由触发的**字段 —— 没有它，诊断只能看到"槽位出现了"，看不出
+        # 是"她说腻了"还是"玩家没接住"，而这两种的措辞与代价完全不同。
+        trigger = _text(topic_slot.get("trigger"), limit=60)
+        if trigger:
+            slot["trigger"] = trigger
         instruction = _text(topic_slot.get("instruction"), limit=300)
         if instruction:
             slot["instruction"] = instruction
