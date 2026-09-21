@@ -38,6 +38,7 @@ import pytest
 from stardew_ai_bridge.stage_policy import (
     _LIFE_FACET_PATTERNS,
     CONVERSATION_LEAD_TRIAL_NPC_IDS,
+    _facet_hits,
     _facet_of_topic,
     build_stage_policy,
     canonical_npc_id,
@@ -607,13 +608,154 @@ def test_narrow_material_roles_are_recorded() -> None:
 
     * `Sophia` 的 4 条只有两面（工作或手艺 / 镇上或邻里）→ 剩 2 条，触发轮次的建议
       方向因此只在"镇上"里挑；
-    * `Alex` 的 4 条里有 3 条落进"工作或手艺"—— 体育词（四分卫、投球、俯卧撑）被同一
-      张正则收编 → 剩 1 条，且那一条不映射任何面（`_facet_of_topic` 返回 `None`），
-      **不能作为建议候选**，于是 Alex 触发时只能走"换到另一个生活面（…）"的泛化降级。
+    * `Alex` 的缺口**已关闭**（2026-09-21 三次拆面，见第 10 节）：他的 4 条里原本有 3 条
+      落进"工作或手艺"—— 体育词（四分卫、投球、俯卧撑）被 `四分卫|投球|俯卧撑|训练|运动`
+      这一段正则收编，禁工作面后只剩一条不映射任何面的素材（`_facet_of_topic` 返回
+      `None`），**不能作为建议候选**，于是每一轮都走"换到另一个生活面（…）"的泛化降级。
+      运动词归位到"爱好或消遣"之后，他名下已经**没有任何工作面条目**，禁工作面等于不
+      收窄，候选回到 3 条。
 
     这是数据层的事：补素材会让这两条断言失败，那时按新数据更新即可。
     """
 
     assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 2
-    assert len(narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺")) == 1
+    assert narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺") == _prompt_topics("Alex")
     assert _facet_of_topic("职业选手目标，以及后来发现的微不足道的小事") is None
+
+
+# --- 10. 2026-09-21 三次：运动词归位（Alex 的素材缺口关闭） -------------------
+#
+# 父任务拍板的方案：**把"四分卫／投球／俯卧撑"从"工作或手艺"拆到"爱好或消遣"**，
+# 判据是"打橄榄球是爱好，不是工作"。这一节钉住三件事：
+#   ① 这五个词只属于爱好面（拆干净，不是两边都留）；
+#   ② 真正的工作类说法**一条都没跟着走**（Alex 的"农场帮忙"必须留在工作面）；
+#   ③ Alex 触发换面时给出的是**具体**建议，而不是泛化降级。
+
+ALEX_MODS = ["vanilla"]
+
+# 最近两轮都落在"工作或手艺"：Alex 在农场帮忙 —— 那个落点**留在工作面**（拆面不许搬走）。
+ALEX_FARM_REPLIES = [
+    "今天在农场帮着搬了半天饲料，胳膊都酸了。",
+    "刚又去农场搭了会儿手，回来倒头就睡。",
+]
+
+# 运动词归位后，连着谈身体算"爱好或消遣"重复（改前它算"工作或手艺"）。
+ALEX_PUSHUPS_REPLIES = [
+    "刚做完三组俯卧撑，胳膊都抬不起来了。",
+    "睡前又补了一组俯卧撑，今天就够了。",
+]
+
+
+@pytest.mark.parametrize("word", ["四分卫", "投球", "俯卧撑", "训练", "运动"])
+def test_sports_words_live_in_the_hobbies_facet_only(word: str) -> None:
+    """① 拆干净：这五个词**只**命中"爱好或消遣"，工作面一个都不留。"""
+
+    assert _facet_hits(word) == {"爱好或消遣"}, word
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "今天去农场帮忙搬了半天的箱子。",  # Alex 游戏里的实际落点
+        "明天还得早起开公交，先不聊了。",  # Pam
+        "铁匠铺里还有一批工具要锻造。",  # Clint
+        "木工台上那批图纸今天得画完。",  # Robin
+        "实验室的记录还要再核对一遍。",  # Demetrius / Maru
+        "诊所今天排了一天的班。",  # Harvey
+        "博物馆那批文物要重新登记。",  # Gunther
+        "店里今天要进货，得早点开门。",  # Pierre
+        "今天出海钓鱼，风不大。",  # Willy
+    ],
+)
+def test_work_patterns_did_not_get_swept_into_hobbies(text: str) -> None:
+    """② 拆的是体育词，不是"提到身体或户外就搬走"：工作类说法必须留在工作面。"""
+
+    hits = _facet_hits(text)
+
+    assert "工作或手艺" in hits, text
+    assert "爱好或消遣" not in hits, text
+
+
+def test_alex_topics_land_on_their_new_facets() -> None:
+    """拆面的结果本身：4 条素材的新归属（第 4 条仍不映射任何面）。"""
+
+    assert {topic: _facet_of_topic(topic) for topic in _prompt_topics("Alex")} == {
+        "全明星四分卫和夹克上的小星星": "爱好或消遣",
+        "海滩、投球和镇上的朋友": "镇上或邻里",
+        "俯卧撑、酸痛与进步": "爱好或消遣",
+        "职业选手目标，以及后来发现的微不足道的小事": None,
+    }
+
+
+def test_alex_gets_a_concrete_suggestion_after_the_sports_split() -> None:
+    """③ 核心验收：Alex 谈完农场被要求换面时，给出**具体**建议而不是泛化降级。
+
+    改前面貌：4 条里 3 条被"工作或手艺"收编 ⇒ 禁工作面后只剩一条无面素材 ⇒
+    `suggestedTopic` 恒为空，instruction 退化成"换到另一个生活面（吃喝、天气季节…）"。
+    改后：素材里没有工作面条目，候选落到"爱好或消遣"这一面上。
+    """
+
+    slot = rotation_topic_slot(_prompt_topics("Alex"), recent_replies=ALEX_FARM_REPLIES)
+
+    assert slot["bannedFacet"] == "工作或手艺"
+    assert slot["suggestedFacet"] == "爱好或消遣"
+    assert slot["suggestedTopic"] == "全明星四分卫和夹克上的小星星"
+    # 泛化降级的那句"换到另一个生活面（…）"一个字都不许出现 —— 它正是改前的表现。
+    assert "换到另一个生活面（" not in slot["instruction"]
+
+
+def test_alex_suggestion_reaches_the_live_card() -> None:
+    """端到端：具体建议真的进了 `stage_execution_card`，且与同一张卡的落点池自洽。"""
+
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload("Alex", _history(ALEX_FARM_REPLIES), ALEX_MODS)
+    context, _ = _build_context(body)
+    card = _card(
+        PromptBuilder().build(context, body["message"], compact=True),
+        "stage_execution_card",
+    )
+    slot = card["topicSlot"]
+    guidance = card["conversationLead"]["roleGuidance"]
+
+    assert slot["suggestedFacet"] == "爱好或消遣"
+    assert slot["suggestedTopic"] == "全明星四分卫和夹克上的小星星"
+    assert slot["suggestedTopic"] in guidance
+    # 工作面素材：Alex 本来就没有，所以禁令摘不掉任何一条他名下的素材。
+    for topic in _prompt_topics("Alex"):
+        if _facet_of_topic(topic) == "工作或手艺":
+            assert topic not in guidance, topic
+
+
+def test_sports_talk_now_reads_as_hobbies_repeat() -> None:
+    """行为面的变化：同两轮回复，改前判"工作或手艺"、改后判"爱好或消遣"。
+
+    `banned` 是**按素材占比**在重复面里挑的（`rotation_topic_slot` 的 tie-break），
+    所以这里禁的会是爱好面，建议退到那条主面为"镇上或邻里"的素材上。
+    """
+
+    slot = rotation_topic_slot(_prompt_topics("Alex"), recent_replies=ALEX_PUSHUPS_REPLIES)
+
+    assert slot["bannedFacet"] == "爱好或消遣"
+    assert slot["suggestedFacet"] == "镇上或邻里"
+
+
+def test_alex_cross_facet_topic_penetration_is_recorded() -> None:
+    """**次要面穿透**（记录事实，不是判 bug）：跨面条目的主面之外仍留着被禁面的词。
+
+    「海滩、投球和镇上的朋友」同时命中三个面，`_facet_of_topic` 按声明顺序取主面
+    = "镇上或邻里"，于是禁"爱好或消遣"时它**不会**被 `narrow_topic_pool` 摘掉，
+    而文本里仍写着"投球"（被禁面的词）。这与"槽位禁某面、guidance 仍列该面"那种
+    **同面冲突**不是一回事：`narrow_topic_pool` 一直按**主面**收窄，那条规则没变。
+
+    影响面是可数的：48 个角色里只有 Alex 的这一条素材跨界。真要连次要面一起摘，
+    得让 `narrow_topic_pool` / `_pick` 改用 `_facet_hits`（命中即摘）——那是另一轮
+    机制改动，会改变全部角色的收窄口径，不在这里顺手做。
+    """
+
+    topic = "海滩、投球和镇上的朋友"
+
+    assert _facet_of_topic(topic) == "镇上或邻里"
+    assert _facet_hits(topic) == {"爱好或消遣", "镇上或邻里", "家人朋友"}
+    assert topic in narrow_topic_pool(_prompt_topics("Alex"), "爱好或消遣")
