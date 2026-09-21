@@ -1080,3 +1080,226 @@ def test_explicit_turn_count_still_wins_over_the_roster_size() -> None:
     assert len(response.turns) == 2
     _, messages = provider.requests[0]
     assert "最多输出 2 个公开回合" in json.dumps(messages, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# 角色卡拼接时的归属（2026-09-22，群聊云端验证 BUG-1）
+#
+# 实测形态（真机索引 3 人场，见 `.tmp/group-cloud-verify/dump_shape.py`，0 请求）：
+# 76 条消息里 12 条 assistant 全部来自 `original_style_example_assistant`，
+# 且 name **一字不差**——三人的语气样例被压平进同一个数组、无归属标识，
+# 模型会把 A 的语气样例读成「群里某人说过的话」（对应 BUG-2 的事实串味）。
+# 这里的用例钉住修法：样例 name 带归属 + 每份卡前插边界卡，**不删任何样例**
+# （multi_turn 那一次调用要同时演所有人，删掉别人的样例就没有多人语气依据）。
+# ---------------------------------------------------------------------------
+
+
+def _card_with_style_examples(npc_id: str, examples: list[str]) -> list[dict[str, str]]:
+    """模拟 PromptBuilder 产出的单 NPC 角色卡：样例说明卡 + assistant 样例 + 末条 user。"""
+
+    return [
+        {
+            "role": "system",
+            "name": "persona_core",
+            "content": f"你是 {npc_id}",
+        },
+        {
+            "role": "system",
+            "name": "original_style_examples",
+            "content": "以下是当前 NPC 的原版对白语气示例，只展示 NPC 原句。",
+        },
+        *[
+            {
+                "role": "assistant",
+                "name": "original_style_example_assistant",
+                "content": text,
+            }
+            for text in examples
+        ],
+        {"role": "user", "name": "player_input", "content": "玩家的上一句"},
+    ]
+
+
+def _three_card_prompts() -> dict[str, list[dict[str, str]]]:
+    return {
+        "alex": _card_with_style_examples("Alex", ["我想和你打球！", "嘿，有空跟我去海滩玩玩啊？"]),
+        "shane": _card_with_style_examples("Shane", ["不。"]),
+        "victor": _card_with_style_examples("Victor", ["我正在尝试，妈妈。"]),
+    }
+
+
+def test_group_style_examples_carry_their_owner() -> None:
+    from stardew_ai_bridge.group_conversation import build_group_messages
+
+    messages = build_group_messages(
+        participants=[{"npcId": "Alex"}, {"npcId": "Shane"}, {"npcId": "Victor"}],
+        active_npc_id="Alex",
+        participant_prompts=_three_card_prompts(),
+        strategy="multi_turn",
+        turn_count=3,
+        player_message="你们谁养了宠物？",
+    )
+
+    style = [item for item in messages if str(item.get("role")) == "assistant"]
+
+    # 每条样例都归到它真正的主人名下；三人的样例不再共用一个 name。
+    assert [item["name"] for item in style] == [
+        "original_style_example_assistant_Alex",
+        "original_style_example_assistant_Alex",
+        "original_style_example_assistant_Shane",
+        "original_style_example_assistant_Victor",
+    ]
+    assert len({item["name"] for item in style}) == 3
+    # 样例内容一字不动（仍然全部保留：multi_turn 要演所有人）
+    assert [item["content"] for item in style] == [
+        "我想和你打球！",
+        "嘿，有空跟我去海滩玩玩啊？",
+        "不。",
+        "我正在尝试，妈妈。",
+    ]
+    # 前缀保留：既有的 startswith 式识别不受影响
+    assert all(
+        item["name"].startswith("original_style_example_assistant") for item in style
+    )
+
+
+def test_group_participant_card_boundary_marks_each_card_start() -> None:
+    from stardew_ai_bridge.group_conversation import build_group_messages
+
+    messages = build_group_messages(
+        participants=[
+            {"npcId": "Alex", "displayName": "亚历克斯"},
+            {"npcId": "Shane", "displayName": "谢恩"},
+            {"npcId": "Victor", "displayName": "维克多"},
+        ],
+        active_npc_id="Alex",
+        participant_prompts=_three_card_prompts(),
+        strategy="multi_turn",
+        turn_count=3,
+        player_message="你们谁养了宠物？",
+    )
+
+    boundaries = [
+        index
+        for index, item in enumerate(messages)
+        if item.get("name") == "participant_card_boundary"
+    ]
+    assert len(boundaries) == 3
+
+    payloads = [json.loads(messages[index]["content"]) for index in boundaries]
+    assert [item["npcId"] for item in payloads] == ["Alex", "Shane", "Victor"]
+    assert [item["displayName"] for item in payloads] == ["亚历克斯", "谢恩", "维克多"]
+
+    # 边界 → 紧接着就是这张卡自己的第一条消息，段落因此可判定。
+    for index, payload in zip(boundaries, payloads):
+        assert messages[index + 1]["content"] == f"你是 {payload['npcId']}"
+
+    # 边界卡必须同时否掉两种误读：样例既不是「群里说过的话」，也不属于别人。
+    for payload in payloads:
+        assert "不是本场群聊里任何人说过的话" in payload["scope"]
+        assert "不能记到别人头上" in payload["scope"]
+
+
+def test_group_boundary_card_is_skipped_when_a_role_card_is_missing() -> None:
+    from stardew_ai_bridge.group_conversation import build_group_messages
+
+    messages = build_group_messages(
+        participants=[{"npcId": "Alex"}, {"npcId": "Shane"}],
+        active_npc_id="Alex",
+        participant_prompts={"alex": _card_with_style_examples("Alex", ["我想和你打球！"])},
+        strategy="multi_turn",
+        turn_count=2,
+        player_message="嗨。",
+    )
+
+    boundaries = [
+        item for item in messages if item.get("name") == "participant_card_boundary"
+    ]
+
+    # 取不到角色卡的人不产生「指向空卡」的分隔。
+    assert len(boundaries) == 1
+    assert json.loads(boundaries[0]["content"])["npcId"] == "Alex"
+
+
+def test_turn_based_keeps_the_owner_without_a_boundary_card() -> None:
+    from stardew_ai_bridge.group_conversation import build_group_messages
+
+    messages = build_group_messages(
+        participants=[{"npcId": "Alex"}, {"npcId": "Emily"}],
+        active_npc_id="Emily",
+        participant_prompts={
+            "alex": _card_with_style_examples("Alex", ["我想和你打球！"]),
+            "emily": _card_with_style_examples("Emily", ["今天天气真好。"]),
+        },
+        strategy="turn_based",
+        player_message="晚上好。",
+    )
+
+    # 单份卡没有段落歧义，不插边界卡；但归属仍然写明（不制造两条路径的分叉）。
+    assert not [
+        item for item in messages if item.get("name") == "participant_card_boundary"
+    ]
+    style = [item for item in messages if str(item.get("role")) == "assistant"]
+    assert [item["name"] for item in style] == ["original_style_example_assistant_Emily"]
+
+
+def test_group_multi_turn_still_uses_a_single_call_for_every_card() -> None:
+    """归属是**在拼装层**补的：multi_turn 依然只调一次，三张卡同场。
+
+    这一条钉住前提——若将来有人把 multi_turn 改成「每人一次调用」，
+    BUG-1 的取舍（保留全部样例 + 标归属）就要重新评估，测试会在这里提醒。
+    """
+
+    provider = RecordingProvider([_three_participant_reply()])
+    service = GroupConversationService(
+        ProviderRouter(
+            local_provider=provider,
+            cloud_enabled=False,
+            cloud_only=False,
+            default_provider="local",
+        ),
+        prompt_provider=lambda participants, request: {
+            participant.npc_id.casefold(): _card_with_style_examples(
+                participant.npc_id, [f"{participant.npc_id} 的一句语气样例"]
+            )
+            for participant in participants
+        },
+    )
+
+    response = service.generate(
+        _group_request(
+            "multi_turn",
+            participants=_THREE_PARTICIPANTS,
+            turnCount=None,
+        )
+    )
+
+    assert response.provider_calls == 1
+    _, messages = provider.requests[0]
+    style = [item for item in messages if str(item.get("role")) == "assistant"]
+    assert len(style) == 3
+    assert {item["name"] for item in style} == {
+        "original_style_example_assistant_Abigail",
+        "original_style_example_assistant_Sebastian",
+        "original_style_example_assistant_Sophia",
+    }
+
+
+def test_group_style_example_name_is_sanitized_for_upstream() -> None:
+    import re
+
+    from stardew_ai_bridge.group_conversation import _style_example_name
+
+    allowed = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+    assert _style_example_name("Alex") == "original_style_example_assistant_Alex"
+    # 上游 `message.name` 只收 [A-Za-z0-9_-]：mod NPC 的 id 没有字符集保证，必须清洗。
+    weird = _style_example_name("S.V.E 角色/名")
+    assert allowed.match(weird)
+    assert weird.startswith("original_style_example_assistant_")
+    # 名字超长时截断到上游上限内，不能整条发出去被拒。
+    long_name = _style_example_name("N" * 200)
+    assert allowed.match(long_name)
+    assert len(long_name) == 64
+    # 清洗后什么都不剩时退回原先的公共 name，而不是留下一个空后缀。
+    assert _style_example_name("   ") == "original_style_example_assistant"

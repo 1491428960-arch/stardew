@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from time import perf_counter
 
@@ -44,6 +45,80 @@ _FORMAT_REPAIR_RULE = (
     "不要 Markdown 代码块、不要解释、不要任何多余文字；"
     "每个回合都必须同时有 speakerNpcId 和 content。"
 )
+
+# ---------------------------------------------------------------------------
+# 角色卡拼接时的**归属**（2026-09-22，群聊云端验证 BUG-1）
+# ---------------------------------------------------------------------------
+#
+# 背景：multi_turn 只用**一次** provider 调用同时演名单里的所有人，
+# 所以 `build_group_messages` 必须把**每份**参与者角色卡都拼进同一个 messages
+# 数组（详见该函数内的注释）。而角色卡与私聊同源，每份卡里都带着自己的语气样例
+# （`prompts.py` 的 `original_style_example_assistant`，3 人场实测 4 条/人）。
+#
+# 实测（`.tmp/group-cloud-verify/dump_shape.py`，3 人场 0 请求）：
+# 76 条消息里 12 条 assistant 的 `name` **一字不差**都是
+# `original_style_example_assistant`，三人的样例被压平进同一个数组、
+# 无任何归属字段——模型只能靠正文猜「这条是谁的」，
+# 于是会把 A 的语气样例读成「群里某人说过的话」（对应 BUG-2 的事实串味）。
+#
+# 修法**不删样例**：删掉别人的样例会让模型失去多人语气依据（multi_turn 要演所有人），
+# 而样例必须留在 assistant 位置（`prompts.py` 记录过 Sophia 的实证：移除
+# assistant few-shot 会掉语气）。因此只在拼装处补两层归属：
+# 1. 每条语气样例的 `name` 带上该参与者（`_style_example_name`）；
+# 2. 合并多份卡时，每份卡前插一张 `participant_card_boundary` 划出边界。
+
+#: `prompts.py` 里语气样例消息的 name（私聊、群聊同源）。加归属时保留这个前缀，
+#: 既有的 `startswith` 式识别与工具不受影响。
+_STYLE_EXAMPLE_NAME = "original_style_example_assistant"
+
+#: 参与者卡之间的分隔卡：多份卡拼接时用来划出「以下这一段属于谁」。
+_PARTICIPANT_CARD_BOUNDARY_NAME = "participant_card_boundary"
+
+#: 上游对 `message.name` 的限制（OpenAI 兼容：`^[a-zA-Z0-9_-]{1,64}$`）。
+#: npcId 一般就是游戏内英文名，但 mod NPC 的 id 没有字符集保证，所以统一清洗。
+_NAME_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9_-]")
+_NAME_MAX_LENGTH = 64
+
+
+def _style_example_name(npc_id: str) -> str:
+    """把语气样例的 `name` 归属化：`original_style_example_assistant_<npcId>`。"""
+
+    suffix = _NAME_UNSAFE_CHARS.sub("_", str(npc_id).strip()).strip("_")
+    if not suffix:
+        return _STYLE_EXAMPLE_NAME
+    room = _NAME_MAX_LENGTH - len(_STYLE_EXAMPLE_NAME) - 1
+    if room <= 0:  # pragma: no cover - 前缀本身远短于上限，留作防御
+        return _STYLE_EXAMPLE_NAME
+    return f"{_STYLE_EXAMPLE_NAME}_{suffix[:room]}"
+
+
+def _participant_card_boundary(npc_id: str, display_name: str) -> dict[str, str]:
+    """一份参与者卡开始处的边界卡：明确「这一段消息属于谁」。
+
+    没有它，多份卡的卡名完全相同（`safety_rules`、`persona_core` … 各三轮），
+    模型只能跨二十多条消息自己推断段落归属——实测它推不出来（见 BUG-2）。
+    """
+
+    return {
+        "role": "system",
+        "name": _PARTICIPANT_CARD_BOUNDARY_NAME,
+        "content": json.dumps(
+            {
+                "npcId": npc_id,
+                "displayName": display_name,
+                "scope": (
+                    "以下是这位参与者一个人的角色卡（直到下一张 "
+                    f"{_PARTICIPANT_CARD_BOUNDARY_NAME} 为止）："
+                    "这一段里的“当前 NPC”“你”都只指他，不指名单里的其他人。"
+                    "其中 role=assistant 的消息是他自己的原版语气示例，"
+                    "不是本场群聊里任何人说过的话，也不是别人转述给他的话；"
+                    "只学这些原句的说法方式，示例里的事实、人物、宠物、事件都属于"
+                    "示例本身，不属于本场对话，也不能记到别人头上。"
+                ),
+            },
+            ensure_ascii=False,
+        ),
+    }
 
 
 def _participant_value(
@@ -162,14 +237,35 @@ def build_group_messages(
         str(_participant_value(item, "npc_id", "npcId")) for item in participants
     ]
     roster_ids = [item for item in roster_ids if item]
+    display_name_by_id = {
+        str(_participant_value(item, "npc_id", "npcId")).casefold(): str(
+            _participant_value(item, "display_name", "displayName") or ""
+        )
+        for item in participants
+    }
     speakers = (
         roster_ids
         if strategy == "multi_turn"
         else [item for item in roster_ids if item.casefold() == active_npc_id.casefold()]
     )
+    # multi_turn 下 speakers 是**整个名单**：那一次调用要同时演所有人
+    # （见 `_group_scene_instruction` 的「本轮允许同时输出这些角色的对白」），
+    # 因此这里必须把每份角色卡都拼进来，不能只留当前发言人的那一份。
+    # 代价是同一个数组里出现 N 份卡——而卡内消息的 name 完全相同，
+    # 归属必须由这里补上（见文件头部 `_STYLE_EXAMPLE_NAME` 那段注释）。
+    merge_cards = len(speakers) > 1
     messages: list[dict[str, str]] = []
     for npc_id in speakers:
         block = prompts.get(npc_id.casefold()) or ()
+        # 边界卡懒插入：这份卡一条可保留消息都没有时不插，免得出现
+        # 一张指向空卡的分隔卡（角色卡取不到时会走到这里）。
+        boundary = (
+            _participant_card_boundary(
+                npc_id, display_name_by_id.get(npc_id.casefold(), "")
+            )
+            if merge_cards
+            else None
+        )
         for message in block:
             if not isinstance(message, Mapping):
                 continue
@@ -182,7 +278,14 @@ def build_group_messages(
             }
             name = message.get("name")
             if isinstance(name, str) and name:
+                # 语气样例必须标明归属：它和别的参与者的样例在同一个数组里，
+                # 而 name 在此前是完全相同的（BUG-1 的成因）。
+                if name == _STYLE_EXAMPLE_NAME:
+                    name = _style_example_name(npc_id)
                 entry["name"] = name
+            if boundary is not None:
+                messages.append(boundary)
+                boundary = None
             messages.append(entry)
     messages.append(
         {
