@@ -295,10 +295,18 @@ _LIFE_FACET_PATTERNS: tuple[tuple[str, str], ...] = (
     ("爱好或消遣", r"音乐|乐队|吉他|舞蹈|摄影|照片|游戏|阅读|书|探险|滑板|摩托|手工|编织|瑜伽|散步"),
 )
 
-# 判定"同一个生活面连续出现"的回看轮数。取 2 是刻意的：用户实测的重复发生在
-# **第 4 与第 5 轮**，即连续两轮同面就已经不可接受（旧文案允许"最多连续两次"，
-# 恰好放过了这个 case）。
-_FACET_LOOKBACK = 2
+# 判定"同一个生活面反复出现"的窗口与阈值（2026-09-21 二次，用户拍板）。
+#
+# 原实现是「最近 2 轮**取交集**」——只有**连续两轮**落在同一面才判重复。用户实测
+# 的问题不止于连续：他嫌的是「内容永远围着'创作／手艺'这一轴」（索菲亚＝画／酒、
+# 埃琳娜＝写作）。「提了 → 换开 → 又提」这种形状下，相邻两轮的交集是空的，旧窗口
+# 一次都不触发，手艺轴照样以 2/3 的密度占位。
+#
+# 现在改成「最近 ``_FACET_LOOKBACK`` 轮里同一面出现 ``≥ _FACET_REPEAT_THRESHOLD``
+# 次」：连续两轮**仍然命中**（回归不变），隔一轮再提也命中。判定至少需要
+# ``_FACET_REPEAT_THRESHOLD`` 轮历史——一轮无从谈"出现过两次"。
+_FACET_LOOKBACK = 3
+_FACET_REPEAT_THRESHOLD = 2
 
 
 def _facet_hits(text: object) -> set[str]:
@@ -330,6 +338,32 @@ def _facet_of_topic(topic: object) -> str | None:
     return None
 
 
+def narrow_topic_pool(
+    preferred_topics: object = None,
+    banned_facet: object = None,
+) -> list[str]:
+    """落点池**排除被禁生活面**后的那一份（2026-09-21 二次）。
+
+    槽位说「不要再出现工作面」而 `roleGuidance` 的 `{topicPool}` 还列着「酒窖里
+    这一批新酿」——两层并排就是"一紧一松、取最松"，正是本文件记过三次的形状。
+    收窄之后「槽位禁什么」与「guidance 还列什么」不可能再打架。
+
+    降级：过滤后为空（该角色素材**全部**落在被禁面）时返回空列表，调用方据此退回
+    `_DEFAULT_TOPIC_POOL_PHRASE` 的不点名说法。**不能**退回原始列表——那等于把
+    被禁面又写回 prompt；更不能留下空占位符（"落点在之间轮换"是读不通的指令）。
+    """
+
+    topics = [
+        item.strip()
+        for item in (preferred_topics if isinstance(preferred_topics, (list, tuple)) else ())
+        if isinstance(item, str) and item.strip()
+    ]
+    banned = str(banned_facet).strip() if banned_facet is not None else ""
+    if not banned:
+        return topics
+    return [topic for topic in topics if _facet_of_topic(topic) != banned]
+
+
 def rotation_topic_slot(
     preferred_topics: object = None,
     *,
@@ -338,8 +372,8 @@ def rotation_topic_slot(
     """按最近轮次的落点算一个「本轮必须换面」的硬槽位；不需要换时返回空 dict。
 
     ``recent_replies`` 是**时间正序**的 NPC 回复文本（调用方从 history 里取 assistant 项）。
-    只有"最近 ``_FACET_LOOKBACK`` 轮都落在同一个生活面"时才产出槽位 —— 平时零成本，
-    不进 prompt。
+    只有"最近 ``_FACET_LOOKBACK`` 轮里同一个生活面出现 ``_FACET_REPEAT_THRESHOLD``
+    次以上"时才产出槽位 —— 平时零成本，不进 prompt。
     """
 
     replies = [
@@ -347,11 +381,19 @@ def rotation_topic_slot(
         for item in (recent_replies if isinstance(recent_replies, (list, tuple)) else ())
         if isinstance(item, str) and item.strip()
     ][-_FACET_LOOKBACK:]
-    if len(replies) < _FACET_LOOKBACK:
+    if len(replies) < _FACET_REPEAT_THRESHOLD:
         return {}
 
     per_reply = [_facet_hits(item) for item in replies]
-    repeated = set.intersection(*per_reply) if per_reply else set()
+    # **计数**而不是取交集：一句话常同时命中"工作"与"天气"，取交集要求两轮都命中
+    # 同一面，隔一轮的形状直接漏掉（见 `_FACET_LOOKBACK` 的注释）。
+    counts: dict[str, int] = {}
+    for facets in per_reply:
+        for facet in facets:
+            counts[facet] = counts.get(facet, 0) + 1
+    repeated = {
+        facet for facet, count in counts.items() if count >= _FACET_REPEAT_THRESHOLD
+    }
     if not repeated:
         return {}
 
@@ -372,19 +414,39 @@ def rotation_topic_slot(
         key=lambda facet: (topic_facets.count(facet), -facet_order.get(facet, 0)),
     )
 
-    # 建议去哪个面：优先该角色**自己素材里就有**、且最近没用过的面。
+    # 建议去哪个面：优先该角色**自己素材里就有**、最近没用过、且不与禁令同面的那一条。
+    #
+    # 降级（2026-09-21 二次）：候选为空时不再直接放弃，而是退一步 —— 允许回到最近几轮
+    # 用过、但**没有被禁**的面。用户点名的"隔一轮提同一件事"形状下，素材只覆盖两个面
+    # 的角色（索菲亚＝工作／镇上）会让 `used` 立刻等于它的全部素材面，旧写法于是**每一
+    # 轮**都落进"没有候选"的泛化分支，建议指向它根本没有素材的面（吃喝、天气、家人…）
+    # ——"换到空的"比不换更差。禁令只针对 `banned` 这一面，回到别的面并不违规。
     used = set().union(*per_reply) if per_reply else set()
-    candidates = [
-        (topic, _facet_of_topic(topic))
-        for topic in topics
-        if _facet_of_topic(topic) and _facet_of_topic(topic) not in used
-    ]
-    suggested_topic = candidates[0][0] if candidates else ""
-    suggested_facet = candidates[0][1] if candidates else ""
 
+    def _pick(allow_used: bool) -> tuple[str, str]:
+        for topic in topics:
+            facet = _facet_of_topic(topic)
+            if not facet or facet == banned:
+                continue
+            if not allow_used and facet in used:
+                continue
+            return topic, facet
+        return "", ""
+
+    suggested_topic, suggested_facet = _pick(allow_used=False)
+    if not suggested_topic:
+        suggested_topic, suggested_facet = _pick(allow_used=True)
+
+    # 措辞两处按新窗口调整：
+    # ① "最近N轮都在谈" → "最近N轮里有M轮在谈"：窗口 3、阈值 2 之后不再是"每轮都"；
+    # ② 补一句**玩家点名豁免**。索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的
+    #    酒、酒窖、喝一口等当前对象」——不加这句，禁令会对玩家自己抛出的对象下封口令，
+    #    等于把"两层打架"从一个地方搬到另一个地方。压的是 NPC **主动**选落点。
     instruction = (
-        f"最近{len(replies)}轮都在谈「{banned}」这一面；本轮不要再出现这一面的对象、"
-        f"动作或说法（换一个物件、换一个时段，或换个说法讲同一件事都不算换）。"
+        f"最近{len(replies)}轮里有{counts.get(banned, 0)}轮在谈「{banned}」这一面；"
+        f"本轮不要再出现这一面的对象、动作或说法（玩家本轮自己点名的对象仍要接住，"
+        f"但接住之后不要由你往这一面延伸；换一个物件、换一个时段，"
+        f"或换个说法讲同一件事都不算换）。"
     )
     if suggested_topic:
         instruction += (

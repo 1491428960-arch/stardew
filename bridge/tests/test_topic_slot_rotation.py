@@ -7,11 +7,14 @@
 
 * `rotation_topic_slot(preferred_topics, recent_replies=...)` 读最近
   `_FACET_LOOKBACK` 轮 NPC 回复，用 `_LIFE_FACET_PATTERNS` 匹配落点簇；
-  **同一个面连着两轮**就把该面列为硬禁用，并从该角色自己的素材里挑一条
-  **不同面**的作为指定项；
+  **最近 3 轮里同一面出现 ≥2 次**就把该面列为硬禁用，并从该角色自己的素材里挑一条
+  **不同面**的作为指定项（2026-09-21 二次：原口径是"连续两轮"，见第 6 节）；
 * 只在触发时产出，其余轮次零成本（字段不进 prompt）；
 * 单一层级：只点名被禁的那一面 + 一个可去的面，不留第二个可比对象
-  （`stage_policy` 里记过两次"两个层级 → 模型挑最松读法"的教训）。
+  （`stage_policy` 里记过两次"两个层级 → 模型挑最松读法"的教训）；
+* 2026-09-21 二次：槽位算在 `build_stage_policy` **之前**，被禁面同时从
+  `{topicPool}` 里摘掉 —— 否则"slot 说别谈酒、guidance 还列着酒"又是一次
+  "一紧一松、取最松"（第 7、8 节）。
 
 本文件另外钉住三个**容易假通过**的点：
 
@@ -34,7 +37,11 @@ import pytest
 
 from stardew_ai_bridge.stage_policy import (
     _LIFE_FACET_PATTERNS,
+    CONVERSATION_LEAD_TRIAL_NPC_IDS,
     _facet_of_topic,
+    build_stage_policy,
+    canonical_npc_id,
+    narrow_topic_pool,
     rotation_topic_slot,
 )
 
@@ -57,6 +64,18 @@ MIXED_REPLIES = [
 ]
 SOPHIA_TOPICS = ["酒窖里这一批新酿", "画布上还没画完的那一块",
                  "镇上今天谁在广场上吵", "她刚搬来镇上时住的那间旧房子"]
+
+TOWN_REPLIES = [
+    "今天广场上有人在吵架，围了一圈人。",
+    "镇上的集市比平时热闹，我逛了一圈。",
+]
+WEATHER_REPLIES = ["外面一直在下雨，我就坐在窗边看了会儿。"]
+EATING_REPLIES = ["我刚煮了一锅汤，还烤了面包。"]
+HOBBY_REPLIES = ["晚上弹了会儿吉他，又翻了几页书。"]
+
+# 隔一轮提同一件事：相邻两轮**从不同面**出发。
+# 旧窗口（最近两轮取交集）在这个形状上**一次都不触发** —— 正是用户点名的代价场景。
+ALTERNATING_REPLIES = [BREW_REPLIES[0], TOWN_REPLIES[0], BREW_REPLIES[1]]
 
 
 def _payload(npc: str, history: list[dict[str, str]], mods: list[str]) -> dict:
@@ -349,3 +368,252 @@ def test_rewritten_topics_keep_the_guidance_within_the_compact_limit(
     assert len(guidance) <= 240, f"{npc_id} 的 roleGuidance 有 {len(guidance)} 字"
     for topic in _preferred_topics(npc_id):
         assert topic in guidance, topic
+
+
+# --- 6. 窗口收紧：最近 3 轮里同一面出现 ≥2 次（2026-09-21 二次，用户拍板） ----
+#
+# 用户嫌的不是"连续"本身，而是「内容永远围着'创作／手艺'这一轴」（索菲亚＝画／酒、
+# 埃琳娜＝写作）。旧口径（最近两轮取交集）只看得见连续：`[酒, 镇上, 酒]` 上相邻两轮
+# 交集为空，**一次都不触发**，手艺轴照样以 2/3 的密度占位。
+
+
+def test_slot_fires_when_the_same_facet_repeats_within_three_turns() -> None:
+    """隔一轮提同一件事也要命中 —— 这是本次收紧要拿下的形状。"""
+
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=ALTERNATING_REPLIES)
+
+    assert slot["bannedFacet"] == "工作或手艺"
+    assert "3轮里有2轮" in slot["instruction"]
+
+
+def test_healthy_rotation_never_fires() -> None:
+    """代价闸：每轮都换面的写法不许被误伤 —— 收紧不能变成"为换而换"。"""
+
+    assert rotation_topic_slot(
+        SOPHIA_TOPICS,
+        recent_replies=[BREW_REPLIES[0], TOWN_REPLIES[0], WEATHER_REPLIES[0]],
+    ) == {}
+    assert rotation_topic_slot(
+        SOPHIA_TOPICS,
+        recent_replies=[EATING_REPLIES[0], HOBBY_REPLIES[0], WEATHER_REPLIES[0]],
+    ) == {}
+
+
+def test_two_turns_are_enough_to_judge_and_one_is_not() -> None:
+    """阈值 2 的边界：两轮同面就要判（回归不变），一轮无从谈"出现过两次"。"""
+
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
+
+    assert slot["bannedFacet"] == "工作或手艺"
+    assert "2轮里有2轮" in slot["instruction"]
+    assert rotation_topic_slot(SOPHIA_TOPICS, recent_replies=[BREW_REPLIES[0]]) == {}
+
+
+def test_window_only_looks_at_the_three_most_recent_turns() -> None:
+    """更早的重复必须滑出窗口，否则一次重复会把槽位永久卡住。"""
+
+    replies = BREW_REPLIES + [
+        TOWN_REPLIES[0],
+        WEATHER_REPLIES[0],
+        EATING_REPLIES[0],
+    ]
+
+    assert rotation_topic_slot(SOPHIA_TOPICS, recent_replies=replies) == {}
+
+
+def test_instruction_spares_the_object_the_player_named() -> None:
+    """禁令只压 NPC **主动**选落点。
+
+    索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的酒、酒窖、喝一口等当前
+    对象」——不加豁免，两条硬指令会在同一张卡里互相封口，等于把"两层打架"搬个位置。
+    """
+
+    instruction = rotation_topic_slot(
+        SOPHIA_TOPICS, recent_replies=BREW_REPLIES
+    )["instruction"]
+
+    assert "玩家本轮自己点名的对象仍要接住" in instruction
+    assert "不要由你往这一面延伸" in instruction
+
+
+def test_suggestion_falls_back_to_a_used_but_unbanned_facet() -> None:
+    """降级：首选"最近没用过"的面被用光时，退到"至少不与禁令同面"的素材上。
+
+    素材只覆盖两面的角色（索菲亚＝工作／镇上）在交替对话里，`used` 会等于它的全部
+    素材面。旧写法此时**每一轮**都落进"没有候选"的泛化分支，建议指向它根本没有素材
+    的面（吃喝、天气、家人…）——"换到空的"比不换更差。禁令只针对 `banned` 这一面，
+    回到别的面并不违规。
+    """
+
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=ALTERNATING_REPLIES)
+
+    assert slot["suggestedTopic"] in SOPHIA_TOPICS
+    # 确实用了一条"最近出现过"的面的素材，也就是降级分支真的生效了
+    assert _facet_of_topic(slot["suggestedTopic"]) == "镇上或邻里"
+    assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
+
+
+# --- 7. 落点池收窄：拿掉被禁面 -----------------------------------------------
+
+
+def test_narrow_topic_pool_drops_the_banned_facet() -> None:
+    narrowed = narrow_topic_pool(SOPHIA_TOPICS, "工作或手艺")
+
+    assert narrowed == ["镇上今天谁在广场上吵", "她刚搬来镇上时住的那间旧房子"]
+
+
+def test_narrow_topic_pool_without_a_ban_is_the_original_pool() -> None:
+    assert narrow_topic_pool(SOPHIA_TOPICS, None) == SOPHIA_TOPICS
+    assert narrow_topic_pool(SOPHIA_TOPICS, "") == SOPHIA_TOPICS
+
+
+def test_narrow_topic_pool_returns_empty_when_the_whole_pool_is_banned() -> None:
+    """全被禁光时返回空列表 —— 调用方据此退回不点名的中性说法。
+
+    **不能**退回原始列表：那等于把被禁面又写回 prompt。
+    """
+
+    assert narrow_topic_pool(["酒窖里这一批新酿"], "工作或手艺") == []
+
+
+# --- 8. 端到端：同一张卡里，禁令与落点池必须自洽 -------------------------------
+
+
+def test_banned_facet_disappears_from_the_guidance_of_the_same_card() -> None:
+    """收窄的实质：槽位说"别谈酒和画"，同一张卡的 roleGuidance 就不许再列它们。
+
+    这是本次修的那个 bug —— 修复前 guidance 里四条照旧，槽位在另一处说"别再谈工作
+    面"，两层并排就是"一紧一松、取最松"。
+    """
+
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload("Sophia", _history(BREW_REPLIES), SOPHIA_MODS)
+    context, _ = _build_context(body)
+    card = _card(
+        PromptBuilder().build(context, body["message"], compact=True),
+        "stage_execution_card",
+    )
+    guidance = card["conversationLead"]["roleGuidance"]
+
+    assert card["topicSlot"]["bannedFacet"] == "工作或手艺"
+    assert "酒窖里这一批新酿" not in guidance
+    assert "画布上还没画完的那一块" not in guidance
+    assert "镇上今天谁在广场上吵" in guidance
+
+
+def test_guidance_keeps_the_whole_pool_when_no_slot_fires() -> None:
+    """未触发的轮次必须原样保留四条 —— 收窄只在触发轮生效，不是常态缩池。"""
+
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload(
+        "Sophia",
+        _history([BREW_REPLIES[0], TOWN_REPLIES[0], WEATHER_REPLIES[0]]),
+        SOPHIA_MODS,
+    )
+    context, _ = _build_context(body)
+    card = _card(
+        PromptBuilder().build(context, body["message"], compact=True),
+        "stage_execution_card",
+    )
+    guidance = card["conversationLead"]["roleGuidance"]
+
+    assert "topicSlot" not in card
+    for topic in SOPHIA_TOPICS:
+        assert topic in guidance, topic
+
+
+def test_suggested_topic_is_visible_in_the_same_card() -> None:
+    """同源不变式：槽位点名的方向必须在同一张卡的落点池里看得到。"""
+
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload("Sophia", _history(ALTERNATING_REPLIES), SOPHIA_MODS)
+    context, _ = _build_context(body)
+    card = _card(
+        PromptBuilder().build(context, body["message"], compact=True),
+        "stage_execution_card",
+    )
+    slot = card["topicSlot"]
+    guidance = card["conversationLead"]["roleGuidance"]
+
+    assert slot["suggestedTopic"]
+    assert slot["suggestedTopic"] in guidance
+    # 被禁面的素材条目一条都不许留在池子里（模板里"谈过酿造或绘画"那句是通用轮换
+    # 指令、不是落点池，所以这里只逐条核对**素材**，不整段扫面关键词）。
+    for topic in SOPHIA_TOPICS:
+        if _facet_of_topic(topic) == slot["bannedFacet"]:
+            assert topic not in guidance, topic
+
+
+# --- 9. 素材覆盖：禁掉任一面之后还剩得下东西吗 --------------------------------
+
+
+def _prompt_topics(npc_id: str) -> list[str]:
+    """`_build_context` 真正喂给 stage policy 的那一份 preferredTopics。"""
+
+    from stardew_ai_bridge.prompts import _preferred_topics_for_prompt
+
+    wanted = canonical_npc_id(npc_id).casefold()
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for name, profile in (payload.get("personas") or {}).items():
+            if not isinstance(profile, dict):
+                continue
+            if canonical_npc_id(name).casefold() != wanted:
+                continue
+            voice_style = profile.get("voiceStyle")
+            raw = (
+                voice_style.get("preferredTopics")
+                if isinstance(voice_style, dict)
+                else None
+            )
+            topics = _preferred_topics_for_prompt(raw)
+            if topics:
+                return topics
+    raise AssertionError(f"data/personas 里找不到 {npc_id} 的 preferredTopics")
+
+
+@pytest.mark.parametrize("npc_id", sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS))
+def test_any_banned_facet_still_leaves_a_readable_guidance(npc_id: str) -> None:
+    """换面不能换到"空的"：禁掉任一面后 roleGuidance 仍是一句可读、且不含被禁面的指令。
+
+    素材真被抽空时（该角色所有条目都落在被禁面）由 `_topic_pool_phrase` 的中性说法
+    兜底 —— 可读性保住了，但**不等于**素材够用；真实缺口由下一条哨兵测试记录。
+    """
+
+    topics = _prompt_topics(npc_id)
+    assert topics, npc_id
+
+    for facet, _ in _LIFE_FACET_PATTERNS:
+        narrowed = narrow_topic_pool(topics, facet)
+        guidance = build_stage_policy(
+            npc_id, "dating", preferred_topics=narrowed
+        )["conversationLead"]["roleGuidance"]
+
+        assert guidance.strip(), (npc_id, facet)
+        assert "{topicPool}" not in guidance, (npc_id, facet)
+        for topic in topics:
+            if _facet_of_topic(topic) == facet:
+                assert topic not in guidance, (npc_id, facet, topic)
+
+
+def test_narrow_material_roles_are_recorded() -> None:
+    """素材缺口**哨兵**（记录事实，不是判 bug）：禁「工作或手艺」后剩几条。
+
+    * `Sophia` 的 4 条只有两面（工作或手艺 / 镇上或邻里）→ 剩 2 条，触发轮次的建议
+      方向因此只在"镇上"里挑；
+    * `Alex` 的 4 条里有 3 条落进"工作或手艺"—— 体育词（四分卫、投球、俯卧撑）被同一
+      张正则收编 → 剩 1 条，且那一条不映射任何面（`_facet_of_topic` 返回 `None`），
+      **不能作为建议候选**，于是 Alex 触发时只能走"换到另一个生活面（…）"的泛化降级。
+
+    这是数据层的事：补素材会让这两条断言失败，那时按新数据更新即可。
+    """
+
+    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 2
+    assert len(narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺")) == 1
+    assert _facet_of_topic("职业选手目标，以及后来发现的微不足道的小事") is None

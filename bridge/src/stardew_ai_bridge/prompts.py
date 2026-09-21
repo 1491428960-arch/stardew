@@ -25,6 +25,7 @@ from .speech import (
 from .stage_policy import (
     apply_relationship_event_gate,
     build_stage_policy,
+    narrow_topic_pool,
     rotation_topic_slot,
 )
 from .story_state import build_story_state
@@ -1445,16 +1446,69 @@ class ContextBuilder:
             if isinstance(pool_voice_style, Mapping)
             else None
         )
+
+        # history 先于 `build_stage_policy` 构造（2026-09-21 二次调序）：生活面槽位要读
+        # 最近几轮的 assistant 回复，而槽位必须在 `build_stage_policy` **之前**算出来，
+        # 才能把"排除被禁面后的落点池"喂给 `roleGuidance` 的 `{topicPool}`。
+        # 这一段只依赖 `values`，与 stagePolicy 无耦合，前移不改变任何取值。
+        history_input = values.get("history", values.get("conversationHistory", ())) or ()
+        history: list[dict[str, str]] = []
+        for item in list(history_input)[-_HISTORY_LIMIT:]:
+            if not isinstance(item, Mapping):
+                continue
+            role = item.get("role")
+            content = _remove_secret_labels(_text(item.get("content")))
+            if role in {"user", "assistant"} and content:
+                history_item = {"role": role, "content": content}
+                history_item.update(_history_provenance(item))
+                history.append(history_item)
+
+        # 生活面轮换槽位（2026-09-21）：用户实测「强制做出对话的区分度」。
+        # 落点池（preferredTopics）与 roleGuidance 的轮换指令都只是**语义层软约束**，
+        # 压不过职业轴在词频层与具体性层的双重牵引 —— 索菲亚有 4 条跨簇素材、
+        # 也有动作式轮换指令，仍然连着 6 轮画／酒。这里改成**由代码按最近轮次算出
+        # 本轮该谈哪一面**，作为单一层级的硬槽位交给 `stage_execution_card`。
+        # 只在"最近 `_FACET_LOOKBACK` 轮里同一面出现 ≥2 次"时产出，其余轮次零成本。
+        #
+        # 素材来源是下面那份 `pool_preferred_topics`（与 persona_core 同源），
+        # 不是 `stage_policy` 里的某个键 —— 后者从来没有写过这个键（见
+        # `test_topic_slot_rotation.py` 钉住的第二点）。
+        topic_slot = rotation_topic_slot(
+            pool_preferred_topics,
+            recent_replies=[
+                item["content"]
+                for item in history
+                if item.get("role") == "assistant" and item.get("content")
+            ],
+        )
+
+        # 槽位与 `roleGuidance` 的**唯一层级**（2026-09-21 二次）：槽位说"别再谈工作面"，
+        # 而 `{topicPool}` 还列着「酒窖里这一批新酿」，两层并排就是"一紧一松、取最松"
+        # ——本文件与 `stage_policy` 各记过一次同型教训。这里把被禁面从落点池里摘掉，
+        # 于是"禁止什么"与"还列着什么"不可能再打架。
+        # 降级：摘空时传空列表，`_topic_pool_phrase` 退回不点名的中性说法；
+        # **不退回原始列表**——那等于把被禁面又写回 prompt。
+        pool_for_guidance = narrow_topic_pool(
+            pool_preferred_topics,
+            topic_slot.get("bannedFacet") if topic_slot else None,
+        )
+
         identity["stagePolicy"] = _sanitize_value(
             apply_relationship_event_gate(
                 build_stage_policy(
                     str(npc_id),
                     profile_stage,
-                    preferred_topics=pool_preferred_topics,
+                    preferred_topics=pool_for_guidance,
                 ),
                 relationship_gate.as_prompt_dict(),
             )
         )
+        # 槽位在 `build_stage_policy` 之后才合并进 stagePolicy：注入本身不妨碍
+        # `roleGuidance` 已经用收窄后的池子渲染完成（上面的顺序就是这一点）。
+        if topic_slot:
+            stage_policy_for_slot = dict(identity["stagePolicy"])
+            stage_policy_for_slot["topicSlot"] = topic_slot
+            identity["stagePolicy"] = _sanitize_value(stage_policy_for_slot)
         current_mood = _first_value(values, "currentMood", "current_mood")
         if current_mood is None:
             current_mood = _first_value(state, "currentMood", "current_mood")
@@ -1484,41 +1538,6 @@ class ContextBuilder:
             _first_value(values, "recentFacts", "recent_facts") or (),
             npc_id=str(npc_id),
         )
-
-        history_input = values.get("history", values.get("conversationHistory", ())) or ()
-        history: list[dict[str, str]] = []
-        for item in list(history_input)[-_HISTORY_LIMIT:]:
-            if not isinstance(item, Mapping):
-                continue
-            role = item.get("role")
-            content = _remove_secret_labels(_text(item.get("content")))
-            if role in {"user", "assistant"} and content:
-                history_item = {"role": role, "content": content}
-                history_item.update(_history_provenance(item))
-                history.append(history_item)
-
-        # 生活面轮换槽位（2026-09-21）：用户实测「强制做出对话的区分度」。
-        # 落点池（preferredTopics）与 roleGuidance 的轮换指令都只是**语义层软约束**，
-        # 压不过职业轴在词频层与具体性层的双重牵引 —— 索菲亚有 4 条跨簇素材、
-        # 也有动作式轮换指令，仍然连着 6 轮画／酒。这里改成**由代码按最近轮次算出
-        # 本轮该谈哪一面**，作为单一层级的硬槽位交给 `stage_execution_card`。
-        # 只在"最近两轮落在同一生活面"时产出，其余轮次零成本、字段不进 prompt。
-        #
-        # 素材来源是上面那份 `pool_preferred_topics`（与 persona_core 同源），
-        # 不是 `stage_policy` 里的某个键 —— 后者从来没有写过这个键。
-        if isinstance(identity.get("stagePolicy"), Mapping):
-            stage_policy_for_slot = dict(identity["stagePolicy"])
-            topic_slot = rotation_topic_slot(
-                pool_preferred_topics,
-                recent_replies=[
-                    item["content"]
-                    for item in history
-                    if item.get("role") == "assistant" and item.get("content")
-                ],
-            )
-            if topic_slot:
-                stage_policy_for_slot["topicSlot"] = topic_slot
-            identity["stagePolicy"] = _sanitize_value(stage_policy_for_slot)
 
         context: dict[str, Any] = {
             "npcIdentity": identity,
