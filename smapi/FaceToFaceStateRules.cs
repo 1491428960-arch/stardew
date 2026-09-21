@@ -68,6 +68,60 @@ public static class FaceToFaceStateRules
         return gate.AllowsInteraction;
     }
 
+    /// <summary>
+    /// 这次会话是不是线上频道（<c>channel=remote</c>，人不在同一地点）。
+    /// </summary>
+    public static bool IsRemoteChannel(string? channel)
+    {
+        return string.Equals(
+            channel,
+            ConversationChannel.Remote,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 线上会话开启／结束时，把**面对面**的会话状态收敛回空闲。
+    ///
+    /// 线上刻意不进面对面那套状态机——续聊提问与吻别的前提都是人就在旁边
+    /// （见 <see cref="FaceToFaceConversationCoordinator.TryOpenRemoteChat"/>）。
+    /// 但状态是**跨会话**的字段：一次被打断的面对面会话会把
+    /// <see cref="FaceToFaceState.Composing"/>／<see cref="FaceToFaceState.AwaitingContinuationChoice"/>
+    /// 留在里面，之后任何一次 DialogueBox 或聊天窗关闭都可能把它捡起来，
+    /// 弹出本该只在当面出现的续聊提问。所以线上会话的两端都必须显式收干净。
+    ///
+    /// 亲吻两态原样保留：亲吻动画进行中不该被线上会话打断
+    /// （线上入口本就会在亲吻未消费时拒绝打开）。
+    /// </summary>
+    public static FaceToFaceConversationState EndFaceToFaceSessionForRemote(
+        FaceToFaceConversationState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.State is FaceToFaceState.AwaitingKiss or FaceToFaceState.Kissing
+            ? state
+            : new FaceToFaceConversationState(FaceToFaceState.Idle, null);
+    }
+
+    /// <summary>
+    /// 一次聊天窗关闭（回到世界）之后，要不要弹「要继续聊聊吗？」。
+    ///
+    /// **频道是判定的一部分**：线上会话不进面对面状态机，无论状态里还留着什么、
+    /// 手里还攥着哪位角色，都不弹。此前这里只看 state 与 npc，线上之所以"看起来"
+    /// 不弹，只是因为 <c>OnRemoteChatClosed</c> 恰好把 npc 清了——那条回调只在
+    /// <c>ChatInputMenu.Close()</c>（Esc／「结束」按钮）里被调用，走
+    /// <c>exitThisMenu</c> 一类路径退出时不会触发，npc 于是留着上一位面对面角色，
+    /// 提问照样弹出来。
+    /// </summary>
+    public static bool ShouldOfferContinuationAfterChatClosed(
+        FaceToFaceConversationState state,
+        bool remoteChannelClosed,
+        bool hasSpeaker)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return !remoteChannelClosed &&
+            state.State == FaceToFaceState.AwaitingContinuationChoice &&
+            hasSpeaker;
+    }
+
     public static bool IsSameGameDay(int? rememberedDay, int currentDay)
     {
         return rememberedDay.HasValue && rememberedDay.Value == currentDay;

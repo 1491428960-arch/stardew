@@ -81,6 +81,13 @@ public sealed class FaceToFaceConversationCoordinator
     ///
     /// 刻意**不**进入面对面的状态机：续聊提问与吻别的前提都是人就在旁边。
     /// 关闭后不记续聊目标、不武装亲吻，直接回到世界（名单随时可以再开）。
+    ///
+    /// 「不进状态机」是在**两端**都落实的（<see cref="EndRemoteChatSession"/>）：
+    /// 打开前先把可能残留的面对面中间态收干净，关闭后再收一次。只靠在关闭回调里
+    /// 清 npc 是不够的——那条回调只在 <c>ChatInputMenu.Close()</c> 里触发，
+    /// 走 <c>exitThisMenu</c> 一类路径退出时不会执行，残留的
+    /// <c>AwaitingContinuationChoice</c>＋上一位面对面角色就会把续聊提问弹出来
+    /// （用户实测反馈）。
     /// </summary>
     public bool TryOpenRemoteChat(StardewNpc target)
     {
@@ -90,6 +97,8 @@ public sealed class FaceToFaceConversationCoordinator
         {
             return false;
         }
+
+        EndRemoteChatSession();
 
         Game1.activeClickableMenu = new ChatInputMenu(
             target,
@@ -105,7 +114,18 @@ public sealed class FaceToFaceConversationCoordinator
     private void OnRemoteChatClosed(bool valuableRelationshipRepair)
     {
         _ = valuableRelationshipRepair;
+        EndRemoteChatSession();
+    }
+
+    /// <summary>
+    /// 线上会话的收尾（打开前与关闭后共用同一处实现）：丢掉面对面会话目标，
+    /// 并把状态机收敛回空闲。这样线上既不继承上一次面对面的中间态，
+    /// 也不给下一次留下能弹续聊提问的残留。
+    /// </summary>
+    private void EndRemoteChatSession()
+    {
         npc = null;
+        state = FaceToFaceStateRules.EndFaceToFaceSessionForRemote(state);
     }
 
     public bool TryConsumePendingKiss(Vector2 interactionTile)
@@ -216,11 +236,30 @@ public sealed class FaceToFaceConversationCoordinator
             return;
         }
 
-        if (e.OldMenu is ChatInputMenu && e.NewMenu is null &&
-            state.State == FaceToFaceState.AwaitingContinuationChoice &&
-            npc is not null)
+        // 线上会话退出：一律不进面对面状态机——不弹续聊提问、不武装亲吻，
+        // 并把会话状态收敛回空闲。
+        //
+        // 判据是**刚关掉的那个窗口自己的频道**，不是「关闭回调有没有被调用」：
+        // ChatInputMenu 的 onClosed 只在 Close()（Esc／「结束」按钮）里触发，
+        // 走 exitThisMenu 一类路径退出时不会执行（ModEntry 里就有两处这样退菜单），
+        // 那时 npc 会留着上一位面对面角色，下面那条续聊分支就会拿他弹窗。
+        if (e.NewMenu is null &&
+            e.OldMenu is ChatInputMenu closedChat &&
+            FaceToFaceStateRules.IsRemoteChannel(closedChat.ChatChannel))
         {
-            OfferContinuationChoice(npc);
+            EndRemoteChatSession();
+            return;
+        }
+
+        // 面对面会话退出：照旧问一句要不要继续。
+        if (e.NewMenu is null &&
+            e.OldMenu is ChatInputMenu &&
+            FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+                state,
+                remoteChannelClosed: false,
+                hasSpeaker: npc is not null))
+        {
+            OfferContinuationChoice(npc!);
             return;
         }
 

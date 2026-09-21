@@ -117,6 +117,15 @@ public class ChatInputMenu : IClickableMenu
 
     public string UiHint => uiHint;
 
+    /// <summary>
+    /// 本次会话的频道（<see cref="ConversationChannel"/> 里的取值）。
+    ///
+    /// 关闭回调只有 <c>Action&lt;bool&gt;</c>，频道没有随回调传出去，所以协调器要在
+    /// 窗口还挂在 <c>Game1.activeClickableMenu</c> 上时自己读这里——判定「刚关掉的是
+    /// 哪条频道的会话」不能依赖状态字段的副作用（那条回调并不是每条退出路径都会调）。
+    /// </summary>
+    public string ChatChannel => conversationChannel;
+
     protected StardewNpc Npc => npc;
 
     protected ConversationService Service => conversationService;

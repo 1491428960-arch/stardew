@@ -220,4 +220,154 @@ public sealed class FaceToFaceStateRulesTests
         Assert.False(FaceToFaceStateRules.ShouldObserveDialogueOpened(state));
         Assert.Equal(state, FaceToFaceStateRules.ObserveDialogueClosed(state));
     }
+
+    // ── 线上频道（B26）：不进面对面状态机 ──────────────────────────────────
+    //
+    // 用户实测反馈：「线上聊天退出后不要弹出『继续聊聊』选项，这个是面对面聊天用的」。
+    // 下面这组测试把这条设计钉在**判定**上：频道必须是续聊提问的输入之一，
+    // 而不是靠「关闭回调恰好把 npc 清掉了」这种副作用侥幸不弹。
+
+    /// <summary>
+    /// 线上会话关闭一律不弹 —— 哪怕状态里还留着上次面对面的中间态、
+    /// 手里还攥着一位角色。这正是用户实测到的那条路径。
+    /// </summary>
+    [Fact]
+    public void Remote_chat_never_offers_continuation_even_with_leftover_face_to_face_state()
+    {
+        var leftover = new FaceToFaceConversationState(
+            FaceToFaceState.AwaitingContinuationChoice,
+            "Rasmodia");
+
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+            leftover,
+            remoteChannelClosed: true,
+            hasSpeaker: true));
+    }
+
+    /// <summary>面对面会话照旧：同一种关闭，这句提问要弹。</summary>
+    [Fact]
+    public void Face_to_face_chat_still_offers_continuation()
+    {
+        var awaiting = new FaceToFaceConversationState(
+            FaceToFaceState.AwaitingContinuationChoice,
+            "Rasmodia");
+
+        Assert.True(FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+            awaiting,
+            remoteChannelClosed: false,
+            hasSpeaker: true));
+    }
+
+    /// <summary>
+    /// 穷举 6 个状态 × 2 种说话人：**只有**面对面频道可能弹，
+    /// 线上频道在任何组合下都不弹。这是「设计落实到所有路径」的可证伪表述。
+    /// </summary>
+    [Fact]
+    public void Only_the_face_to_face_channel_can_offer_continuation()
+    {
+        foreach (var stateValue in Enum.GetValues<FaceToFaceState>())
+        {
+            foreach (var hasSpeaker in new[] { false, true })
+            {
+                var state = new FaceToFaceConversationState(stateValue, "Rasmodia");
+
+                Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+                    state,
+                    remoteChannelClosed: true,
+                    hasSpeaker: hasSpeaker));
+
+                var expected = stateValue == FaceToFaceState.AwaitingContinuationChoice &&
+                    hasSpeaker;
+                Assert.Equal(
+                    expected,
+                    FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+                        state,
+                        remoteChannelClosed: false,
+                        hasSpeaker: hasSpeaker));
+            }
+        }
+    }
+
+    /// <summary>
+    /// 线上会话的两端都要把面对面状态收敛回空闲：被打断的 Composing／
+    /// AwaitingContinuationChoice 若留着，之后任何一次 DialogueBox 关闭都会
+    /// 经 ObserveDialogueClosed 把它推成那句提问。
+    /// </summary>
+    [Theory]
+    [InlineData(FaceToFaceState.Idle)]
+    [InlineData(FaceToFaceState.VanillaDialogueOpen)]
+    [InlineData(FaceToFaceState.Composing)]
+    [InlineData(FaceToFaceState.AwaitingContinuationChoice)]
+    public void Remote_session_ends_any_face_to_face_state_back_to_idle(
+        FaceToFaceState value)
+    {
+        var ended = FaceToFaceStateRules.EndFaceToFaceSessionForRemote(
+            new FaceToFaceConversationState(value, "Rasmodia"));
+
+        Assert.Equal(FaceToFaceState.Idle, ended.State);
+        Assert.Null(ended.NpcId);
+    }
+
+    /// <summary>
+    /// 亲吻两态不被线上会话打断：亲吻是面对面专属动作，线上入口本就会在
+    /// 亲吻未消费时拒绝打开，所以收敛规则必须原样放过这两态。
+    /// </summary>
+    [Theory]
+    [InlineData(FaceToFaceState.AwaitingKiss)]
+    [InlineData(FaceToFaceState.Kissing)]
+    public void Remote_session_leaves_kiss_states_untouched(FaceToFaceState value)
+    {
+        var state = new FaceToFaceConversationState(value, "Sophia");
+
+        Assert.Equal(state, FaceToFaceStateRules.EndFaceToFaceSessionForRemote(state));
+    }
+
+    /// <summary>
+    /// 端到端（规则层）：面对面聊完留下的「待续聊」中间态，中间插一次线上会话
+    /// 之后不该再弹；同一条序列若不经线上，则照旧要弹。
+    /// </summary>
+    [Fact]
+    public void A_remote_session_in_between_cancels_the_leftover_continuation_prompt()
+    {
+        var afterFaceToFace = FaceToFaceStateRules.ObserveDialogueClosed(
+            new FaceToFaceConversationState(FaceToFaceState.Composing, "Rasmodia"));
+        Assert.Equal(FaceToFaceState.AwaitingContinuationChoice, afterFaceToFace.State);
+
+        // 线上会话两端各收敛一次（打开前 + 关闭后）。
+        var closed = FaceToFaceStateRules.EndFaceToFaceSessionForRemote(
+            FaceToFaceStateRules.EndFaceToFaceSessionForRemote(afterFaceToFace));
+
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+            closed,
+            remoteChannelClosed: true,
+            hasSpeaker: false));
+
+        // 对照组：同样的残留状态，走的若是面对面，提问照弹。
+        Assert.True(FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+            afterFaceToFace,
+            remoteChannelClosed: false,
+            hasSpeaker: true));
+    }
+
+    [Theory]
+    [InlineData(ConversationChannel.Remote, true)]
+    [InlineData(ConversationChannel.FaceToFace, false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void Only_the_remote_channel_id_is_recognized(string? channel, bool expected)
+    {
+        Assert.Equal(expected, FaceToFaceStateRules.IsRemoteChannel(channel));
+    }
+
+    [Fact]
+    public void Remote_chat_open_rejects_a_null_state_guard()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            FaceToFaceStateRules.EndFaceToFaceSessionForRemote(null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+                null!,
+                remoteChannelClosed: false,
+                hasSpeaker: true));
+    }
 }
