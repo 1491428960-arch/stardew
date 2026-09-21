@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace StardewAI.NPC;
 
 /// <summary>
@@ -59,16 +61,82 @@ public static class PrivateChatRosterRules
     public const int ListPadding = 8;
 
     /// <summary>
-    /// 整理名单：过滤无效行、按 ID 去重、算出在场与频道、再排序。
+    /// 名字序用的文化：<c>zh-CN</c>。
     ///
-    /// 排序规则（越靠前越「顺手」）：
-    /// 身边（2.5 格内，按交互键就能续聊的那批）→ 同处一地 → 线上；
-    /// 同一档内按距离由近到远，最后按显示名兜底，保证顺序稳定可复现。
+    /// **中文按拼音排**：ICU（.NET 5+ 在 Windows 上的默认全球化实现）里中文
+    /// （<c>zh</c>／<c>zh-CN</c>）的默认排序规则就是**拼音序**，因此「按首字母排」
+    /// 不需要项目自带一份拼音表——阿(a) &lt; 艾(ai) &lt; 德(de) &lt; 法(fa)……
+    /// 同首字母的人（艾芙琳／艾利欧特／艾米丽）还会继续按全拼排。
+    /// 拉丁字母的名字按该文化下的字母序，且大小写不敏感。
     ///
-    /// 排序决定的是**列表长什么样**；打开时预选哪一行由
-    /// <see cref="DefaultSelectedIndex"/> 决定，两者只有一处会分叉——
-    /// 鼠标正指着某位角色时预选会跟着鼠标走（老 F8 的「鼠标指向优先」），
-    /// 那时选中行可能不在第一行，这是有意的。
+    /// **边界（都是实测过的）**：① 这只在机器上真的带着中文排序数据时成立——进程跑在
+    /// globalization-invariant 模式时会连 <c>zh-CN</c> 都取不到，那时退化为序数比较
+    /// （见 <see cref="CreateNameOrderComparer"/>），顺序仍然稳定可复现，只是中文不再按拼音；
+    /// 游戏与 SMAPI 的 <c>runtimeconfig.json</c> 都没有打开那个开关（已逐个核对），
+    /// 所以游戏里走的是拼音那条路。② 中英混排时两种文字的先后由 ICU 的中文排序规则决定
+    /// （实测汉字在前、拉丁在后）：玩家正常只会看到中文名，这一点只在装了英文名 NPC
+    /// 的 mod 存档里看得见。
+    /// </summary>
+    public const string NameOrderCultureName = "zh-CN";
+
+    private static readonly (StringComparer Comparer, bool UsesPinyin) NameOrder = ResolveNameOrder();
+
+    /// <summary>名字序比较器：中文按拼音、拉丁字母按字母序，且大小写不敏感。</summary>
+    public static IComparer<string> NameOrderComparer => NameOrder.Comparer;
+
+    /// <summary>
+    /// 本机是否**真的**拿到了拼音排序（false = 中文没按拼音排，见 <see cref="NameOrderComparer"/>）。
+    /// 留这个只读开关，是为了让「中文怎么没按拼音排」这类问题一眼可查，测试也据此给出可读的失败原因。
+    /// </summary>
+    public static bool UsesPinyinNameOrder => NameOrder.UsesPinyin;
+
+    /// <summary>
+    /// 把文化翻译成名字序比较器。<paramref name="culture"/> 为 <c>null</c>
+    /// （这台机器上取不到中文排序数据）时退化为序数比较——那是兜底，不是目标口径。
+    /// </summary>
+    public static StringComparer CreateNameOrderComparer(CultureInfo? culture)
+    {
+        return culture is null
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Create(culture, ignoreCase: true);
+    }
+
+    private static (StringComparer Comparer, bool UsesPinyin) ResolveNameOrder()
+    {
+        try
+        {
+            var comparer = CreateNameOrderComparer(
+                CultureInfo.GetCultureInfo(NameOrderCultureName));
+
+            // 「拿到了 zh-CN」不等于「中文按拼音」：ICU 若带着一份缺中文排序数据的库，
+            // zh-CN 会静默退回根排序规则，那时中文就是码位序。拿一对**拼音序与码位序恰好相反**
+            // 的字实测：阿(a) 在 艾(ai) 前 = 拼音序；反过来就是没拿到。
+            // 实测不过时只把这个只读标志报成 false，比较器仍用 ICU 给的那份（总比我们猜一个顺序强）。
+            return (comparer, comparer.Compare("阿", "艾") < 0);
+        }
+        catch (CultureNotFoundException)
+        {
+            // 走到这里说明进程没有全球化数据（InvariantGlobalization）。名单不该因此崩掉：
+            // 退回序数比较，顺序依旧稳定可复现——只是中文不再按拼音。
+            return (CreateNameOrderComparer(null), false);
+        }
+    }
+
+    /// <summary>
+    /// 整理名单：过滤无效行、按 ID 去重、算出在场与频道、再**按名字排序**。
+    ///
+    /// 排序规则（2026-09-21 按用户反馈改定）：**只看名字**——中文按拼音、拉丁字母按字母序、
+    /// 大小写不敏感，显示名完全相同时按 ID 兜底（见 <see cref="NameOrderComparer"/>），
+    /// 于是同一份输入永远得到同一份顺序，名单每次打开都长一个样。
+    ///
+    /// **为什么不再按「身边 → 同处一地 → 线上」分档**：分档的用意是把「最顺手的那位」顶到最前，
+    /// 但名单是给玩家**找人**用的——同一批人的位置会随玩家走到哪儿而变，每次打开都得重找一遍。
+    /// 状态并没有丢：每一行右侧照样标着「身边／同处一地／线上」，点之前仍然知道会发生什么；
+    /// 「顺手的那位」也没有丢：打开时**预选**谁由 <see cref="DefaultSelectedIndex"/> 单独算
+    /// （鼠标指向优先，否则当前地点最近的），它只决定选中行，不影响列表顺序。
+    ///
+    /// 预选行与列表顺序只有一处会分叉——鼠标正指着某位角色时预选会跟着鼠标走
+    /// （老 F8 的「鼠标指向优先」），那时选中行可能不在第一行，这是有意的。
     /// </summary>
     public static IReadOnlyList<PrivateChatRosterEntry> Build(
         IEnumerable<PrivateChatRosterSource>? sources)
@@ -78,7 +146,7 @@ public static class PrivateChatRosterRules
             return Array.Empty<PrivateChatRosterEntry>();
         }
 
-        var rows = new List<(PrivateChatRosterEntry Entry, float Distance)>();
+        var rows = new List<PrivateChatRosterEntry>();
         foreach (var source in sources)
         {
             if (source is null)
@@ -94,30 +162,24 @@ public static class PrivateChatRosterRules
             }
 
             if (rows.Any(row =>
-                    string.Equals(row.Entry.NpcId, npcId, StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(row.NpcId, npcId, StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
 
-            rows.Add((
-                new PrivateChatRosterEntry(
-                    npcId,
-                    displayName,
-                    source.IsPresent,
-                    IsNearby(source.IsPresent, source.DistanceInTiles),
-                    ResolveChannel(source.IsPresent),
-                    source.DistanceInTiles,
-                    source.IsInteractionTarget),
-                SortDistance(source.DistanceInTiles)));
+            rows.Add(new PrivateChatRosterEntry(
+                npcId,
+                displayName,
+                source.IsPresent,
+                IsNearby(source.IsPresent, source.DistanceInTiles),
+                ResolveChannel(source.IsPresent),
+                source.DistanceInTiles,
+                source.IsInteractionTarget));
         }
 
         return rows
-            .OrderByDescending(row => row.Entry.IsNearby)
-            .ThenByDescending(row => row.Entry.IsPresent)
-            .ThenBy(row => row.Distance)
-            .ThenBy(row => row.Entry.DisplayName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(row => row.Entry.NpcId, StringComparer.OrdinalIgnoreCase)
-            .Select(row => row.Entry)
+            .OrderBy(row => row.DisplayName, NameOrderComparer)
+            .ThenBy(row => row.NpcId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 
@@ -146,8 +208,8 @@ public static class PrivateChatRosterRules
     ///
     /// 候选都来自 <see cref="KnownNpcResolver"/>，即**都已经有好感度记录**，
     /// 所以那条记录过滤在这里恒成立；不在当前地点的行由规则自己排除。
-    /// 当前地点一个人都挑不出来时返回 0 —— 名单已按「身边 → 同处一地 → 线上」排序，
-    /// 第 0 行就是最顺手的那位线上角色。
+    /// 当前地点一个人都挑不出来时返回 0 —— 名单按名字排，第 0 行是名字最靠前的那位
+    /// （不在同一地点的行距离一律取不到，本来就分不出远近，所以退回首行不会漏掉更「顺手」的人）。
     /// </summary>
     public static int DefaultSelectedIndex(IReadOnlyList<PrivateChatRosterEntry>? entries)
     {
@@ -208,7 +270,7 @@ public static class PrivateChatRosterRules
     /// 允许回应当面反应。同处一地的角色玩家随时能走到跟前，所以算见面；
     /// 不同地点只能是线上。
     ///
-    /// 距离只影响排序与「身边」标记，不参与这条判定——否则站在屋子另一头
+    /// 距离只影响「身边」标记与打开名单时预选谁，不参与这条判定——否则站在屋子另一头
     /// 就会莫名其妙被降级成线上聊天。
     /// </summary>
     public static string ResolveChannel(bool isPresent)
@@ -301,18 +363,5 @@ public static class PrivateChatRosterRules
         return rowIndex > lastVisible
             ? ChatScrollRules.ClampStartIndex(rowIndex - visibleCapacity + 1, maxStart)
             : start;
-    }
-
-    /// <summary>
-    /// 排序用的距离：取不到距离的行一律排到最后，而不是当成 0 排到最前
-    /// （否则一个「不知道在哪」的角色会插到身边的人前面）。
-    /// </summary>
-    private static float SortDistance(float distanceInTiles)
-    {
-        return float.IsNaN(distanceInTiles) ||
-            float.IsInfinity(distanceInTiles) ||
-            distanceInTiles < 0f
-            ? float.MaxValue
-            : distanceInTiles;
     }
 }

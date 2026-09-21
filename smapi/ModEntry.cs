@@ -961,8 +961,8 @@ public sealed class ModEntry : Mod
         var character = Game1.getCharacterFromName(known.NpcId);
         if (character is null)
         {
-            // 取不到角色对象（还没进过场等）：给一个取不到的距离，
-            // 由规则层统一排到列表后段，而不是当成 0 挤进「身边」那一档。
+            // 取不到角色对象（还没进过场等）：给一个取不到的距离。它**不影响排序**
+            // （名单按名字排），但这个人不会被算成「身边」，也不会成为打开名单时的预选行。
             return new PrivateChatRosterSource(
                 known.NpcId,
                 known.DisplayName,

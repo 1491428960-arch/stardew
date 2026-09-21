@@ -80,8 +80,8 @@ public sealed class PrivateChatRosterSelectionTests
     }
 
     /// <summary>
-    /// 当前地点一个人都没有时退回第 0 行：名单已按「身边 → 同处一地 → 线上」排好，
-    /// 第一行就是最顺手的那位线上角色，不需要第二条兜底规则。
+    /// 当前地点一个人都没有时退回第 0 行：名单按名字排，第一行就是名字最靠前的那位，
+    /// 不需要第二条兜底规则（不在同一地点的人距离一律取不到，本来就分不出远近）。
     /// </summary>
     [Fact]
     public void Falls_back_to_the_first_row_when_nobody_is_in_the_current_location()
@@ -91,6 +91,27 @@ public sealed class PrivateChatRosterSelectionTests
             Source("Emily", isPresent: false, distanceInTiles: float.MaxValue));
 
         Assert.Equal(0, PrivateChatRosterRules.DefaultSelectedIndex(roster));
+    }
+
+    /// <summary>
+    /// 排序改成按名字之后，「预选谁」与「谁排第一」彻底分家：最近的那位在名字序里
+    /// 排在最后一行时，打开名单预选的仍然是他——玩家按回车进的是眼前这个人，
+    /// 而不是名字最靠前的那位。
+    /// </summary>
+    [Fact]
+    public void Preselection_is_independent_of_the_name_order_of_the_list()
+    {
+        var roster = Roster(
+            Source("Abigail", isPresent: true, distanceInTiles: 20f),
+            Source("Emily", isPresent: true, distanceInTiles: 15f),
+            Source("Marnie", isPresent: true, distanceInTiles: 1f));
+
+        Assert.Equal(
+            new[] { "Abigail", "Emily", "Marnie" },
+            roster.Select(entry => entry.NpcId));
+        Assert.Equal(
+            "Marnie",
+            roster[PrivateChatRosterRules.DefaultSelectedIndex(roster)].NpcId);
     }
 
     [Fact]
