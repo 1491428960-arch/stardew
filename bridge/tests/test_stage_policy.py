@@ -150,11 +150,14 @@ def test_sophia_conversation_lead_guidance_connects_current_object_to_small_plan
     「**前半句**保留玩家点名的对象和数量」。删掉「核心」不是放宽——新措辞把
     「保留什么」限定在了句子的位置（前半句）上，比原来的形容词更可执行；
     「接住对象」这个意图由本条继续钉住。
+
+    2026-09-23：句首的举例（"酒、酒窖、喝一口等"）为腾 `roleGuidance` 的 240 字
+    预算删掉了 —— 同一约束已由 `topicSlot.playerAnchor` 逐字承担。
     """
 
     guidance = build_stage_policy("Sophia", "dating")["conversationLead"]["roleGuidance"]
 
-    assert "先明确接住玩家点名的酒、酒窖、喝一口等当前对象" in guidance
+    assert "先明确接住玩家点名的当前对象" in guidance
     assert "前半句保留玩家点名的对象和数量" in guidance
     assert "再写因玩家而产生的个人感受" in guidance
     assert "最后给一个具体、可商量的小安排" in guidance
@@ -216,7 +219,10 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
         assert topic in guidance, topic
     assert "画布上还没画完的那一块" in guidance  # 创作方向
     assert "镇上今天谁在广场上吵" in guidance  # 跨簇：镇上方向
-    assert "她刚搬来镇上时住的那间旧房子" in guidance  # 跨簇：新开始方向
+    # 2026-09-23：这条由「她刚搬来镇上时住的那间旧房子」（镇上或邻里）改写为
+    # 「记得刚搬来那阵子住的那间旧房子」（**过去的回忆**）—— 原话内容不变，只是
+    # 不再带"镇上"字样，于是它成为全库**唯一**一条覆盖"过去的回忆"的素材。
+    assert "记得刚搬来那阵子住的那间旧房子" in guidance  # 跨簇：回忆方向
     assert "同一类最多连续两次" not in guidance  # 四轮：两层表述已换成动作式
     assert "谈过酿造或绘画" in guidance  # 被压的两个簇要点名
     assert "下一轮就换到镇上的事或她自己的近况" in guidance  # 出口要给死

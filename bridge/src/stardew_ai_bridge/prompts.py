@@ -2707,7 +2707,20 @@ def _compact_energy_profile(value: object) -> dict[str, str]:
 # 2026-09-21 由 3 提到 4：索菲亚的第 4 类「安全感与新开始」是全 prompt 里唯一的
 # 非酒非画方向，却在 `persona_core` 这一步就被砍掉，而 roleGuidance 又要求她
 # 在四类之间轮换——典型的「两份数据各写各的」。提到 4 之后数据源的 4 条全部可见。
-_PREFERRED_TOPICS_LIMIT = 4
+#
+# 2026-09-23 由 4 提到 **6**，与素材层拍板的「每角色 4~6 条」对齐。
+#
+# 起因是素材缺口审计的目标："索菲亚/埃琳娜 补到 5 个生活面"。而**5 个面至少要 5~6 条
+# 素材**（现有素材里有重复面的条目），4 条上限下第 5、6 条根本进不了 prompt ——
+# 于是 `rotation_topic_slot` 的 `_pick` 会从 6 条里挑，`roleGuidance` 的 `{topicPool}`
+# 也由 6 条渲染，而 `persona_core` 只给模型看前 4 条：**"要求落 A 而 A 看不见"**
+# 这个坑会以新形式复活。两个数（素材条数上限、prompt 可见条数上限）从此对齐。
+#
+# 提到 6 对**其余角色零影响**：43 个角色的 `preferredTopics` 都只有 3~4 条，
+# 没有一条被新增可见。回归由
+# `test_topic_slot_rotation.py::test_preferred_topics_fit_the_prompt_limit` 钉住
+# （逐角色断言条数 ≤ 本常量，超了就是"写了也白写"）。
+_PREFERRED_TOPICS_LIMIT = 6
 
 
 def _preferred_topics_for_prompt(value: object) -> list[str]:

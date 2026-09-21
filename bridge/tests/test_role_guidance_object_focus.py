@@ -134,7 +134,9 @@ def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
     # 2026-09-21 六轮（批次 4b）：这两条素材本身已从抽象元类目
     # （「小镇日常」「安全感与新开始」）改写成可落座的具体物，断言跟着换词。
     assert "镇上今天谁在广场上吵" in guidance
-    assert "她刚搬来镇上时住的那间旧房子" in guidance
+    # 2026-09-23：这条素材改写成落"过去的回忆"面（原字面「她刚搬来镇上时住的那间
+    # 旧房子」判"镇上或邻里"）—— 内容不变，去掉"镇上"字样后成为全库唯一一条回忆面素材。
+    assert "记得刚搬来那阵子住的那间旧房子" in guidance
 
 
 def test_no_role_guidance_asks_the_model_to_narrate_a_process() -> None:

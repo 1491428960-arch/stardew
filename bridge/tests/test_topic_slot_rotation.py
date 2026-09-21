@@ -63,8 +63,20 @@ MIXED_REPLIES = [
     "刚把酒窖里的橡木桶擦了一遍。",
     "外面下雨了，我就在窗边坐了会儿。",
 ]
+# 索菲亚的 `preferredTopics`，与 `data/personas/sve.json` **逐字一致**
+# （由 `test_pilot_topics_match_the_data_source` 钉住，防止两边各自演化）。
+# 2026-09-23：从 2 面 4 条补到 **5 面 6 条**（第 4 条由"镇上"改写为"过去的回忆"，
+# 另加吃喝、爱好两条），让她在每个被禁面上都还有落点可去。
 SOPHIA_TOPICS = ["酒窖里这一批新酿", "画布上还没画完的那一块",
-                 "镇上今天谁在广场上吵", "她刚搬来镇上时住的那间旧房子"]
+                 "镇上今天谁在广场上吵", "记得刚搬来那阵子住的那间旧房子",
+                 "加了桦树糖浆的爆米花食谱", "窝在毯子里看电视"]
+
+# **只覆盖两个面**的素材形状 —— `_pick(allow_used=False)` 选空后退到"用过但未被禁"
+# 那一级（降级分支）的回归用例。用 2026-09-23 之前的索菲亚素材，因为那正是缺口
+# 角色的样子（补素材之后她本人已经不再走这条分支，见
+# `test_sophia_no_longer_needs_the_fallback_branch`）。
+NARROW_ROLE_TOPICS = ["酒窖里这一批新酿", "画布上还没画完的那一块",
+                      "镇上今天谁在广场上吵", "她刚搬来镇上时住的那间旧房子"]
 
 TOWN_REPLIES = [
     "今天广场上有人在吵架，围了一圈人。",
@@ -115,14 +127,17 @@ def test_slot_bans_the_repeated_facet_and_names_another_one() -> None:
 
     2026-09-22：禁令的**说法**换成"别再以这一面做新的落点"，并在它前面加了一句
     「先接住上一轮的具体东西、从它拉一根线过去」（用户抱怨的"硬拐"）。
-    断言跟着换成新句；「禁什么 + 去哪一面」这两半本身没变。
+    2026-09-23：**禁令改成范例**（用户拍板"减约束、给示例"）——「换物件／换时段／
+    换个说法都不算换」这份反例清单换成一个可照抄的句式（"手上这件先这样……对了，
+    说起来"）。断言跟着换到新句；「禁什么 + 去哪一面」这两半本身没变。
     """
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert "别再以这一面做新的落点" in slot["instruction"]
-    assert "都不算换" in slot["instruction"]  # 「换物件/换时段/换个说法」都不算
+    assert "这一面本轮先搁着" in slot["instruction"]
+    assert "不要以同一面另起一件事" in slot["instruction"]
+    assert "像这样换" in slot["instruction"]  # 范例式，不再是反例清单
     assert slot["suggestedFacet"] == "镇上或邻里"
     assert slot["suggestedTopic"] in SOPHIA_TOPICS
     assert slot["suggestedFacet"] != slot["bannedFacet"]
@@ -243,7 +258,7 @@ def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
     assert slot["bannedFacet"] == "工作或手艺"
     assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
     blob = json.dumps(messages, ensure_ascii=False)
-    assert "别再以这一面做新的落点" in blob
+    assert "这一面本轮先搁着" in blob
 
 
 def test_slot_reaches_the_provider_through_the_http_route(
@@ -313,8 +328,8 @@ def test_without_the_slot_the_prompt_never_tells_the_model_to_stop(
         PromptBuilder().build(context, body["message"], compact=True), ensure_ascii=False
     )
 
-    assert "别再以这一面做新的落点" in with_slot
-    assert "别再以这一面做新的落点" not in without_slot
+    assert "这一面本轮先搁着" in with_slot
+    assert "这一面本轮先搁着" not in without_slot
     assert "topicSlot" in with_slot and "topicSlot" not in without_slot
     # 关掉机制后，"酒" 仍然在 prompt 里（素材与 roleGuidance 都还在）——
     # 也就是说旧版**没有任何东西**阻止模型继续谈酒。
@@ -363,15 +378,58 @@ def test_rewritten_topics_are_concrete_objects_not_meta_categories(npc_id: str) 
     ("npc_id", "expected"),
     [
         ("Sophia", ["酒窖里这一批新酿", "画布上还没画完的那一块",
-                    "镇上今天谁在广场上吵", "她刚搬来镇上时住的那间旧房子"]),
+                    "镇上今天谁在广场上吵", "记得刚搬来那阵子住的那间旧房子",
+                    "加了桦树糖浆的爆米花食谱", "窝在毯子里看电视"]),
         ("Elliott", ["卡住的那一段稿子", "海风里退潮后的那片沙滩",
-                     "手边正在读的那本书", "你上次提到的那个地方"]),
+                     "手边正在读的那本书", "你上次提到的那个地方",
+                     "不想老了以后做个孤独的隐士"]),
     ],
 )
 def test_试点两人的素材已改写(npc_id: str, expected: list[str]) -> None:
-    """用户点名的两组改写（只在这两人身上试点，其余角色等效果）。"""
+    """用户点名的两组改写（只在这两人身上试点，其余角色等效果）。
+
+    2026-09-23：目标从"能落座的具体物"提到"**补到 5 个生活面**"——
+    索菲亚 2 面 → 5 面（加吃喝、爱好，并把"旧房子"那条由"镇上"改写为"过去的回忆"，
+    那是全库唯一一条覆盖"过去的回忆"的素材），埃琳娜 4 面 → 5 面（加"自己的状态"）。
+    两人都停在 6/5 条，不超过素材层的"每角色 4~6 条"。
+    """
 
     assert _preferred_topics(npc_id) == expected
+
+
+@pytest.mark.parametrize(
+    ("npc_id", "expected_facets"),
+    [
+        ("Sophia", {"工作或手艺", "镇上或邻里", "过去的回忆", "吃喝", "爱好或消遣"}),
+        ("Elliott", {"工作或手艺", "天气季节", "爱好或消遣", "玩家自己", "自己的状态或烦恼"}),
+    ],
+)
+def test_试点两人的素材覆盖到五个生活面(npc_id: str, expected_facets: set[str]) -> None:
+    """**本轮的目标本身**（审计报告的缺口：全库没有一个人到 5 面）。
+
+    面数不够的后果不是"素材少"，而是**换面一换就撞回原地**：索菲亚原先只有
+    工作 / 镇上两面，槽位一旦禁掉工作面，`_pick` 只剩镇上可挑，第三轮就穷尽 ——
+    机制只能靠规则硬压（用户体感"只聊画"的直接来源）。
+    """
+
+    got = {_facet_of_topic(topic) for topic in _preferred_topics(npc_id)}
+    assert got == expected_facets, f"{npc_id} 的面覆盖变了：{sorted(got)}"
+
+
+def test_pilot_topics_match_the_data_source() -> None:
+    """测试里那份 `SOPHIA_TOPICS` 必须与 `data/personas/sve.json` **逐字一致**。
+
+    本条防的是"两边各自演化"：素材改了而常量没跟上，`rotation_topic_slot` 那一批
+    用例就会在**另一份数据**上跑，测的却不是线上真正喂进去的东西 ——
+    与 b307388 那次「要求落 A，而 A 不在 prompt 里」同型。
+    """
+
+    assert _preferred_topics("Sophia") == SOPHIA_TOPICS
+    # 降级用例的素材形状必须仍是"只覆盖两面"，否则那条用例测不到降级分支
+    assert {_facet_of_topic(topic) for topic in NARROW_ROLE_TOPICS} == {
+        "工作或手艺",
+        "镇上或邻里",
+    }
 
 
 @pytest.mark.parametrize(
@@ -447,8 +505,8 @@ def test_window_only_looks_at_the_three_most_recent_turns() -> None:
 def test_player_anchor_is_a_standalone_hard_constraint() -> None:
     """禁令只压 NPC **主动**选落点；玩家点名的对象必须接住 —— 且这是**硬约束**。
 
-    索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的酒、酒窖、喝一口等当前
-    对象」——不加豁免，两条硬指令会在同一张卡里互相封口，等于把"两层打架"搬个位置。
+    索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的当前对象」——不加豁免，
+    两条硬指令会在同一张卡里互相封口，等于把"两层打架"搬个位置。
 
     2026-09-22：豁免从 instruction 的**括号从句**升成 `topicSlot` 的**一级字段**
     `playerAnchor`。旧写法是「别再以这一面做新的落点（玩家本轮自己点名的对象仍要
@@ -456,6 +514,9 @@ def test_player_anchor_is_a_standalone_hard_constraint() -> None:
     语气上是提醒，模型很容易在"本轮由你主动把话头换一次"这条主线下面读成可选项。
     而它是"方向盘在玩家手里"的**唯一**措辞层保障：代码层的撤回只在"玩家点的正好是
     被禁那一面"时生效，玩家点名别的面时全靠这一条。
+
+    2026-09-23：上面那句 `roleGuidance` 里的举例（"酒、酒窖、喝一口等"）为腾 240 字
+    预算删掉了 —— 它本来就是 `playerAnchor` 的第二份措辞。豁免本身一个字没动。
     """
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
@@ -465,8 +526,9 @@ def test_player_anchor_is_a_standalone_hard_constraint() -> None:
     assert "顺着聊" in slot["playerAnchor"]
     # 升成独立字段之后，instruction 里不再有那段括号从句（不留第二份措辞）
     assert "玩家本轮自己点名的对象仍要接住" not in slot["instruction"]
-    # 但禁令本身一个字都不许少
-    assert "别再以这一面做新的落点" in slot["instruction"]
+    # 但禁令本身一个字都不许少（2026-09-23：说法换成范例，意图断言保持不变）
+    assert "这一面本轮先搁着" in slot["instruction"]
+    assert "不要以同一面另起一件事" in slot["instruction"]
 
 
 def test_player_anchor_is_unconditional() -> None:
@@ -489,27 +551,61 @@ def test_player_anchor_is_unconditional() -> None:
 def test_suggestion_falls_back_to_a_used_but_unbanned_facet() -> None:
     """降级：首选"最近没用过"的面被用光时，退到"至少不与禁令同面"的素材上。
 
-    素材只覆盖两面的角色（索菲亚＝工作／镇上）在交替对话里，`used` 会等于它的全部
-    素材面。旧写法此时**每一轮**都落进"没有候选"的泛化分支，建议指向它根本没有素材
-    的面（吃喝、天气、家人…）——"换到空的"比不换更差。禁令只针对 `banned` 这一面，
-    回到别的面并不违规。
+    素材只覆盖两面的角色在交替对话里，`used` 会等于它的全部素材面。旧写法此时
+    **每一轮**都落进"没有候选"的泛化分支，建议指向它根本没有素材的面（吃喝、天气、
+    家人…）——"换到空的"比不换更差。禁令只针对 `banned` 这一面，回到别的面并不违规。
+
+    2026-09-23：素材换成 `NARROW_ROLE_TOPICS`（**只覆盖两面**的形状）—— 索菲亚本人
+    补到 5 面之后已经不走这条分支了，但缺口角色还在走，降级逻辑必须继续有人守。
     """
 
-    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=ALTERNATING_REPLIES)
+    slot = rotation_topic_slot(NARROW_ROLE_TOPICS, recent_replies=ALTERNATING_REPLIES)
 
-    assert slot["suggestedTopic"] in SOPHIA_TOPICS
+    assert slot["suggestedTopic"] in NARROW_ROLE_TOPICS
     # 确实用了一条"最近出现过"的面的素材，也就是降级分支真的生效了
     assert _facet_of_topic(slot["suggestedTopic"]) == "镇上或邻里"
     assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
+
+
+def test_sophia_no_longer_needs_the_fallback_branch() -> None:
+    """补素材的**直接效果**：同一场景下她不再退到"用过但未被禁"的面。
+
+    两轮落在工作面之后（`used` = {工作或手艺}），5 面素材里有的是**没被用过、
+    也不与禁令同面**的候选 —— 槽位因此给出一个真正的新方向（"过去的回忆"），
+    而不是"换个说法说镇上"。这正是"素材补上去，规则减下来"要拿到的形状：
+    换面不再靠降级兜底，而是有地方可去。
+    """
+
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
+
+    assert slot["suggestedFacet"] == "镇上或邻里"  # 第一轮：镇上没被用过
+    assert _facet_of_topic(slot["suggestedTopic"]) != slot["bannedFacet"]
+
+    # 交替场景（used = {工作或手艺, 镇上或邻里}）里也不会退到泛化分支
+    alternating = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=ALTERNATING_REPLIES)
+
+    assert alternating["suggestedTopic"] in SOPHIA_TOPICS
+    assert alternating["suggestedFacet"] not in {"工作或手艺", "镇上或邻里"}
+    assert "换到另一个生活面（" not in alternating["instruction"]
 
 
 # --- 7. 落点池收窄：拿掉被禁面 -----------------------------------------------
 
 
 def test_narrow_topic_pool_drops_the_banned_facet() -> None:
+    """禁工作面之后，她**剩下 4 条**（镇上 1 + 回忆 1 + 吃喝 1 + 爱好 1）。
+
+    改前是 2 条 —— 这个数字就是"换面时还有多少地方可去"的度量。回归哨兵在下一条。
+    """
+
     narrowed = narrow_topic_pool(SOPHIA_TOPICS, "工作或手艺")
 
-    assert narrowed == ["镇上今天谁在广场上吵", "她刚搬来镇上时住的那间旧房子"]
+    assert narrowed == [
+        "镇上今天谁在广场上吵",
+        "记得刚搬来那阵子住的那间旧房子",
+        "加了桦树糖浆的爆米花食谱",
+        "窝在毯子里看电视",
+    ]
 
 
 def test_narrow_topic_pool_without_a_ban_is_the_original_pool() -> None:
@@ -655,8 +751,9 @@ def test_any_banned_facet_still_leaves_a_readable_guidance(npc_id: str) -> None:
 def test_narrow_material_roles_are_recorded() -> None:
     """素材缺口**哨兵**（记录事实，不是判 bug）：禁「工作或手艺」后剩几条。
 
-    * `Sophia` 的 4 条只有两面（工作或手艺 / 镇上或邻里）→ 剩 2 条，触发轮次的建议
-      方向因此只在"镇上"里挑；
+    * `Sophia`：2026-09-23 补到 5 面 6 条之后，禁工作面**剩 4 条**（改前是 2 条）。
+      这个数字是"换面时还有多少地方可去"的直接度量 —— 2 条意味着第三轮就穷尽，
+      机制只能退回泛化降级；
     * `Alex` 的缺口**已关闭**（2026-09-21 三次拆面，见第 10 节）：他的 4 条里原本有 3 条
       落进"工作或手艺"—— 体育词（四分卫、投球、俯卧撑）被 `四分卫|投球|俯卧撑|训练|运动`
       这一段正则收编，禁工作面后只剩一条不映射任何面的素材（`_facet_of_topic` 返回
@@ -664,12 +761,46 @@ def test_narrow_material_roles_are_recorded() -> None:
       运动词归位到"爱好或消遣"之后，他名下已经**没有任何工作面条目**，禁工作面等于不
       收窄，候选回到 3 条。
 
-    这是数据层的事：补素材会让这两条断言失败，那时按新数据更新即可。
+    这是数据层的事：补素材会让这两条断言失败，那时按新数据更新即可（本次 Sophia
+    那一行就是这么更新的）。
     """
 
-    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 2
+    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 4
     assert narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺") == _prompt_topics("Alex")
     assert _facet_of_topic("职业选手目标，以及后来发现的微不足道的小事") is None
+
+
+def test_preferred_topics_fit_the_prompt_limit() -> None:
+    """**素材条数上限 = prompt 可见条数上限**（2026-09-23 提到 6 之后的新不变式）。
+
+    `persona_core` 只写 `_PREFERRED_TOPICS_LIMIT` 条，而 `{topicPool}` / 槽位的
+    `_pick` 读的是**截断后**的同一份 —— 两边同源。于是条数超上限的**唯一**后果是：
+    第 N+1 条素材永远不会被点名，而它在 json 里看得见、在候选人表里也算"已补"。
+    那是"写了也白写"，且**不会报错**。这条哨兵把它变成一条会红的断言。
+
+    素材层的口径是"每角色 4~6 条"（够换面即可；池子太长会稀释，也会挤爆
+    `roleGuidance` 的 240 字）。
+    """
+
+    from stardew_ai_bridge.prompts import _PREFERRED_TOPICS_LIMIT
+
+    assert _PREFERRED_TOPICS_LIMIT == 6
+
+    offenders = {}
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for name, profile in (payload.get("personas") or {}).items():
+            voice_style = (profile or {}).get("voiceStyle")
+            topics = (
+                voice_style.get("preferredTopics") if isinstance(voice_style, dict) else None
+            )
+            if topics and len(topics) > _PREFERRED_TOPICS_LIMIT:
+                offenders[f"{path.name}:{name}"] = len(topics)
+
+    assert offenders == {}, (
+        f"这些角色的素材条数超过 prompt 可见上限（第 {_PREFERRED_TOPICS_LIMIT + 1} 条起"
+        f"永远不会被选中）：{offenders}"
+    )
 
 
 # --- 10. 2026-09-21 三次：运动词归位（Alex 的素材缺口关闭） -------------------

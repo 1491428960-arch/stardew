@@ -80,11 +80,21 @@ def _rendered_guidance(npc_id: str) -> str:
 
 
 def test_variation_rule_allows_continuation_but_bans_two_in_a_row() -> None:
+    """规则本身不变，**说法**从"三个不算换"换成"一个可感知的判据"（2026-09-23）。
+
+    旧句把"不算换"枚举三遍（换物件 / 换时段 / 换个说法），与紧跟其后的"才算换"
+    是同一件事的一反一正两遍 —— 用户要的方向是"减约束、给示例"，所以反例清单换成
+    读者视角的判据（"读起来还是同一件事"），两个正例（从酿造换到…、从写作换到…）
+    原文保留。跨面这条硬要求仍在首句。
+    """
+
     rule = _lead("Harvey", "married")["variationRule"]
 
     assert "允许继续承接当前话题" in rule
     assert "同一个生活面不允许连续两轮出现" in rule
-    assert "只换物件、只换时段，或用另一种说法讲同一件事，都不算换" in rule
+    assert "像这样换" in rule  # 正例示范保留
+    assert "只在同一面里挪动物件、时段或说法，读起来还是同一件事" in rule
+    assert "都不算换" not in rule  # 反例清单已删
 
 
 def test_variation_rule_has_no_looser_second_copy() -> None:

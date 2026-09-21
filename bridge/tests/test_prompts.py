@@ -1766,17 +1766,18 @@ def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:
     guidance = json.loads(card["content"])["conversationLead"]["roleGuidance"]
 
     assert "{topicPool}" not in guidance
-    # 四类都要在（措辞取自 data/personas/sve.json，不是硬编码的第二份）。
+    # 数据源里的**每一类**都要在（措辞取自 data/personas/sve.json，不是硬编码的第二份）。
     # 2026-09-21 六轮（批次 4b）：素材本身已从**抽象元类目**改写成**可落座的具体物**
     # （「小镇日常」→「镇上今天谁在广场上吵」、「安全感与新开始」→
     # 「她刚搬来镇上时住的那间旧房子」），所以这条的断言也跟着换词 ——
     # 它验的是"渲染结果 = 数据源"，不是某几个固定的词。
-    for topic in (
-        "酒窖里这一批新酿",
-        "画布上还没画完的那一块",
-        "镇上今天谁在广场上吵",
-        "她刚搬来镇上时住的那间旧房子",
-    ):
+    # 2026-09-23：断言改成**直接读数据源**。本轮素材补到 6 条时它红过一次，原因正是
+    # 那份硬编码清单**本身就是第二份数据** —— 与 docstring 声明的口径相反。
+    source = json.loads(
+        (PERSONAS_DIR / "sve.json").read_text(encoding="utf-8")
+    )["personas"]["Sophia"]["voiceStyle"]["preferredTopics"]
+    assert source, "数据源读空了"
+    for topic in source:
         assert topic in guidance, topic
 
 
