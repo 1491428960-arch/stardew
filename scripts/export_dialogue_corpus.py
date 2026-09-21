@@ -27,6 +27,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="已解包的 Content/Data/Events JSON 根目录",
     )
     parser.add_argument(
+        "--vanilla-extra-dialogue-root",
+        type=Path,
+        help=(
+            "已解包的 Content/Data/ExtraDialogue JSON 所在目录（通常就是 "
+            "Content (unpacked)/Data）；同目录树的 Data/Characters.json 与 "
+            "Strings/NPCNames.<locale>.json 用来判定每个键的说话人"
+        ),
+    )
+    parser.add_argument(
         "--mod-root",
         type=Path,
         action="append",
@@ -52,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     corpus = build_dialogue_corpus(
         vanilla_root=args.vanilla_root,
         vanilla_events_root=args.vanilla_events_root,
+        vanilla_extra_dialogue_root=args.vanilla_extra_dialogue_root,
         mod_roots=args.mod_root,
         locale=args.locale,
         vanilla_locale=args.locale,

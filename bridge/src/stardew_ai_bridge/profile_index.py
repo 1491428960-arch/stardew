@@ -369,6 +369,7 @@ class ProfileIndexBuilder:
         corpus_paths: Iterable[str | Path] = (),
         vanilla_root: str | Path | None = None,
         vanilla_events_root: str | Path | None = None,
+        vanilla_extra_dialogue_root: str | Path | None = None,
         vanilla_locale: str | None = None,
         runtime_sample_paths: Iterable[str | Path] = (),
         locale: str = "zh-CN",
@@ -408,7 +409,11 @@ class ProfileIndexBuilder:
         for root_value in mod_roots:
             root = Path(root_value)
             self._load_mod_root(index, root, locale=locale)
-        if vanilla_root is not None or vanilla_events_root is not None:
+        if (
+            vanilla_root is not None
+            or vanilla_events_root is not None
+            or vanilla_extra_dialogue_root is not None
+        ):
             from .corpus import build_dialogue_corpus
 
             self._merge_corpus_payload(
@@ -416,6 +421,7 @@ class ProfileIndexBuilder:
                 build_dialogue_corpus(
                     vanilla_root=vanilla_root,
                     vanilla_events_root=vanilla_events_root,
+                    vanilla_extra_dialogue_root=vanilla_extra_dialogue_root,
                     vanilla_locale=vanilla_locale,
                 ),
             )

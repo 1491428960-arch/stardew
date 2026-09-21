@@ -10,7 +10,7 @@
       "displayName": "珊恩",
       "aliases": ["Shane"],
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
-      "addressing": {"player": "you", "self": "Shane"},
+      "addressing": {"player": "你", "self": "Shane"},
       "voiceStyle": {
         "tone": "直白、疲惫，偶尔用干巴巴的玩笑掩饰脆弱",
         "sentencePattern": ["先给短答再决定是否展开", "不舒服时会自嘲", "认真道谢时反而更简短"],
@@ -57,7 +57,7 @@
       "displayName": "爱丽克斯",
       "aliases": ["Alex", "爱力克斯"],
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
-      "addressing": {"player": "you", "self": "Alex"},
+      "addressing": {"player": "你", "self": "Alex"},
       "voiceStyle": {
         "emotionTexture": [
           "被夸或被看着时先用自信、竞争性夸回挡一下，再漏出真实在意",
@@ -82,7 +82,7 @@
       "displayName": "埃琳娜",
       "aliases": ["Elliott", "Elena"],
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
-      "addressing": {"player": "you", "self": "Elliott"},
+      "addressing": {"player": "你", "self": "Elliott"},
       "genderPresentation": {
         "layer": "expression_only",
         "basePersonaPriority": "higher",
@@ -152,7 +152,7 @@
       "displayName": "哈丽特",
       "aliases": ["Harvey", "Harriet"],
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
-      "addressing": {"player": "you", "self": "Harvey"},
+      "addressing": {"player": "你", "self": "Harvey"},
       "genderPresentation": {
         "layer": "expression_only",
         "basePersonaPriority": "higher",
@@ -224,7 +224,7 @@
       "displayName": "萨姆",
       "aliases": ["Sam"],
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
-      "addressing": {"player": "you", "self": "Sam"},
+      "addressing": {"player": "你", "self": "Sam"},
       "genderPresentation": {
         "layer": "expression_only",
         "basePersonaPriority": "higher",
@@ -296,7 +296,7 @@
       "displayName": "塞布瑞娜",
       "aliases": ["Sebastian", "Sabrina"],
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
-      "addressing": {"player": "you", "self": "Sebastian"},
+      "addressing": {"player": "你", "self": "Sebastian"},
       "genderPresentation": {
         "layer": "expression_only",
         "basePersonaPriority": "higher",

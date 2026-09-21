@@ -44,6 +44,15 @@ def _parser() -> argparse.ArgumentParser:
         help="已解包的 vanilla Data/Events JSON 根目录",
     )
     parser.add_argument(
+        "--vanilla-extra-dialogue-root",
+        type=Path,
+        help=(
+            "已解包的 vanilla Data/ExtraDialogue JSON 所在目录（通常就是 "
+            "Content (unpacked)/Data）；同目录树的 Data/Characters.json 与 "
+            "Strings/NPCNames.<locale>.json 用来判定每个键的说话人"
+        ),
+    )
+    parser.add_argument(
         "--vanilla-locale",
         help="原版对白语言后缀，例如 zh-CN；未指定时保留所有语言文件",
     )
@@ -82,6 +91,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.vanilla_root is not None and not args.vanilla_root.is_dir():
         print(f"vanilla root not found: {args.vanilla_root}", file=sys.stderr)
         return 2
+    if (
+        args.vanilla_extra_dialogue_root is not None
+        and not args.vanilla_extra_dialogue_root.is_dir()
+    ):
+        print(
+            "vanilla extra dialogue root not found: "
+            f"{args.vanilla_extra_dialogue_root}",
+            file=sys.stderr,
+        )
+        return 2
     missing_runtime_samples = [path for path in args.runtime_samples if not path.is_file()]
     if missing_runtime_samples:
         for path in missing_runtime_samples:
@@ -93,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         corpus_paths=args.corpus,
         vanilla_root=args.vanilla_root,
         vanilla_events_root=args.vanilla_events_root,
+        vanilla_extra_dialogue_root=args.vanilla_extra_dialogue_root,
         vanilla_locale=args.vanilla_locale,
         runtime_sample_paths=args.runtime_samples,
     )

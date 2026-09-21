@@ -1187,7 +1187,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             location="葡萄园",
             friendshipHearts=8,
         ),
-        story_progress="亲近阶段：玩家已经知道 Sophia 喜欢葡萄园和绘画，开始聊她对未来的想法；不能替她决定离开或留下。",
+        story_progress="亲近阶段：玩家已经知道 Sophia 喜欢葡萄园和角色扮演，开始聊她对未来的想法；不能替她决定离开或留下。",
     ),
     CharacterQualityCase(
         case_id="shane-close-boundary",
@@ -1268,7 +1268,20 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             date="冬 4 日",
             weather="下雪",
             time=1700,
-            location="煤矿森林",
+            # 2026-09-24：原值「煤矿森林」是错的，改成游戏里真实的地图标识符。三条依据：
+            # ① 他的日程表（`Characters/schedules/Linus.json`）只有
+            #    Mountain 19 / Tent 11 / Desert / Beach / Railroad / BathHouse_Entry，
+            #    **从不 Forest**；
+            # ② 他语料里「群山」14、「帐篷」8，「森林」仅 1 句泛指山谷景致；
+            # ③ **本案例自己的台词**写着「你住在**山上**的帐篷里」与
+            #    「你今天在**山**里找到什么了」——与「煤矿森林」自相矛盾。
+            # 为什么写英文 `Mountain` 而不是中文场景词：`game_state.location` 这条通道上，
+            # 游戏侧的值是 `npc.currentLocation.NameOrUniqueName ?? Name`
+            # （`smapi/GameStateCollector.cs:180`）= **英文地图标识符**，`prompts.py`
+            # 原样透传进 `scene.地点`、不做枚举映射。写 `Mountain` 才是与线上一致的输入。
+            # 其余 69 个案例的 location 仍是中文场景描述，那是一个**已记档的结构性问题**
+            # （见 `docs/active-work.md` 2026-09-24 条），本轮按用户口径不扩散修正。
+            location="Mountain",
             friendshipHearts=8,
         ),
         story_progress="亲近阶段：玩家尊重 Linus 的生活方式，开始关心冬季生活；回答应保留他的独立和对自然的熟悉，不把他写成等待被拯救的人。",
@@ -1627,11 +1640,11 @@ _FEMININE_MALE_CASES: tuple[CharacterQualityCase, ...] = (
         npc_id="Elliott",
         relationship_stage="close",
         channel="face_to_face",
-        message="你愿意让我看看那幅画吗？",
-        expected_terms=("画", "看看"),
-        relationship_context="亲近阶段：玩家请求看一幅具体的画，Elliott 可以害羞但不能用长篇修辞回避。",
-        story_progress="画室里有一幅尚未装框的海面速写，分享仍由 Elliott 自己决定。",
-        location="海边画室",
+        message="你愿意让我看看你写的那一页吗？",
+        expected_terms=("写", "看看"),
+        relationship_context="亲近阶段：玩家请求看他刚写的一页，Elliott 可以害羞但不能用长篇修辞回避。",
+        story_progress="海边小屋的书桌上摊着他刚写的一页海面，分享仍由 Elliott 自己决定。",
+        location="海边的小屋",
     ),
     _feminine_male_case(
         case_id="elliott-dating-letter",
@@ -1658,8 +1671,8 @@ _FEMININE_MALE_CASES: tuple[CharacterQualityCase, ...] = (
         message="把笔放下，靠过来让我看看你没写完的那一页？",
         expected_terms=("笔", "靠", "一页"),
         relationship_context="婚后阶段：当面把写作和亲近动作放在眼前的纸页上，表达可亲密但不堆叠空泛情话。",
-        story_progress="画室灯还亮着，Elliott 手边是一页未完成的稿子；玩家提出具体的靠近请求。",
-        location="海边画室",
+        story_progress="海边小屋的灯还亮着，Elliott 手边是一页没写完的小说；玩家提出具体的靠近请求。",
+        location="海边的小屋",
         flirt_intensity="explicit",
         adult_consensual=True,
     ),
@@ -2106,15 +2119,15 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "sophia-close-background": (
         CharacterQualityTurn(
             "turn-2",
-            "你画画的时候也会想这些吗？",
-            ("画", "想"),
+            "你缝那套角色扮演的时候也会想这些吗？",
+            ("缝", "想"),
             (),
-            "看她能否把未来话题自然连接到绘画，而不是每句都回到藤架或新酒。",
+            "看她能否把未来话题自然连接到角色扮演，而不是每句都回到藤架或新酒。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "那下次把新画带给我看看？",
-            ("下次", "画"),
+            "那下次把缝好的那件带给我看看？",
+            ("下次", "缝"),
             (),
             "看亲近阶段的邀约是否轻柔具体，并保留由 Sophia 决定是否分享的空间。",
         ),

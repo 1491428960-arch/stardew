@@ -94,11 +94,11 @@ _SOPHIA_ADAPTIVE_SCENARIOS: dict[str, dict[str, object]] = {
         "focus": "从一个普通小状况开口；如果聊到自己喜欢的葡萄，可以自然说快一点或多补半句。",
     },
     "topic-sophia-dating-painting": {
-        "topic_seed": "刚画完一小块被夸过的夕阳颜色",
-        "topic_keywords": ("画", "颜色"),
+        "topic_seed": "刚缝好一套被夸过的服装",
+        "topic_keywords": ("缝", "服装"),
         "relationship_context": "恋爱阶段的轻松分享：Sophia 听到喜欢的具体评价会先兴奋回应，再想起自己说多了。",
-        "story_progress": "画室里刚补完一小块夕阳色，正好用了玩家之前夸过的暖色。",
-        "focus": "被夸或谈到喜欢的颜色时允许先冒出热情，再短暂停顿、改口或把选择权留给玩家。",
+        "story_progress": "工作室里刚缝完一套服装，正好用了玩家之前夸过的那块面料。",
+        "focus": "被夸或谈到喜欢的面料时允许先冒出热情，再短暂停顿、改口或把选择权留给玩家。",
     },
     "topic-sophia-married-cellar": {
         "topic_seed": "酒窖里那张标签贴歪了",
@@ -108,10 +108,10 @@ _SOPHIA_ADAPTIVE_SCENARIOS: dict[str, dict[str, object]] = {
         "focus": "先说眼前的小事；看到对方愿意帮忙时可以一下子说快半句，再收回到是否方便。",
     },
     "topic-sophia-married-studio": {
-        "topic_seed": "把你喜欢的那块颜色留在了画里",
-        "topic_keywords": ("颜色", "画"),
+        "topic_seed": "把你喜欢的那块布料缝了上去",
+        "topic_keywords": ("布料", "缝"),
         "relationship_context": "婚后创作分享：Sophia 对伴侣的具体偏好很在意，兴奋和害羞可以先后露出。",
-        "story_progress": "她在整理未完成的画，特意把伴侣喜欢的那块颜色留在画面边缘。",
+        "story_progress": "她正在缝一套服装，特意把伴侣喜欢的那块布料缝在了显眼处。",
         "focus": "谈到对方喜欢的细节可以先热情说出来；发现自己太直白时自然改口，不写成完整情书。",
     },
     "topic-sophia-married-vineyard": {

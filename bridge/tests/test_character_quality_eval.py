@@ -2856,7 +2856,10 @@ def test_deep_flirt_player_inputs_are_natural_and_role_specific() -> None:
 
     role_context_markers = {
         "deep-flirt-wizard-married": ("星尘", "声音", "法师塔"),
-        "deep-flirt-sophia-married": ("葡萄酒", "画", "甜香"),
+        # 2026-09-24：Sophia 的「画」随人设一起换成「角色扮演」（SVE 查证：她的创作面
+        # 是角色扮演／缝纫，不是画画）。这条断言的用途是"玩家台词要带该角色的具体
+        # 纹理"，所以换成她 18 处原话里的核心词，而不是把标记放宽。
+        "deep-flirt-sophia-married": ("葡萄酒", "角色扮演", "甜香"),
         "deep-flirt-shane-dating": ("鸡舍", "收拾", "陪"),
         "deep-flirt-sebastian-married": ("鼓点", "音乐", "合成器"),
         "deep-flirt-alex-married": ("练球", "训练", "看我"),

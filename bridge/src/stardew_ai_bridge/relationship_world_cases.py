@@ -370,7 +370,7 @@ RELATIONSHIP_WORLD_CASES: tuple[CharacterQualityCase, ...] = (
             views=(_view("Sophia", "Shane", "known", source="player_statement"),),
             mediation={"status": "active"},
         ),
-        relationship_context="Sophia 已参加公开婚礼，知道婚姻事实；她仍偏好稳定的一对一，需要围绕陪伴、酒窖和画室里的相处方式协商。",
+        relationship_context="Sophia 已参加公开婚礼，知道婚姻事实；她仍偏好稳定的一对一，需要围绕陪伴、酒窖和工作室里的相处方式协商。",
         story_progress="远程婚后消息里提出新的恋爱关系；Sophia 要求先把眼前的陪伴说清楚，不要求主角否认政策。",
         topic_seed="婚后陪伴协商",
         topic_keywords=("婚礼", "陪伴", "酒窖"),

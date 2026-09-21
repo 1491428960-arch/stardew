@@ -217,14 +217,19 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     # 本轮改的正是"词"，钉词会让这条测试变成"素材不能改"的反向闸。
     for topic in topics:
         assert topic in guidance, topic
-    assert "画布上还没画完的那一块" in guidance  # 创作方向
+    # 2026-09-24：创作方向那条由「画布上还没画完的那一块」换成
+    # 「给下一个角色扮演挑的布料」（SVE 里她做的是角色扮演／缝纫，不是绘画；
+    # 面归属仍是「工作或手艺」，「布料」本来就在该面词表里）。
+    assert "给下一个角色扮演挑的布料" in guidance  # 创作方向
     assert "镇上今天谁在广场上吵" in guidance  # 跨簇：镇上方向
     # 2026-09-23：这条由「她刚搬来镇上时住的那间旧房子」（镇上或邻里）改写为
     # 「记得刚搬来那阵子住的那间旧房子」（**过去的回忆**）—— 原话内容不变，只是
     # 不再带"镇上"字样，于是它成为全库**唯一**一条覆盖"过去的回忆"的素材。
     assert "记得刚搬来那阵子住的那间旧房子" in guidance  # 跨簇：回忆方向
     assert "同一类最多连续两次" not in guidance  # 四轮：两层表述已换成动作式
-    assert "谈过酿造或绘画" in guidance  # 被压的两个簇要点名
+    # 2026-09-24：被压的两个簇里「绘画」换成「角色扮演」（SVE 查证见
+    # `test_role_guidance_object_focus.py::test_sophia_persona_stops_claiming_she_paints`）。
+    assert "谈过酿造或角色扮演" in guidance  # 被压的两个簇要点名
     assert "下一轮就换到镇上的事或她自己的近况" in guidance  # 出口要给死
     assert "因为是玩家才愿意分享" in guidance
     assert "{topicPool}" not in guidance  # 占位符不得残留到 prompt 里

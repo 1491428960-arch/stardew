@@ -67,7 +67,11 @@ MIXED_REPLIES = [
 # （由 `test_pilot_topics_match_the_data_source` 钉住，防止两边各自演化）。
 # 2026-09-23：从 2 面 4 条补到 **5 面 6 条**（第 4 条由"镇上"改写为"过去的回忆"，
 # 另加吃喝、爱好两条），让她在每个被禁面上都还有落点可去。
-SOPHIA_TOPICS = ["酒窖里这一批新酿", "画布上还没画完的那一块",
+# 2026-09-24：第 2 条由「画布上还没画完的那一块」换成「给下一个角色扮演挑的布料」——
+# SVE 从没把她设定成画画的（她家「很多布料和油漆」是手工材料，她自称的是
+# 「艺术瓶颈」），她的创作面在原话里是**角色扮演 + 缝纫**。面归属不变（都落
+# 「工作或手艺」，「布料」本就在该面词表里），所以 `expected_facets` 一个字没动。
+SOPHIA_TOPICS = ["酒窖里这一批新酿", "给下一个角色扮演挑的布料",
                  "镇上今天谁在广场上吵", "记得刚搬来那阵子住的那间旧房子",
                  "加了桦树糖浆的爆米花食谱", "窝在毯子里看电视"]
 
@@ -377,7 +381,7 @@ def test_rewritten_topics_are_concrete_objects_not_meta_categories(npc_id: str) 
 @pytest.mark.parametrize(
     ("npc_id", "expected"),
     [
-        ("Sophia", ["酒窖里这一批新酿", "画布上还没画完的那一块",
+        ("Sophia", ["酒窖里这一批新酿", "给下一个角色扮演挑的布料",
                     "镇上今天谁在广场上吵", "记得刚搬来那阵子住的那间旧房子",
                     "加了桦树糖浆的爆米花食谱", "窝在毯子里看电视"]),
         ("Elliott", ["卡住的那一段稿子", "海风里退潮后的那片沙滩",
@@ -689,7 +693,7 @@ def test_suggested_topic_is_visible_in_the_same_card() -> None:
 
     assert slot["suggestedTopic"]
     assert slot["suggestedTopic"] in guidance
-    # 被禁面的素材条目一条都不许留在池子里（模板里"谈过酿造或绘画"那句是通用轮换
+    # 被禁面的素材条目一条都不许留在池子里（模板里"谈过酿造或角色扮演"那句是通用轮换
     # 指令、不是落点池，所以这里只逐条核对**素材**，不整段扫面关键词）。
     for topic in SOPHIA_TOPICS:
         if _facet_of_topic(topic) == slot["bannedFacet"]:

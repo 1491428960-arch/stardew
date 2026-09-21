@@ -36,9 +36,11 @@ from stardew_ai_bridge.stage_policy import (
 SOPHIA_MODS = ["vanilla", "SVE", "FlashShifter.StardewValleyExpandedCP"]
 # 2026-09-23：索菲亚素材补到 5 面 6 条，本常量跟着同步（与
 # `test_topic_slot_rotation.py::SOPHIA_TOPICS` 及 `data/personas/sve.json` 逐字一致）。
+# 2026-09-24：第 2 条由「画布上还没画完的那一块」换成「给下一个角色扮演挑的布料」
+# （SVE 里她的创作面是角色扮演／缝纫，不是绘画；面归属不变，仍在「工作或手艺」）。
 SOPHIA_TOPICS = [
     "酒窖里这一批新酿",
-    "画布上还没画完的那一块",
+    "给下一个角色扮演挑的布料",
     "镇上今天谁在广场上吵",
     "记得刚搬来那阵子住的那间旧房子",
     "加了桦树糖浆的爆米花食谱",

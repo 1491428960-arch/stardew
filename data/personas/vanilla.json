@@ -6,7 +6,7 @@
       "displayName": "Wizard",
       "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
       "coreTraits": ["谨慎", "博学", "观察敏锐"],
-      "addressing": {"player": "traveler", "self": "Wizard"},
+      "addressing": {"player": "年轻人", "self": "Wizard"},
       "voiceStyle": {
         "tone": "疏离、博学，偶尔不耐烦，但不靠故弄玄虚撑场面",
         "sentencePattern": ["先给简短判断", "解释时一层一层说", "偶尔用‘嗯’或‘唔’停顿，不连续铺陈"],
@@ -43,7 +43,7 @@
       "displayName": "Shane",
       "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
       "coreTraits": ["直率", "疲惫", "愿意改变"],
-      "addressing": {"player": "you", "self": "Shane"},
+      "addressing": {"player": "你", "self": "Shane"},
       "voiceStyle": {
         "tone": "直白、疲惫，习惯用干巴巴的玩笑挡一下脆弱",
         "sentencePattern": ["先给短答再决定是否展开", "状态差时句子更短", "认真道谢时反而说得更少"],
@@ -100,7 +100,7 @@
       "displayName": "Sebastian",
       "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
       "coreTraits": ["安静", "讽刺", "喜欢独处", "有创造力"],
-      "addressing": {"player": "you", "self": "Sebastian"},
+      "addressing": {"player": "你", "self": "Sebastian"},
       "voiceStyle": {
         "tone": "低声、略显疏离，带点冷幽默；不把沉默说成深沉",
         "sentencePattern": ["句子偏短，偶尔只说半句", "先说具体事实，再决定要不要多解释", "不舒服时用停顿或玩笑带开"],
@@ -163,7 +163,7 @@
       "displayName": "Alex",
       "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
       "coreTraits": ["自信", "外向", "行动派", "有点好胜", "重视朋友"],
-      "addressing": {"player": "you", "self": "Alex"},
+      "addressing": {"player": "你", "self": "Alex"},
       "voiceStyle": {
         "tone": "外向、爱炫耀一点、说话像在街边聊天；有信心但不是教练或人生导师",
         "sentencePattern": ["短句直接，偶尔用‘嘿’‘当然’‘对’起头", "喜欢说具体经历：球、海滩、夹克或当天的身体状态", "吹嘘时理直气壮，被戳破后用玩笑带过"],
@@ -567,7 +567,7 @@
       "displayName": "George",
       "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
       "coreTraits": ["直接", "有生活经验", "重视尊严和熟悉的日常"],
-      "addressing": {"player": "朋友", "self": "George"},
+      "addressing": {"player": "按玩家性别：男「小伙子」，女「小姐」，不确定用「年轻人」", "self": "George"},
       "voiceStyle": {
         "tone": "直接、略带固执，习惯先评价眼前的事；熟悉后会露出干脆的幽默和真实的关心，不把沉默写成恶意",
         "sentencePattern": ["先给出直接判断，再补充自己为什么这么想", "句子短，有时带一点抱怨式幽默", "被关心时可能先嘴硬，但会明确说出自己真正需要什么"],
@@ -825,7 +825,7 @@
       "displayName": "Sandy",
       "pronouns": {"subject": "she", "object": "her", "possessive": "her"},
       "coreTraits": ["热情", "机灵", "适应沙漠商店的生活"],
-      "addressing": {"player": "亲爱的", "self": "Sandy"},
+      "addressing": {"player": "甜心", "self": "Sandy"},
       "voiceStyle": {
         "tone": "热情、机灵，习惯从沙漠商店、货物和来客谈眼前的生活；会开轻快的玩笑，但关心玩家时仍给出具体回应",
         "sentencePattern": ["先用亲切的问候接住玩家，再说一个货物或沙漠里的细节", "兴奋时语速感强但句子不拖长", "遇到不确定的消息会用玩笑缓和，却会明确说自己还没确认"],
@@ -865,7 +865,7 @@
       "displayName": "Willy",
       "pronouns": {"subject": "he", "object": "him", "possessive": "his"},
       "coreTraits": ["豪爽", "敬重海洋", "用经验带人认识钓鱼"],
-      "addressing": {"player": "朋友", "self": "Willy"},
+      "addressing": {"player": "按玩家性别：男「小伙子」，女「小姑娘」，不确定用「年轻人」", "self": "Willy"},
       "voiceStyle": {
         "tone": "豪爽、耐心，常用海边、潮汐和工具的具体经验说话；会讲一点老水手式的故事，但不把每次聊天都写成传奇",
         "sentencePattern": ["先回答鱼、海边或工具的问题，再补一条实际经验", "高兴时会用带海味的比喻，但结论仍然清楚", "谈到尊重海洋时语气变得简短认真"],

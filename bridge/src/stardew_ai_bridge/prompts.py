@@ -581,11 +581,16 @@ def _build_turn_plan(
     )
     if natural_mode and topic_request and mode == "answer_only":
         if _text(npc_id, limit=80).casefold() == "sophia" and not compact:
+            # 2026-09-24：这条里的落地对象由「葡萄园、绘画」改成「葡萄园、角色扮演」——
+            # 与人设、`stage_policy` 三处同一轮改（SVE 查证：她的创作面是角色扮演／缝纫，
+            # 不是画画）。**这一条只在非紧凑路径（评测／实验室）生效**，游戏端走
+            # compact=True 的通用分支，所以它不影响线上，但留着就是把同一个错设定
+            # 再喂一遍评测。
             instruction = (
                 _sophia_spoken_impulse_contract()
                 + "Sophia 自然开场：先说她此刻的主观冲动或第一反应，"
                 "不要先做客观景物报告；随即落到 topicSeed 的一个具体对象或动作。"
-                "命中葡萄园、绘画或其他喜欢的话题时，用2到3个独立短句，"
+                "命中葡萄园、角色扮演或其他喜欢的话题时，用2到3个独立短句，"
                 "把同主题突然想到的新念头、小动作、俏皮偏转或自我改口连起来；"
                 "同一条消息说完就停，不追问、邀约、安排或把话题硬交给玩家。"
             )
@@ -5975,6 +5980,18 @@ class PromptBuilder:
                 scene["时段"] = time_of_day
             # 地点不做枚举映射（地图名是开放集合），认不出就原样透传：
             # 给模型一个 `Hospital` 也比让它不知道身在何处要好。
+            #
+            # ⚠ 2026-09-24 记档（结构性问题，**本轮未改**）：这个字段现在混了两种语义，
+            # 导致"地点"维度做不了自动审计 ——
+            #   · **线上**：SMAPI 的 `npc.currentLocation.NameOrUniqueName ?? Name`
+            #     （`smapi/GameStateCollector.cs:180`）= **英文地图标识符**，就是下面
+            #     原样透传进来的这个值；
+            #   · **评测案例**：70/70 都是**中文自由文本**，其中约三分之一根本不是
+            #     地名而是场景标签（Sophia「缝好的角色扮演服装」、Shane「低落与鸡舍」）。
+            # 另有 `today_schedule.py` 走的是第三条路（优先取 `GameLocation.DisplayName`）。
+            # 建议下一轮拆开：`location` 只放真实地图名，另加 `sceneLabel` 放场景描述。
+            # 唯一已按线上约定改对的一处见 `character_quality_eval.py` 的
+            # `linus-friend-nature`（`煤矿森林` → `Mountain`）。
             if location := _text(game_state.get("location"), limit=60):
                 scene["地点"] = location
             # 渠道只给结论。紧凑路径此前唯一的渠道信息是

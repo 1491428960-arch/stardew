@@ -46,12 +46,17 @@ import pytest
 
 from stardew_ai_bridge.stage_policy import (
     _CONVERSATION_LEAD_ROLE_GUIDANCE,
+    _ROLE_OVERRIDES,
     build_stage_policy,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 
 _PROCESS_DIRECTIVE = re.compile(r"(从|说|讲|落到|挑)[^。；]{0,24}过程")
+
+# "架上绘画"那一组词（含工序名）。刻意**不含**单字「画」：
+# 索菲亚语料里真实有「我今天早上画了眼线」（化妆），那是她的原话，不是缺陷。
+_PAINTING_NOUNS = re.compile(r"绘画|画画|画布|画架|画笔|画作|画框|颜料|罩光|罩染|打底")
 
 
 def _sophia_preferred_topics() -> list[str]:
@@ -85,7 +90,9 @@ def test_sophia_guidance_lands_on_objects_not_on_a_process() -> None:
     # `test_sophia_rotation_rule_is_action_shaped`。
     # 五轮：触发条件从"连着两轮"收紧到"上一轮"，与新 `variationRule` 的
     # 「不允许连续两轮同面」对齐（旧写法字面允许连着两轮 = 一松一紧取最松）。
-    assert "谈过酿造或绘画" in text
+    # 2026-09-24：被压的两个簇里「绘画」换成「角色扮演」（SVE 查证：她的创作面是
+    # 角色扮演／缝纫，不是画画）。**规则形状一个字没动，只换词**。
+    assert "谈过酿造或角色扮演" in text
     assert "{topicPool}" in text
 
 
@@ -100,11 +107,14 @@ def test_sophia_rotation_rule_is_action_shaped() -> None:
     2026-09-21 五轮：触发条件再收紧一轮 —— 旧句写「连着两轮……第三轮就换」，
     字面**允许连着两轮**，而 `variationRule` 的新上限是「不允许连续两轮同面」。
     两句并排又是一松一紧，模型会挑松的那个读。改成「谈过……下一轮就换」。
+
+    2026-09-24：两个簇的名字由「酿造 / 绘画」改成「酿造 / **角色扮演**」。
+    形状（单层、点名两个簇、出口写死）仍然一字不动。
     """
 
     text = _CONVERSATION_LEAD_ROLE_GUIDANCE["Sophia"]
 
-    assert "谈过酿造或绘画" in text
+    assert "谈过酿造或角色扮演" in text
     assert "下一轮就换到镇上的事或她自己的近况" in text
     # 层级词与旧句式不得回来——它们正是那个出口
     assert "同一类" not in text
@@ -203,6 +213,233 @@ def test_penny_teaching_rule_points_at_classroom_objects(
 
     assert new in joined
     assert old not in joined
+
+
+def test_sophia_persona_stops_claiming_she_paints() -> None:
+    """SVE 查证：她的创作面是**角色扮演／缝纫**，不是画画（2026-09-24）。
+
+    起因是收尾体检（`docs/report-overnight-dialogue-2026-09-23.md` §5.4）：
+    `signatureMoves` 写「谈到酿造、**绘画**」、`preferredTopics` 写
+    「画布上还没画完的那一块」，而她那 265 条语料里含"画"的只有「画了眼线」
+    （化妆）和「你看动画吗」（动漫）。体检当时**没查 SVE 的非对白资源**，
+    本轮补查了 `[CP] Stardew Valley Expanded` 的资产／事件／邮件／地图：
+
+    - **没有画具、没有画室、没有画作相关事件。** 她家 55 条可查看物
+      （`SophiaHouse.1~56`）里没有画架／画布／画，唯一沾"油漆"的是
+      `SophiaHouse.18`「很多**布料和油漆**」—— 与缝纫材料并列的手工耗材。
+    - **她自己的原话里创作＝角色扮演 + 缝纫**：`CharacterDialogue.136`
+      「我在计划我的下一个角色扮演」、`.144`「艾米丽有一台很好的缝纫机」、
+      `.166`「艾米丽正在缝制一套华丽的服装」、`Marriage.004`「她设计了一个新的缝纫图案」、
+      `10hearts.01`「这是我的《草原王者大冒险》角色扮演！我为了做这个忙了一段时间」。
+      家里是「一本旧的手工艺品手册」（`SophiaParentsRoom.4`）、
+      《服装设计指南——角色扮演的应用》（`SophiaHouse.15`）。
+    - 唯一沾"艺术"的是 `CharacterDialogue.174`「**艺术瓶颈**，被我打破了」
+      （英文 "Artist's block, no more!"）—— 指她那个没点名的"项目"，
+      **不等于架上绘画**；另有 `NightMarket.001`「我可能会买幅画」，是**买**画。
+    - `Furniture.json` 里的 `Prismatic Painting` 之类是 SVE 通用家具目录的
+      墙面装饰，不属于她。
+
+    因此本轮按"移除／替换"处理：**人设与指令两侧**一共 13 处「绘画」全部换成
+    角色扮演／缝纫／手工／布料 —— 人设 9 处（`sve.json`）＋ `stage_policy.py` 4 处
+    （`_ROLE_OVERRIDES["Sophia"]["acquaintance"/"friend"]` 3 处、
+    `_CONVERSATION_LEAD_ROLE_GUIDANCE["Sophia"]` 1 处）。
+    其中 `preferredTopics` 那条仍落**同一个生活面**（「工作或手艺」——`布料` 与
+    `缝纫` 本来就在该面词表里，`_LIFE_FACET_PATTERNS` 第 467 行），面覆盖不变。
+
+    ⚠ **本条的真正目的**：这个仓库反复出现过"同一 bug 只修一处"（人设改了、指令
+    没改，或反过来）。所以这一条**同时扫两侧**——人设（`sve.json`）与指令
+    （`stage_policy.py` 的两个 Sophia 专用 dict）。任何一侧回退成"绘画"都会红。
+    """
+
+    data = json.loads(
+        (ROOT / "data" / "personas" / "sve.json").read_text(encoding="utf-8")
+    )
+    sophia = data["personas"]["Sophia"]
+
+    flat: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+        elif isinstance(node, str):
+            flat.append(node)
+
+    walk(sophia)
+    joined = "\n".join(flat)
+
+    # 钉的是"架上绘画"那一组词，不是单字「画」——「画了眼线」是她语料里
+    # 真实存在的一条（化妆），不该被这条闸挡住。
+    offenders = [
+        f"sve.json:{line}"
+        for line in flat
+        if _PAINTING_NOUNS.search(line)
+    ]
+
+    # 指令侧：这两处都在 prompt 里（`stage_execution_card` 与 `final_role_voice_contract`），
+    # 只修人设不修这里就是这个 bug 的另一半。
+    policy_texts = {
+        "stage_policy._CONVERSATION_LEAD_ROLE_GUIDANCE['Sophia']":
+            _CONVERSATION_LEAD_ROLE_GUIDANCE["Sophia"],
+        "stage_policy._ROLE_OVERRIDES['Sophia']":
+            json.dumps(_ROLE_OVERRIDES["Sophia"], ensure_ascii=False),
+    }
+    for label, text in policy_texts.items():
+        for match in _PAINTING_NOUNS.finditer(text):
+            start = max(0, match.start() - 30)
+            end = min(len(text), match.end() + 30)
+            offenders.append(f"{label}:…{text[start:end]}…")
+
+    assert offenders == [], offenders
+
+    # 换上去的方向要有原话支撑，不能只是把"画"删掉留一个空洞。
+    assert "角色扮演" in joined
+    assert "缝" in joined
+    assert "角色扮演" in policy_texts[
+        "stage_policy._CONVERSATION_LEAD_ROLE_GUIDANCE['Sophia']"
+    ]
+    assert "角色扮演" in policy_texts["stage_policy._ROLE_OVERRIDES['Sophia']"]
+    # `preferredTopics` 第 2 条必须仍在「工作或手艺」面上（面归属不得漂移）。
+    assert "给下一个角色扮演挑的布料" in sophia["voiceStyle"]["preferredTopics"]
+
+
+def test_sophia_rendered_prompt_has_no_painting_words() -> None:
+    """行为层的同一道闸：**渲染出来的 prompt** 里不许再有"架上绘画"。
+
+    上一条钉的是源码字面量（`sve.json` / `stage_policy.py`）。2026-09-24 扫全库时
+    又找出**第 5 处**：`prompts.py` 的 `_build_turn_plan` 里有一条 Sophia 专用的
+    自然开场指令写着「命中葡萄园、**绘画**或其他喜欢的话题时…」（只在
+    `compact=False` 的评测／实验室路径生效，游戏端走通用分支）。
+
+    教训是"同一 bug 只修一处"：字面量分散在三个文件里，靠人工 grep 一定会漏。
+    这一条改成**渲染真实 prompt 再扫** —— 少一处就红，不依赖谁记得住有哪几处。
+    """
+
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    context = {
+        "npcIdentity": {
+            "npcId": "Sophia",
+            "displayName": "Sophia",
+            "stageProfile": {"stage": "dating"},
+            "voiceStyle": {
+                "speechParticleHints": ["嘿", "哇", "哦哦哦"],
+                "energyProfile": {
+                    "dating": "喜欢或被夸时可以先热烈回应，连说两句后害羞地改口",
+                },
+            },
+        },
+        "qualityContext": {
+            "naturalMode": True,
+            "topicSeed": "收工时发现一小串葡萄裂开了",
+            "topicKeywords": ["葡萄", "收工"],
+            "turnPlan": {"mode": "answer_only"},
+        },
+        "interaction": {"intent": "topic", "channel": "remote"},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "")
+
+    offenders: list[str] = []
+    for message in messages:
+        content = message.get("content", "")
+        for match in _PAINTING_NOUNS.finditer(content):
+            start = max(0, match.start() - 40)
+            end = min(len(content), match.end() + 40)
+            offenders.append(f"[{message.get('name')}] …{content[start:end]}…")
+
+    assert offenders == [], offenders
+    # 反向确认这条路径真的渲染出了 Sophia 的专用指令（否则上面的空断言是假通过）。
+    turn_plan = next(
+        json.loads(message["content"])
+        for message in messages
+        if message.get("name") == "turn_plan"
+    )
+    assert "口头冲动" in turn_plan["instruction"]
+    assert "角色扮演" in turn_plan["instruction"]
+
+
+def test_no_sophia_quality_case_still_has_her_painting() -> None:
+    """第四道闸：**全部评测案例**里，这两位角色的字段一个字都不许再提"架上绘画"。
+
+    为什么必须单独一条：前三条闸盯的是**线上**（人设 / `stage_policy` / turn-plan），
+    而**评测案例是第四层**——它们不进游戏，却会进评测 prompt。
+    只改前三层的话，"我们后面跑的验证会是在测一个她会画画的版本"。
+
+    覆盖两位（都给过证据、都拍板改过）：
+
+    - **Sophia**：SVE 查证她不做架上绘画（无画具/画室/画作事件；家里那句是
+      「很多布料和油漆」，油漆是手工材料）。她的创作面是**角色扮演 + 缝纫**。
+    - **Elliott**：他是**写作者**（230 条语料：写 22 / 书 25 / 小说 16 / 诗 6 / 创作 9），
+      全库含「画」只有 **2 处，且都是他夸 Leah 的画**；英文原版里
+      `manuscript`/`draft`/`sketch`/`paint`/`studio` 也都是 0，
+      76 条事件台词同样 0。案例原本给的「画室 / 海面速写 / 那幅画」不是他的设定。
+
+    ⚠ **刻意不覆盖的**：Elliott 案例里的「**稿子 / 手稿**」**保持原样**——
+    那是**同义说法缺口**（他确实是写作者，只是 230 条里没用「稿」这个字），
+    属于"三类假阳性"的第 ③ 类，不是"替他加设定"。
+    `case_id`（含 `elliott-close-studio` 与三处 `*painting`）按用户口径保留原名。
+
+    这一条**刻意收单字「画」**（前三条闸不收，因为「画了眼线」是 Sophia 的真实原话）。
+    2026-09-24 实测教训：我第一遍扫案例时正则不含单字「画」，
+    于是漏掉了 `pacing-sophia-vineyard-evening` 里的「**画室**／**新画**」——
+    正是用户提醒过的那个坑。只在 `画了眼线` 这一处开例外。
+    """
+
+    from stardew_ai_bridge.character_quality_eval import (
+        QUALITY_SUITE_IDS,
+        quality_cases_for_suite,
+    )
+
+    watched = {"Sophia", "Elliott"}
+    pattern = re.compile(r"画(?!了眼线)|速写|写生|paint\w*|easel|canvas|sketch\w*")
+
+    def strings(node: object, path: str):
+        if isinstance(node, str):
+            yield path, node
+        elif isinstance(node, (list, tuple)):
+            for index, item in enumerate(node):
+                yield from strings(item, f"{path}[{index}]")
+        elif isinstance(node, dict):
+            for key, value in node.items():
+                yield from strings(value, f"{path}.{key}")
+
+    checked_cases = 0
+    offenders: list[str] = []
+    for suite in QUALITY_SUITE_IDS:
+        for case in quality_cases_for_suite(suite):
+            if _text_field(case, "npc_id") not in watched:
+                continue
+            checked_cases += 1
+            for name, value in _dataclass_values(case):
+                # `case_id` **刻意排除**：它是历史标识符，被测试与历史 artifacts 钉着，
+                # 改名会断基线。用户 2026-09-24 拍板"保留原名、只改内容"，
+                # 所以这些 case_id 是**预期存在**的。
+                if name == "case_id":
+                    continue
+                for path, text in strings(value, name):
+                    if pattern.search(text):
+                        offenders.append(f"{suite}/{case.case_id} {path} = {text[:90]}")
+
+    # 反向确认真的扫到了案例（否则空断言是假通过）。
+    assert checked_cases >= 12, checked_cases
+    assert offenders == [], offenders
+
+
+def _text_field(case: object, name: str) -> str:
+    value = getattr(case, name, "")
+    return value if isinstance(value, str) else ""
+
+
+def _dataclass_values(case: object):
+    import dataclasses
+
+    for field in dataclasses.fields(case):
+        yield field.name, getattr(case, field.name, None)
 
 
 def test_harvey_and_victor_keep_their_existing_object_focus() -> None:

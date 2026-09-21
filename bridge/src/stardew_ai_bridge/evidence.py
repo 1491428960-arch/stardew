@@ -44,6 +44,13 @@ _GIFT_DIALOGUE_KEY = re.compile(
     r"(?:accept(?:_|$)|gift|birthday|bouquet|mermaid|stardrop|spousegift|give_flowers)",
     re.IGNORECASE,
 )
+# `extra_dialogue` 专用的"挖空"词表：**只**含礼物与节日两个语义簇，
+# 见 `_is_special_dialogue_key` 的 `relax_scene_context`。
+_SCENE_CONTEXT_KEY_WORDS = re.compile(
+    r"gift|(?:festival|flowerdance|eggfestival|luau|moonlightjellies|"
+    r"stardewvalleyfair|spiritseve|winterstar)",
+    re.IGNORECASE,
+)
 _TRIGGERED_DIALOGUE_KEY = re.compile(
     r"^(?:greenrain|resort|desertfestival|firstvisit(?:_|$)|"
     r"fishcaught(?:_|$)|cropmatured(?:_|$)|purchasedanimal(?:_|$)|"
@@ -119,9 +126,11 @@ def has_dialogue_source_residue(record: Mapping[str, Any]) -> bool:
     )
 
 
-def _is_special_dialogue_record(record: Mapping[str, Any]) -> bool:
+def _is_special_dialogue_path(record: Mapping[str, Any]) -> bool:
+    """路径判据：事件脚本目录与节日脚本里的文案不是无条件日常口吻。"""
+
     path = str(record.get("sourcePath", "")).replace("\\", "/").casefold()
-    if (
+    return bool(
         path == "ucr.json"
         or path.endswith("/ucr.json")
         or "/events/" in path
@@ -129,10 +138,34 @@ def _is_special_dialogue_record(record: Mapping[str, Any]) -> bool:
         or "/code/" in path
         or path.startswith("code/")
         or path.endswith("/festivaldialogue.json")
-    ):
-        return True
+    )
+
+
+def _is_special_dialogue_key(
+    record: Mapping[str, Any],
+    *,
+    relax_scene_context: bool = False,
+) -> bool:
+    """键名判据：键里编码了季节、事件、礼物、地点等触发条件的，都不是日常口吻。
+
+    `relax_scene_context=True` 只给 `Data/ExtraDialogue`（`extra_dialogue`）用，
+    它把"**礼物类**"与"**节日类**"两个语义簇从键名里挖掉再判 —— 理由与代价：
+
+    * `Data/ExtraDialogue` 的条目**按定义就是"某个情境下说的话"**，键名里的
+      `Gift` / `Festival` 说的是**什么时候说**，而不是"这不是他平时的口吻"。
+      `Birdie_NoGift`（「我不需要任何礼物，孩子。你留着就好。」）与
+      `Robin_*_Festival`（「好吧，后天，我就着手造你的新{0}。」）都是**本人真说的话**，
+      且正好体现性格，因此收下。
+    * **只对这一个来源开口，不外溢**：其它来源的 `*Gift*` / `*Festival*` 键**大量是
+      模板化台词**（生日、花束、美人鱼吊坠…），放行会稀释语料池，所以照旧排除。
+    * **只挖这两个簇**：季节、事件、特殊场景、地点、记忆、关系、触发等其余判据
+      **照旧生效** —— 例如 `ArchaeologyHouse_Gunther_Room` 仍因 `archaeologyhouse`
+      命中触发词而被排除。
+    """
 
     key = str(record.get("sourceKey", "")).strip()
+    if relax_scene_context:
+        key = _SCENE_CONTEXT_KEY_WORDS.sub(" ", key)
     return bool(
         _SEASON_DIALOGUE_KEY.match(key)
         or _EVENT_DIALOGUE_KEY.match(key)
@@ -145,6 +178,10 @@ def _is_special_dialogue_record(record: Mapping[str, Any]) -> bool:
         or _RELATIONSHIP_ONLY_DIALOGUE_KEY.match(key)
         or _RELATION_RESPONSE_KEY.fullmatch(key)
     )
+
+
+def _is_special_dialogue_record(record: Mapping[str, Any]) -> bool:
+    return _is_special_dialogue_path(record) or _is_special_dialogue_key(record)
 
 
 def is_model_evidence_record(record: Mapping[str, Any]) -> bool:
@@ -163,6 +200,15 @@ def is_model_evidence_record(record: Mapping[str, Any]) -> bool:
         # 检索处理；事件样本还要经过 completedEventIds 门控，不能在索引
         # 构建时无条件丢弃。
         return True
+    if evidence_kind == "extra_dialogue":
+        # `Data/ExtraDialogue` 是**对白表**：里面的条目按定义就是"角色在某个
+        # 情境下说的话"（Joja 会员推销、被从矿洞救回、大结局发言……）。
+        # CP mod 常把这张表的 patch 写在 `code/` 目录下（SVE 的 Summit 台词
+        # 就在 `code/Locations/Summit.json`），那只是 mod 的文件组织方式，
+        # **不代表这些条目是事件脚本** —— 路径判据对它们属于误伤，所以只按键名
+        # 判断触发条件，并把"礼物类/节日类"两个簇也放开（理由与边界见
+        # `_is_special_dialogue_key`）。
+        return not _is_special_dialogue_key(record, relax_scene_context=True)
     return not _is_special_dialogue_record(record)
 
 
