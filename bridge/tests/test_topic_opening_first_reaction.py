@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from stardew_ai_bridge.guard import missing_opening_grounding, retry_for_format_noise
@@ -85,6 +87,16 @@ def _contract(messages: list[dict[str, str]]) -> str:
         message["content"]
         for message in messages
         if message["name"] == "topic_response_contract"
+    )
+
+
+def _voice_card(messages: list[dict[str, str]]) -> dict[str, object]:
+    return json.loads(
+        next(
+            message["content"]
+            for message in messages
+            if message["name"] == "voice_execution_card"
+        )
     )
 
 
@@ -180,11 +192,11 @@ def test_the_length_cap_alone_would_not_have_stopped_that_reply() -> None:
 def test_reaction_permission_is_tightened_symmetrically(moves: list[str]) -> None:
     """对称保护：拿到许可句的正是索菲亚这类角色，许可不能比公共契约松。"""
 
-    contract = _contract(_topic_messages(moves))
+    permission = str(_voice_card(_topic_messages(moves))["openingMove"])
 
-    assert "第一反应是一声感叹或招呼，不是对某样东西的描述" in contract
-    assert "省掉主语的描述" in contract
-    assert "来源句也不能省" in contract
+    assert "第一反应是一声感叹或招呼，不是对某样东西的描述" in permission
+    assert "省掉主语的描述" in permission
+    assert "来源句也不能省" in permission
 
 
 def test_topic_contract_keeps_the_source_sentence_requirement() -> None:
@@ -207,9 +219,13 @@ def test_topic_contract_keeps_the_source_sentence_requirement() -> None:
 def test_reaction_opening_roles_get_the_explicit_permission(
     moves: list[str],
 ) -> None:
-    contract = _contract(_topic_messages(moves))
+    """许可句的主位置是 voice_execution_card，紧挨它要管的 voiceActions。"""
 
-    assert _TOPIC_REACTION_OPENING_PERMISSION in contract
+    messages = _topic_messages(moves)
+
+    assert _voice_card(messages)["openingMove"] == _TOPIC_REACTION_OPENING_PERMISSION
+    # 契约末尾只保留兜底，不再是主位置。
+    assert _TOPIC_REACTION_OPENING_PERMISSION not in _contract(messages)
 
 
 @pytest.mark.parametrize("moves", [HARVEY_MOVES, LATE_REACTION_MOVES])
@@ -218,15 +234,18 @@ def test_other_roles_do_not_get_the_reaction_invitation(
 ) -> None:
     """没有这个说话习惯的角色不该被邀请用「哇」开场。"""
 
-    contract = _contract(_topic_messages(moves))
+    messages = _topic_messages(moves)
 
-    assert _TOPIC_REACTION_OPENING_PERMISSION not in contract
+    assert "openingMove" not in _voice_card(messages)
+    assert _TOPIC_REACTION_OPENING_PERMISSION not in _contract(messages)
 
 
 def test_permission_is_absent_without_any_voice_style() -> None:
-    contract = _contract(_topic_messages(None))
+    messages = _topic_messages(None)
 
-    assert _TOPIC_REACTION_OPENING_PERMISSION not in contract
+    assert _TOPIC_REACTION_OPENING_PERMISSION not in _contract(messages)
+    # 没有 voiceStyle 时这张卡仍可能因关系阶段而存在，但不会长出开场许可。
+    assert "openingMove" not in _voice_card(messages)
 
 
 def test_permission_is_not_added_to_ordinary_chat_turns() -> None:
@@ -236,6 +255,54 @@ def test_permission_is_not_added_to_ordinary_chat_turns() -> None:
     )
 
     assert all(message["name"] != "topic_response_contract" for message in messages)
+    # 普通回合照发这张卡，但不带开场许可：许可只在 NPC 主动找话题时才有意义。
+    assert "openingMove" not in _voice_card(messages)
+
+
+def test_permission_falls_back_to_the_contract_when_the_voice_card_is_not_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """voice card 本轮不发时，许可句退回契约末尾——不能凭空消失。"""
+
+    import stardew_ai_bridge.prompts as prompts
+
+    monkeypatch.setattr(
+        prompts,
+        "_build_voice_execution_card",
+        lambda identity, *, history=(), topic_opening=False: {},
+    )
+
+    assert _TOPIC_REACTION_OPENING_PERMISSION in _contract(_topic_messages(SOPHIA_MOVES))
+
+
+# --- 2026-09-21 三次收紧：契约要示范「反应拍 + 来源句」------------------------
+
+
+def test_contract_demonstrates_a_reaction_beat_plus_source_sentence() -> None:
+    """契约的 ✓ 例必须示范本契约刚放开的那种形态。
+
+    上一版两条 ✓ 例里**没有一条带反应拍**，等于只示范了「来源句打头」这一种写法，
+    模型照抄的正是那一种。
+    """
+
+    contract = _contract(_topic_messages(SOPHIA_MOVES))
+
+    assert "反应拍和来源句要在同一条消息里一起出现" in contract
+    assert "哇——我刚把新画晾到窗边，颜料还没干。你要不要看一眼？" in contract
+
+
+def test_the_new_example_keeps_the_banned_opening_shape_out() -> None:
+    """正例刻意不写「还没干透」——那正是契约禁止拿来起句的零形式指代。
+
+    它作为**禁止**形态出现在契约别处是应该的；一旦落进 ✓ 例，那条禁令会被稀释。
+    """
+
+    contract = _contract(_topic_messages(SOPHIA_MOVES))
+
+    assert "还没干透" in contract
+    example = contract.split("✓ 招牌动作是", 1)[1].split("三条示例", 1)[0]
+    assert "还没干透" not in example
+    assert "颜料还没干" in example
 
 
 # --- 识别函数本身 ------------------------------------------------------------

@@ -213,11 +213,20 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     "只留一个口子就够，不要堆问题，也不要用命令或提醒代替口子。"
     "✗ 不能这样：‘记录簿不会长腿跑掉。倒是你，今天看起来没怎么好好休息，得先坐下，别站在塔里晃。’"
     "✓ 应该这样：‘我刚把今天的记录簿合上——上面半页星图怎么算都不对。你今天在农场忙完了吗？’"
-    "两条示例只示范来源句和口子这两个步骤，句式和对象随角色与场景变化，里面的事实不要当作当前剧情。"
+    # 2026-09-21 三次收紧（用户实测「刚把最后一层罩光放到窗边…只有你陪我支过」）：
+    # 上面那条 ✓ 例**只有来源句和口子、没有反应拍**，等于没示范本契约刚放开的那种
+    # 正确形态——模型只能照抄「来源句打头」这一种写法。补一条**同时有反应拍和来源句**
+    # 的正例。刻意不把用户实测那句里的「还没干透」写进来：它正是契约明令禁止拿来起句的
+    # 「省掉主语的描述」，放进正例会稀释那条禁令。示例对象用「新画」而不是抽象名词，
+    # 与旁边那条「记录簿——星图」同一写法：示范的是**步骤**，不是内容。
+    "✓ 招牌动作是‘先脱口说第一反应’的角色，反应拍和来源句要在同一条消息里一起出现："
+    "‘哇——我刚把新画晾到窗边，颜料还没干。你要不要看一眼？’"
+    "三条示例只示范反应拍、来源句和口子这三个步骤，句式和对象随角色与场景变化，里面的事实不要当作当前剧情。"
 )
-# 角色卡里「先脱口说第一反应」这一类句首动作的识别词。命中时找话题契约要**额外**
-# 说明这个反应可以放在来源句前面，否则 `voice_execution_card` 里的招牌动作会被
-# 上面那条来源句硬要求压掉（见 `_TOPIC_OPENING_GROUNDING_INSTRUCTION` 的注释）。
+# 角色卡里「先脱口说第一反应」这一类句首动作的识别词。命中时这个角色要**额外**
+# 拿到一句开场许可，说清这个反应可以放在来源句前面，否则 `voice_execution_card`
+# 里的招牌动作会被上面那条来源句硬要求压掉（见 `_TOPIC_OPENING_GROUNDING_INSTRUCTION`
+# 的注释）。**许可句本身的位置**见 `_TOPIC_REACTION_OPENING_PERMISSION`。
 #
 # 刻意只收「以一声反应起句」这一种：`招呼`／`叫住`／`先给判断` 这些句首动作在
 # 上面那条通用放行里已经覆盖，单独再加邀请只会让没有这个习惯的角色也用「哇」开场。
@@ -238,6 +247,14 @@ _REACTION_OPENING_MARKERS = (
 # 实测出问题的也恰好是她的回复。许可句如果只收紧公共契约不收，等于给最需要管的
 # 角色留了一条专用通道——「还没完全干透」可以自称「第一反应」蒙混过关。
 # 所以这里显式划线：那一拍是感叹或招呼，不是对某样东西的描述。
+#
+# 2026-09-21 二次实测（用户：「还是很突兀，并且语言风格不贴角色」）：
+# 收紧措辞之后模型**照样**用「刚把最后一层罩光放到窗边」起句——第一拍仍是新对象，
+# 整条也没有来源句。结构性原因不在措辞本身：许可句原先挂在 **topic 契约末尾**，
+# 而模型执行招牌动作时读的是 `voice_execution_card`，两张卡之间隔着 reply_contract，
+# 跨卡片关联留不住。**本句的主位置因此挪进 `voice_execution_card`**，紧贴
+# `voiceActions`（见 `_build_voice_execution_card` 的 `openingMove` 字段）；
+# 契约末尾只保留「那张卡本轮没发」时的兜底。
 _TOPIC_REACTION_OPENING_PERMISSION = (
     "这个角色的招牌动作就是在句首选脱口而出的第一反应：先用一声短反应（哇、等等、你看）起句，"
     "紧接着在同一条消息里补上来源句和口子；两拍用句号或感叹号断开，"
@@ -4160,8 +4177,16 @@ def _build_voice_execution_card(
     identity: object,
     *,
     history: object = (),
+    topic_opening: bool = False,
 ) -> dict[str, Any]:
-    """提取最终生成前真正需要执行的少量角色说话动作。"""
+    """提取最终生成前真正需要执行的少量角色说话动作。
+
+    ``topic_opening`` 为真时（本轮是 NPC 主动找话题），命中「先脱口说第一反应」
+    的角色会在这张卡里额外拿到一句开场许可。**许可句的主位置就在这里**，
+    紧贴它要管的 ``voiceActions``：模型执行招牌动作时读的是这张卡，把许可挂在
+    另一张卡（topic 契约）末尾属于跨卡片关联，一致性会打折
+    （2026-09-21，见 ``_TOPIC_REACTION_OPENING_PERMISSION`` 的说明）。
+    """
 
     if not isinstance(identity, Mapping):
         return {}
@@ -4252,6 +4277,11 @@ def _build_voice_execution_card(
         )
     if voice_actions:
         card["voiceActions"] = voice_actions
+    if topic_opening and has_reaction_opening_move(identity):
+        # 字段顺序就是模型的阅读顺序：许可挨着它要管的 voiceActions 落位。
+        # 命中本许可的角色一定会写进 voiceActions（判定读的就是 signatureMoves[0]），
+        # 所以上面那条「整张卡是否为空」的判据不会因为这一段而漏掉一张只有许可的卡。
+        card["openingMove"] = _TOPIC_REACTION_OPENING_PERMISSION
     if avoid:
         card["avoid"] = avoid
     return card
@@ -6530,8 +6560,11 @@ class PromptBuilder:
         voice_execution_card = _build_voice_execution_card(
             identity,
             history=history,
+            topic_opening=topic_request,
         )
-        if voice_execution_card and not natural_light_turn:
+        # 这张卡本轮到底发不发，决定开场许可走哪条路（见 topic 契约末尾那处兜底）。
+        voice_card_sent = bool(voice_execution_card) and not natural_light_turn
+        if voice_card_sent:
             messages.append(
                 {
                     "role": "system",
@@ -6561,7 +6594,10 @@ class PromptBuilder:
                     "示例的渠道限制不能覆盖当前渠道规则。"
                 )
             topic_instruction += _TOPIC_OPENING_GROUNDING_INSTRUCTION
-            if has_reaction_opening_move(identity):
+            # 2026-09-21：许可句的主位置已经挪进 `voice_execution_card`（紧贴
+            # voiceActions）。只有那张卡本轮不发时才退回契约末尾兜底——否则
+            # 这一条许可会在「卡没发」的回合里凭空消失，比跨卡片关联更糟。
+            if has_reaction_opening_move(identity) and not voice_card_sent:
                 topic_instruction += _TOPIC_REACTION_OPENING_PERMISSION
             topic_context: dict[str, Any] = {"instruction": topic_instruction}
             topic_seed = _text(
