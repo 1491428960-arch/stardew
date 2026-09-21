@@ -456,6 +456,109 @@ public sealed class GroupSessionRulesTests
     private static GroupSessionContext Context(string sessionId) =>
         new(sessionId, "公共话题", "最近的小事", "秋 12", 132);
 
+    // ── 分步揭示（2026-09-21 用户口径）────────────────────────────────────────
+    //
+    // 用户报了两件事，都落在同一段时序上：
+    //   ① 「玩家发一句 → 要**立刻**上屏，像 F8 私聊那样」（改前它和 NPC 回复
+    //      挤在同一批追加里，自己刚发的话要等十几秒响应回来才出现）；
+    //   ② 「NPC 回复不要同时蹦几条，要一条一条出现，稍微有点间隔」。
+    //
+    // 于是面板改成两步：玩家那句在发出去之后立刻追加，NPC 回合由
+    // GroupTurnRevealQueue 逐条接上。**但最终画面必须与改前那一次调用逐条相同** ——
+    // 否则 GroupSessionRules 类注释里那条「场次里那串发言 == F9 界面当时真正画出来的
+    // 那串气泡」当场就不成立了（存档那条路是 BridgeClient 一次性写完的，与播放无关）。
+    // 下面三条把这条等价性钉死。
+
+    [Fact]
+    public void The_player_line_can_be_appended_on_its_own()
+    {
+        var lines = GroupSessionRules.AppendTurn(
+            Array.Empty<GroupDialogueHistoryEntry>(),
+            "我先说一句。",
+            turns: null);
+
+        var only = Assert.Single(lines);
+        Assert.Equal(GroupSessionRules.PlayerSpeakerType, only.SpeakerType);
+        Assert.Equal(GroupSessionRules.PlayerSpeakerId, only.SpeakerId);
+        Assert.Equal("我先说一句。", only.Content);
+    }
+
+    [Fact]
+    public void AppendTurn_in_steps_matches_a_single_call()
+    {
+        var turns = new[]
+        {
+            new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "我在练鼓。" },
+            new BridgeGroupTurn { SpeakerNpcId = "Emily", Content = "我在改裙子！" },
+        };
+
+        var once = GroupSessionRules.AppendTurn(null, "你们最近忙什么？", turns);
+
+        // 第一步：玩家那句立刻上屏。
+        var stepByStep = GroupSessionRules.AppendTurn(null, "你们最近忙什么？", turns: null);
+        // 第二步：NPC 回合逐条接上（间隔播放的每一拍各调一次）。
+        foreach (var turn in turns)
+        {
+            stepByStep = GroupSessionRules.AppendTurn(stepByStep, null, new[] { turn });
+        }
+
+        Assert.Equal(once.Count, stepByStep.Count);
+        Assert.Equal(
+            once.Select(line => (line.SpeakerType, line.SpeakerId, line.Content)),
+            stepByStep.Select(line => (line.SpeakerType, line.SpeakerId, line.Content)));
+    }
+
+    [Fact]
+    public void Step_by_step_appending_truncates_exactly_like_a_single_call()
+    {
+        // 已经满档：单场上限是 120 条，再多就丢最旧的。分步追加每一步都会重做这条
+        // 裁剪，所以最终结果必须与一次调用逐条相同（否则逐条播放会把画面越播越错）。
+        var existing = Enumerable.Range(0, GroupSessionRules.MaxLinesPerSession)
+            .Select(index => Line("Abigail", $"第 {index} 条"))
+            .ToArray();
+        var turns = new[]
+        {
+            new BridgeGroupTurn { SpeakerNpcId = "Emily", Content = "新的一句。" },
+            new BridgeGroupTurn { SpeakerNpcId = "Emily", Content = "新的两句。" },
+        };
+
+        var once = GroupSessionRules.AppendTurn(existing, "玩家一句。", turns);
+        var stepByStep = GroupSessionRules.AppendTurn(existing, "玩家一句。", turns: null);
+        foreach (var turn in turns)
+        {
+            stepByStep = GroupSessionRules.AppendTurn(stepByStep, null, new[] { turn });
+        }
+
+        Assert.Equal(GroupSessionRules.MaxLinesPerSession, once.Count);
+        Assert.Equal(once.Count, stepByStep.Count);
+        Assert.Equal(
+            once.Select(line => line.Content),
+            stepByStep.Select(line => line.Content));
+    }
+
+    /// <summary>
+    /// 撤回：这一轮拿不到可用回复时，面板要把先上屏的那句自己收回去
+    /// （存档那条路在这种轮次里一条都不写，见
+    /// <see cref="GroupSessionRules.Append"/> 的第一个 return）。
+    /// 玩家行是纯追加，所以去掉尾部即还原。
+    /// </summary>
+    [Fact]
+    public void Taking_the_player_line_back_restores_the_previous_transcript()
+    {
+        var before = GroupSessionRules.AppendTurn(
+            null,
+            "上一轮。",
+            new[] { new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "上一轮回复。" } });
+
+        var afterReveal = GroupSessionRules.AppendTurn(before, "这一轮发不出去。", turns: null);
+        Assert.Equal(before.Count + 1, afterReveal.Count);
+
+        var rolledBack = afterReveal.Take(before.Count).ToArray();
+        Assert.Equal(
+            before.Select(line => line.Content),
+            rolledBack.Select(line => line.Content));
+    }
+
     private static GroupChatSessionRecord Session(string sessionId)
     {
         return new GroupChatSessionRecord

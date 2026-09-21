@@ -369,5 +369,156 @@ public sealed class FaceToFaceStateRulesTests
                 null!,
                 remoteChannelClosed: false,
                 hasSpeaker: true));
+        Assert.Throws<ArgumentNullException>(() =>
+            FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+                null!,
+                ConversationChannel.FaceToFace,
+                hasSpeaker: true,
+                speakerStillHere: true));
+    }
+
+    // ── 2026-09-21：用户第二次反馈「线上退出后又弹」────────────────────────
+    //
+    // 上一轮（04773f6）只把「频道」接进了**一个**出口：ChatInputMenu 关闭。
+    // 第二个出口——原版 DialogueBox 关闭，经 ObserveDialogueClosed ——
+    // 至今写着「state 是待续聊 且 npc 非空就弹」，那正是该提交自己定义的根因形态。
+    // 下面三组把两条出口一起钉死。
+
+    /// <summary>
+    /// **穷举**两个出口共用的那个判定：只有「面对面频道 + 待续聊 + 有说话人 +
+    /// 人还在旁边」才弹。协调器的两条出口都调
+    /// <see cref="FaceToFaceStateRules.ShouldOfferContinuationAfterExit"/>，
+    /// 所以把这个输入空间整个走一遍，等于把两条出口都覆盖了。
+    /// </summary>
+    [Fact]
+    public void Only_a_nearby_face_to_face_speaker_can_be_offered_continuation()
+    {
+        foreach (var stateValue in Enum.GetValues<FaceToFaceState>())
+        {
+            foreach (var channel in new[]
+                     {
+                         ConversationChannel.FaceToFace,
+                         ConversationChannel.Remote,
+                         string.Empty,
+                         null,
+                     })
+            {
+                foreach (var hasSpeaker in new[] { false, true })
+                {
+                    foreach (var nearby in new[] { false, true })
+                    {
+                        var state = new FaceToFaceConversationState(stateValue, "Rasmodia");
+                        var expected =
+                            stateValue == FaceToFaceState.AwaitingContinuationChoice &&
+                            hasSpeaker &&
+                            nearby &&
+                            !FaceToFaceStateRules.IsRemoteChannel(channel);
+
+                        Assert.Equal(
+                            expected,
+                            FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+                                state,
+                                channel,
+                                hasSpeaker,
+                                nearby));
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>线上频道在任何组合下都不弹 —— 与 04773f6 那条判定逐项一致。</summary>
+    [Fact]
+    public void Both_exit_points_share_one_verdict()
+    {
+        foreach (var stateValue in Enum.GetValues<FaceToFaceState>())
+        {
+            var state = new FaceToFaceConversationState(stateValue, "Rasmodia");
+            foreach (var remote in new[] { false, true })
+            {
+                foreach (var hasSpeaker in new[] { false, true })
+                {
+                    Assert.Equal(
+                        FaceToFaceStateRules.ShouldOfferContinuationAfterChatClosed(
+                            state,
+                            remoteChannelClosed: remote,
+                            hasSpeaker: hasSpeaker),
+                        FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+                            state,
+                            remote ? ConversationChannel.Remote : ConversationChannel.FaceToFace,
+                            hasSpeaker: hasSpeaker,
+                            speakerStillHere: true));
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 说话人已经走开（换了地图或超出续聊距离）时不弹：续聊入口本来就要求
+    /// 同一天、同一地点、2.5 格以内，弹窗不该比它宽松 —— 否则残留的上一任角色
+    /// 会让一个**根本用不了**的提问冒出来。
+    /// </summary>
+    [Fact]
+    public void A_speaker_who_walked_away_does_not_get_a_continuation_prompt()
+    {
+        var awaiting = new FaceToFaceConversationState(
+            FaceToFaceState.AwaitingContinuationChoice,
+            "Rasmodia");
+
+        Assert.True(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            awaiting,
+            ConversationChannel.FaceToFace,
+            hasSpeaker: true,
+            speakerStillHere: true));
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            awaiting,
+            ConversationChannel.FaceToFace,
+            hasSpeaker: true,
+            speakerStillHere: false));
+    }
+
+    /// <summary>
+    /// 第二个出口的端到端（规则层）：一段被线上会话打断的面对面残留，
+    /// 之后经「原版 DialogueBox 关闭」这条出口也必须不弹。
+    /// </summary>
+    [Fact]
+    public void The_dialogue_box_exit_refuses_a_leftover_from_a_remote_session()
+    {
+        var leftover = new FaceToFaceConversationState(FaceToFaceState.Composing, "Rasmodia");
+        var afterRemote = FaceToFaceStateRules.EndFaceToFaceSessionForRemote(
+            FaceToFaceStateRules.EndFaceToFaceSessionForRemote(leftover));
+        var pushed = FaceToFaceStateRules.ObserveDialogueClosed(afterRemote);
+
+        Assert.Equal(FaceToFaceState.Idle, pushed.State);
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            pushed,
+            ConversationChannel.Remote,
+            hasSpeaker: false,
+            speakerStillHere: false));
+    }
+
+    /// <summary>
+    /// Mod 自己弹的 DialogueBox 不许被当成原版寒暄。**全状态穷举**：
+    /// 只有 Idle 与 VanillaDialogueOpen 这两个「我没在开会话」的状态才接受观察。
+    ///
+    /// <see cref="FaceToFaceState.Composing"/> 是 2026-09-21 补上的：改前这份排除表漏了它，
+    /// 于是玩家在聊天窗里送礼时，那个确认框会被当成「又一次原版寒暄」——
+    /// 状态被顶成 VanillaDialogueOpen，而 <c>npc</c> 被 <c>Game1.currentSpeaker</c>
+    /// （跨对话残留字段）整个重写。此后任意一次 DialogueBox 关闭都会经第二个出口
+    /// 弹出「要继续聊聊吗？」，而那个说话人可能跟本次会话毫无关系、甚至已经不在场。
+    /// </summary>
+    [Fact]
+    public void Only_an_idle_session_observes_a_fresh_dialogue_box()
+    {
+        foreach (var stateValue in Enum.GetValues<FaceToFaceState>())
+        {
+            var expected = stateValue is
+                FaceToFaceState.Idle or FaceToFaceState.VanillaDialogueOpen;
+
+            Assert.Equal(
+                expected,
+                FaceToFaceStateRules.ShouldObserveDialogueOpened(
+                    new FaceToFaceConversationState(stateValue, "Rasmodia")));
+        }
     }
 }

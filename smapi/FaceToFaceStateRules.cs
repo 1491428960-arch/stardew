@@ -50,14 +50,35 @@ public static class FaceToFaceStateRules
     /// </summary>
     public const float RepeatChatNearbyDistanceInTiles = 2.5f;
 
+    /// <summary>
+    /// 一次 DialogueBox 打开时，要不要把它当成「玩家正在跟 NPC 当面说话」。
+    ///
+    /// **Mod 自己弹的 DialogueBox 与玩家自己弹的 DialogueBox 长得一模一样**
+    /// （续聊提问、送礼确认都是 <c>createQuestionDialogue</c>），所以这里要按
+    /// **状态**把它们排除掉，而不能只看「新菜单是 DialogueBox」：
+    ///
+    /// - <see cref="FaceToFaceState.AwaitingContinuationChoice"/>：续聊提问本身。
+    ///   放它进来的话，提问会在回答回调跑之前先把状态重置成原版对话态
+    ///   （2026-09-20 的既有防护）。
+    /// - <see cref="FaceToFaceState.Composing"/>：**AI 聊天窗还开着**。
+    ///   2026-09-21 补。改前这份排除表漏了它，于是玩家在聊天窗里送礼时，
+    ///   那个确认框会被当成「又一次原版寒暄」：状态被顶成
+    ///   <see cref="FaceToFaceState.VanillaDialogueOpen"/>，而 <c>npc</c> 被
+    ///   <c>Game1.currentSpeaker</c> 整个重写（这个字段是跨对话残留的，可能是别人、
+    ///   也可能已经是 null）。此后任意一次 DialogueBox 关闭都会经第二个出口
+    ///   把那份被污染的状态推成「要继续聊聊吗？」——**与本次会话是谁毫无关系**。
+    ///   聊天窗开着时玩家不可能再去跟别的 NPC 交互，所以这条排除不会误伤原版对话。
+    /// - 亲吻两态：动画进行中不该被任何对话框打断。
+    ///
+    /// 线上会话那条另有防线（协调器按频道判定，见
+    /// <see cref="ShouldOfferContinuationAfterExit"/>）：线上不进面对面状态机。
+    /// </summary>
     public static bool ShouldObserveDialogueOpened(
         FaceToFaceConversationState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        // The continuation question is rendered by the same DialogueBox type
-        // as vanilla NPC speech. Do not let that question restart the vanilla
-        // dialogue state before its answer callback runs.
         return state.State is not FaceToFaceState.AwaitingContinuationChoice and
+            not FaceToFaceState.Composing and
             not FaceToFaceState.AwaitingKiss and
             not FaceToFaceState.Kissing;
     }
@@ -120,6 +141,42 @@ public static class FaceToFaceStateRules
         return !remoteChannelClosed &&
             state.State == FaceToFaceState.AwaitingContinuationChoice &&
             hasSpeaker;
+    }
+
+    /// <summary>
+    /// 一次会话结束之后要不要弹「要继续聊聊吗？」——**两个出口共用这一个判定**。
+    ///
+    /// 出口一：<c>ChatInputMenu</c> 关闭（Esc／「结束」按钮／<c>exitThisMenu</c>／被别的菜单顶掉）。
+    /// 出口二：原版 <c>DialogueBox</c> 关闭（协调器的 <c>ObserveDialogueClosed</c>）。
+    ///
+    /// 2026-09-21（用户第二次反馈「线上退出后又弹」）：<c>04773f6</c> 只把**频道**
+    /// 接进了出口一，出口二至今仍写着「state 是待续聊 且 npc 非空就弹」——
+    /// 那正是该提交自己定义的根因形态（原话：「弹窗出口只看 <c>state</c> 和 <c>npc</c>
+    /// 两个跨会话字段，完全不看这次关闭的是哪条频道」）。它当时用「线上入口两端收敛」
+    /// 间接盖住了出口二，但收敛只挂在**线上入口**上：任何不经过该入口的残留
+    /// （面对面聊天被 F8/F9/背包选择器打断、切场景、回标题）都绕得过去。
+    ///
+    /// 现在两个出口都走这里：想弹就得同时过「不是线上频道」「状态是待续聊」
+    /// 「手里有说话人」「那个人此刻真的还在旁边」四关。
+    /// </summary>
+    /// <param name="sessionChannel">刚结束的那次会话挂在哪条频道上（取值见 <see cref="ConversationChannel"/>）。</param>
+    /// <param name="speakerStillHere">
+    /// 说话人此刻是不是还在同一地点、且在续聊距离内。续聊入口
+    /// （<c>TryOpenRepeatChat</c>）本来就要求这一条，弹窗不该比它更宽松 ——
+    /// 否则残留的上一任角色会让一个**根本用不了**的提问冒出来。
+    /// </param>
+    public static bool ShouldOfferContinuationAfterExit(
+        FaceToFaceConversationState state,
+        string? sessionChannel,
+        bool hasSpeaker,
+        bool speakerStillHere)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return speakerStillHere &&
+            ShouldOfferContinuationAfterChatClosed(
+                state,
+                remoteChannelClosed: IsRemoteChannel(sessionChannel),
+                hasSpeaker: hasSpeaker);
     }
 
     public static bool IsSameGameDay(int? rememberedDay, int currentDay)

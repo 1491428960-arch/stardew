@@ -33,8 +33,27 @@ public sealed class GroupDialogueMenu : IClickableMenu
     private readonly bool readOnly;
     /// <summary>只读回看时的滚动起点；与 <see cref="followLatest"/> 一起决定这一屏画哪一段。</summary>
     private int scrollStartIndex;
-    /// <summary>是否跟随最新一条。滚轮往上翻会关掉它，翻回底部自动打开。</summary>
+    /// <summary>是否跟随最新一条。滚轮往上翻会关掉它，翻回底部或自己发言时自动打开。</summary>
     private bool followLatest = true;
+    /// <summary>
+    /// NPC 回复的逐条揭示队列（玩家自己那句**不走它**：那条要立刻上屏，见
+    /// <see cref="RevealPlayerLine"/>）。间隔见 <see cref="GroupTranscriptRules.TurnRevealIntervalSeconds"/>。
+    /// </summary>
+    private readonly GroupTurnRevealQueue revealQueue = new();
+    /// <summary>自己那句是否已经上屏。这一轮拿不到可用回复时要撤回，好让「画面 == 存档」重新成立。</summary>
+    private bool playerLineRevealed;
+    /// <summary>发言前的画面快照，撤回时用它还原。</summary>
+    private List<GroupDialogueHistoryEntry>? preSendSnapshot;
+    /// <summary>翻到历史里之后，视口外又来了几条（提示行靠它告诉玩家「下面还有东西」）。</summary>
+    private int unseenCount;
+    /// <summary>滚动产生的位置提示。<c>hint</c> 留给错误诊断，两者同时存在时诊断优先。</summary>
+    private string scrollHint = string.Empty;
+    /// <summary>
+    /// 视觉测试专用：把排进来的响应**一次全部**揭示，不走逐条动画。
+    /// 理由：视觉测试要的是稳定可复现的终态（证据行会比对「面板发言数 == 存档场次条数」），
+    /// 而逐条是**给人看的时序**；播放本身由 <c>GroupTurnRevealQueue</c> 的单测覆盖。
+    /// </summary>
+    private bool revealImmediately;
 
     public GroupDialogueMenu(
         BridgeClient? bridgeClient,
@@ -82,7 +101,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
             // 根本不画（那个位置画的是一句说明），若仍抢走键盘，玩家打出来的字会进到一个
             // 看不见的框里，看起来像界面卡住。发送与回车两条路径另由
             // <see cref="SendCurrentAsync"/> 的闸门挡住，这里只是第一道。
-            hint = GroupReadOnlyRules.ReadOnlyHintText(restored.Length);
+            //
+            // 说明写在 scrollHint 而不是 hint：hint 是**诊断级**的（画出来时压过一切），
+            // 而这句说明在玩家一滚动时就该让位给位置提示——那正是改前
+            // hint = ScrollHint() 覆盖它的行为。
+            scrollHint = GroupReadOnlyRules.ReadOnlyHintText(restored.Length);
         }
         else
         {
@@ -122,6 +145,24 @@ public sealed class GroupDialogueMenu : IClickableMenu
         ? GroupReadOnlyRules.MaxScrollStart(visibleMessages.Count, GroupDialogueLayoutRules.MaxVisibleMessages)
         : scrollStartIndex;
 
+    /// <summary>
+    /// 实际画出来的提示行：<c>hint</c>（错误诊断／只读常驻说明）优先，
+    /// 它为空时才让位给滚动位置提示——两者都要用同一行，但诊断信息更重要。
+    /// </summary>
+    internal string DisplayHint => string.IsNullOrWhiteSpace(hint) ? scrollHint : hint;
+
+    /// <summary>诊断用：还有几条 NPC 回复没播完（退出时必须清零）。</summary>
+    internal int PendingRevealCount => revealQueue.PendingCount;
+
+    /// <summary>诊断用：这一屏从第几条开始画（可发言与只读共用同一条取值）。</summary>
+    internal int VisibleWindowStart => GroupReadOnlyRules.VisibleWindow(
+        visibleMessages.Count,
+        GroupDialogueLayoutRules.MaxVisibleMessages,
+        GroupTranscriptRules.WindowStartIndex(followLatest, scrollStartIndex)).Start;
+
+    /// <summary>诊断用：是不是还在跟随最新（翻到历史里之后为 false）。</summary>
+    internal bool IsFollowingLatest => followLatest;
+
     public override void receiveLeftClick(int x, int y, bool playSound = true)
     {
         if (closed)
@@ -132,6 +173,14 @@ public sealed class GroupDialogueMenu : IClickableMenu
         if (layout.CloseButton.Contains(x, y))
         {
             Close();
+            return;
+        }
+
+        if (revealQueue.HasPending && layout.MessageArea.Contains(x, y))
+        {
+            // 点一下正在播放的消息区 = 剩下的立刻全部显示。玩家不想等动画时
+            // 不该被迫等完——他点这一下就是「我看完了，都放出来」。
+            revealQueue.SkipAll();
             return;
         }
 
@@ -164,13 +213,78 @@ public sealed class GroupDialogueMenu : IClickableMenu
             return;
         }
 
+        if (key == Keys.End)
+        {
+            JumpToLatest();
+            return;
+        }
+
+        if (key == Keys.PageUp && ScrollBy(1))
+        {
+            return;
+        }
+
+        if (key == Keys.PageDown && ScrollBy(-1))
+        {
+            return;
+        }
+
         base.receiveKeyPress(key);
     }
 
     /// <summary>
-    /// 只读回看里用滚轮翻整场记录。可发言时不接管滚轮（沿用改前的行为），
-    /// 因为这个面板在那时始终跟着最新一条走。
+    /// 只读回看与正常对话**共用**的翻页入口：滚轮、PageUp/PageDown 都走这里，
+    /// 于是「一屏画哪一段」的算术永远只有 <see cref="GroupReadOnlyRules.VisibleWindow"/> 一份。
+    ///
+    /// 2026-09-21：改前这里只在只读模式翻页（<c>if (!readOnly) return;</c>），
+    /// 正常对话时一屏装不下就再也看不到前面的——用户口径「群聊没有翻页功能，这个得加」。
     /// </summary>
+    /// <returns>这一次滚轮/按键是否真的移动了视口。</returns>
+    private bool ScrollBy(int direction)
+    {
+        var maxStart = GroupReadOnlyRules.MaxScrollStart(
+            visibleMessages.Count,
+            GroupDialogueLayoutRules.MaxVisibleMessages);
+        if (direction == 0 || maxStart <= 0)
+        {
+            // 装得下一屏：没有可翻的，保持跟随。
+            return false;
+        }
+
+        // 与原版一致：direction > 0 是往上滚 = 看更早的发言。
+        var (start, follow) = GroupTranscriptRules.Scroll(
+            followLatest,
+            scrollStartIndex,
+            direction,
+            visibleMessages.Count,
+            GroupDialogueLayoutRules.MaxVisibleMessages);
+        scrollStartIndex = start;
+        followLatest = follow;
+        if (followLatest)
+        {
+            unseenCount = 0;
+        }
+
+        scrollHint = ScrollHint();
+        return true;
+    }
+
+    /// <summary>
+    /// 回到底部：End 键，以及滚轮一直往下滚（<see cref="GroupTranscriptRules.Scroll"/>
+    /// 滚到底时会自己把 <c>followLatest</c> 打开）。**不跳过播放**——玩家按 End 是想看
+    /// 最新的，之后新出现的那几条照常按节奏来，那正是他想要的。
+    /// </summary>
+    private void JumpToLatest()
+    {
+        followLatest = true;
+        unseenCount = 0;
+        // 回到底部就不再需要位置提示；只读那边退回它的常驻说明
+        // （否则按一下 End 会把「这一场已经结束」那句一起抹掉）。
+        scrollHint = readOnly
+            ? GroupReadOnlyRules.ReadOnlyHintText(visibleMessages.Count)
+            : string.Empty;
+    }
+
     public override void receiveScrollWheelAction(int direction)
     {
         if (closed)
@@ -178,27 +292,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
             return;
         }
 
-        if (!readOnly)
+        if (!ScrollBy(direction) && !readOnly)
         {
+            // 没接管（一屏装得下、或方向为 0）：可发言时交回原版，只读时本来就无事可做。
             base.receiveScrollWheelAction(direction);
-            return;
         }
-
-        var maxStart = GroupReadOnlyRules.MaxScrollStart(
-            visibleMessages.Count,
-            GroupDialogueLayoutRules.MaxVisibleMessages);
-        if (direction == 0 || maxStart <= 0)
-        {
-            return;
-        }
-
-        // 与原版一致：direction > 0 是往上滚 = 看更早的发言。
-        scrollStartIndex = ChatScrollRules.MoveStartIndex(
-            followLatest ? maxStart : scrollStartIndex,
-            direction > 0 ? -1 : 1,
-            maxStart);
-        followLatest = scrollStartIndex >= maxStart;
-        hint = ScrollHint();
     }
 
     public override void update(GameTime time)
@@ -217,8 +315,113 @@ public sealed class GroupDialogueMenu : IClickableMenu
             _ = SendCurrentAsync(opening: true);
         }
 
+        RevealPendingTurns(time);
         PumpPendingRequest();
         base.update(time);
+    }
+
+    /// <summary>
+    /// 把队列里「到点」的 NPC 回合交给面板。间隔是
+    /// <see cref="GroupTranscriptRules.TurnRevealIntervalSeconds"/>；只读回看不播
+    /// （那一场一次性铺满，见 <see cref="GroupTranscriptRules.ShouldRevealOneByOne"/>）。
+    ///
+    /// **加速**：按住 Shift 时用 <see cref="GroupTranscriptRules.FastForwardIntervalSeconds"/>，
+    /// 几乎立刻放完。之所以不用空格做这件事——空格会产生文本，于是会**同时**
+    /// 触发加速并往输入框里塞一个空格；Shift 不产生任何文本，没有这个问题。
+    /// </summary>
+    private void RevealPendingTurns(GameTime time)
+    {
+        if (readOnly || !revealQueue.HasPending)
+        {
+            return;
+        }
+
+        var interval = IsFastForwarding()
+            ? GroupTranscriptRules.FastForwardIntervalSeconds
+            : GroupTranscriptRules.TurnRevealIntervalSeconds;
+        AppendRevealedTurns(revealQueue.Advance(
+            time.ElapsedGameTime.TotalSeconds,
+            interval));
+    }
+
+    private static bool IsFastForwarding()
+    {
+        var keyboard = Keyboard.GetState();
+        return keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift);
+    }
+
+    /// <summary>
+    /// 把一批 NPC 回合接到面板上。
+    ///
+    /// **仍然走 <see cref="GroupSessionRules.AppendTurn"/>**，不自己往列表里塞：
+    /// 裁剪上限、丢空条目、addressedTo 归一化都在那里，绕开它「面板 == 存档」
+    /// 这条贯穿全篇的不变式当场就破了。分批调用与一次性调用的最终结果是逐条相同的
+    /// （<c>AppendTurn</c> 对每一步都重做同一套规则），因此逐条播放不会改变最终画面。
+    /// </summary>
+    private void AppendRevealedTurns(IReadOnlyList<BridgeGroupTurn> turns)
+    {
+        if (turns.Count == 0)
+        {
+            return;
+        }
+
+        var spoken = GroupSessionRules.AppendTurn(visibleMessages, playerMessage: null, turns);
+        visibleMessages.Clear();
+        visibleMessages.AddRange(spoken);
+        if (!followLatest)
+        {
+            // 玩家正在看历史：**不把他拽回底部**——拽回去等于翻页白翻，
+            // 那正是用户口径里点名的第三种情况。只把「下面又来了几条」记下来，
+            // 交给提示行告诉他该不该翻回来。
+            unseenCount += turns.Count;
+            scrollHint = ScrollHint();
+        }
+    }
+
+    /// <summary>
+    /// 玩家自己那句**立刻上屏**（与 F8 私聊同一条体验）。
+    ///
+    /// 改前玩家的话和 NPC 回复在同一批里追加（<c>PumpPendingRequest</c> 里一次
+    /// <c>AppendTurn(…, pendingPlayerMessage, response.Turns)</c>），于是自己刚发的那句
+    /// 要等十几秒响应回来才出现，中间那段时间面板像没反应。
+    ///
+    /// 先记一份快照：这一轮若拿不到可用回复就撤回（见 <see cref="RollBackPlayerLine"/>）。
+    /// </summary>
+    private void RevealPlayerLine(string? message, bool opening)
+    {
+        if (opening || string.IsNullOrWhiteSpace(message))
+        {
+            // 开场那一轮玩家一句话都没说；重试那一轮的文字早就上过屏了。
+            return;
+        }
+
+        preSendSnapshot ??= new List<GroupDialogueHistoryEntry>(visibleMessages);
+        var spoken = GroupSessionRules.AppendTurn(visibleMessages, message, turns: null);
+        visibleMessages.Clear();
+        visibleMessages.AddRange(spoken);
+        playerLineRevealed = true;
+        // 自己说话 = 想看回复：视口自动回到底部（用户口径里的第三种情况）。
+        followLatest = true;
+        unseenCount = 0;
+        scrollHint = string.Empty;
+    }
+
+    /// <summary>
+    /// 把「立刻上屏」的那句自己撤回来。这一轮既然没有可用回复，场上就等于什么都没发生
+    /// ——存档那条路（<see cref="GroupSessionRules.Append"/>）在这种轮次里一条都不写，
+    /// 面板若留着那句，「画面 == 存档」立刻不成立。撤回之后那句话仍在
+    /// <c>pendingPlayerMessage</c> 里，重试成功时会补上。
+    /// </summary>
+    private void RollBackPlayerLine()
+    {
+        if (playerLineRevealed && preSendSnapshot is not null)
+        {
+            visibleMessages.Clear();
+            visibleMessages.AddRange(preSendSnapshot);
+        }
+
+        playerLineRevealed = false;
+        preSendSnapshot = null;
     }
 
     public override void draw(SpriteBatch b)
@@ -259,11 +462,12 @@ public sealed class GroupDialogueMenu : IClickableMenu
         // 提示行与气泡不接收点击，两个分支都不改任何命中区。
         // 提示为空（群聊成功回复后会清空）时按「没有东西要放」处理，不占底部留白。
         var namesWidth = Game1.smallFont.MeasureString(participantNames).X;
-        var hintWidth = string.IsNullOrWhiteSpace(hint)
+        var displayHint = DisplayHint;
+        var hintWidth = string.IsNullOrWhiteSpace(displayHint)
             ? 0f
-            : Game1.smallFont.MeasureString(hint).X;
+            : Game1.smallFont.MeasureString(displayHint).X;
         var hintNeedsBottomRow = MenuSkinRules.HintNeedsBottomRow(
-            !string.IsNullOrWhiteSpace(hint),
+            !string.IsNullOrWhiteSpace(displayHint),
             layout.ParticipantStrip.Width,
             namesWidth,
             hintWidth);
@@ -283,12 +487,14 @@ public sealed class GroupDialogueMenu : IClickableMenu
         var contentWidth = ChatBubbleDrawing.ContentWidth(bubbleRight - bubbleLeft);
         var measure = (string value) => Game1.smallFont.MeasureString(value).X;
         var y = messageArea.Y + 12;
-        // 这一屏画哪一段：可发言时恒等于改前的 TakeLast(MaxVisibleMessages)（始终跟最新），
-        // 只读回看时才由滚轮决定起点。
+        // 这一屏画哪一段：可发言与只读**共用同一条算术**（GroupReadOnlyRules.VisibleWindow），
+        // 区别只在喂给它的起点——跟随最新时取一个必然被夹到末尾的值，翻页时取滚动位置。
+        // 可发言时的「不拽回」是这条算术的自然结果：消息变多只会让 maxStart 变大，
+        // 起点不动，视口因此停在原处（见 AppendRevealedTurns）。
         var window = GroupReadOnlyRules.VisibleWindow(
             visibleMessages.Count,
             GroupDialogueLayoutRules.MaxVisibleMessages,
-            followLatest ? int.MaxValue : scrollStartIndex);
+            GroupTranscriptRules.WindowStartIndex(followLatest, scrollStartIndex));
         // 按发言人计次：边框构图随 occurrence 在三套布局间轮换（与回放页一致）。
         // 此前一律传 0，于是同一角色多次发言的构图固定不变。
         var seenBySpeaker = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
@@ -369,15 +575,15 @@ public sealed class GroupDialogueMenu : IClickableMenu
         {
             b.DrawString(
                 Game1.smallFont,
-                hint,
+                displayHint,
                 new Vector2(messageArea.X + 12, messageArea.Y + bubbleAreaHeight + 4),
                 MenuSkinRules.InkSoft);
         }
-        else if (!string.IsNullOrWhiteSpace(hint))
+        else if (!string.IsNullOrWhiteSpace(displayHint))
         {
             b.DrawString(
                 Game1.smallFont,
-                hint,
+                displayHint,
                 new Vector2(layout.ParticipantStrip.Right - hintWidth, layout.ParticipantStrip.Y + 5),
                 MenuSkinRules.InkSoft);
         }
@@ -387,6 +593,12 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
     protected override void cleanupBeforeExit()
     {
+        // **离开这个菜单之前，把没播完的一次性补上——绝不能丢。**
+        // 按 Esc、点关闭、切场景、退回标题、退出存档，全都汇到这里。
+        // 存档那条路本来就与播放无关（BridgeClient 一次性写完整场），所以丢的只会是
+        // 画面；但画面一少，「面板发言数 == 存档场次条数」这条不变式当场就不成立
+        // （视觉测试的证据行正是拿这两个数比对的）。
+        AppendRevealedTurns(revealQueue.Drain());
         keyboardSubscriberLease.Release();
         cancellationSource.Cancel();
         pendingRequest.Clear();
@@ -485,7 +697,13 @@ public sealed class GroupDialogueMenu : IClickableMenu
         {
             sending = false;
             hint = $"请求未发出：{exception.GetType().Name}。";
+            return Task.CompletedTask;
         }
+
+        // 玩家那句**立刻上屏**（与 F8 私聊同一条体验）。这一步在请求发出去之后立刻做，
+        // 不等响应——改前它和 NPC 回复挤在同一批追加里，自己刚发的话要等十几秒才出现。
+        // 拿不到可用回复时由 PumpPendingRequest 撤回（见 RollBackPlayerLine）。
+        RevealPlayerLine(message, opening);
 
         return Task.CompletedTask;
     }
@@ -500,6 +718,8 @@ public sealed class GroupDialogueMenu : IClickableMenu
         sending = false;
         if (error is not null)
         {
+            RollBackPlayerLine();
+            revealImmediately = false;
             hint = "请求失败，邀约仍可重试。";
             return;
         }
@@ -508,6 +728,10 @@ public sealed class GroupDialogueMenu : IClickableMenu
         var next = GroupDialogueSessionRules.ApplyResult(session, response.Turns, response.Fallback);
         if (response.Fallback || next.Invitation.Status != GroupInvitationStatus.Completed)
         {
+            // 这一轮没有可用回复：场上等于什么都没发生，把先上屏的那句自己撤回，
+            // 好让「面板 == 存档」继续成立（存档在这种轮次里一条都不写）。
+            RollBackPlayerLine();
+            revealImmediately = false;
             session = next;
             // 排障辅助（2026-09-20 起常驻）：把失败的关键事实压成一行放进 hint，
             // 它直接画在菜单上、玩家可见，不需要额外的日志管线。
@@ -528,12 +752,33 @@ public sealed class GroupDialogueMenu : IClickableMenu
         }
 
         // 面板上这一场显示的发言与存档里的场次记录**同源**：都由 GroupSessionRules.AppendTurn
-        // 产出（玩家那句在前、NPC 回合按返回顺序在后）。此前这里与 BridgeClient 各写一遍，
-        // 「界面看到的」与「存档记下的」有走散的空间。
-        var spoken = GroupSessionRules.AppendTurn(visibleMessages, pendingPlayerMessage, response.Turns);
-        visibleMessages.Clear();
-        visibleMessages.AddRange(spoken);
+        // 产出。只是现在**分两步揭示**——
+        //
+        // 1. 玩家那句：已经在 SendCurrentAsync 里立刻上屏（重试与视觉测试这两条不经过
+        //    那里的路径在这里补上），顺序仍是玩家在前；
+        // 2. NPC 回合：进逐条揭示队列，由 update 按间隔一条条接上（回看不播、
+        //    视觉测试一次放完，见 GroupTranscriptRules.ShouldRevealOneByOne 与 revealImmediately）。
+        //
+        // 最终画面与改前**逐条相同**：AppendTurn 每一步都重做同一套裁剪与归一化规则。
+        if (!playerLineRevealed && !string.IsNullOrWhiteSpace(pendingPlayerMessage))
+        {
+            RevealPlayerLine(pendingPlayerMessage, opening: false);
+        }
+
+        var turns = response.Turns ?? Array.Empty<BridgeGroupTurn>();
+        if (GroupTranscriptRules.ShouldRevealOneByOne(readOnly) && !revealImmediately)
+        {
+            revealQueue.Enqueue(turns);
+        }
+        else
+        {
+            AppendRevealedTurns(turns);
+        }
+
         pendingPlayerMessage = null;
+        playerLineRevealed = false;
+        preSendSnapshot = null;
+        revealImmediately = false;
         session = next;
         if (!string.IsNullOrWhiteSpace(session.Invitation.InvitationId))
         {
@@ -612,6 +857,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
             ? null
             : playerMessage.Trim();
         sending = true;
+        // 视觉测试要的是**稳定可复现的终态**（证据行会比对「面板发言数 == 存档场次条数」），
+        // 逐条动画是给人看的时序，所以这条路径一次放完。真实路径仍逐条走，
+        // 播放节奏本身由 GroupTurnRevealQueue 的单测覆盖。
+        revealImmediately = true;
+        RevealPlayerLine(pendingPlayerMessage, opening: false);
         pendingRequest.Start(Task.FromResult(response));
     }
 
@@ -632,17 +882,27 @@ public sealed class GroupDialogueMenu : IClickableMenu
         receiveLeftClick(layout.SendButton.Center.X, layout.SendButton.Center.Y);
     }
 
-    /// <summary>只读回看的滚动位置提示（画在标题旁那一行）。</summary>
+    /// <summary>
+    /// 滚动位置提示。只读与可发言共用同一段算术（<see cref="GroupReadOnlyRules.VisibleWindow"/>），
+    /// 只有文案分两档：回看写「回看中」，对话中写「第 a–b 条 / 共 n 条」，
+    /// 并在玩家看历史时附上「下面还有几条新消息」。
+    /// </summary>
     private string ScrollHint()
     {
         var window = GroupReadOnlyRules.VisibleWindow(
             visibleMessages.Count,
             GroupDialogueLayoutRules.MaxVisibleMessages,
-            scrollStartIndex);
-        return GroupReadOnlyRules.ScrollHintText(
-            window.Start,
-            window.Count,
-            visibleMessages.Count);
+            GroupTranscriptRules.WindowStartIndex(followLatest, scrollStartIndex));
+        return readOnly
+            ? GroupReadOnlyRules.ScrollHintText(
+                window.Start,
+                window.Count,
+                visibleMessages.Count)
+            : GroupTranscriptRules.ChatScrollHintText(
+                window.Start,
+                window.Count,
+                visibleMessages.Count,
+                unseenCount);
     }
 
     private void OnInputEnterPressed(TextBox sender)
