@@ -703,10 +703,8 @@ public class ChatInputMenu : IClickableMenu
             BubbleGap,
             message =>
             {
-                var lineCount = ChatTextLayoutRules.Wrap(message.Content, contentWidth, measure).Count;
-                return fixedHeight
-                    + (lineCount * Game1.smallFont.LineSpacing)
-                    + ((lineCount - 1) * MessageLineSpacing);
+                var lines = ChatTextLayoutRules.Wrap(message.Content, contentWidth, measure);
+                return ChatBubbleDrawing.MeasureMessage(message.Role, lines);
             });
         scrollMaxStartIndex = Math.Max(0, history.Count - latestWindow.Count);
         if (followLatest)
@@ -720,11 +718,39 @@ public class ChatInputMenu : IClickableMenu
         var y = area.Y + MessagePadding;
         foreach (var message in history.Skip(scrollStartIndex))
         {
-            var isPlayer = message.Role == "player";
-            var speaker = isPlayer ? "你" : npc.displayName;
+            var isPlayer = message.Role == ChatHistoryRules.PlayerRole;
+            var isDivider = string.Equals(
+                message.Role,
+                ChatHistoryRules.SessionRole,
+                StringComparison.Ordinal);
+            // 发言人与配色都取自这一条自己（群聊场次里会有别的 NPC 与玩家本人），
+            // 只有老式私聊消息没有携带发言人，才退回当前私聊对象。
+            var speaker = isPlayer
+                ? "你"
+                : message.SpeakerName ?? npc.displayName;
+            var bubbleNpcId = message.SpeakerId ?? npc.Name;
             var lines = ChatTextLayoutRules.Wrap(message.Content, contentWidth, measure);
             if (lines.Count == 0)
             {
+                continue;
+            }
+
+            if (isDivider)
+            {
+                // 分节线不是谁说的话：它标出「这里开始是一整场群聊」以及当时都有谁在
+                // （见 GroupSessionRules.ToTimeline），所以不走气泡那套配色与对齐。
+                var dividerHeight = ChatBubbleDrawing.MeasureDividerHeight(lines.Count);
+                if (y + dividerHeight > area.Bottom - MessagePadding)
+                {
+                    break;
+                }
+
+                y += ChatBubbleDrawing.DrawDivider(
+                    b,
+                    area.X + MessagePadding,
+                    area.Right - MessagePadding,
+                    y,
+                    lines) + BubbleGap;
                 continue;
             }
 
@@ -756,7 +782,7 @@ public class ChatInputMenu : IClickableMenu
                 y,
                 speaker,
                 lines,
-                npc.Name,
+                bubbleNpcId,
                 isPlayer);
 
             y += drawnHeight + BubbleGap;

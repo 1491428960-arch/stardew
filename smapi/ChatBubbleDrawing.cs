@@ -84,6 +84,93 @@ internal static class ChatBubbleDrawing
     }
 
     /// <summary>
+    /// 分节线（群聊场次抬头）的上下留白。它没有气泡底板，只比一行字多一点呼吸空间。
+    /// </summary>
+    public const int DividerPadding = 8;
+
+    /// <summary>分节线左右两条发丝线与居中文字之间留的空。</summary>
+    public const int DividerLineGap = 10;
+
+    /// <summary>
+    /// 分节线占用的高度。**必须与实际绘制用同一个算式**：F8 的滚动窗口是按高度算出来的
+    /// （<c>ChatInputMenu.DrawMessages</c> 的 <c>SelectLatestThatFit</c>），
+    /// 两处不一致就会出现「算得下、画到一半被切断」。
+    /// </summary>
+    public static int MeasureDividerHeight(int lineCount)
+    {
+        return lineCount <= 0
+            ? 0
+            : (DividerPadding * 2) + (lineCount * Game1.smallFont.LineSpacing);
+    }
+
+    /// <summary>
+    /// 画一条**分节线**：左右各一段发丝线、中间一行（或几行）说明文字。
+    /// 用来在 F8 的时间线里标出「这里开始是一整场群聊」以及**当时都有谁在**
+    /// （见 <see cref="GroupSessionRules"/>）——它不是谁说的话，所以不走气泡那套配色。
+    /// 返回它占用的高度。
+    /// </summary>
+    public static int DrawDivider(
+        SpriteBatch b,
+        int left,
+        int right,
+        int y,
+        IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(b);
+        if (lines is null || lines.Count == 0)
+        {
+            return 0;
+        }
+
+        var lineSpacing = Game1.smallFont.LineSpacing;
+        var height = MeasureDividerHeight(lines.Count);
+        var available = Math.Max(1, right - left);
+        var textTop = y + DividerPadding;
+        var ruleY = textTop + (lineSpacing / 2);
+        var textY = textTop;
+        foreach (var line in lines)
+        {
+            var textWidth = (int)Math.Ceiling(Game1.smallFont.MeasureString(line).X);
+            var textLeft = left + Math.Max(0, (available - textWidth) / 2);
+            var ruleWidth = Math.Max(0, textLeft - DividerLineGap - left);
+            if (ruleWidth > 0)
+            {
+                b.Draw(
+                    Game1.fadeToBlackRect,
+                    new Rectangle(left, ruleY, ruleWidth, 1),
+                    MenuSkinRules.RuleColor);
+                b.Draw(
+                    Game1.fadeToBlackRect,
+                    new Rectangle(right - ruleWidth, ruleY, ruleWidth, 1),
+                    MenuSkinRules.RuleColor);
+            }
+
+            b.DrawString(
+                Game1.smallFont,
+                line,
+                new Vector2(textLeft, textY),
+                MenuSkinRules.InkSoft);
+            textY += lineSpacing;
+        }
+
+        return height;
+    }
+
+    /// <summary>
+    /// 一条**显示消息**在消息区里占的高度：普通消息按气泡算，分节线（
+    /// <see cref="ChatHistoryRules.SessionRole"/>）按它自己的算式算。
+    /// F8 的滚动窗口（哪些消息放得下）与实际绘制都走这一个函数，
+    /// 免得两处各算一遍、出现「算得下但画到一半被切」。
+    /// </summary>
+    public static int MeasureMessage(string? role, IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        return string.Equals(role, ChatHistoryRules.SessionRole, StringComparison.Ordinal)
+            ? MeasureDividerHeight(lines.Count)
+            : MeasureHeight(lines.Count);
+    }
+
+    /// <summary>
     /// 在 [<paramref name="left"/>, <paramref name="right"/>] 之间画一个气泡，返回它占用的高度。
     /// 玩家侧靠右对齐，NPC 侧靠左并使用角色专属底色与图标徽章。
     /// </summary>

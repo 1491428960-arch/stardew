@@ -124,6 +124,21 @@ public sealed record GroupDialogueParticipant(
     [property: JsonPropertyName("displayName")] string DisplayName,
     [property: JsonPropertyName("gameState")] NpcGameState? GameState = null);
 
+/// <summary>
+/// 一次群聊请求所属的**场次身份**：由 F9 菜单在发起请求时带上，<see cref="BridgeClient"/>
+/// 用它决定「这一轮发言该并进哪一场」。只有 <see cref="SessionId"/> 是键，其余是存档里
+/// 抬头要用的展示信息（标题／主题／日期）。
+///
+/// 为什么必须由菜单给出而不是 BridgeClient 自己推断：同一批参与者可能开过好几场，
+/// 按参与者推断会把两场并成一场；而邀约卡 id 从一开始就唯一标识「这场」。
+/// </summary>
+public sealed record GroupSessionContext(
+    string SessionId,
+    string Title = "",
+    string Topic = "",
+    string DateLabel = "",
+    int TotalDays = 0);
+
 public sealed record GroupDialogueRequest(
     string Message,
     IReadOnlyList<GroupDialogueParticipant> Participants,
@@ -134,4 +149,5 @@ public sealed record GroupDialogueRequest(
     NpcGameState? GameState = null,
     IReadOnlyList<string>? RecentFacts = null,
     RelationshipWorldSnapshot? RelationshipWorld = null,
-    string Provider = "auto");
+    string Provider = "auto",
+    GroupSessionContext? Session = null);

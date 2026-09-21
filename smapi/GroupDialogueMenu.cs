@@ -32,14 +32,21 @@ public sealed class GroupDialogueMenu : IClickableMenu
         StoryStateStore storyStateStore,
         GroupDialogueInvitationRecord invitation,
         IReadOnlyList<GroupDialogueParticipant> participants,
-        Action? onClosed = null)
+        Action? onClosed = null,
+        IReadOnlyList<GroupDialogueHistoryEntry>? initialHistory = null)
         : base(0, 0, 1, 1)
     {
         this.bridgeClient = bridgeClient;
         this.storyStateStore = storyStateStore ?? throw new ArgumentNullException(nameof(storyStateStore));
         this.participants = participants ?? throw new ArgumentNullException(nameof(participants));
         this.onClosed = onClosed;
-        session = GroupDialogueSessionRules.Create(invitation);
+        // 续读（2026-09-21）：存档里那一场的发言序列由调用方从回看档案取出交进来，
+        // 于是「关掉菜单再打开」接的是同一场，而不是一片空白。
+        var restored = (initialHistory ?? Array.Empty<GroupDialogueHistoryEntry>())
+            .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.Content))
+            .ToArray();
+        session = GroupDialogueSessionRules.Create(invitation, restored);
+        visibleMessages.AddRange(restored);
         displayNames = participants.ToDictionary(item => item.NpcId, item => item.DisplayName, StringComparer.OrdinalIgnoreCase);
 
         layout = CalculateLayout();
@@ -67,6 +74,12 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
     /// <summary>诊断用：最近一次群聊请求里，成功带上自己游戏状态的参与者数量。</summary>
     internal int LastRequestStateCount { get; private set; }
+
+    /// <summary>
+    /// 视觉测试/诊断用：面板上（也即这一场）真正显示的发言。它与存档里的场次记录同源
+    /// （都由 <see cref="GroupSessionRules.AppendTurn"/> 产出），用来核对「画面 = 存档」。
+    /// </summary>
+    internal IReadOnlyList<GroupDialogueHistoryEntry> VisibleMessages => visibleMessages;
 
     /// <summary>诊断用：最近一次群聊请求的参与者名单。</summary>
     internal IReadOnlyList<string> LastRequestParticipantIds { get; private set; } =
@@ -348,7 +361,15 @@ public sealed class GroupDialogueMenu : IClickableMenu
             gameState,
             Array.Empty<string>(),
             null,
-            "auto");
+            "auto",
+            // 场次身份：BridgeClient 用它把这一轮发言并进「这一场」（见 GroupSessionContext）。
+            // 邀约卡 id 从一开始就唯一标识一场，重开同一张卡就是接着写同一场。
+            new GroupSessionContext(
+                session.Invitation.InvitationId,
+                session.Invitation.Title,
+                session.Invitation.Topic,
+                CurrentDateLabel(),
+                CurrentTotalDays()));
         try
         {
             pendingRequest.Start(bridgeClient.SendGroupAsync(
@@ -402,14 +423,12 @@ public sealed class GroupDialogueMenu : IClickableMenu
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(pendingPlayerMessage))
-        {
-            visibleMessages.Add(new GroupDialogueHistoryEntry(
-                "player",
-                "player",
-                pendingPlayerMessage.Trim()));
-        }
-        visibleMessages.AddRange(next.PublicHistory.Skip(session.PublicHistory.Count));
+        // 面板上这一场显示的发言与存档里的场次记录**同源**：都由 GroupSessionRules.AppendTurn
+        // 产出（玩家那句在前、NPC 回合按返回顺序在后）。此前这里与 BridgeClient 各写一遍，
+        // 「界面看到的」与「存档记下的」有走散的空间。
+        var spoken = GroupSessionRules.AppendTurn(visibleMessages, pendingPlayerMessage, response.Turns);
+        visibleMessages.Clear();
+        visibleMessages.AddRange(spoken);
         pendingPlayerMessage = null;
         session = next;
         if (!string.IsNullOrWhiteSpace(session.Invitation.InvitationId))
@@ -430,12 +449,41 @@ public sealed class GroupDialogueMenu : IClickableMenu
     /// </summary>
     internal void ApplyMemoryHighlights(IReadOnlyList<string>? highlights)
     {
-        var gameDate = $"{Game1.currentSeason} {Game1.dayOfMonth}";
+        var gameDate = CurrentDateLabel();
         foreach (var write in GroupMemoryRules.Plan(
                      participants.Select(item => item.NpcId),
                      highlights))
         {
             storyStateStore.RecordMemoryHighlight(write.NpcId, write.Content, gameDate);
+        }
+    }
+
+    /// <summary>
+    /// 当前游戏日期的人类可读写法（<c>秋 12</c>），场次抬头与长期记忆用的是同一个口径。
+    /// 取不到日期（还没进世界）时返回空串，不抛异常。
+    /// </summary>
+    private static string CurrentDateLabel()
+    {
+        try
+        {
+            return $"{Game1.currentSeason} {Game1.dayOfMonth}";
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>当前游戏内总天数（场次记录里用来排序与排障）；取不到时记 0（未知）。</summary>
+    private static int CurrentTotalDays()
+    {
+        try
+        {
+            return Game1.Date.TotalDays;
+        }
+        catch
+        {
+            return 0;
         }
     }
 

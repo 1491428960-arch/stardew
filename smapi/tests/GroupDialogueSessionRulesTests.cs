@@ -130,6 +130,32 @@ public sealed class GroupDialogueSessionRulesTests
             second.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
     }
 
+    [Fact]
+    public void Reopening_a_session_restores_the_history_from_the_archive()
+    {
+        // 2026-09-21（群聊场次）：关掉 F9 再进来接的是同一场，不再是空白。
+        var restored = new[]
+        {
+            new GroupDialogueHistoryEntry("player", "player", "你们怎么看？"),
+            new GroupDialogueHistoryEntry("npc", "Abigail", "我有点想知道。"),
+            new GroupDialogueHistoryEntry("npc", "Emily", "我也想听。"),
+        };
+
+        var session = GroupDialogueSessionRules.Create(AcceptedInvitation(), restored);
+
+        // 面板上要显示整串（玩家的话也在），而**发给模型**的公开历史仍然只有 NPC 发言
+        // —— 续读不该偷偷改掉请求体。
+        Assert.Equal(
+            new[] { "Abigail", "Emily" },
+            session.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
+        Assert.All(session.PublicHistory, entry => Assert.Equal("npc", entry.SpeakerType));
+        // 已经有历史了，就不要再自动开场（否则重开一次就会多出一次 NPC 起头）。
+        Assert.False(GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingAlreadyRequested: false));
+        Assert.True(GroupDialogueSessionRules.ShouldOpenWithNpc(
+            GroupDialogueSessionRules.Create(AcceptedInvitation()),
+            openingAlreadyRequested: false));
+    }
+
     private static GroupDialogueInvitationRecord AcceptedInvitation() => new()
     {
         InvitationId = "invite-1",

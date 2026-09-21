@@ -254,7 +254,8 @@ public sealed class ModEntry : Mod
             Monitor.Log(
                 $"[StardewAI.History] 已载入回看档案：key={ChatHistoryArchive.StorageKey} " +
                 $"存档={saveFolder ?? "<unknown>"} NPC={loaded.History.Count} " +
-                $"条={loaded.MessageCount} 长度={json?.Length ?? 0}",
+                $"条={loaded.MessageCount} 场次={loaded.Sessions.Count} " +
+                $"场次发言={loaded.SessionLineCount} 长度={json?.Length ?? 0}",
                 LogLevel.Info);
             foreach (var warning in loaded.Warnings)
             {

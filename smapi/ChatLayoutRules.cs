@@ -2,7 +2,25 @@ using Microsoft.Xna.Framework;
 
 namespace StardewAI.NPC;
 
-public sealed record ChatDisplayMessage(string Role, string Content);
+/// <summary>
+/// 消息区里的一条内容。前两个字段是面板一直在用的「角色 + 文本」；
+/// 后三个是 2026-09-21 加群聊场次时补的**可选**字段，老调用点（只传两个参数）不受影响。
+/// </summary>
+/// <param name="Role">见 <see cref="ChatHistoryRules"/> 的 PlayerRole／NpcRole／SessionRole。</param>
+/// <param name="Content">显示的原文；分节线（<see cref="ChatHistoryRules.SessionRole"/>）放抬头文字。</param>
+/// <param name="Sequence">
+/// 回看档案里的发生序号（<see cref="BridgeClient"/> 的单调计数器）。私聊条目与群聊场次共用同一个
+/// 序号空间，F8 靠它把两者并成一条时间线；<c>null</c> 表示这条来自老档案（没有序号），排在有序号的那批之前。
+/// **它只服务显示**，永远不进任何发给模型的请求。
+/// </param>
+/// <param name="SpeakerId">发言角色的 id（用于取角色配色与徽章）；玩家发言为 <c>"player"</c>。</param>
+/// <param name="SpeakerName">气泡抬头显示的名字；为 null 时退回当前私聊对象的显示名。</param>
+public sealed record ChatDisplayMessage(
+    string Role,
+    string Content,
+    int? Sequence = null,
+    string? SpeakerId = null,
+    string? SpeakerName = null);
 
 public sealed record ChatLayout(
     Rectangle Panel,

@@ -56,8 +56,13 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
         visibleInvitations = storyStateStore.State.GroupDialogueInvitations
             .Where(invitation =>
                 invitation.Status is not GroupInvitationStatus.Expired and
-                    not GroupInvitationStatus.Dismissed and
-                    not GroupInvitationStatus.Completed &&
+                    not GroupInvitationStatus.Dismissed &&
+                // 已聊过（Completed）的卡留在列表里**当且仅当这一场有存档记录**：
+                // 没有记录就没有可回看/可续的东西，列表也不该被历史卡片塞满。
+                // 有了它，玩家聊完一场可以先关掉、之后再进来接着聊或回看
+                // （2026-09-21 群聊场次；此前 Completed 一律隐藏，于是「重开 F9」根本没有入口）。
+                (invitation.Status != GroupInvitationStatus.Completed ||
+                    HasArchivedSession(invitation)) &&
                 !GroupInvitationRules.IsExpired(
                     CurrentTotalDays(),
                     invitation.CreatedTotalDays,
@@ -65,6 +70,12 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             .OrderByDescending(invitation => invitation.CreatedTotalDays)
             .Take(GroupInvitationRules.MaxVisibleInvitations)
             .ToList();
+    }
+
+    /// <summary>这一场在回看档案里有没有记录（决定它还能不能被打开）。</summary>
+    private bool HasArchivedSession(GroupDialogueInvitationRecord invitation)
+    {
+        return bridgeClient?.GroupSession(invitation.InvitationId) is not null;
     }
 
     public override void receiveLeftClick(int x, int y, bool playSound = true)
@@ -165,7 +176,13 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                     MenuSkinRules.InkSoft);
                 // 按钮矩形与点击判定同源：GroupInvitationActionLayoutRules。
                 // 两档 tint：接受=主按钮，稍后/忽略=次按钮。
-                MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.AcceptButton(row), "接受", true, MenuSkinRules.PrimaryButtonTint);
+                // 已聊过的那张卡写「继续」：它接的是同一场（历史从存档回来），不是重新开一场。
+                MenuButtonDrawing.DrawButton(
+                    b,
+                    GroupInvitationActionLayoutRules.AcceptButton(row),
+                    HasArchivedSession(invitation) ? "继续" : "接受",
+                    true,
+                    MenuSkinRules.PrimaryButtonTint);
                 MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DeferButton(row), "稍后", true, MenuSkinRules.SecondaryButtonTint);
                 MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DismissButton(row), "忽略", true, MenuSkinRules.SecondaryButtonTint);
                 y += 104;
@@ -203,12 +220,16 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                 npcId,
                 invitation.ParticipantDisplayNames.ElementAtOrDefault(index) ?? npcId))
             .ToArray();
+        // 续读：这一场在回看档案里的发言序列交给菜单，于是重开同一张卡接的是同一场
+        // （PublicHistory 与面板气泡都从这里回来），而不是一片空白。
+        var restored = bridgeClient?.GroupSession(invitation.InvitationId)?.Lines;
         Game1.activeClickableMenu = new GroupDialogueMenu(
             bridgeClient,
             storyStateStore,
             invitation with { Status = GroupInvitationStatus.Accepted },
             participants,
-            Close);
+            Close,
+            restored);
         closed = true;
     }
 
@@ -248,6 +269,8 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             GroupInvitationStatus.Unread => "未读",
             GroupInvitationStatus.Deferred => "稍后处理",
             GroupInvitationStatus.Accepted => "进行中",
+            // 已聊过的卡会留在列表里（有场次记录时），文案要跟着有——否则会露出英文枚举名。
+            GroupInvitationStatus.Completed => "已聊过",
             _ => status.ToString(),
         };
     }

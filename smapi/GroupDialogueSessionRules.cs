@@ -7,12 +7,23 @@ public sealed record GroupDialogueSession(
 
 public static class GroupDialogueSessionRules
 {
-    public static GroupDialogueSession Create(GroupDialogueInvitationRecord invitation)
+    /// <summary>
+    /// 开一场群聊会话。
+    ///
+    /// <paramref name="restoredLines"/> 是**存档里那一场的发言序列**（F9 续读，2026-09-21）：
+    /// 关掉菜单再进来时，发给模型的公开历史与面板上的气泡都从这里接回来，不再是一片空白。
+    /// 传进来的整串（玩家与 NPC 都在）只有 NPC 那部分进 <see cref="GroupDialogueSession.PublicHistory"/>
+    /// —— 请求体里的历史一直只有 NPC 发言，续读不该偷偷改掉发给模型的东西
+    /// （见 <see cref="GroupSessionRules.ToPublicHistory"/>）；玩家自己的话由面板照旧显示。
+    /// </summary>
+    public static GroupDialogueSession Create(
+        GroupDialogueInvitationRecord invitation,
+        IReadOnlyList<GroupDialogueHistoryEntry>? restoredLines = null)
     {
         ArgumentNullException.ThrowIfNull(invitation);
         return new GroupDialogueSession(
             invitation with { Status = GroupInvitationStatus.Accepted },
-            Array.Empty<GroupDialogueHistoryEntry>(),
+            GroupSessionRules.ToPublicHistory(restoredLines),
             CanRetry: false);
     }
 

@@ -1244,6 +1244,16 @@ public sealed class VisualTestHarness
             $"带各自状态={groupRequestStateCount}；" +
             $"内存层记忆 {string.Join("；", groupHistoryEvidence)}；净增={groupMemoryLayerGainCount}",
             LogLevel.Info);
+        // 群聊场次（2026-09-21）：面板上真正画出来的发言条数，与存档里那一场的发言条数应当一致
+        // ——「F9 画面 = 存档场次 = F8 回看」这条链的证据就打在下一行里。
+        var sessionEvidence = groupParticipantIds
+            .Select(npcId => $"{npcId}={client.RecentGroupSessions(npcId)
+                .Sum(session => session.Lines.Count)}")
+            .ToArray();
+        monitor.Log(
+            $"视觉测试群聊场次证据：面板发言={groupMenu.VisibleMessages.Count}；" +
+            $"存档场次 {string.Join("；", sessionEvidence)}",
+            LogLevel.Info);
     }
 
     private void OnRenderedActiveMenu(object? sender, RenderedActiveMenuEventArgs e)

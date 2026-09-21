@@ -40,6 +40,17 @@ public sealed class ChatHistoryArchiveEnvelope
     /// <summary>NPC id → 按时间先后排列的对话记录（最新的在最后）。</summary>
     [JsonPropertyName("byNpc")]
     public Dictionary<string, List<BridgeDialogueHistoryItem>>? ByNpc { get; init; }
+
+    /// <summary>
+    /// 群聊场次（2026-09-21 新增，见 <see cref="GroupChatSessionRecord"/>）：一场群聊一条，
+    /// 内含完整发言序列。**加字段不升版本号**，理由见 <see cref="ChatHistoryArchive.CurrentSchemaVersion"/>。
+    ///
+    /// 没有场次时整个字段不写（<see cref="JsonIgnoreCondition.WhenWritingNull"/>）：这样
+    /// 「从没开过群聊」的档案与加这个字段之前**逐字节相同**，体积预算用例的数字也不会漂。
+    /// </summary>
+    [JsonPropertyName("groupSessions")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<GroupChatSessionRecord>? GroupSessions { get; init; }
 }
 
 /// <summary>
@@ -51,23 +62,36 @@ public sealed class ChatHistoryArchiveLoadResult
     public static ChatHistoryArchiveLoadResult Empty { get; } = new(
         new Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>(StringComparer.OrdinalIgnoreCase),
         messageCount: 0,
-        Array.Empty<string>());
+        Array.Empty<string>(),
+        Array.Empty<GroupChatSessionRecord>(),
+        sessionLineCount: 0);
 
     internal ChatHistoryArchiveLoadResult(
         IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>> history,
         int messageCount,
-        IReadOnlyList<string> warnings)
+        IReadOnlyList<string> warnings,
+        IReadOnlyList<GroupChatSessionRecord> sessions,
+        int sessionLineCount)
     {
         History = history;
         MessageCount = messageCount;
         Warnings = warnings;
+        Sessions = sessions;
+        SessionLineCount = sessionLineCount;
     }
 
     public IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>> History { get; }
 
+    /// <summary>私聊档案的条数（不含场次里的发言——那两个数分开报，免得日志口径含糊）。</summary>
     public int MessageCount { get; }
 
     public IReadOnlyList<string> Warnings { get; }
+
+    /// <summary>读回来的群聊场次，最早的在前。老档案没有这一段时是空列表，不是错误。</summary>
+    public IReadOnlyList<GroupChatSessionRecord> Sessions { get; }
+
+    /// <summary>场次里的发言总条数。</summary>
+    public int SessionLineCount { get; }
 }
 
 /// <summary>
@@ -84,6 +108,13 @@ public static class ChatHistoryArchive
     /// </summary>
     public const string StorageKey = "stardew-ai-npc.chat-history.v1";
 
+    /// <summary>
+    /// 载荷版本。**2026-09-21 加了群聊场次仍然写 1**：新增的是可选字段，读出端对缺失/多出来的
+    /// 字段本来就宽容（缺失 → 空列表；多出来的字段 → 忽略），所以「老档案读得进、新档案老代码
+    /// 也读得进」两头都成立。一旦升成 2，改前那份 DLL 载入新存档时会走
+    /// <c>schema version unsupported</c> 分支把**整份档案**丢掉 —— 玩家回退版本就白丢历史，
+    /// 而这次改动本身并没有破坏旧格式。真要做不兼容的改动时再升。
+    /// </summary>
     public const int CurrentSchemaVersion = 1;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -103,6 +134,19 @@ public static class ChatHistoryArchive
     /// </summary>
     public static string Serialize(
         IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>? history,
+        string? saveFolder)
+    {
+        return Serialize(history, null, saveFolder);
+    }
+
+    /// <summary>
+    /// 同上，外加**群聊场次**（<see cref="GroupChatSessionRecord"/>）。场次数与单场条数同样在这里裁
+    /// （<see cref="GroupSessionRules.MaxSessions"/>／<see cref="GroupSessionRules.MaxLinesPerSession"/>），
+    /// 一条不留时整个字段不写进 JSON。
+    /// </summary>
+    public static string Serialize(
+        IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>? history,
+        IReadOnlyList<GroupChatSessionRecord>? sessions,
         string? saveFolder)
     {
         var byNpc = new Dictionary<string, List<BridgeDialogueHistoryItem>>(StringComparer.Ordinal);
@@ -130,12 +174,14 @@ public static class ChatHistoryArchive
             }
         }
 
+        var normalizedSessions = GroupSessionRules.NormalizeAll(sessions, out _);
         return JsonSerializer.Serialize(
             new ChatHistoryArchiveEnvelope
             {
                 SchemaVersion = CurrentSchemaVersion,
                 SaveId = SaveIdFromFolderName(saveFolder),
                 ByNpc = byNpc,
+                GroupSessions = normalizedSessions.Count == 0 ? null : normalizedSessions,
             },
             JsonOptions);
     }
@@ -208,10 +254,25 @@ public static class ChatHistoryArchive
             messageCount += items.Length;
         }
 
-        var warnings = skipped == 0
-            ? Array.Empty<string>()
-            : new[] { $"chat history dropped {skipped} empty npc entries" };
-        return new ChatHistoryArchiveLoadResult(history, messageCount, warnings);
+        var warnings = new List<string>();
+        if (skipped > 0)
+        {
+            warnings.Add($"chat history dropped {skipped} empty npc entries");
+        }
+
+        // 群聊场次：老档案（没有这个字段）在这里得到空列表，不刷警告 —— 那时还没有这个形态。
+        var sessions = GroupSessionRules.NormalizeAll(envelope.GroupSessions, out var droppedSessions);
+        if (droppedSessions > 0)
+        {
+            warnings.Add($"chat history dropped {droppedSessions} unusable group sessions");
+        }
+
+        return new ChatHistoryArchiveLoadResult(
+            history,
+            messageCount,
+            warnings.ToArray(),
+            sessions,
+            sessions.Sum(session => session.Lines.Count));
     }
 
     /// <summary>
@@ -231,6 +292,9 @@ public static class ChatHistoryArchive
                 : content,
             Intent = item.Intent,
             RelationshipStage = item.RelationshipStage,
+            // 显示序号要一起带上：丢了它，F8 里群聊场次就会从它原本的位置掉到时间线最前面
+            // （见 GroupSessionRules.ToTimeline 的排序规则）。
+            Sequence = item.Sequence,
         };
     }
 
@@ -274,6 +338,8 @@ public static class ChatHistoryArchive
         return new ChatHistoryArchiveLoadResult(
             new Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>(StringComparer.OrdinalIgnoreCase),
             messageCount: 0,
-            new[] { warning });
+            new[] { warning },
+            Array.Empty<GroupChatSessionRecord>(),
+            sessionLineCount: 0);
     }
 }

@@ -68,6 +68,20 @@ public sealed class BridgeDialogueHistoryItem
     [JsonPropertyName("relationshipStage")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? RelationshipStage { get; init; }
+
+    /// <summary>
+    /// 回看档案里的发生序号（与 <see cref="GroupChatSessionRecord.Sequence"/> 共用一个序号空间，
+    /// 由 <see cref="BridgeClient"/> 的单调计数器发放），F8 靠它把私聊记录与群聊场次并成一条时间线。
+    ///
+    /// ⚠️ **它只服务显示，永远不进请求体**：发送窗口（<c>historyByNpc</c>）里的每条都保持
+    /// <c>null</c>（<see cref="JsonIgnoreCondition.WhenWritingNull"/> 会让它整个不出现在 JSON 里），
+    /// 因为 Bridge 侧的请求模型是 <c>extra="forbid"</c> —— 多一个字段就 422、整轮对话退化成兜底。
+    /// 写入路径见 <c>AppendHistory</c>，护栏用例见
+    /// <c>GroupSessionArchiveTests.Model_window_never_carries_display_only_fields</c>。
+    /// </summary>
+    [JsonPropertyName("sequence")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Sequence { get; init; }
 }
 
 /// <summary>
@@ -262,6 +276,12 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     // 回看档案：F8 面板「往上翻」看的那一份，比发送窗口长（ChatHistoryRules.MaxDisplayMessages）。
     // 与 historyByNpc 并存、各裁各的；这份**不参与任何请求**，只被 RecentHistory 读出去。
     private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> displayHistoryByNpc = new();
+    // 群聊场次：一场群聊一条（见 GroupChatSessionRecord），最早的在前。
+    // 与 displayHistoryByNpc 同属「给玩家翻的档案」，同样不参与任何请求。
+    private readonly List<GroupChatSessionRecord> groupSessions = new();
+    // 回看档案的单调序号：私聊条目与群聊场次共用一个号池，F8 据此把两者并成一条时间线。
+    // 它是显示层的东西，**不进请求体**（见 BridgeDialogueHistoryItem.Sequence）。
+    private int displaySequence;
     private readonly Dictionary<string, NpcGameState> previousStateByNpc = new();
 
     public BridgeClient(
@@ -499,7 +519,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 cancellationToken: cancellationToken).ConfigureAwait(false);
             var result = ValidateGroupResponse(parsed, participantIds, groupStrategy);
             LogSafeGroupResponseMetadata(result);
-            RememberGroupTurn(participants, request.Message, result);
+            RememberGroupTurn(participants, request.Message, result, request.Session);
             return result;
         }
         catch (TaskCanceledException)
@@ -575,9 +595,44 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     }
 
     /// <summary>
+    /// 只读回看入口：这位 NPC **在场**的每一场群聊（一场一条，含完整发言序列）。
+    /// 与 <see cref="RecentHistory"/> 合起来构成 F8 面板要铺的那条时间线
+    /// （合并与排序见 <see cref="GroupSessionRules.ToTimeline"/>）。
+    /// </summary>
+    public IReadOnlyList<GroupChatSessionRecord> RecentGroupSessions(string? npcId)
+    {
+        if (string.IsNullOrWhiteSpace(npcId))
+        {
+            return Array.Empty<GroupChatSessionRecord>();
+        }
+
+        lock (memoryLock)
+        {
+            return groupSessions
+                .Where(session => GroupSessionRules.InvolvesNpc(session, npcId))
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// 一场群聊的存档记录（按邀约卡 id 找）。F9 菜单重开时用它把整场历史接回来 ——
+    /// 这是「session.PublicHistory 随存档走」的读取端。
+    /// </summary>
+    public GroupChatSessionRecord? GroupSession(string? sessionId)
+    {
+        lock (memoryLock)
+        {
+            return FindGroupSession(sessionId);
+        }
+    }
+
+    /// <summary>
     /// 把**回看档案**编成存档载荷（见 <see cref="ChatHistoryArchive"/>）。
     /// 只导出 F8 面板那一份：发给模型的 6 条窗口本就是它的尾部子集，重复存没有意义，
     /// 也免得将来有人误以为窗口能靠存档恢复。
+    ///
+    /// 群聊场次与私聊档案同属这一份，一起写进同一段 JSON（同一个存档键、同一次 Saving）——
+    /// 它们本来就是「玩家往上翻时看到的东西」的两种形态。
     /// </summary>
     /// <param name="saveFolder">当前存档的文件夹名；写入时会被归一化成存档 ID 存下来。</param>
     public string SerializeDisplayHistory(string? saveFolder)
@@ -588,7 +643,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 pair => pair.Key,
                 pair => (IReadOnlyList<BridgeDialogueHistoryItem>)pair.Value.ToArray(),
                 StringComparer.Ordinal);
-            return ChatHistoryArchive.Serialize(snapshot, saveFolder);
+            return ChatHistoryArchive.Serialize(snapshot, groupSessions.ToArray(), saveFolder);
         }
     }
 
@@ -598,6 +653,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     ///
     /// 只动回看档案：发给模型的 <c>historyByNpc</c> 一字不动，
     /// <c>previousStateByNpc</c> 这类运行时推导状态也不受影响。
+    ///
+    /// 显示序号会**接着读回来的最大值往下发**：否则新写的条目拿到 1、2、3，
+    /// 会插到存档里那批旧条目的前面（序号小的排前面）。
     /// </summary>
     public ChatHistoryArchiveLoadResult LoadDisplayHistory(string? json, string? saveFolder)
     {
@@ -609,9 +667,25 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             {
                 displayHistoryByNpc[pair.Key] = pair.Value.ToList();
             }
+
+            groupSessions.Clear();
+            groupSessions.AddRange(loaded.Sessions);
+            displaySequence = HighestSequence(loaded) ?? 0;
         }
 
         return loaded;
+    }
+
+    /// <summary>档案里出现过的最大显示序号；一条都没有时返回 null（新档从 0 起）。</summary>
+    private static int? HighestSequence(ChatHistoryArchiveLoadResult loaded)
+    {
+        var sequences = loaded.History
+            .SelectMany(pair => pair.Value)
+            .Select(item => item.Sequence)
+            .Concat(loaded.Sessions.Select(session => session.Sequence))
+            .Where(sequence => sequence.HasValue)
+            .Select(sequence => sequence!.Value);
+        return sequences.Any() ? sequences.Max() : null;
     }
 
     /// <summary>
@@ -726,19 +800,51 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     }
 
     /// <summary>
-    /// 记一条历史：**发送窗口**（发给模型，<see cref="MaxHistoryItems"/> 条）与
-    /// **回看档案**（F8 面板，<see cref="ChatHistoryRules.MaxDisplayMessages"/> 条）
-    /// 各存一份、各自裁剪。两份存的是同一个不可变对象，文本不重复占内存。
+    /// 记一条**私聊**历史：**发送窗口**（发给模型，<see cref="MaxHistoryItems"/> 条）与
+    /// **回看档案**（F8 面板，<see cref="ChatHistoryRules.MaxDisplayMessages"/> 条）各存一份、各自裁剪。
+    /// 两份的文本是同一个不可变字符串，不重复占内存（回看那一份多带一个显示序号，见下）。
+    ///
+    /// ⚠️ 群聊**不走这里**：群聊的发送窗口一份（每位发言者本人发言合并成一条）与回看档案一份
+    /// （整场一条场次记录）内容不同，分别写在 <see cref="RememberGroupTurn"/>，
+    /// 免得「一条摘要」既当模型记忆又当回看记录（那正是玩家翻不到对话流的原因）。
     /// </summary>
     private void AppendHistory(string npcId, BridgeDialogueHistoryItem item)
+    {
+        AppendSendWindowHistory(npcId, item);
+
+        var displayLog = EnsureHistory(displayHistoryByNpc, npcId);
+        // 回看那一份盖上显示序号：下一个号只发给回看档案，发送窗口里的那条保持 null。
+        displayLog.Add(item.Sequence.HasValue ? item : WithSequence(item, NextDisplaySequence()));
+        TrimHistory(displayLog, ChatHistoryRules.MaxDisplayMessages);
+    }
+
+    /// <summary>回看档案专用的一份副本（只多一个显示序号；其余字段照抄）。</summary>
+    private static BridgeDialogueHistoryItem WithSequence(BridgeDialogueHistoryItem item, int sequence)
+    {
+        return new BridgeDialogueHistoryItem
+        {
+            Role = item.Role,
+            Content = item.Content,
+            Intent = item.Intent,
+            RelationshipStage = item.RelationshipStage,
+            Sequence = sequence,
+        };
+    }
+
+    /// <summary>只写**发送窗口**（发给模型的 6 条）。这里的记录必须与 Bridge 的请求模型逐字段对齐，
+    /// 因此显示专用的字段（<see cref="BridgeDialogueHistoryItem.Sequence"/>）一律不填。</summary>
+    private void AppendSendWindowHistory(string npcId, BridgeDialogueHistoryItem item)
     {
         var sendWindow = EnsureHistory(historyByNpc, npcId);
         sendWindow.Add(item);
         TrimHistory(sendWindow, MaxHistoryItems);
+    }
 
-        var displayLog = EnsureHistory(displayHistoryByNpc, npcId);
-        displayLog.Add(item);
-        TrimHistory(displayLog, ChatHistoryRules.MaxDisplayMessages);
+    /// <summary>发一个显示序号（只在 <c>memoryLock</c> 里调用）。</summary>
+    private int NextDisplaySequence()
+    {
+        displaySequence = displaySequence == int.MaxValue ? int.MaxValue : displaySequence + 1;
+        return displaySequence;
     }
 
     private static List<BridgeDialogueHistoryItem> EnsureHistory(
@@ -763,14 +869,25 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     }
 
     /// <summary>
-    /// 群聊结束后，把每个参与者自己说过的内容**合并成一条**写进它自己的记忆。
-    /// 只记本人发言：别人的话不进这一份记忆；一次群聊最多占一条，
-    /// 免得随口聊的把私聊记忆挤出 6 条窗口。
+    /// 群聊结果落进两份**用途不同**的记忆：
+    ///
+    /// 1. **发送窗口**（每位参与者本人发言合并成一条，与改前一致）：NPC 私下再聊时得记得
+    ///    群里说过什么，所以这一份必须留；它只在内存里，从不进回看档案；
+    /// 2. **回看档案 → 群聊场次**（<see cref="GroupChatSessionRecord"/>）：整场一条记录、
+    ///    含完整发言序列（玩家的话也在里面），F8 因此能按顺序翻完整场。
+    ///
+    /// 改前第 2 份写的是「本人发言合并成一条」的转述（<c>Role=assistant</c>）——那既不是对话流、
+    /// 又让同一句群聊发言在存档里出现好几遍（每人一份转述）。现在一场群聊在存档里**只此一份**，
+    /// 按 NPC 的条目里不再有群聊内容，两者不可能重复。
+    ///
+    /// 判据与 F9 界面同源：fallback／没有可用回合时，菜单既不画气泡也不记档
+    /// （玩家那句留在输入框状态里可以重试），所以这里同样一条都不写。
     /// </summary>
     private void RememberGroupTurn(
         IReadOnlyList<GroupDialogueParticipant> participants,
         string playerMessage,
-        BridgeGroupDialogueResponse result)
+        BridgeGroupDialogueResponse result,
+        GroupSessionContext? sessionContext)
     {
         if (result.Fallback || result.Turns.Count == 0)
         {
@@ -779,6 +896,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
 
         lock (memoryLock)
         {
+            // 1) 发送窗口：每位发言者一条合并摘要（不进回看档案）。
             foreach (var participant in participants)
             {
                 var npcId = participant.NpcId?.Trim();
@@ -807,13 +925,77 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 var summary = string.IsNullOrWhiteSpace(playerMessage)
                     ? $"群里我说：“{joined}”"
                     : $"群里玩家说：“{playerMessage.Trim()}”；我回应：“{joined}”";
-                AppendHistory(npcId, new BridgeDialogueHistoryItem
+                AppendSendWindowHistory(npcId, new BridgeDialogueHistoryItem
                 {
                     Role = "assistant",
                     Content = Truncate(summary, MaxHistoryContentLength),
                     RelationshipStage = stage,
                 });
             }
+
+            // 2) 回看档案：整场群聊一条记录。没有场次身份（老调用点／测试替身没带上下文）时
+            //    退回按参与者姓名拼的身份，仍然只写一条，而不是每人一条。
+            var context = sessionContext ?? FallbackSessionContext(participants);
+            var existing = FindGroupSession(context.SessionId);
+            var next = GroupSessionRules.Append(
+                existing,
+                context,
+                participants,
+                playerMessage,
+                result.Turns,
+                fallback: false,
+                sequence: NextDisplaySequence());
+            if (next is null)
+            {
+                return;
+            }
+
+            if (existing is null)
+            {
+                groupSessions.Add(next);
+                TrimGroupSessions();
+                return;
+            }
+
+            var index = groupSessions.IndexOf(existing);
+            groupSessions[index] = next;
+        }
+    }
+
+    /// <summary>
+    /// 调用点没带场次身份时的兜底：用参与者名单拼一个稳定 id。
+    /// 正常路径（F9 菜单）总会带上邀约卡 id；这里只服务测试替身与旧调用点，
+    /// 让它们仍然得到「一场一条」而不是「每人一条」。
+    /// </summary>
+    private static GroupSessionContext FallbackSessionContext(
+        IReadOnlyList<GroupDialogueParticipant> participants)
+    {
+        var ids = participants
+            .Select(item => item.NpcId?.Trim() ?? string.Empty)
+            .Where(id => id.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase);
+        return new GroupSessionContext($"group:{string.Join("+", ids)}");
+    }
+
+    private GroupChatSessionRecord? FindGroupSession(string? sessionId)
+    {
+        var normalized = sessionId?.Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        return groupSessions.FirstOrDefault(session =>
+            string.Equals(session.SessionId, normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>场次数上限（丢最旧的）。</summary>
+    private void TrimGroupSessions()
+    {
+        if (groupSessions.Count > GroupSessionRules.MaxSessions)
+        {
+            groupSessions.RemoveRange(0, groupSessions.Count - GroupSessionRules.MaxSessions);
         }
     }
 

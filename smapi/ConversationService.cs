@@ -102,13 +102,17 @@ public sealed class ConversationService : IDisposable
     }
 
     /// <summary>
-    /// 只读回看：该 NPC 最近的历史对话，映射成面板消息（角色与条数规则见
-    /// <see cref="ChatHistoryRules"/>）。F8 面板打开时铺进消息区，之后新消息继续追加；
+    /// 只读回看：该 NPC 最近的历史对话**加上它在场的群聊场次**，并成一条按发生顺序排列的
+    /// 时间线（角色、条数、合并与排序规则见 <see cref="GroupSessionRules.ToTimeline"/>）。
+    /// F8 面板打开时铺进消息区，之后新消息继续追加；
     /// 这条路径不发送任何请求，也不会改变发给模型的那份窗口。
     /// </summary>
     public IReadOnlyList<ChatDisplayMessage> RecentMessages(string npcId)
     {
-        return ChatHistoryRules.ToDisplayMessages(transport.RecentHistory(npcId));
+        return GroupSessionRules.ToTimeline(
+            transport.RecentHistory(npcId),
+            transport.RecentGroupSessions(npcId),
+            npcId);
     }
 
     public void Dispose()

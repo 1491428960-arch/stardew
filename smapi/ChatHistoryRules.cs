@@ -14,6 +14,19 @@ namespace StardewAI.NPC;
 /// </summary>
 public static class ChatHistoryRules
 {
+    /// <summary>面板上「玩家说的」这一档（气泡靠右、浅蓝底）。</summary>
+    public const string PlayerRole = "player";
+
+    /// <summary>面板上「NPC 说的」这一档（气泡靠左、角色专属底色）。</summary>
+    public const string NpcRole = "npc";
+
+    /// <summary>
+    /// **分节线**：不是谁说的话，而是「这里开始是一整场群聊」的抬头
+    /// （见 <see cref="GroupSessionRules"/>）。它画成一条带抬头的发丝线，不画气泡，
+    /// 发言人不参与配色——所以它自己成一档，不能混进 <see cref="NpcRole"/>。
+    /// </summary>
+    public const string SessionRole = "session";
+
     /// <summary>
     /// 单次回看最多铺多少条历史。2026-09-21 由 60 提到 1000：60 条只够回看十来屏，
     /// 玩家想翻「上周那次」根本翻不到，而回看档案本来就是给玩家翻的（发给模型的窗口
@@ -37,8 +50,11 @@ public static class ChatHistoryRules
 
     /// <summary>
     /// 把 Bridge 累积的历史映射成面板消息：<c>user</c> → <c>player</c>，
-    /// 其余（<c>assistant</c>，含群聊摘要）→ <c>npc</c>。
-    /// 空白内容与超出上限的部分直接丢掉（保留最新的那批）。
+    /// 其余（<c>assistant</c>）→ <c>npc</c>。空白内容与超出上限的部分直接丢掉（保留最新的那批）。
+    ///
+    /// 2026-09-21：群聊不再往这一份里写（它现在走「场次」，见 <see cref="GroupSessionRules"/>），
+    /// 于是这里只剩下真正的私聊记录；老档案里那批群聊摘要仍按 <c>assistant</c> 读出，
+    /// 显示成 NPC 气泡——老数据保持原样，不迁移也不丢。
     /// </summary>
     public static IReadOnlyList<ChatDisplayMessage> ToDisplayMessages(
         IEnumerable<BridgeDialogueHistoryItem>? history,
@@ -52,7 +68,10 @@ public static class ChatHistoryRules
         return history
             .Where(item => item is not null && !string.IsNullOrWhiteSpace(item.Content))
             .TakeLast(maximumCount)
-            .Select(item => new ChatDisplayMessage(DisplayRole(item.Role), item.Content))
+            .Select(item => new ChatDisplayMessage(
+                DisplayRole(item.Role),
+                item.Content,
+                item.Sequence))
             .ToArray();
     }
 
@@ -64,8 +83,8 @@ public static class ChatHistoryRules
     {
         return role?.Trim().ToLowerInvariant() switch
         {
-            "user" or "player" => "player",
-            _ => "npc",
+            "user" or PlayerRole => PlayerRole,
+            _ => NpcRole,
         };
     }
 }

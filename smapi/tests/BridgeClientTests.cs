@@ -860,8 +860,11 @@ public sealed class BridgeClientTests
     }
 
     [Fact]
-    public async Task RecentHistory_carries_group_summaries_for_their_own_speaker_only()
+    public async Task Group_turn_is_archived_as_one_session_instead_of_per_npc_summaries()
     {
+        // 2026-09-21（群聊场次）：改前回看档案里写的是「本人发言合并成一条」的转述
+        // （每人一份、没说话的人一条都没有），F8 因此翻不到对话流。
+        // 现在一场群聊在回看档案里只此一份，且含完整发言序列。
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StringContent(
@@ -888,11 +891,28 @@ public sealed class BridgeClientTests
                 null,
                 Array.Empty<GroupDialogueHistoryEntry>()));
 
-        // 群聊记录按「本人发言合并成一条」留在各自的回看档案里，F8 面板也翻得到；
-        // 没说话的那位不留记录。
-        var abigail = Assert.Single(client.RecentHistory("Abigail"));
-        Assert.Contains("群里玩家说", abigail.Content);
+        // 1) 按 NPC 的回看条目里**不再**有群聊转述（那正是「同一句话存两遍」的来源）。
+        Assert.Empty(client.RecentHistory("Abigail"));
         Assert.Empty(client.RecentHistory("Emily"));
+
+        // 2) 场次一条，玩家与 NPC 的发言按顺序都在；没说话的 Emily 留在名单里但不产空气泡。
+        var session = Assert.Single(client.RecentGroupSessions("Abigail"));
+        Assert.Equal(
+            new[] { "你们怎么看？", "我觉得挺好。" },
+            session.Lines.Select(line => line.Content).ToArray());
+        Assert.Equal(new[] { "player", "npc" }, session.Lines.Select(line => line.SpeakerType).ToArray());
+        Assert.Equal(new[] { "Abigail", "Emily" }, session.Participants);
+        // 同一场也能在另一位在场者的面板里翻到（存的是同一份，不是每人一份）。
+        Assert.Same(session, Assert.Single(client.RecentGroupSessions("Emily")));
+        Assert.Empty(client.RecentGroupSessions("Penny"));
+
+        // 3) 发给模型的发送窗口**照旧**留着那条转述摘要：NPC 私下再聊时得记得群里说过什么。
+        await client.SendAsync("Abigail", "刚才群里那个话题");
+        using var request = JsonDocument.Parse(handler.RequestBodies[^1]);
+        var sent = request.RootElement.GetProperty("history").EnumerateArray().ToArray();
+        Assert.Contains(sent, item => item.GetProperty("content").GetString()!.Contains("群里玩家说"));
+        // 4) 显示专用的序号绝不进请求体（Bridge 侧 extra="forbid"，多一个字段就 422）。
+        Assert.All(sent, item => Assert.False(item.TryGetProperty("sequence", out _)));
     }
 
     [Fact]
