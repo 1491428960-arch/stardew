@@ -254,7 +254,25 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
 {
     public static readonly Uri DefaultEndpoint = new("http://127.0.0.1:5678");
     public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
+    /// <summary>私聊历史窗口的条数（`SendAsync` 的 history 与
+    /// <see cref="AppendSendWindowHistory"/> 的发送窗口都用它）。</summary>
     private const int MaxHistoryItems = 6;
+
+    /// <summary>
+    /// **群聊**历史窗口的条数（<see cref="SendGroupAsync"/> 的 history）。
+    ///
+    /// 为什么要和私聊那份分开（2026-09-22）：私聊一条历史 = 一个完整回合，
+    /// 群聊一条 = 一个人的一次发言 —— 一轮（玩家 1 条 + NPC 2～3 条）要占 3～4 条，
+    /// 6 条只够 1.5～2 轮。玩家发言进历史后这个额度还会被玩家行占去一部分
+    /// （见 <see cref="GroupSessionRules.ToRequestHistory"/>），覆盖轮数会进一步减半。
+    /// 10 条在 3 人场里约 2.5～3 轮，与改前「纯 NPC 6 条」的覆盖相当。
+    ///
+    /// 有界：单条 ≤ <see cref="MaxHistoryContentLength"/>（240 字），10 条 ≤ 2400 字；
+    /// Bridge 侧 `history` 的 `max_length=40`，远在上限以内。
+    /// **不要**直接放大 <see cref="MaxHistoryItems"/> 来达到同样效果——那是私聊那份额度。
+    /// </summary>
+    private const int MaxGroupHistoryItems = 10;
+
     private const int MaxHistoryContentLength = ChatHistoryRules.MaxContentLength;
     private const int MaxMessageLength = 2000;
     private const int MaxRecentFactLength = 240;
@@ -464,8 +482,12 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             return BridgeGroupDialogueResponse.Offline("bridge: message empty");
         }
 
+        // **取最近**的若干条（2026-09-22 修）：改前这里是 `.Take(MaxHistoryItems)` —— 取的是
+        // **最旧**的 6 条，与私聊 `TrimHistory`（保留末尾）方向相反。玩家发言进历史后这个
+        // 方向性错误会被放大：越聊，模型看到的越是这场对话的开头，而刚发生的事被挡在外面。
+        // 与私聊对齐用 TakeLast，别改回 Take。
         var boundedHistory = (request.History ?? Array.Empty<GroupDialogueHistoryEntry>())
-            .Take(MaxHistoryItems)
+            .TakeLast(MaxGroupHistoryItems)
             .Select(item => new GroupDialogueHistoryEntry(
                 item.SpeakerType,
                 item.SpeakerId,
@@ -835,8 +857,11 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         };
     }
 
-    /// <summary>只写**发送窗口**（发给模型的 6 条）。这里的记录必须与 Bridge 的请求模型逐字段对齐，
-    /// 因此显示专用的字段（<see cref="BridgeDialogueHistoryItem.Sequence"/>）一律不填。</summary>
+    /// <summary>只写**私聊**那个发送窗口（发给模型的 <see cref="MaxHistoryItems"/> 条）。
+    /// 这里的记录必须与 Bridge 的请求模型逐字段对齐，
+    /// 因此显示专用的字段（<see cref="BridgeDialogueHistoryItem.Sequence"/>）一律不填。
+    /// 群聊的发送窗口也走这里（同样用私聊那份额度），它另有一份与请求无关的用途，
+    /// 见 <see cref="RememberGroupTurn"/>。</summary>
     private void AppendSendWindowHistory(string npcId, BridgeDialogueHistoryItem item)
     {
         var sendWindow = EnsureHistory(historyByNpc, npcId);

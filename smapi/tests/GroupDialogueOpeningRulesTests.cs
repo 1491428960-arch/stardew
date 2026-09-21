@@ -38,6 +38,7 @@ public sealed class GroupDialogueOpeningRulesTests
         // 失败会让 CanRetry 为真——若在这里再自动发一次，就会变成无限重试。
         var session = GroupDialogueSessionRules.ApplyResult(
             FreshSession(),
+            "你们在聊什么？",
             new[] { new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "…" } },
             fallback: true);
 
@@ -58,13 +59,17 @@ public sealed class GroupDialogueOpeningRulesTests
     {
         var session = GroupDialogueSessionRules.ApplyResult(
             FreshSession(),
+            "你们在聊什么？",
             new[]
             {
                 new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "听说矿洞那边有新东西。" },
             },
             fallback: false);
 
+        // 「已经有历史」的判据不变（面板上已经有东西可看，就不该再自动起一次头）；
+        // 2026-09-22 起这段历史里含玩家那句，而它同样是「已经有历史」的证据。
         Assert.NotEmpty(session.PublicHistory);
+        Assert.Contains(session.PublicHistory, entry => entry.SpeakerType == "player");
         Assert.False(GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingAlreadyRequested: false));
     }
 

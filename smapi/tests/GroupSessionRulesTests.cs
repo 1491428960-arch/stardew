@@ -343,15 +343,48 @@ public sealed class GroupSessionRulesTests
     // ── F8 时间线 ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ToPublicHistory_keeps_only_npc_lines()
+    public void ToRequestHistory_keeps_the_player_line_and_the_npc_lines_in_order()
     {
         var session = Session("invite-1");
 
-        var history = GroupSessionRules.ToPublicHistory(session.Lines);
+        var history = GroupSessionRules.ToRequestHistory(session.Lines);
 
-        // 发给模型的群聊历史一直只有 NPC 发言；场次里的玩家那句不进请求体。
-        Assert.Equal(new[] { "Abigail" }, history.Select(entry => entry.SpeakerId).ToArray());
-        Assert.All(history, entry => Assert.Equal("npc", entry.SpeakerType));
+        // **原意图**：「面板上画出来的整串」与「发给模型的那一份」要有明确边界，
+        // 不能把面板私有的东西（显示序号、空条目）漏进请求体。
+        // **为什么新行为更对**：旧行为把这个边界划在「丢玩家行」上（函数名 ToPublicHistory，
+        // 只留 NPC），理由是「玩家那句由 message 单独送」——那只在单轮下成立，
+        // 第 2 轮起第 1 轮玩家说过的话就再也回不到请求里，模型因此看不到玩家参与过
+        // （实测：NPC 会反问玩家从没提过的事）。现在边界改划在「丢掉不可用的行」上：
+        // 玩家行与 NPC 行都进，顺序照旧，Bridge 侧本来就支持 speakerType="player"。
+        Assert.Equal(
+            new[] { "player", "Abigail" },
+            history.Select(entry => entry.SpeakerId).ToArray());
+        Assert.Equal(
+            new[] { "player", "npc" },
+            history.Select(entry => entry.SpeakerType).ToArray());
+    }
+
+    [Fact]
+    public void ToRequestHistory_drops_lines_the_bridge_would_reject()
+    {
+        // 存档是**外部可编辑的输入**：speakerType 只认 player／npc（Bridge 侧是 Literal），
+        // 其余一律按 NPC 处理；没有内容的行与没有 speakerId 的 NPC 行直接丢
+        // （Bridge 侧 content／speakerId 都要求非空，留着只会换来 422）。
+        var history = GroupSessionRules.ToRequestHistory(new[]
+        {
+            new GroupDialogueHistoryEntry("PLAYER", "player", "大写也算玩家。"),
+            new GroupDialogueHistoryEntry("手改过的值", "Abigail", "未知 speakerType 按 NPC 处理。"),
+            new GroupDialogueHistoryEntry("npc", "Abigail", "   "),
+            new GroupDialogueHistoryEntry("npc", "  ", "没有 speakerId。"),
+            new GroupDialogueHistoryEntry("npc", "Emily", "正常一条。"),
+        });
+
+        Assert.Equal(
+            new[] { "player", "Abigail", "Emily" },
+            history.Select(entry => entry.SpeakerId).ToArray());
+        Assert.Equal(
+            new[] { "player", "npc", "npc" },
+            history.Select(entry => entry.SpeakerType).ToArray());
     }
 
     [Fact]

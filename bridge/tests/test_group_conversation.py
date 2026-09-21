@@ -426,6 +426,57 @@ def test_group_messages_turn_based_only_uses_the_active_speaker_card() -> None:
     assert "你是 Sophia" not in contents
 
 
+def test_group_messages_carry_the_players_own_lines_from_the_public_history() -> None:
+    """SMAPI 侧现在会把**玩家自己的话**放进请求历史（2026-09-22，BUG-3 断点 1）。
+
+    这条测试钉住 Bridge 侧**不需要任何改动**就接得住它：
+    `GroupHistoryItem.speaker_type` 本来就接受 `"player"`、名单归属只校验 `npc` 行，
+    而 `publicHistory` 是原样进 `group_scene` 卡的一个字段。因此：
+      * 历史里的 player 行会原样出现在场景卡里（顺序不变）；
+      * **当轮**玩家话仍然只作为末条 `user` 消息 —— 两者是不同轮次的话，不会重复。
+    """
+
+    from stardew_ai_bridge.group_conversation import build_group_messages
+
+    card = [{"role": "system", "name": "npcIdentity", "content": "你是 Sophia"}]
+    history = [
+        {
+            "speakerType": "player",
+            "speakerId": "player",
+            "content": "我最近在攒钱买鸡舍。",
+        },
+        {"speakerType": "npc", "speakerId": "Sophia", "content": "养鸡很吵的。"},
+        {
+            "speakerType": "player",
+            "speakerId": "player",
+            "content": "那你都喂它们什么？",
+        },
+    ]
+
+    messages = build_group_messages(
+        participants=[{"npcId": "Sophia"}, {"npcId": "Emily"}],
+        active_npc_id="Sophia",
+        participant_prompts={"sophia": card, "emily": card},
+        strategy="multi_turn",
+        player_message="你还在吗？",
+        public_history=history,
+    )
+
+    scene = json.loads(
+        next(item for item in messages if item.get("name") == "group_scene")["content"]
+    )
+    assert [entry["speakerType"] for entry in scene["publicHistory"]] == [
+        "player",
+        "npc",
+        "player",
+    ]
+    assert scene["publicHistory"][0]["content"] == "我最近在攒钱买鸡舍。"
+    assert scene["publicHistory"][-1]["content"] == "那你都喂它们什么？"
+    # 当轮玩家话只出现一次（末条 user），历史里的旧玩家话不会另外变成 user 消息。
+    assert messages[-1] == {"role": "user", "content": "你还在吗？"}
+    assert [item.get("role") for item in messages].count("user") == 1
+
+
 def test_group_messages_fall_back_when_no_role_card_is_available() -> None:
     from stardew_ai_bridge.group_conversation import build_group_messages
 

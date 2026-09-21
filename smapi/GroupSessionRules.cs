@@ -9,10 +9,10 @@ namespace StardewAI.NPC;
 /// 玩家说什么、NPC 按什么顺序回、谁在场，三处（F9 画面／存档／F8 回看）都出自
 /// <see cref="AppendTurn"/> 一个函数，任何一处改规则另外两处不会各自漂移。
 ///
-/// 与「发给模型的群聊上下文」的边界：
-/// <see cref="GroupDialogueSession.PublicHistory"/> 仍**只有 NPC 发言**（它进请求体，
-/// 改它等于改模型看到的东西）；场次记录里则玩家与 NPC 都在，两者是同一串发言的两种投影
-/// （见 <see cref="ToPublicHistory"/>）。
+/// 与「发给模型的群聊上下文」的边界（**2026-09-22 改**）：
+/// <see cref="GroupDialogueSession.PublicHistory"/> 由 <see cref="ToRequestHistory"/> 从场次发言
+/// 投影而来，**玩家那一句也在里面** —— 两侧现在是同一串发言的两种投影，而不是「整串 vs 只剩 NPC」。
+/// 理由见 <see cref="ToRequestHistory"/> 的注释（旧口径被真机实测证伪，不要再改回去）。
 /// </summary>
 public static class GroupSessionRules
 {
@@ -218,15 +218,57 @@ public static class GroupSessionRules
 
     /// <summary>
     /// 场次发言 → 发给模型的 <see cref="GroupDialogueSession.PublicHistory"/>：
-    /// **只留 NPC 发言**，与改前的请求体一字不差（玩家那句本来就由 <c>message</c> 单独送）。
+    /// **玩家与 NPC 都在里面，顺序照旧**。
+    ///
+    /// ## 它曾经叫 <c>ToPublicHistory</c>，只留 NPC 发言 —— 那条口径已被实测证伪（2026-09-22）
+    ///
+    /// 旧注释写的理由是：「玩家那句本来就由 <c>message</c> 单独送」。
+    /// 那条理由**只在单轮下成立**：<c>message</c> 只带当轮那一句，
+    /// 第 2 轮起，第 1 轮玩家说过的话一旦被这里滤掉就再也回不到请求里。
+    /// 实测代价（真机 C1 第 1 轮）：Alex 反问「你呢，还去海滩吗？」——
+    /// 而玩家从没提过海滩，因为模型手里根本没有玩家上一轮说过的话可以接。
+    ///
+    /// 「记了，但请求侧把它丢了」也是这件事的准确描述：玩家的话一直在存档里
+    /// （<see cref="AppendTurn"/> 会写 <see cref="PlayerLine"/>），只是请求不读它。
+    ///
+    /// Bridge 侧本来就支持：<c>GroupHistoryItem.speaker_type: Literal["player","npc"]</c>
+    /// 已含 <c>"player"</c>，名单归属只对 <c>npc</c> 行校验，因此这里不需要任何 Bridge 侧改动。
+    ///
+    /// ⚠️ **不要再改回「只留 NPC」**。要改之前先看 <c>GroupDialogueSessionRulesTests</c> 里
+    /// 钉住多轮玩家行的用例：那边证明的是「第 2 轮的请求历史里必须有第 1 轮玩家那句」。
     /// </summary>
-    public static IReadOnlyList<GroupDialogueHistoryEntry> ToPublicHistory(
+    public static IReadOnlyList<GroupDialogueHistoryEntry> ToRequestHistory(
         IEnumerable<GroupDialogueHistoryEntry>? lines)
     {
-        return (lines ?? Array.Empty<GroupDialogueHistoryEntry>())
-            .Where(line => line is not null &&
-                string.Equals(line.SpeakerType?.Trim(), NpcSpeakerType, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
+        var history = new List<GroupDialogueHistoryEntry>();
+        foreach (var line in lines ?? Array.Empty<GroupDialogueHistoryEntry>())
+        {
+            if (line is null || string.IsNullOrWhiteSpace(line.Content))
+            {
+                continue;
+            }
+
+            // speakerType／speakerId 归一到 Bridge 认得的那两个取值（存档是外部可编辑的输入）：
+            // 非 "player" 一律按 NPC 处理，与 NormalizeLine 同一条规矩；
+            // 没有 speakerId 的 NPC 行直接丢（Bridge 侧 speakerId 要求非空，留着只会换来 422）。
+            var isPlayer = string.Equals(
+                line.SpeakerType?.Trim(),
+                PlayerSpeakerType,
+                StringComparison.OrdinalIgnoreCase);
+            var speakerId = isPlayer ? PlayerSpeakerId : line.SpeakerId?.Trim();
+            if (string.IsNullOrEmpty(speakerId))
+            {
+                continue;
+            }
+
+            history.Add(new GroupDialogueHistoryEntry(
+                isPlayer ? PlayerSpeakerType : NpcSpeakerType,
+                speakerId!,
+                line.Content!,
+                line.AddressedTo));
+        }
+
+        return history;
     }
 
     /// <summary>

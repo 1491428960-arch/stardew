@@ -678,6 +678,29 @@ public sealed class GroupDialogueMenu : IClickableMenu
             .ToArray();
         LastRequestStateCount = participantsWithState
             .Count(item => item.GameState is not null);
+        // 常驻记忆事实（recentFacts）—— 只取 **active speaker 一个人** 的记忆。
+        //
+        // 为什么不是「每人各一份」（2026-09-22 的决定，别再当成漏接线）：
+        // `RecentMemoryFacts(npcId)` 是**单个 NPC 视角**的记忆（按 OwnerNpcId 过滤），
+        // 里面既有群聊里当着所有人说过的事，也有玩家**只跟这一个 NPC** 私下说过的事；
+        // 而 Bridge 侧的场景卡 `group_scene` 里 recentFacts 只是**一个无归属的字符串数组**
+        // （`build_group_messages` 直接 `list(recent_facts)`，不像参与者角色卡那样按人分段）。
+        // 把三份并排塞进那个数组，等于让另外两人读到「玩家只跟 Alex 说过的事」——
+        // 越界知识，比不传更糟（与下面 relationshipWorld 同一类判据）。
+        // 取本轮发起者那一份是安全的：它是这场对话的当前发言人，与私聊口径也一致
+        // （`ConversationService` 用的同样是 `RecentMemoryFacts(该 NPC)`）。
+        // 要做到「每人一份」得先给场景卡加 per-NPC 槽位（Bridge 侧改动），在那之前不合并。
+        var recentFacts = storyStateStore.RecentMemoryFacts(activeSpeakerNpcId);
+
+        // 关系世界（relationshipWorld）—— **本轮有意继续传 null**（2026-09-22）。
+        //
+        // `RelationshipSnapshotFor(npcId)` 是**单个 NPC 视角**的快照（以该 NPC 为 viewer
+        // 组织「我认识谁、谁和谁是什么关系」），而 group_scene 卡里只有**一个**
+        // relationshipWorld 槽位。群聊有 2～3 位参与者，取 active speaker 会让另外两人
+        // 读到不属于自己的关系视图（把 Alex 的关系网塞给 Shane），**比空更糟**；
+        // 取谁的都一样错，所以这一条**不是接线遗漏，是刻意的**。
+        // 正确做法是按参与者拆成「每人一份」的槽位（与参与者角色卡同构），
+        // 那是 Bridge 侧的改动，单独排期——不要顺手把它补成 active speaker 的快照。
         var request = new GroupDialogueRequest(
             opening
                 ? string.Empty
@@ -690,7 +713,7 @@ public sealed class GroupDialogueMenu : IClickableMenu
             session.PublicHistory,
             activeSpeakerNpcId,
             gameState,
-            Array.Empty<string>(),
+            recentFacts,
             null,
             "auto",
             // 场次身份：BridgeClient 用它把这一轮发言并进「这一场」（见 GroupSessionContext）。
@@ -740,7 +763,15 @@ public sealed class GroupDialogueMenu : IClickableMenu
         }
 
         LastResponseJson = System.Text.Json.JsonSerializer.Serialize(response);
-        var next = GroupDialogueSessionRules.ApplyResult(session, response.Turns, response.Fallback);
+        // 这一轮玩家真正说出口的那句（进请求历史）：正常发送时它就是刚发出去的那句；
+        // 重试时它是**上一轮玩家的原话**（retry 那一轮的 request.Message 是一句占位文案
+        // 「请继续回应刚才的群聊话题。」，玩家从没说过，不能当玩家发言写进历史），
+        // 开场那一轮玩家一句话都没说 ⇒ null ⇒ 不产生玩家行。
+        var next = GroupDialogueSessionRules.ApplyResult(
+            session,
+            pendingPlayerMessage,
+            response.Turns,
+            response.Fallback);
         if (response.Fallback || next.Invitation.Status != GroupInvitationStatus.Completed)
         {
             // 这一轮没有可用回复：场上等于什么都没发生，把先上屏的那句自己撤回，

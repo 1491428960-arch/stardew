@@ -32,9 +32,12 @@ public sealed class GroupDialogueSessionRulesTests
 
         var result = GroupDialogueSessionRules.ApplyResult(
             session,
+            "你们怎么看？",
             Array.Empty<BridgeGroupTurn>(),
             fallback: true);
 
+        // 失败轮连**玩家那句也不写**：面板这时会把自己的气泡撤回、存档也不建场次
+        // （GroupSessionRules.Append 的同一条判据），请求历史若留着它，三者立刻不一致。
         Assert.Empty(result.PublicHistory);
         Assert.True(result.CanRetry);
         Assert.Equal(GroupInvitationStatus.Accepted, result.Invitation.Status);
@@ -48,6 +51,7 @@ public sealed class GroupDialogueSessionRulesTests
 
         var result = GroupDialogueSessionRules.ApplyResult(
             session,
+            "你们怎么看？",
             new[]
             {
                 new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "我会放点吵的。" },
@@ -56,12 +60,65 @@ public sealed class GroupDialogueSessionRulesTests
             },
             fallback: false);
 
+        // **原意图**：一次请求里的多个回合要按模型给出的顺序原样进历史，不能丢、不能重排。
+        // **为什么新行为更对**：现在玩家那句也在序列最前面 —— 它就是这一轮里最先发生的事。
+        // 旧断言（只有 3 条 NPC）钉住的是「玩家话不进历史」这个已被证伪的口径。
         Assert.Equal(
-            new[] { "Abigail", "Emily", "Abigail" },
+            new[] { "player", "Abigail", "Emily", "Abigail" },
             result.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
-        Assert.All(result.PublicHistory, entry => Assert.Equal("npc", entry.SpeakerType));
+        Assert.Equal("player", result.PublicHistory[0].SpeakerType);
+        Assert.Equal("你们怎么看？", result.PublicHistory[0].Content);
+        Assert.All(
+            result.PublicHistory.Skip(1),
+            entry => Assert.Equal("npc", entry.SpeakerType));
         Assert.Equal(GroupInvitationStatus.Completed, result.Invitation.Status);
         Assert.False(result.CanRetry);
+    }
+
+    [Fact]
+    public void Opening_turn_adds_no_player_line()
+    {
+        // 开场那一轮玩家一句话都没说（Bridge 侧「空消息 ⇒ 开场」）：历史里不该凭空
+        // 多出一条空的玩家行 —— Bridge 侧 content 要求非空，而且那等于替玩家编了一句话。
+        var session = GroupDialogueSessionRules.Create(AcceptedInvitation());
+
+        var result = GroupDialogueSessionRules.ApplyResult(
+            session,
+            playerMessage: null,
+            new[] { new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "我先说个事。" } },
+            fallback: false);
+
+        Assert.Equal(
+            new[] { "Abigail" },
+            result.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
+    }
+
+    [Fact]
+    public void The_player_line_from_the_previous_turn_survives_into_the_next_request()
+    {
+        // ★ 本次修复的核心：多轮下，第 1 轮玩家说过的话必须在第 2 轮的请求历史里。
+        // 改前 ApplyResult 只追加 NPC 回合，玩家那句从不进历史 —— 第 2 轮起模型
+        // 就再也看不到玩家参与过这场对话（真机实测：NPC 反问玩家从没提过的事）。
+        var session = GroupDialogueSessionRules.Create(AcceptedInvitation());
+        var first = GroupDialogueSessionRules.ApplyResult(
+            session,
+            "我最近在攒钱买鸡舍。",
+            new[] { new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "养鸡好玩。" } },
+            fallback: false);
+
+        var second = GroupDialogueSessionRules.ApplyResult(
+            first,
+            "那你们呢？",
+            new[] { new BridgeGroupTurn { SpeakerNpcId = "Emily", Content = "我在挑布料。" } },
+            fallback: false);
+
+        Assert.Equal(
+            new[] { "player", "Abigail", "player", "Emily" },
+            second.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
+        Assert.Contains(
+            second.PublicHistory,
+            entry => entry.SpeakerType == "player" &&
+                     entry.Content == "我最近在攒钱买鸡舍。");
     }
 
     [Fact]
@@ -71,6 +128,7 @@ public sealed class GroupDialogueSessionRulesTests
 
         var result = GroupDialogueSessionRules.ApplyResult(
             session,
+            "你们怎么看？",
             new[]
             {
                 new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "我先说。" },
@@ -78,6 +136,8 @@ public sealed class GroupDialogueSessionRulesTests
             },
             fallback: false);
 
+        // 整批拒绝时**连玩家那句都不进**：这一轮在面板上等于没发生（玩家气泡被撤回，
+        // 存档一条不写），历史里留一句玩家话会让模型以为玩家说过、NPC 没接。
         Assert.Empty(result.PublicHistory);
         Assert.True(result.CanRetry);
         Assert.Equal(GroupInvitationStatus.Accepted, result.Invitation.Status);
@@ -90,6 +150,7 @@ public sealed class GroupDialogueSessionRulesTests
 
         var result = GroupDialogueSessionRules.ApplyResult(
             session,
+            "你们怎么看？",
             new[]
             {
                 new BridgeGroupTurn
@@ -107,8 +168,13 @@ public sealed class GroupDialogueSessionRulesTests
             },
             fallback: false);
 
-        Assert.Equal(new[] { "Emily" }, result.PublicHistory[0].AddressedTo);
-        Assert.Empty(result.PublicHistory[1].AddressedTo!);
+        // **原意图**：addressedTo 要按在场名单归一化 —— 名单外的目标丢掉，
+        // 同一个人写成 "Emily"/"emily" 两种拼法只留一份规范写法。
+        // **为什么索引变了**：历史里现在多了一条玩家行（它在最前面），
+        // 归一化这件事本身一点没变，所以下面比对的是 `…[1]`／`…[2]`。
+        Assert.Equal("player", result.PublicHistory[0].SpeakerType);
+        Assert.Equal(new[] { "Emily" }, result.PublicHistory[1].AddressedTo);
+        Assert.Empty(result.PublicHistory[2].AddressedTo!);
     }
 
     [Fact]
@@ -117,16 +183,21 @@ public sealed class GroupDialogueSessionRulesTests
         var session = GroupDialogueSessionRules.Create(AcceptedInvitation());
         var first = GroupDialogueSessionRules.ApplyResult(
             session,
+            "第一轮玩家话。",
             new[] { new BridgeGroupTurn { SpeakerNpcId = "Abigail", Content = "第一轮。" } },
             fallback: false);
 
         var second = GroupDialogueSessionRules.ApplyResult(
             first,
+            "第二轮玩家话。",
             new[] { new BridgeGroupTurn { SpeakerNpcId = "Emily", Content = "第二轮。" } },
             fallback: false);
 
+        // **原意图**：第二次结果要**接在**已有历史后面，而不是把前面的覆盖掉。
+        // **为什么新行为更对**：接着写的东西现在包括两轮的玩家话 —— 覆盖轮数虽然变多，
+        // 但顺序仍是真实的发言顺序（玩家先说、NPC 后接）。
         Assert.Equal(
-            new[] { "Abigail", "Emily" },
+            new[] { "player", "Abigail", "player", "Emily" },
             second.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
     }
 
@@ -143,17 +214,36 @@ public sealed class GroupDialogueSessionRulesTests
 
         var session = GroupDialogueSessionRules.Create(AcceptedInvitation(), restored);
 
-        // 面板上要显示整串（玩家的话也在），而**发给模型**的公开历史仍然只有 NPC 发言
-        // —— 续读不该偷偷改掉请求体。
+        // **原意图**：续读要接回**同一串发言**，不是从空开始；顺序与内容都不能被改写。
+        // **为什么新行为更对**：续读前玩家说过的话也要接回来 —— 旧断言钉的是
+        // 「续读时把玩家行滤掉」，于是一关菜单再进来，玩家此前说过的话在请求里全丢，
+        // 而存档里明明还留着（"记了，但请求侧把它丢了"）。
+        // 面板那份来自 visibleMessages（构造时 AddRange(restored)），与这里读的
+        // PublicHistory 是两个容器 ⇒ 玩家那句仍然只画一次。
         Assert.Equal(
-            new[] { "Abigail", "Emily" },
+            new[] { "player", "Abigail", "Emily" },
             session.PublicHistory.Select(entry => entry.SpeakerId).ToArray());
-        Assert.All(session.PublicHistory, entry => Assert.Equal("npc", entry.SpeakerType));
+        Assert.Equal(
+            new[] { "player", "npc", "npc" },
+            session.PublicHistory.Select(entry => entry.SpeakerType).ToArray());
         // 已经有历史了，就不要再自动开场（否则重开一次就会多出一次 NPC 起头）。
         Assert.False(GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingAlreadyRequested: false));
         Assert.True(GroupDialogueSessionRules.ShouldOpenWithNpc(
             GroupDialogueSessionRules.Create(AcceptedInvitation()),
             openingAlreadyRequested: false));
+    }
+
+    [Fact]
+    public void A_restored_session_with_only_a_player_line_still_counts_as_history()
+    {
+        // 边界：存档里只有玩家行（手改过的存档也可能这样）时，历史非空 ⇒ 不该再自动开场
+        // ——否则会在玩家已经说过话的场次里让 NPC 重新起一次头。
+        var session = GroupDialogueSessionRules.Create(
+            AcceptedInvitation(),
+            new[] { new GroupDialogueHistoryEntry("player", "player", "我先说一句。") });
+
+        Assert.Single(session.PublicHistory);
+        Assert.False(GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingAlreadyRequested: false));
     }
 
     private static GroupDialogueInvitationRecord AcceptedInvitation() => new()

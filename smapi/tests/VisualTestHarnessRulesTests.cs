@@ -248,6 +248,9 @@ public sealed class VisualTestHarnessRulesTests
 
         var session = GroupDialogueSessionRules.ApplyResult(
             GroupDialogueSessionRules.Create(invitation),
+            // 视觉测试场景里玩家没有说话（响应是直接排进菜单的），所以这里传 null：
+            // 历史条数仍等于回合数，与「面板发言数 == 存档场次条数」那条证据行一致。
+            playerMessage: null,
             response.Turns,
             response.Fallback);
 

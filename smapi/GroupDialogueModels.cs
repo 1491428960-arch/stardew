@@ -81,8 +81,11 @@ public sealed record GroupDialogueHistoryEntry(
 ///    <see cref="Participants"/> 名单里（抬头会写「都有谁在」），只是不产生空气泡；
 /// 2. **随存档走**：经 <see cref="ChatHistoryArchive"/> 与私聊档案一起写进当前存档，
 ///    读不到/格式不对就空手开局，绝不拦住载入（见 <c>GroupSessionRules.Normalize</c>）；
-/// 3. **不参与请求**：这是给玩家翻的档案。发给模型的群聊上下文仍是
-///    <see cref="GroupDialogueSession.PublicHistory"/>（只有 NPC 发言，一字不动）。
+/// 3. **与请求同源**：这是给玩家翻的档案，同时也是发给模型的请求历史
+///    ——<see cref="GroupDialogueSession.PublicHistory"/> 由
+///    <see cref="GroupSessionRules.ToRequestHistory"/> 从这边的发言序列投影而来，
+///    **玩家那句也在请求里**（2026-09-22 起；旧口径是「请求只有 NPC 发言」，
+///    已被实测证伪，理由见 <see cref="GroupSessionRules.ToRequestHistory"/>）。
 /// </summary>
 public sealed record GroupChatSessionRecord
 {
@@ -117,7 +120,8 @@ public sealed record GroupChatSessionRecord
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Sequence { get; init; }
 
-    /// <summary>完整发言序列，按发生顺序（玩家发言与 NPC 发言都在里面）。</summary>
+    /// <summary>完整发言序列，按发生顺序（玩家发言与 NPC 发言都在里面）。
+    /// 它同时是请求历史的来源，见类型注释第 3 条。</summary>
     [JsonPropertyName("lines")]
     public IReadOnlyList<GroupDialogueHistoryEntry> Lines { get; init; } =
         Array.Empty<GroupDialogueHistoryEntry>();

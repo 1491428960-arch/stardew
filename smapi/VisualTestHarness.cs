@@ -1175,7 +1175,11 @@ public sealed class VisualTestHarness
         var invitation = dialogue.Session.Invitation;
         groupInvitationStatus = invitation.Status.ToString();
         groupParticipantIds = invitation.Participants.ToArray();
-        groupResponseTurns = dialogue.Session.PublicHistory.Count;
+        // 与 RecordGroupMessageEvidence 同一个口径：只数 NPC 回合。
+        // 2026-09-22 起群聊的 PublicHistory 里也有玩家行（玩家发言进请求历史），
+        // 这个字段名叫「响应回合数」，若把玩家行算进去，两处证据行会给出两个不同的数。
+        groupResponseTurns = dialogue.Session.PublicHistory
+            .Count(entry => string.Equals(entry.SpeakerType, "npc", StringComparison.Ordinal));
         groupFlowSummary =
             $"{(string.IsNullOrWhiteSpace(invitation.Title) ? "（无标题）" : invitation.Title)}" +
             $" · 参与者 {string.Join("、", groupParticipantIds)}" +
