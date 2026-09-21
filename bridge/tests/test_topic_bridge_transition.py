@@ -213,6 +213,10 @@ def test_rendered_instruction_example() -> None:
 
     2026-09-23：禁令句换成了**范例**（"这一面本轮先搁着——像这样换：「手上这件先这样
     ……对了，说起来」"）。这份实例是逐字对照的锚点，改文案时**必须**一起来改。
+
+    2026-09-24 **去模板化**（见下一条测试）：范例由"固定一句"改成"四个候选按 anchor
+    确定性轮换"，末句的「再用「对了」「说起来」拐到别的面」也跟着改成「再用**一个
+    转折词**拐到别的面」——原句在同一句里把那个模板又强化了一遍。
     """
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
@@ -222,8 +226,8 @@ def test_rendered_instruction_example() -> None:
         "最近2轮里有2轮在谈「工作或手艺」这一面；"
         "上一轮你说过：「是啊，葡萄园的收成很好」。"
         "本轮先接住那里面的具体东西，再从它拉一根线过去、换到别的面，不要凭空跳过去。"
-        "这一面本轮先搁着——像这样换：「手上这件先这样……对了，说起来」，"
-        "先把上一句收住，再用「对了」「说起来」拐到别的面，不要以同一面另起一件事。"
+        "这一面本轮先搁着——像这样换：「……说起来，」，"
+        "先把上一句收住，再用一个转折词拐到别的面，不要以同一面另起一件事。"
         "改从「镇上或邻里」这一面挑一件具体的、能落到对白里的小事来说"
         "（例如「镇上今天谁在广场上吵」这个方向），只说一件，不要罗列。"
     )
@@ -231,6 +235,138 @@ def test_rendered_instruction_example() -> None:
         "硬约束：玩家本轮点名的对象必须先接住、先应下来；"
         "他要接着聊那一面就顺着聊，换面不许绕开它、也不许一句带过。"
     )
+
+
+def test_transition_example_rotates_instead_of_repeating_one_template() -> None:
+    """过渡范例必须真的轮得动（2026-09-24 回归）。
+
+    **背景（60 次云端实测）**：旧版只给一个范例「手上这件先这样……对了，说起来」，
+    改后 `7b9aa33` 的 A/B 两组共 10 轮换面里，「对了，说起来」这一对**连用**出现在
+    5 轮，形状二第 3、4、5 轮**连续三轮同款开场**，第 4、5 轮连内容都回环。
+    —— 范例被当成了唯一模板照抄，把"有时硬拐"换成了"固定一个说法"。
+
+    修法是**代码换、不由模型自觉**：每轮只注入一个范例，且优先挑最近两轮没用过的。
+    这里钉四件事：避让生效、全用过时兜底不崩、兜底确定性、旧的那句连用不会回来。
+    """
+
+    from stardew_ai_bridge.stage_policy import (
+        _TRANSITION_EXAMPLES,
+        _transition_example,
+    )
+
+    examples = {text for _, text in _TRANSITION_EXAMPLES}
+
+    # ① 最近一轮用过「对了」→ 本轮不能再给带「对了」的那个
+    just_used = ["嗯，那杯我先留着。对了，说起来——刚搬来那阵子住的那间旧房子。"]
+    picked = _transition_example("是啊，葡萄园的收成很好", just_used)
+    assert picked in examples
+    assert "对了" not in picked
+    assert "说起来" not in picked
+
+    # ② 四个都用过 → 兜底仍然返回候选之一，且**确定性**（不依赖 PYTHONHASHSEED）
+    all_used = ["对了 说起来 哦，还有—— 话说回来，"]
+    fallback = _transition_example("是啊，葡萄园的收成很好", all_used)
+    assert fallback in examples
+    assert fallback == _transition_example("是啊，葡萄园的收成很好", all_used)
+
+    # ③ 零历史（`replies` 省略）仍返回候选之一，不炸
+    assert _transition_example("") in examples
+
+    # ④ 端到端：换面那一轮的 instruction 里只出现**一个**范例，且不是旧的连用
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
+    assert "对了，说起来" not in slot["instruction"]
+    assert sum(text in slot["instruction"] for text in examples) == 1
+
+
+def test_a_topic_she_just_said_is_not_suggested_again() -> None:
+    """方案 4（2026-09-24）：判面之外还要看「这条素材本身最近两轮说过没有」。
+
+    **背景是云端实测的 A2 形状**（改后 `7b9aa33`，改前/改后各 5 轮）。第 4、5 轮她
+    连说了两遍爆米花，而那句**判不出「吃喝」面** —— 素材条目「加了桦树糖浆的爆米花
+    **食谱**」是靠"食谱"两个字判出面的，她说的「加了桦树糖浆的爆米花」判出来是空。
+    于是 `_pick` 认为"吃喝这一面没用过"，第 5 轮把**同一条素材**又推荐了一遍。
+
+    这里用的 4 条回复是**实测原文**（`.tmp/dq-verify/out/after-all.txt` 的 A2 前 4 轮）。
+    """
+
+    replies = [
+        "还不错，刚从酒窖里出来，手上还都是橡木桶的味道。秋天这批新酿闻起来比我想的好，等一下——你要不要过来尝一小口？",
+        "酒窖里那批新酿我还没贴标签，正想着怎么把秋天这股果香留在名字里。你提起来的这一杯，我倒想先问问你尝着像什么，再决定要不要分装给镇上的人。",
+        "嗯，那杯我就先留着——对了，说起来刚搬来那阵子住的那间旧房子，窗户漏风，冬天我总窝在毯子里看电视。你哪天要是路过，我给你也留一小瓶。",
+        "嗯，那杯我先留着。对了，说起来——加了桦树糖浆的爆米花，我前阵子试过一次，甜得有点意外。今天镇上倒是没什么大事，就广场上两个人为了摊位吵了几句，我看了一会儿就走了。",
+    ]
+
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=replies)
+
+    assert slot, "这 4 条应当触发 facetRepeat"
+    # 旧写法在这里给出的正是「加了桦树糖浆的爆米花食谱」（离线复现过）。
+    assert slot["suggestedTopic"] != "加了桦树糖浆的爆米花食谱"
+    assert slot["suggestedTopic"]
+
+
+def test_spoken_topic_detection_uses_bigrams_not_the_whole_entry() -> None:
+    """判据本身：整条子串匹配在真实素材上**几乎不命中**，所以用的是 2-gram 覆盖率。"""
+
+    from stardew_ai_bridge.stage_policy import _topic_already_spoken
+
+    said = ["嗯，那杯我先留着。对了，说起来——加了桦树糖浆的爆米花，我前阵子试过一次。"]
+    # 模型永远不会说出「食谱」那两个字 —— 整条子串匹配会漏掉一条明显用过的素材。
+    assert "加了桦树糖浆的爆米花食谱" not in said[0]
+    assert _topic_already_spoken("加了桦树糖浆的爆米花食谱", said) is True
+    # 完全没提过的素材不能误杀。
+    assert _topic_already_spoken("酒窖里这一批新酿", said) is False
+
+
+def test_pick_falls_back_instead_of_returning_empty() -> None:
+    """三级降级：连"没说过 + 最近没用过的面"都挑不出时，退回不排除那一轮，**不返回空**。
+
+    素材只有两条、且两条都已经被她说过的极端形状。宁可重复一条，也不要像旧写法那样
+    建议一个这个角色根本没有素材的面。
+    """
+
+    topics = [
+        "酒窖里这一批新酿",
+        "镇上今天谁在广场上吵",
+        "记得刚搬来那阵子住的那间旧房子",
+    ]
+    replies = [
+        "酒窖里这一批新酿刚封好。对了，镇上今天谁在广场上吵得厉害，我路过看了会儿。",
+        "酒窖里这一批新酿我今早又尝了一口。记得刚搬来那阵子住的那间旧房子窗户漏风。",
+    ]
+
+    slot = rotation_topic_slot(topics, recent_replies=replies)
+
+    assert slot, "应当仍有建议，不能返回空槽位"
+    assert slot["suggestedTopic"] in topics
+
+
+def test_consecutive_facet_switches_do_not_reuse_the_same_transition() -> None:
+    """她连着换面时，代码给出的范例不能连着两轮同款。
+
+    模拟的是**期望行为**：她照范例拐出去，于是回复里带上了刚给的那个过渡词。
+    实测里连三轮同款正是这条形状出的问题，所以这里连跑 6 轮看相邻是否撞。
+    """
+
+    from stardew_ai_bridge.stage_policy import (
+        _TRANSITION_EXAMPLES,
+        _transition_example,
+    )
+
+    replies = [
+        "刚把新酿的葡萄酒装进橡木桶，酒窖里全是葡萄的甜味。",
+        "是啊，葡萄园的收成很好，我又酿了一批酒。",
+    ]
+    picked: list[str] = []
+    for _ in range(6):
+        example = _transition_example(replies[-1], replies)
+        picked.append(example)
+        marker = next(
+            item for item in _TRANSITION_EXAMPLES if item[1] == example
+        )[0]
+        replies.append(f"嗯，那杯我先留着——{marker}，刚搬来那阵子住的那间旧房子。")
+
+    assert all(a != b for a, b in zip(picked, picked[1:])), picked
+    assert len(set(picked)) >= 3, picked
 
 
 # --- 2. 回归：槽位本身的算法一个字没动 ---------------------------------------

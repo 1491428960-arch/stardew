@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import zlib
 from copy import deepcopy
 from collections.abc import Mapping
 from typing import Any
@@ -771,6 +772,94 @@ def _facet_per_turn(
     return per_turn
 
 
+# 换面过渡的候选范例（2026-09-24 去模板化）。
+#
+# **为什么要改**：旧版只给一个范例，而且每轮都给同一句 ——
+#     「手上这件先这样……对了，说起来」
+# 60 次云端实测（改后 `7b9aa33`，A/B 两组共 10 轮换面）：「对了，说起来」这一对
+# **连用**出现在 5 轮里，形状二的第 3、4、5 轮**连续三轮同款开场**，第 4、5 轮连内容
+# 都回环（爆米花同义说两遍）。也就是说：范例被当成了**唯一模板**照抄，
+# 换面过渡从改前的"有时硬拐"退化成了"固定一个说法"——把一个问题换成了另一个。
+#
+# **改法（三条约束都是项目和用户口径的既有约定）**：
+#   ① **代码轮换，不靠模型自觉**。不给"别重复用同一个过渡词"这类规则 ——
+#      用户口径是「反机械感靠减约束、给示例，不靠加规则」，而"别重复"本身就是
+#      又一条可比对的规则。这里改成每轮只注入**一个**范例，由代码换。
+#   ② **优先避开最近两轮已经用过的那个**（`_transition_example` 的第一支），
+#      真避不开时才按 `anchor` 的稳定哈希兜底。兜底**不用 `len(replies)`**：真机
+#      `BridgeClient.MaxHistoryItems = 6`，history 被夹住后长度不再增长、轮换会卡死
+#      （正是本次要修的形态）。也不用 `hash()`：PYTHONHASHSEED 跨进程随机化，
+#      本项目在群聊记忆 id 上踩过这个坑。
+#   ③ **四个候选都不点名任何面**，与下方 `suggestedFacet` / `suggestedTopic` 的
+#      单一层级不变：范例只示范"怎么拐"，"拐到哪一面"仍只由槽位唯一给出。
+#      四个也都在同一层级（"先收住上一句、再用一个转折词拐出去"），不构成第二层。
+_TRANSITION_EXAMPLES: tuple[tuple[str, str], ...] = (
+    ("对了", "「手上这件先这样……对了，」"),
+    ("说起来", "「……说起来，」"),
+    ("还有", "「哦，还有——」"),
+    ("话说回来", "「话说回来，」"),
+)
+
+
+def _transition_example(anchor: str, replies: object = ()) -> str:
+    """挑一个过渡范例：先排除最近两轮用过的，再在剩下的里按内容稳定哈希挑。
+
+    两层都是必要的：
+      · **排除用过的**挡住"模型照抄范例、于是每轮都是同一句"（本次实测的形态）；
+      · **池内不总取第一个**挡住另一头——只用排除法时，池子恒以第一个候选开头，
+        模型不照抄的那几轮会反复拿到同一个（离线模拟里第 4、5 轮就撞了）。
+    哈希用 `zlib.crc32` 而不是内置 `hash()`：后者受 PYTHONHASHSEED 影响、跨进程不稳
+    （本项目在群聊记忆 id 上踩过这个坑）。
+    """
+
+    texts = [item.strip() for item in (replies or ()) if isinstance(item, str)]
+    # 窗口取**最近两条 NPC 回复**（不是按字符数）：要挡的是"相邻两轮同款"，
+    # 而上一轮回复里就带着她刚用过的那个过渡词。
+    recent = " ".join(texts[-2:])
+    pool = [item for item in _TRANSITION_EXAMPLES if item[0] not in recent]
+    if not pool:
+        pool = list(_TRANSITION_EXAMPLES)
+    if len(pool) == 1:
+        return pool[0][1]
+    material = anchor + "|" + (texts[-1] if texts else "")
+    return pool[zlib.crc32(material.encode("utf-8")) % len(pool)][1]
+
+
+# 「这条素材最近两轮已经被她说出来了」的判据（2026-09-24，方案 4）。
+#
+# **动机**：`_pick` 原先的去重依据是**判面**（`used`），而模型说的那句话**未必判得出面** ——
+# 云端实测（A2 形状）第 4、5 轮她连说了两遍爆米花，而
+# `_facet_hits("…加了桦树糖浆的爆米花…")` = **空**（素材条目「加了桦树糖浆的爆米花**食谱**」
+# 靠"食谱"两个字才判出「吃喝」）。于是代码认为"吃喝这一面没用过"，第 5 轮把**同一条素材**
+# 又推荐了一遍 —— 这就是那次内容回环的直接原因。
+#
+# **判据**：素材条目与最近两轮回复的 **2-gram 覆盖率** ≥ 阈值即视为"说过了"。
+#
+# ⚠ **阈值是 13 个实测样本上的观察值，不是统计结论**（样本见
+# `.tmp/dq-verify/out/plan4-eval.txt`，脚本 `eval_plan4.py`）：
+#   · **整条子串匹配不可用** —— 13 个样本只命中 1 次（素材是描述性短语，
+#     模型永远不会说"食谱"那两个字）；
+#   · **LCS ≥ 0.5 会漏** ——「酒窖里这一批新酿」vs 她实际说的「那批新酿」= 0.38；
+#   · **2-gram ≥ 0.5 在样本上最好** —— 爆米花 0.82/0.64、新酿 0.71、Birdie 芋泥 0.62，
+#     而"明显没用素材"的几轮全部 **0.00**（误杀风险低）。
+# **它抓不住"换个说法说同一件事"** —— 那种重复更隐蔽、也更像真人在换着说，**刻意不治**。
+# 将来样本变多再调这个数。
+_TOPIC_ECHO_BIGRAM_RATIO = 0.5
+
+
+def _topic_already_spoken(topic: str, replies: list[str]) -> bool:
+    """这条素材是不是最近两轮已经被她说出来过（方案 4 的去重依据）。"""
+
+    recent = " ".join(replies[-2:])
+    if not recent:
+        return False
+    grams = [topic[index : index + 2] for index in range(len(topic) - 1)]
+    if not grams:
+        return False
+    hits = sum(1 for gram in grams if gram in recent)
+    return hits / len(grams) >= _TOPIC_ECHO_BIGRAM_RATIO
+
+
 def rotation_topic_slot(
     preferred_topics: object = None,
     *,
@@ -878,11 +967,16 @@ def rotation_topic_slot(
     # 那正是它在"无禁令、不拿 `used` 筛"时会返回的那一条。复制一份等价逻辑会让
     # "默认落点"有两份定义（本项目记过的形状），所以宁可在同一个函数里把顺序调过来。
     used = set().union(*per_reply) if per_reply else set()
+    # 方案 4（2026-09-24）：判面之外再加一层"**这条素材本身**最近两轮说过没有"。
+    # 判据与阈值理由见 `_TOPIC_ECHO_BIGRAM_RATIO` 上方注释。
+    spoken = {topic for topic in topics if _topic_already_spoken(topic, replies)}
 
-    def _pick(allow_used: bool) -> tuple[str, str]:
+    def _pick(allow_used: bool, *, skip_spoken: bool = True) -> tuple[str, str]:
         for topic in topics:
             facet = _facet_of_topic(topic)
             if not facet or facet == banned:
+                continue
+            if skip_spoken and topic in spoken:
                 continue
             if not allow_used and facet in used:
                 continue
@@ -932,7 +1026,9 @@ def rotation_topic_slot(
             # 历史时这一级给出的禁令由 `used` 决定，不再是"她惯常的落点"。具体代价：
             # S3 前两轮（R1 工作面、R2 是纯指代判不出面）下它会禁掉**镇上**、把她推回
             # 工作面 —— 而她最近聊的正是工作面，与"换个话题"正好相反。
-            _, default_facet = _pick(allow_used=True)
+            # `skip_spoken=False`：这一级要的正是"**不加任何筛选**时 `_pick` 会返回的
+            # 那一条"，方案 4 的"说过没有"筛选同样不能参与（见 `_TOPIC_ECHO_BIGRAM_RATIO`）。
+            _, default_facet = _pick(allow_used=True, skip_spoken=False)
             if default_facet:
                 banned = default_facet
                 banned_source = "default"
@@ -959,6 +1055,12 @@ def rotation_topic_slot(
     suggested_topic, suggested_facet = _pick(allow_used=False)
     if not suggested_topic:
         suggested_topic, suggested_facet = _pick(allow_used=True)
+    if not suggested_topic:
+        # 第三级降级（2026-09-24 方案 4 加）：连"最近没用过的面"都挑不出来时，才允许
+        # 回到刚说过的那条素材。宁可重复，也不要像旧写法那样建议一个**这个角色根本
+        # 没有素材的面**（"换到空的"比不换更差）—— 与上面两级是同一个降级方向，
+        # 只是多松一格 `skip_spoken`。
+        suggested_topic, suggested_facet = _pick(allow_used=True, skip_spoken=False)
 
     # 措辞（2026-09-22 重写）。三处按本次口径调整：
     #
@@ -1023,9 +1125,14 @@ def rotation_topic_slot(
         #      那根线**长什么样**（一个可照抄的句式），不是第二条规则。
         # instruction 总长仍在 `_compact_stage_policy` 的 300 字以内（最坏组合 237 字），
         # 回归在 `test_topic_bridge_transition.py::test_every_instruction_fits_the_compact_whitelist_limit`。
+        #
+        # 2026-09-24 **去模板化**：范例从"固定一句"改成**四个候选、按 anchor 确定性轮换**
+        # （动机与三条约束见 `_TRANSITION_EXAMPLES` 上方的注释）。同时把末句的
+        # 「再用「对了」「说起来」拐到别的面」改成「再用**一个转折词**拐到别的面」——
+        # 原句把两个具体的词又写了一遍，等于在一句里强化同一个模板。
         parts.append(
-            "这一面本轮先搁着——像这样换：「手上这件先这样……对了，说起来」，"
-            "先把上一句收住，再用「对了」「说起来」拐到别的面，不要以同一面另起一件事。"
+            f"这一面本轮先搁着——像这样换：{_transition_example(anchor, replies)}，"
+            "先把上一句收住，再用一个转折词拐到别的面，不要以同一面另起一件事。"
         )
     else:
         # 没有面可禁（B/C 理由）：要的是"换个落点"，不是封口——凭空禁一面会把

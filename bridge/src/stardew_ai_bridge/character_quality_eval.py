@@ -2347,7 +2347,7 @@ _FEMININE_MALE_FOLLOW_UP_TURNS: dict[
     str, tuple[CharacterQualityTurn, CharacterQualityTurn]
 ] = {
     "elliott-daily": (
-        CharacterQualityTurn("turn-2", "一页海景速写，纸边还沾着沙。", ("海景", "纸"), (), "看初识阶段是否用具体物件回答写作近况。"),
+        CharacterQualityTurn("turn-2", "看你这页海景，纸边还沾着沙。", ("海景", "纸"), (), "看初识阶段是否用具体物件回答写作近况。"),
         CharacterQualityTurn("turn-3", "我先收起来，免得海风把它吹走。", ("收", "海风"), (), "看收尾是否落到眼前动作，不突然长篇抒情。"),
     ),
     "elliott-follow-up": (

@@ -97,6 +97,21 @@ class NpcGameState(ApiModel):
         max_length=100,
     )
     gender: str | None = Field(default=None, max_length=50)
+    # ⚠ **本模型里唯一的玩家字段**（其余每个都是「关于这个 NPC 的」）。往这里继续堆
+    # 玩家信息之前，先考虑是不是该另起一个容器。
+    #
+    # 唯一用途是**称呼**：`prompts.py` 把它渲染进 `mod_overlay` 卡、紧挨 `addressing`，
+    # 让「按玩家性别：男「小伙子」，女「小姑娘」」这个条件有依据。它**不参与任何门控、
+    # 分支或检索**。
+    #
+    # ⚠ **发布顺序**：`ApiModel` 是 `extra="forbid"`（本文件 :12）⇒ **新 DLL + 旧 Bridge
+    # = 422 → 退化成兜底回复**。**必须先发 Bridge、再发 DLL**。反方向安全：旧 DLL 不发
+    # 这个字段时这里是 `None`，与加这个字段之前的行为完全一致。
+    player_gender: str | None = Field(
+        default=None,
+        alias="playerGender",
+        max_length=50,
+    )
     season: str | None = Field(default=None, max_length=50)
     date: str | None = Field(default=None, max_length=100)
     weather: str | None = Field(default=None, max_length=100)

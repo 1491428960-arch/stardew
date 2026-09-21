@@ -38,6 +38,7 @@ avoid「把恢复过程说成已经彻底解决」是在**禁止**把过程说�
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from pathlib import Path
@@ -401,6 +402,18 @@ def test_no_sophia_quality_case_still_has_her_painting() -> None:
     def strings(node: object, path: str):
         if isinstance(node, str):
             yield path, node
+        elif dataclasses.is_dataclass(node) and not isinstance(node, type):
+            # ⚠ 2026-09-24 补这个分支之前，本闸**从来没扫过 `case.turns`** ——
+            # `_materialize_quality_turns` 把 follow-up 轮次放进 `turns` 字段，
+            # 而它是 `CharacterQualityTurn` 的元组；下面原先只有 str/list/tuple/dict
+            # 三支，dataclass 落空、被静默跳过。于是 `elliott-daily` 的
+            # turn-2「一页海景**速写**，纸边还沾着沙。」在两轮修正里都漏了过去
+            # （`速写` 明明在 pattern 里）。同型教训本项目记过一次：
+            # **tuple 里的非字符串元素会静默返回空**。
+            for field in dataclasses.fields(node):
+                yield from strings(
+                    getattr(node, field.name, None), f"{path}.{field.name}"
+                )
         elif isinstance(node, (list, tuple)):
             for index, item in enumerate(node):
                 yield from strings(item, f"{path}[{index}]")

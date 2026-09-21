@@ -84,6 +84,29 @@ public sealed class NpcGameState
     [JsonPropertyName("sourceMods")]
     public IReadOnlyList<string> SourceMods { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// **玩家的**性别（<c>Male</c> / <c>Female</c>），读不到时为 <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠ **这是本 DTO 里唯一的玩家字段** —— 其余每个字段都是「关于这个 NPC 的」。
+    /// 往这里继续堆玩家信息之前，先考虑是不是该另起一个容器（例如
+    /// <c>PlayerContext</c>），别让 <c>NpcGameState</c> 慢慢变成一个「场景快照」。
+    /// </para>
+    /// <para>
+    /// **唯一用途是称呼**：Bridge 侧把它渲染进 <c>mod_overlay</c> 卡、紧挨
+    /// <c>addressing</c>，让「按玩家性别：男「小伙子」，女「小姑娘」」这个条件有依据。
+    /// 它**不参与任何门控、分支或检索**，也不要拿它去推断别的玩家属性。
+    /// </para>
+    /// <para>
+    /// ⚠ **发布顺序**：Bridge 侧的 <c>ApiModel</c> 是 <c>extra="forbid"</c>，
+    /// 所以「新 DLL + 旧 Bridge」会 **422 → 退化成兜底回复**。**必须先发 Bridge、再发 DLL**。
+    /// （反方向安全：旧 DLL 不发这个字段时 Bridge 收到 <c>null</c>，与今天的行为一致。）
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("playerGender")]
+    public string? PlayerGender { get; init; }
+
     [JsonPropertyName("warnings")]
     public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
 }
@@ -225,6 +248,11 @@ public static class GameStateCollector
             NpcId = state.NpcId,
             DisplayName = state.DisplayName,
             Gender = state.Gender,
+            // 玩家性别**刻意不走 `RuntimeNpcState`**：那个 record 的每个成员都是
+            // 「关于这个 NPC 的」，把玩家字段塞进去会污染它的语义，也会让纯函数重载
+            // （`Collect(RuntimeNpcState, ...)` 的测试契约）多出一个不该有的入参。
+            // 它只在终点对象上补一次，见 `NpcGameState.PlayerGender` 的 remarks。
+            PlayerGender = ReadString(Game1.player, "Gender", warnings, "playerGender"),
             Location = state.Location,
             Season = state.Season,
             Date = state.Date,

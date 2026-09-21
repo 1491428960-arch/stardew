@@ -207,3 +207,91 @@ def test_gender_dependent_addressing_states_the_condition_and_a_neutral_fallback
     assert "性别" in value, f"{npc} 没写明性别条件：{value!r}"
     for form in (male, female, neutral):
         assert form in value, f"{npc} 缺 {form}：{value!r}（依据：{evidence}）"
+
+
+# --- 玩家性别通道（2026-09-24）--------------------------------------------------
+#
+# 上面那几条钉的是「**写法**里写明了性别条件」。但条件要能兑现，还缺**依据** ——
+# 而这正是本轮的发现：`gameState.gender` 是 **NPC 的**性别
+# （`GameStateCollector.cs` 读的是 `npc.Gender`），**玩家性别从来没进过请求**，
+# 所以 Willy / George / Morris 三条**恒落「不确定」分支**，实际只输出「年轻人／农场主」
+# —— 而那不是这三人的原话。
+#
+# 2026-09-24 补上 `playerGender` 通道（C# DTO → Bridge 模型 → `mod_overlay` 卡，
+# **紧挨 `addressing`**，值映射成写法里逐字相同的「男 / 女」）。
+#
+# 这里钉两组必须同时成立的事：
+#   · **发性别时条件能兑现**（男→男、女→女，含大小写容错）；
+#   · **不发时不许猜**（不给这个键，模型落「不确定」那一支）。
+
+
+def _mod_overlay_card(npc: str, mods: list[str], player_gender: object) -> dict:
+    """走线上同一条紧凑路径，取 `mod_overlay` 卡（`addressing` 就在这张卡里）。"""
+
+    from stardew_ai_bridge.app import _build_context
+
+    state: dict[str, object] = {
+        "npcId": npc,
+        "displayName": npc,
+        "gender": "Male",
+        "location": "Town",
+        "season": "spring",
+        "date": "5",
+        "weather": "clear",
+        "time": 900,
+        "friendship": 100,
+        "friendshipHearts": 0,
+        "relationship": "stranger",
+    }
+    if player_gender is not None:
+        state["playerGender"] = player_gender
+    payload = {
+        "npcId": npc,
+        "displayName": npc,
+        "message": "你好，我想学钓鱼。",
+        "intent": "chat",
+        "provider": "fake",
+        "compactPrompt": True,
+        "channel": "face_to_face",
+        "sourceMods": mods,
+        "recentFacts": [],
+        "history": [],
+        "gameState": state,
+    }
+    context, prompt = _build_context(payload, compact_prompt=True)
+    assert context.get("_runtime_compact") is True
+    card = next(item for item in prompt if item.get("name") == "mod_overlay")
+    return json.loads(card["content"])
+
+
+@pytest.mark.parametrize(
+    ("npc", "mods", "player_gender", "expected"),
+    [
+        ("Willy", ["vanilla"], "Male", "男"),
+        ("Willy", ["vanilla"], "Female", "女"),
+        # 大小写容错：C# 发的是 `Male`/`Female`，但别指望永远是那个大小写。
+        ("Morris", ["SVE", "vanilla"], "female", "女"),
+        # 认不出的值**不发**这个键 —— 给了错的性别比不给更糟。
+        ("Willy", ["vanilla"], "Unknown", None),
+        # 不发（旧 DLL）= 与加这个字段之前完全一致。
+        ("Willy", ["vanilla"], None, None),
+    ],
+)
+def test_player_gender_reaches_the_addressing_card(
+    npc: str, mods: list[str], player_gender: object, expected: str | None
+) -> None:
+    overlay = _mod_overlay_card(npc, mods, player_gender)
+
+    assert "addressing" in overlay, "addressing 必须与 playerGender 同卡"
+    assert overlay.get("playerGender") == expected
+
+
+def test_the_gender_value_matches_the_addressing_wording() -> None:
+    """卡里发出去的中文必须与写法里那两个字**逐字相同**，否则模型对不上。"""
+
+    overlay = _mod_overlay_card("Willy", ["vanilla"], "Male")
+    wording = overlay["addressing"]["player"]
+
+    assert "性别" in wording
+    assert f"男「小伙子」" in wording
+    assert f"{overlay['playerGender']}「小伙子」" in wording
