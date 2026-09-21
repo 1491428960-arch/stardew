@@ -298,10 +298,32 @@ _CONVERSATION_LEAD_ROLE_GUIDANCE: dict[str, str] = {
 # "投球" —— 这是**主面之外的次要面穿透**，与"槽位禁某面、guidance 仍列该面"那种
 # 同面冲突不是一回事。数量与边界记在 `test_narrow_material_roles_are_recorded` 里，
 # 这里不做互斥裁决（`_facet_of_topic` 的"取声明顺序第一个"仍是唯一规则）。
+# 2026-09-22：**工作面补收单字「画」**（真机实录暴露的覆盖缺口）。
+#
+# 起因：真机 5 轮实录里，索菲亚那一簇（画／酒）有两轮判不出面 ——
+#   · 玩家「那幅画怎么样了？」→ 命中 0 面
+#   · 她「还没画完呢，就差葡萄藤后面那道光」→ 命中 0 面
+# 因为词表收的是**派生词**（绘画／画画／画框／画笔／颜料／画布），而真实对话里说的是
+# **单字**："那幅画""还没画完""画到哪了"。缺了它，"最近几轮都在工作面"在真机上
+# 大部分轮次算不出来，整套槽位空转（离线用例用"画布/酒窖/新酿"这类构造句，命中率
+# 100% —— 离线与真机的差距就在这里）。
+#
+# **为什么「画」能收，而「酒」不能收**（commit message 记过的那个坑）：
+# "酒"是**多义语素**，它在「酒馆」「酒店」「酒保」里属于"吃喝"场景，而 `_facet_of_topic`
+# 按**声明顺序取第一个**命中面 —— 工作面声明在前，于是「酒馆里喝一杯」这类素材的
+# 主面会从"吃喝"漂到"工作或手艺"，`narrow_topic_pool` / `suggestedTopic` 跟着全变。
+# "画"是**单义语素**：中文里作名词或动词几乎只指图画与绘画，唯一需要警惕的
+# 「计划／规划」用的是**划**不是**画**。
+#
+# 这条不是推测，是**扫过全部素材**的：`data/personas/*.json` 里含「画」字的
+# `preferredTopics` 条目**只有 1 条**（Sophia 的「画布上还没画完的那一块」），
+# 它本来就是工作面 —— 加这个字**不改变任何角色的任何素材主面**。
+# 回归由 `test_topic_slot_real_dialogue.py` 的「酒馆仍归吃喝」与
+# `test_topic_slot_rotation.py::test_narrow_material_roles_are_recorded` 一起钉住。
 _LIFE_FACET_PATTERNS: tuple[tuple[str, str], ...] = (
     (
         "工作或手艺",
-        r"葡萄园|酿造|酿酒|酒窖|橡木|酒桶|新酿|绘画|画画|画框|画笔|颜料|画布|"
+        r"葡萄园|酿造|酿酒|酒窖|橡木|酒桶|新酿|绘画|画画|画框|画笔|颜料|画布|画|"
         r"创作|写作|稿|句子|词句|诊所|看诊|病人|处方|"
         r"铁匠|锻造|矿洞|矿石|晶石|科学|研究|实验|天文|机械|发明|工程|"
         r"图纸|建筑|木工|商店|经营|货品|进货|公交|开船|教学|上课|博物馆|文物|"
@@ -387,6 +409,23 @@ _PLAYER_REFUSAL_MARKERS: tuple[str, ...] = (
 _PLAYER_TOPIC_REQUEST_MARKERS: tuple[str, ...] = (
     "换个话题", "换一个话题", "换话题", "说点别的", "聊点别的", "说别的",
     "聊别的", "谈点别的",
+)
+
+# 「玩家点名的对象要接住」：2026-09-22 从 instruction 的**括号从句**升成**一级硬约束**。
+#
+# 原先它是禁令后面括号里的一句补充说明：
+#     「别再以这一面做新的落点（玩家本轮自己点名的对象仍要接住；他要是继续追问
+#       这一面，就顺着他的方向聊，别为了换面绕开它）；换物件…都不算换。」
+# 位置上是从句、语气上是提醒 —— 模型很容易在"本轮由你主动把话头换一次"这条主线下面
+# 把它读成可选项。而它其实是"**方向盘在玩家手里**"的**唯一**措辞层保障：代码层的
+# 撤回只在"玩家点的正好是被禁那一面"时生效（`banned and banned in _facet_hits(...)`），
+# 玩家点名**别的**面（或本轮没有重复面可禁、槽位由 B/C 理由产出）时全靠这句话。
+#
+# 所以提为 `topicSlot` 的一级字段，与 `instruction` 并列，并用"硬约束"点明优先级。
+# 措辞刻意短：白名单里 `playerAnchor` 上限 80 字符，且它要和 `instruction` 一起读。
+_PLAYER_ANCHOR_CONSTRAINT = (
+    "硬约束：玩家本轮点名的对象必须先接住、先应下来；他要接着聊那一面就顺着聊，"
+    "换面不许绕开它、也不许一句带过。"
 )
 
 # 引用上一轮回复时的长度上限。整句会把 instruction 推向 `_compact_stage_policy`
@@ -524,25 +563,72 @@ def _bridge_anchor(reply: object) -> str:
     return anchor
 
 
+def _facet_per_turn(
+    replies: list[str],
+    turn_players: object = (),
+) -> list[set[str]]:
+    """每一轮命中的生活面：先看她的话，**她一个面都判不出**时借同轮玩家的话。
+
+    这是"指代消解"的落点（2026-09-22）。真实对话里她回应玩家点名的对象时**常常不
+    重复名词**：
+
+        · 她「还没画完呢，就差葡萄藤后面那道光」    ← 只有"画"字，靠词表补收才判得出
+        · 她「刚封好的那批已经进桶了，颜色比…深」  ← 0 命中，对象在玩家那句「新酿呢？」
+        · 她「那批还得再等等」／「那瓶先留着」      ← 量词指代，本身不带任何面语义
+
+    只匹配她的话，"最近几轮都在同一面"在真机上大部分轮次算不出来，整套槽位空转。
+    注意**量词本身不该入词表**：「那批货」和「那批新酿」完全不同的面 —— 加"那批／那瓶"
+    是把一个无面语义的词当真判据；正确的机理是**把指代还原到同轮那句有实词的话上**。
+
+    **只在她的回复 0 命中时才借**（两个方向都用 `_facet_hits`，不另建词表）：
+
+    * 她说出了落点实词时，结果与改前**逐字相同** —— 这条性质让回归面最小；
+    * "有实词就不需要消解"正是指代消解的语义，也是保守方向：漏判的代价只是这一轮
+      不换面，误判的代价是她对着玩家正在聊的事硬换台。
+
+    ``turn_players`` 由调用方按 history 的 user → 紧邻 assistant 结构逐项配对
+    （与 ``replies`` 等长）。长度不等时按**尾部**对齐：缺的是最早那几轮，而那几轮
+    本来也滑出了 `_FACET_LOOKBACK` 窗口。
+    """
+
+    aligned: list[str] = []
+    if isinstance(turn_players, (list, tuple)) and replies:
+        aligned = [_player_reply_text(item) for item in turn_players][-len(replies):]
+    offset = len(replies) - len(aligned)
+
+    per_turn: list[set[str]] = []
+    for index, reply in enumerate(replies):
+        facets = _facet_hits(reply)
+        if not facets and index >= offset:
+            facets = _facet_hits(aligned[index - offset])
+        per_turn.append(facets)
+    return per_turn
+
+
 def rotation_topic_slot(
     preferred_topics: object = None,
     *,
     recent_replies: object = (),
     player_replies: object = (),
+    turn_players: object = (),
 ) -> dict[str, Any]:
     """按最近轮次算一个「本轮换面」的硬槽位；不需要换时返回空 dict。
 
     ``recent_replies`` 是**时间正序**的 NPC 回复文本（调用方从 history 里取 assistant 项）。
-    ``player_replies`` 是同一份 history 里**玩家的**回复文本，同样时间正序；调用方
+    ``player_replies`` 是同一份 history 里**玩家的**回复文本，同样时间正序，**末尾是
+    本轮玩家的话**（游戏端本轮不在 history 里，调用方必须自己并上去）；调用方
     省略时行为与 2026-09-21 版完全一致（只有"同面重复"这一个触发条件）。
+    ``turn_players`` 是**与 ``recent_replies`` 逐项对齐**的玩家提问（同长度、同时间正序），
+    用于轮次共指：她那一轮用的是指代（"那幅画／刚封好的那批"）时，对象在玩家的话里。
 
-    三个触发理由，**最多两个同时成立**：
+    三个触发理由，**最多两个同时成立**（`playerShortReply` 与 `playerAsksNewTopic`
+    互斥：「换个话题」这几个字切不出空转词，不是敷衍）：
 
     * ``facetRepeat``：最近 ``_FACET_LOOKBACK`` 轮里同一个生活面出现
       ``_FACET_REPEAT_THRESHOLD`` 次。这是"**她**说腻了"。
-    * ``playerShortReply``：玩家最近一条回复很短且是敷衍类。这是"**玩家**没接住"，
+    * ``playerShortReply``：玩家**本轮**回复很短且是敷衍类。这是"**玩家**没接住"，
       也是"主动权在 NPC 手里"的信号源 —— 不用玩家去点"找话题"。
-    * ``playerAsksNewTopic``：玩家明确要求换个话题。
+    * ``playerAsksNewTopic``：玩家**本轮**明确要求换个话题。
 
     两条**不产出槽位**的路径（都写在常量区的防误判里）：玩家在划边界
     （``_PLAYER_REFUSAL_MARKERS``，交给 `boundaryMode` 收口）；玩家本轮自己
@@ -570,7 +656,7 @@ def rotation_topic_slot(
     if player_text and _is_player_refusal(player_text):
         return {}
 
-    per_reply = [_facet_hits(item) for item in replies]
+    per_reply = _facet_per_turn(replies, turn_players)
     # **计数**而不是取交集：一句话常同时命中"工作"与"天气"，取交集要求两轮都命中
     # 同一面，隔一轮的形状直接漏掉（见 `_FACET_LOOKBACK` 的注释）。
     counts: dict[str, int] = {}
@@ -677,10 +763,12 @@ def rotation_topic_slot(
     # 没有 anchor（history 里压根没有她的上一轮，例如玩家开口第一句就是「嗯」）时
     # **不写**过渡句：没有可拉的那根线，"先接住上一轮的…"是一句读不通的指令。
     if banned:
+        # 原先这里后半句是括号里的"（玩家本轮自己点名的对象仍要接住；他要是继续追问
+        # 这一面，就顺着他的方向聊，别为了换面绕开它）"——2026-09-22 已升成独立字段
+        # `playerAnchor`（理由见 `_PLAYER_ANCHOR_CONSTRAINT`）：留在括号里，它在"本轮
+        # 由你主动把话头换一次"这条主线下面读起来就是可选项。
         parts.append(
-            "别再以这一面做新的落点（玩家本轮自己点名的对象仍要接住；"
-            "他要是继续追问这一面，就顺着他的方向聊，别为了换面绕开它）；"
-            "换物件、换时段或换个说法讲同一件事都不算换。"
+            "别再以这一面做新的落点；换物件、换时段或换个说法讲同一件事都不算换。"
         )
     else:
         # 没有重复面可禁（B/C 理由）：要的是"换个落点"，不是封口——凭空禁一面会把
@@ -724,6 +812,11 @@ def rotation_topic_slot(
     slot: dict[str, Any] = {
         "instruction": instruction,
         "trigger": "+".join(triggers),
+        # 「玩家点名的对象要接住」是**无条件**硬约束（2026-09-22 从 instruction 的括号
+        # 从句升上来）：不管本轮触发的是"她说腻了"还是"玩家没接住"，玩家自己点名的
+        # 东西都要先接住。代码层的撤回（玩家点名被禁面 ⇒ 整轮不产出槽位）只在"点的
+        # 正好是被禁那一面"时生效，其余情况全靠这一条。
+        "playerAnchor": _PLAYER_ANCHOR_CONSTRAINT,
     }
     if banned:
         slot["bannedFacet"] = banned

@@ -189,7 +189,13 @@ def test_instruction_survives_the_compact_path_untruncated() -> None:
 
 
 def test_rendered_instruction_example() -> None:
-    """渲染实例（文档价值：这是模型真正读到的那段话）。"""
+    """渲染实例（文档价值：这是模型真正读到的那段话）。
+
+    2026-09-22：禁令后面那段**括号从句**（"（玩家本轮自己点名的对象仍要接住…）"）
+    移出去了 —— 它现在是 `slot["playerAnchor"]`，与 `instruction` **并列**的一级字段，
+    措辞带"硬约束"。所以这里并排渲染两份，读的时候是一个整体：
+    instruction 说"换面怎么换"，playerAnchor 说"什么不许被换掉"。
+    """
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
@@ -198,11 +204,14 @@ def test_rendered_instruction_example() -> None:
         "最近2轮里有2轮在谈「工作或手艺」这一面；"
         "上一轮你说过：「是啊，葡萄园的收成很好」。"
         "本轮先接住那里面的具体东西，再从它拉一根线过去、换到别的面，不要凭空跳过去。"
-        "别再以这一面做新的落点（玩家本轮自己点名的对象仍要接住；"
-        "他要是继续追问这一面，就顺着他的方向聊，别为了换面绕开它）；"
+        "别再以这一面做新的落点；"
         "换物件、换时段或换个说法讲同一件事都不算换。"
         "改从「镇上或邻里」这一面挑一件具体的、能落到对白里的小事来说"
         "（例如「镇上今天谁在广场上吵」这个方向），只说一件，不要罗列。"
+    )
+    assert slot["playerAnchor"] == (
+        "硬约束：玩家本轮点名的对象必须先接住、先应下来；"
+        "他要接着聊那一面就顺着聊，换面不许绕开它、也不许一句带过。"
     )
 
 
@@ -420,7 +429,12 @@ def test_player_short_reply_is_visible_in_the_compact_window() -> None:
     ② 就算按 4 条算，玩家最近一条回复也在里面 —— 它紧挨着最后一条 NPC 回复，
        是最不容易滑出窗口的那一条。
 
-    这条用**游戏端真实的 6 条**（3 轮）跑，并核对 compact 卡片确实只带 4 条历史。
+    ⚠ 2026-09-22 修形状：本条原先构造的是「history 里含本轮的『嗯』+ `message`
+    是一个无关问句」。**真机上不存在这个形状** —— 游戏端本轮走 `Message` 字段、
+    `History` 里没有本轮（`BridgeClient.SendAsync` 的 `History = historyByNpc[...]`，
+    本轮的 user 项要等 `RememberResult` 收到回复之后才写进去）。那个构造句恰好
+    绕过了接线 bug：即使 `player_replies` 只读 history，它也能捡到那个「嗯」。
+    现在改成真机形状：玩家那句「嗯」**只在 `message` 里**，history 只有已完成的两轮。
     """
 
     from stardew_ai_bridge.app import _build_context
@@ -429,22 +443,22 @@ def test_player_short_reply_is_visible_in_the_compact_window() -> None:
     history = _turns([
         ("今天忙什么", BREW_REPLIES[0]),
         ("还有呢", TOWN_REPLY),
-        ("嗯", WEATHER_REPLY),
     ])
-    body = _payload("Sophia", history, SOPHIA_MODS)
+    body = _payload("Sophia", history, SOPHIA_MODS, message="嗯")
     context, _ = _build_context(body)
     messages = PromptBuilder().build(context, body["message"], compact=True)
 
-    # ① 槽位看到了完整 history（含玩家那条「嗯」）
+    # ① 槽位读到的是**本轮**那句「嗯」—— 它只存在于 payload 的 `message` 里
     slot = _card(messages, "stage_execution_card")["topicSlot"]
     assert slot["trigger"] == "playerShortReply"
     assert "「嗯」" in slot["instruction"]
 
-    # ② 模型可见的历史确实被压到 4 条，而玩家那条**在里面**
+    # ② 模型可见的历史确实被压到 4 条，而本轮玩家那句由 `player_input` 卡单独承载
     visible = [item for item in messages if item.get("name") == "conversation_history"]
     assert len(visible) == 4
     assert visible[-1]["role"] == "assistant"
-    assert any(item["content"] == "嗯" for item in visible)
+    player_cards = [item for item in messages if item.get("name") == "player_input"]
+    assert player_cards and player_cards[-1]["content"] == "嗯"
 
 
 def test_signal_degrades_safely_when_the_window_has_no_player_line() -> None:
@@ -458,6 +472,9 @@ def test_signal_degrades_safely_when_the_window_has_no_player_line() -> None:
     * 但槽位读的是**完整** history，照样判得出 `playerShortReply`。
 
     这正是"compact 的 4 条够不够"这个问题的答案：**槽位不依赖那个窗口**。
+
+    2026-09-22 补：本轮也走 topic（`message = ""`）—— 与真机一致。topic 是 NPC
+    主动开口，没有"本轮玩家的话"，所以槽位退回读 history 里最后一条玩家行。
     """
 
     from stardew_ai_bridge.app import _build_context
@@ -470,7 +487,7 @@ def test_signal_degrades_safely_when_the_window_has_no_player_line() -> None:
         {"role": "assistant", "content": TOWN_REPLY},
         {"role": "assistant", "content": "刚烤好一炉面包，满屋都是黄油味。"},
     ]
-    body = _payload("Sophia", history, SOPHIA_MODS)
+    body = _payload("Sophia", history, SOPHIA_MODS, message="", intent="topic")
     context, _ = _build_context(body)
     messages = PromptBuilder().build(context, body["message"], compact=True)
 
@@ -479,6 +496,7 @@ def test_signal_degrades_safely_when_the_window_has_no_player_line() -> None:
     assert not any(item["role"] == "user" for item in visible), "前提变了：窗口里出现玩家行"
     slot = _card(messages, "stage_execution_card")["topicSlot"]
     assert slot["trigger"] == "playerShortReply"
+    assert "「嗯」" in slot["instruction"]
 
 
 # --- 6. ⭐ 能拉回来：玩家点名被禁面 → 槽位整体撤回 ---------------------------
@@ -540,17 +558,21 @@ def test_yielding_to_the_player_keeps_the_whole_topic_pool() -> None:
     """端到端：撤回的那一轮，`roleGuidance` 的落点池**四条都在**（包括酒）。
 
     这是"她能回来"的直接证据：槽位没产出 ⇒ 不摘面 ⇒ 池子里酒的素材还在。
+
+    ⚠ 2026-09-22 修形状：本条原先把"玩家拉回"的那句放在 **history 的最后一个 user
+    项**里，而 `message` 留着一个无关问句。真机上本轮只走 `message` —— 那个形状等价于
+    "玩家这一轮问的是『今天过得怎么样？』、玩家拉回发生在一轮之前"，撤回自然不该生效。
+    改成真机形状后，同一条断言才真的在测撤回。
     """
 
-    body = _payload(
-        "Sophia",
-        _turns([
-            ("聊点别的", BREW_REPLIES[0]),
-            ("还有呢", BREW_REPLIES[1]),
-            ("那批新酿到底怎么样了？", TOWN_REPLY),
-        ]),
-        SOPHIA_MODS,
-    )
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    history = _turns([
+        ("聊点别的", BREW_REPLIES[0]),
+        ("还有呢", BREW_REPLIES[1]),
+    ])
+    body = _payload("Sophia", history, SOPHIA_MODS, message="那批新酿到底怎么样了？")
     card = _stage_card(body)
 
     assert "topicSlot" not in card
@@ -558,14 +580,29 @@ def test_yielding_to_the_player_keeps_the_whole_topic_pool() -> None:
     for topic in SOPHIA_TOPICS:
         assert topic in guidance, topic
 
+    # 对照：同一份 history，本轮玩家聊**别的**面 ⇒ 槽位照常在场、禁令照常生效。
+    # 这一半排除"槽位没出来只是因为历史形状不对"这个替代解释。
+    other = _build_context(
+        _payload("Sophia", history, SOPHIA_MODS, message="今天镇上是不是有集市？")
+    )
+    other_card = _card(
+        PromptBuilder().build(other[0], "今天镇上是不是有集市？", compact=True),
+        "stage_execution_card",
+    )
+    assert other_card["topicSlot"]["bannedFacet"] == "工作或手艺"
+
 
 def test_yield_is_not_granted_by_a_bare_character_the_facet_table_does_not_know() -> None:
     """**边界记录（不是 bug）**：玩家只喊一个"酒"字时撤回不成立。
 
     `_LIFE_FACET_PATTERNS` 的"工作或手艺"面收的是「酿造／新酿／酒窖／橡木桶」这类
     **做法与场景**词，不含孤立的"酒"（"酒馆"归"吃喝"面，加一个"酒"字会改掉既有映射）。
-    所以这种情况落到**措辞层豁免**上：instruction 明写"他要是继续追问这一面，
-    就顺着他的方向聊，别为了换面绕开它"（见下一条）。两层一起才是完整的"能拉回来"。
+    所以这种情况落到**硬约束**上：`topicSlot.playerAnchor` 明写"玩家本轮点名的对象
+    必须先接住…换面不许绕开它、也不许一句带过"（见第 7 节）。两层一起才是完整的
+    "能拉回来"。
+
+    2026-09-22：豁免从 instruction 的括号从句升成一级字段 `playerAnchor`，
+    断言跟着换到那里；"酒"字仍然不在词表里这一条不变（下面的 `_facet_hits` 断言）。
     """
 
     from stardew_ai_bridge.stage_policy import _facet_hits
@@ -575,27 +612,31 @@ def test_yield_is_not_granted_by_a_bare_character_the_facet_table_does_not_know(
         SOPHIA_TOPICS, recent_replies=BREW_REPLIES, player_replies=["酒怎么样"]
     )
     assert slot
-    assert "顺着他的方向聊" in slot["instruction"]
+    assert "必须先接住" in slot["playerAnchor"]
 
 
 # --- 7. 措辞层豁免：接住 + 跟随，而不是"接住但不许延伸" ----------------------
 
 
 def test_instruction_lets_the_player_steer_the_old_topic() -> None:
-    """旧版豁免是「玩家本轮自己点名的对象仍要接住，**但接住之后不要由你往这一面延伸**」。
+    """"方向盘在玩家手里"从**从句**升成**一级硬约束**（2026-09-22）。
 
-    后半句在"玩家还想聊原来的"场景里恰恰是**拦路**的：她接住一句就不能再往下说。
-    新版换成"他要是继续追问这一面，就顺着他的方向聊"——主动权在角色（由她拉线换面），
-    方向盘在玩家（他拉回来她就跟）。
+    旧版豁免有两个版本：先是「…但接住之后不要由你往这一面延伸」（在"玩家还想聊原来
+    那个"的场景里恰恰拦路：她接住一句就不能再往下说），后改成括号里的「他要是继续
+    追问这一面，就顺着他的方向聊」。后者语义对了，但**位置**还是从句 —— 夹在"别再以
+    这一面做新的落点"和"都不算换"之间，读起来是禁令的附注，而不是一条并列的要求。
+
+    现在它是 `topicSlot.playerAnchor`：与 `instruction` 平级、措辞带"硬约束"、
+    且**无条件**产出（B/C 理由触发的槽位也带着它）。
     """
 
-    instruction = rotation_topic_slot(
-        SOPHIA_TOPICS, recent_replies=BREW_REPLIES
-    )["instruction"]
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
-    assert "玩家本轮自己点名的对象仍要接住" in instruction
-    assert "顺着他的方向聊" in instruction
-    assert "不要由你往这一面延伸" not in instruction
+    assert "硬约束" in slot["playerAnchor"]
+    assert "顺着聊" in slot["playerAnchor"]
+    assert "不许绕开它" in slot["playerAnchor"]
+    assert "不要由你往这一面延伸" not in slot["instruction"]
+    assert "不要由你往这一面延伸" not in slot["playerAnchor"]
 
 
 # --- 8. 三幕场景：她自己换出去，玩家拉回来，她接得住 -------------------------
@@ -622,18 +663,23 @@ def test_three_act_scenario_she_rotates_he_pulls_back() -> None:
     )
     assert second["trigger"] == "playerShortReply"
 
-    # ③ 玩家拉回来 → 撤回
+    # ③ 玩家拉回来 → 撤回。
+    # 真机形状：拉回的那句走**本轮 `message`**，history 里只有已完成的两轮
+    # （2026-09-22 修；原先把拉回那句放在 history 末尾、message 留一个无关问句，
+    #  那个形状在真机上不存在，等于没测到撤回）。
+    pull_back = "那批新酿到底怎么样了？"
     third_history = _turns([
         ("聊点别的", BREW_REPLIES[0]),
         ("还有呢", BREW_REPLIES[1]),
-        ("那批新酿到底怎么样了？", TOWN_REPLY),
     ])
     assert rotation_topic_slot(
         SOPHIA_TOPICS,
-        recent_replies=[BREW_REPLIES[0], BREW_REPLIES[1], TOWN_REPLY],
-        player_replies=["那批新酿到底怎么样了？"],
+        recent_replies=[BREW_REPLIES[0], BREW_REPLIES[1]],
+        player_replies=[pull_back],
     ) == {}
-    card = _stage_card(_payload("Sophia", third_history, SOPHIA_MODS))
+    card = _stage_card(
+        _payload("Sophia", third_history, SOPHIA_MODS, message=pull_back)
+    )
     assert "topicSlot" not in card
     assert "酒窖里这一批新酿" in card["conversationLead"]["roleGuidance"]
 

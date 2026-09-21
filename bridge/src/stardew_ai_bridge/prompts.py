@@ -1463,6 +1463,43 @@ class ContextBuilder:
                 history_item.update(_history_provenance(item))
                 history.append(history_item)
 
+        # **本轮**玩家的话（2026-09-22 接线修复）。
+        #
+        # 游戏端发请求时本轮走 `Message` 字段、`History` 里**没有本轮**：
+        # `BridgeClient.SendChatAsync` 的 `History = historyByNpc[npcId]`（那一刻本轮的
+        # user 项还没写进去），而 `RememberResult` 要等**收到回复之后**才
+        # `AppendHistory({Role = "user", ...})`。所以"玩家最近一句"只从 history 里取，
+        # 拿到的永远是**上一轮**。三个后果都在真机实录里出现过：
+        #   · 短句信号滞后一轮（玩家说「嗯」那轮不换，说「哦」那轮才因「嗯」而换，
+        #     而 instruction 却写着"玩家最近只回了「嗯」"）；
+        #   · `playerAsksNewTopic`（玩家说「换个话题」）实际上永不生效，除非连说两轮；
+        #   · 玩家把话拉回被禁面时反而被**上一轮**的短句催着换走 —— 与"撤回"正好相反。
+        # 这里只把本轮并到末尾（接线），槽位自身的语义一个字不改。
+        current_player_input = _text(
+            _first_value(values, "message", "playerInput"), limit=2000
+        )
+        if _text(values.get("intent"), limit=20).casefold() == "topic":
+            # topic 是 NPC 主动开口，没有"本轮玩家的话"：游戏端 `BridgeClient` 与
+            # `app._build_context` 都会把 message 清空。这里再判一次，防止绕过那两层
+            # 直接调 `ContextBuilder.build` 的调用方把脏 message 带进来。
+            current_player_input = ""
+
+        # 逐轮配对（2026-09-22 二次）：一轮谈的是**哪一面**，由双方的话共同决定。
+        # 她回应玩家点名的对象时常常不重复名词（「还没画完呢」「刚封好的那批已经进桶了」
+        # 「那批还得再等等」），只匹配她的话，`facetRepeat` 在真实对话里大量漏判。
+        # 配对按 history 的 user → 紧邻 assistant 结构做，**不猜相位**：连续两条
+        # assistant（连点「找话题」的形状）配到空提问，正好等价于"那一轮没有玩家的话"。
+        turn_replies: list[str] = []
+        turn_players: list[str] = []
+        pending_player = ""
+        for item in history:
+            if item.get("role") == "user":
+                pending_player = item["content"]
+            elif item.get("role") == "assistant":
+                turn_replies.append(item["content"])
+                turn_players.append(pending_player)
+                pending_player = ""
+
         # 生活面轮换槽位（2026-09-21）：用户实测「强制做出对话的区分度」。
         # 落点池（preferredTopics）与 roleGuidance 的轮换指令都只是**语义层软约束**，
         # 压不过职业轴在词频层与具体性层的双重牵引 —— 索菲亚有 4 条跨簇素材、
@@ -1480,21 +1517,23 @@ class ContextBuilder:
         # 这里刻意用**完整** history（上限 `_HISTORY_LIMIT`），而不是
         # `PromptBuilder.build` 里给模型看的那 4 条窗口
         # （`-(4 if compact else _PROMPT_HISTORY_LIMIT)`）：游戏端 history
-        # 实发 6 条（`BridgeClient.MaxHistoryItems`），玩家最近一句一定在里面；
-        # 即便连点两次「找话题」（topic 请求不写 user 项）让最后 4 条全是
-        # assistant，槽位这边照样找得到。
+        # 实发 6 条（`BridgeClient.MaxHistoryItems`），即便连点两次「找话题」
+        # （topic 请求不写 user 项）让最后 4 条全是 assistant，槽位这边照样找得到。
+        #
+        # ⚠ 但**不能**指望"玩家最近一句一定在里面"—— 本轮不在 history 里（见上方
+        # 接线修复），所以 `player_replies` 必须显式补上 `current_player_input`。
+        player_replies_for_slot = [
+            item["content"]
+            for item in history
+            if item.get("role") == "user" and item.get("content")
+        ]
+        if current_player_input:
+            player_replies_for_slot.append(current_player_input)
         topic_slot = rotation_topic_slot(
             pool_preferred_topics,
-            recent_replies=[
-                item["content"]
-                for item in history
-                if item.get("role") == "assistant" and item.get("content")
-            ],
-            player_replies=[
-                item["content"]
-                for item in history
-                if item.get("role") == "user" and item.get("content")
-            ],
+            recent_replies=turn_replies,
+            player_replies=player_replies_for_slot,
+            turn_players=turn_players,
         )
 
         # 槽位与 `roleGuidance` 的**唯一层级**（2026-09-21 二次）：槽位说"别再谈工作面"，
@@ -3001,6 +3040,12 @@ def _compact_stage_policy(
         instruction = _text(topic_slot.get("instruction"), limit=300)
         if instruction:
             slot["instruction"] = instruction
+        # 「玩家点名的对象要接住」2026-09-22 从 instruction 的括号从句升成**一级字段**
+        # （理由见 `stage_policy._PLAYER_ANCHOR_CONSTRAINT`）。新键必须显式过白名单，
+        # 否则就是本函数记过的那个坑：产出方改了、消费方没跟上，线上一个字节都到不了。
+        player_anchor = _text(topic_slot.get("playerAnchor"), limit=80)
+        if player_anchor:
+            slot["playerAnchor"] = player_anchor
         suggested_facet = _text(topic_slot.get("suggestedFacet"), limit=40)
         if suggested_facet:
             slot["suggestedFacet"] = suggested_facet

@@ -427,25 +427,46 @@ def test_window_only_looks_at_the_three_most_recent_turns() -> None:
     assert rotation_topic_slot(SOPHIA_TOPICS, recent_replies=replies) == {}
 
 
-def test_instruction_spares_the_object_the_player_named() -> None:
-    """禁令只压 NPC **主动**选落点。
+def test_player_anchor_is_a_standalone_hard_constraint() -> None:
+    """禁令只压 NPC **主动**选落点；玩家点名的对象必须接住 —— 且这是**硬约束**。
 
     索菲亚的 `roleGuidance` 第一句是「先明确接住玩家点名的酒、酒窖、喝一口等当前
     对象」——不加豁免，两条硬指令会在同一张卡里互相封口，等于把"两层打架"搬个位置。
 
-    2026-09-22：豁免的**后半句**换了。旧版是「但接住之后不要由你往这一面延伸」——
-    在"玩家还想聊原来那个"的场景里，这句恰恰是拦路的（她接住一句就不能再往下说）。
-    新版改成"他要是继续追问这一面，就顺着他的方向聊"，配合代码层的"玩家点名被禁面
-    就整轮撤回槽位"，才是完整的"主动权在她、方向盘在玩家手里"。
+    2026-09-22：豁免从 instruction 的**括号从句**升成 `topicSlot` 的**一级字段**
+    `playerAnchor`。旧写法是「别再以这一面做新的落点（玩家本轮自己点名的对象仍要
+    接住；他要是继续追问这一面，就顺着他的方向聊，别为了换面绕开它）」——位置上是从句、
+    语气上是提醒，模型很容易在"本轮由你主动把话头换一次"这条主线下面读成可选项。
+    而它是"方向盘在玩家手里"的**唯一**措辞层保障：代码层的撤回只在"玩家点的正好是
+    被禁那一面"时生效，玩家点名别的面时全靠这一条。
     """
 
-    instruction = rotation_topic_slot(
-        SOPHIA_TOPICS, recent_replies=BREW_REPLIES
-    )["instruction"]
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
-    assert "玩家本轮自己点名的对象仍要接住" in instruction
-    assert "顺着他的方向聊" in instruction
-    assert "不要由你往这一面延伸" not in instruction
+    assert "硬约束" in slot["playerAnchor"]
+    assert "先接住" in slot["playerAnchor"]
+    assert "顺着聊" in slot["playerAnchor"]
+    # 升成独立字段之后，instruction 里不再有那段括号从句（不留第二份措辞）
+    assert "玩家本轮自己点名的对象仍要接住" not in slot["instruction"]
+    # 但禁令本身一个字都不许少
+    assert "别再以这一面做新的落点" in slot["instruction"]
+
+
+def test_player_anchor_is_unconditional() -> None:
+    """硬约束**无条件**在场：B/C 理由（没有重复面可禁）触发的槽位也带着它。
+
+    有重复面时"撤回"能把玩家点名的面整体让回去；没有重复面时没有任何代码层保障，
+    更没有理由把这句话省掉。
+    """
+
+    slot = rotation_topic_slot(
+        SOPHIA_TOPICS,
+        recent_replies=[BREW_REPLIES[0], TOWN_REPLIES[0], WEATHER_REPLIES[0]],
+        player_replies=["嗯"],
+    )
+
+    assert "bannedFacet" not in slot
+    assert slot["playerAnchor"]
 
 
 def test_suggestion_falls_back_to_a_used_but_unbanned_facet() -> None:
