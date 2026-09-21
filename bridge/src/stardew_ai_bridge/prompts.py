@@ -23,6 +23,7 @@ from .speech import (
 )
 from .stage_policy import apply_relationship_event_gate, build_stage_policy
 from .story_state import build_story_state
+from .today_schedule import build_daily_context_card
 from .source_aliases import source_matches
 
 
@@ -40,6 +41,11 @@ _IDENTITY_FIELDS = (
     "storyState",
     "relationshipGate",
     "knowledgeRules",
+    # L3 静态作息（persona 提供的「通常」作息）。它走独立的 `daily_routine` 卡，
+    # **不进** `persona_core` 的字段白名单，也不与 `knowledgeFacts` 抢名额：
+    # 普通闲聊只注入 1 条 knowledgeFact（`_MAX_KNOWLEDGE_FACTS` 门控），
+    # 而作息是 2–4 条成组出现的规律，塞进那条通道会把当轮唯一的名额占满。
+    "dailyRoutine",
 )
 _STAGE_KEYS = ("stranger", "acquaintance", "friend", "close", "dating", "married", "parent")
 _STATE_FIELDS = (
@@ -54,6 +60,11 @@ _STATE_FIELDS = (
     "relationshipStage",
     "marriageStatus",
     "childrenCount",
+    # L2a 同住标记（只说住处、不说行踪）与 L2b 当日日程快照。两者都由
+    # `daily_context` 卡渲染，所以这里也要进 `_PROMPT_HIDDEN_STATE_FIELDS`，
+    # 免得完整路径的 `game_state` 卡再把原始数据重复发一遍。
+    "livesWithPlayer",
+    "todaySchedule",
     "completedEventIds",
 )
 
@@ -68,7 +79,19 @@ _STATE_FIELDS = (
 # `completed_event_ids`），不是渲染出来的卡片。它随存档单调增长（正常存档数百条），
 # 整卡渲染只是白占 prompt 预算（512 条约 6KB），所以这里只把它挡在渲染之外：
 # `context["gameState"]` 保持完整，门控 / 语料检索 / `/api/context/preview` 都不受影响。
-_PROMPT_HIDDEN_STATE_FIELDS = frozenset({"completedEventIds"})
+_PROMPT_HIDDEN_STATE_FIELDS = frozenset(
+    {
+        "completedEventIds",
+        # L2a/L2b：这两个字段的**渲染**由 `daily_context` 卡独占（压缩后的人话 +
+        # 语义边界说明），原始结构再进 `game_state` 卡就是纯冗余：
+        # `todaySchedule` 是带坐标粒度的原始条目，比压缩结果长好几倍，
+        # 而且没有「这只是快照」的说明——让模型直接看见它反而更容易被当成实时行踪。
+        # `context["gameState"]` 仍然保留完整字段，`/api/context/preview` 与将来的
+        # 其它消费者不受影响。
+        "livesWithPlayer",
+        "todaySchedule",
+    }
+)
 
 _INTERACTION_INTENTS = {"chat", "topic", "item"}
 _CONVERSATION_CHANNELS = {"remote", "face_to_face"}
@@ -1293,6 +1316,16 @@ class ContextBuilder:
                         for item in event_values
                         if _text(item, limit=120)
                     ][:MAX_COMPLETED_EVENT_IDS]
+                elif key == "todaySchedule":
+                    # L2b：这里只做**限长**与脱敏，形态判断留给
+                    # `today_schedule.project_today_schedule`（它认 Mapping 与带同名
+                    # 属性的对象两种形态，且自己不抛异常）。上游可能给 list[dict]
+                    # （HTTP 路径）也可能给 list[ScheduleEntry]（内部调用路径），
+                    # 在这里统一成 Mapping 会把第二种情况误伤成「没有日程」。
+                    schedule_values = value if isinstance(value, (list, tuple)) else ()
+                    game_state[key] = [
+                        _sanitize_value(item) for item in schedule_values[:16]
+                    ]
                 else:
                     game_state[key] = (
                         _sanitize_value(_text(value))
@@ -3986,6 +4019,62 @@ def _compact_relationship_gate(value: object) -> dict[str, Any]:
     return result
 
 
+# L3 静态作息的时段标签：persona 侧用英文枚举，prompt 里给人读得懂的中文。
+# 认不出的 `period` **不猜**——丢掉时段词、只留 summary，也不要编一个时段出来。
+_DAILY_ROUTINE_PERIOD_LABELS = {
+    "morning": "早上",
+    "day": "白天",
+    "afternoon": "白天",
+    "dusk": "傍晚",
+    "evening": "傍晚",
+    "night": "夜里",
+}
+_MAX_DAILY_ROUTINE_ENTRIES = 4
+_DAILY_ROUTINE_SUMMARY_LIMIT = 60
+
+# L3 作息卡的说明。三个约束都在这里，缺一条就会退化成「角色在背时刻表」：
+#   ① 「通常 / 多数日子」是**必须**的措辞，它是静态知识与今日实况之间的缓冲；
+#   ② 不得当成本刻行踪——作息回答的是「平时这时候在哪」，不是「现在在哪」；
+#   ③ 与今日安排/场景卡冲突时以它们为准，作息让路。
+_DAILY_ROUTINE_INSTRUCTION = (
+    "这是该角色「通常」的作息规律，是概括，不是今天的实际行程。"
+    "只能用「通常」「多数日子」这类说法带出来，不要说成今天一定如此，"
+    "也不要拿它当此刻的行踪。"
+    "同一轮里如果还有今日安排或场景卡，以它们为准；两者对不上时就不要提作息。"
+    "玩家没问到、话题也不相关时不必主动报，更不要一次把四条都念出来。"
+)
+
+
+def _compact_daily_routine(value: object) -> list[str]:
+    """把 persona 的 ``dailyRoutine`` 压成「时段：一句话」的短行。
+
+    只认 ``{period, summary}`` 与纯字符串两种形态，其余一律跳过——
+    作息是静态概括，字段形态不认识时宁可少一条，也不要把 dict 的 repr 塞进 prompt。
+    """
+
+    if not isinstance(value, (list, tuple)):
+        return []
+    entries: list[str] = []
+    for item in value:
+        if len(entries) >= _MAX_DAILY_ROUTINE_ENTRIES:
+            break
+        if isinstance(item, str):
+            summary = _text(item, limit=_DAILY_ROUTINE_SUMMARY_LIMIT)
+            if summary:
+                entries.append(summary)
+            continue
+        if not isinstance(item, Mapping):
+            continue
+        summary = _text(item.get("summary"), limit=_DAILY_ROUTINE_SUMMARY_LIMIT)
+        if not summary:
+            continue
+        period = _DAILY_ROUTINE_PERIOD_LABELS.get(
+            _text(item.get("period"), limit=20).casefold()
+        )
+        entries.append(f"{period}：{summary}" if period else summary)
+    return entries
+
+
 def _compact_identity(
     value: object,
     *,
@@ -4031,6 +4120,11 @@ def _compact_identity(
         )
         if compact:
             result[key] = compact
+    # L3：作息在这里就压成成品的短行（含中文时段标签），下游的 `daily_routine`
+    # 卡只管发不发；压缩与渲染分开是为了让「没有作息数据的角色」一个字节都不多花。
+    daily_routine = _compact_daily_routine(value.get("dailyRoutine"))
+    if daily_routine:
+        result["dailyRoutine"] = daily_routine
     return result
 
 
@@ -5508,6 +5602,49 @@ class PromptBuilder:
                         "role": "system",
                         "name": "recent_memory",
                         "content": _json({"近期记忆": compact_facts}),
+                    }
+                )
+        # L3：静态作息卡。放在 scene / recent_memory 之后，让它天然处于
+        # 「背景资料」的位置而不是开场素材的位置。
+        #
+        # 与 `recent_memory` 的门控**不同**：`natural_topic` 时也照发。作息的消费者
+        # 正是「NPC 主动开口」的那条路径（评测里的自然找话题），它是角色资料的一部分；
+        # 而 `recent_memory` 被清空是为了避免模型把状态差异行铺成开场场景。
+        # 只有真的配了 `dailyRoutine` 的角色才会多出这一张卡，其余角色零成本。
+        daily_routine = safe_identity.get("dailyRoutine")
+        if isinstance(daily_routine, list) and daily_routine:
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "daily_routine",
+                    "content": _json({
+                        "通常作息": daily_routine,
+                        "instruction": _DAILY_ROUTINE_INSTRUCTION,
+                    }),
+                }
+            )
+        # L2a + L2b：住处与今日安排合成一张卡。
+        #
+        # 为什么合成一张而不是两张：`livesWithPlayer` 只有一个布尔，单独成卡时
+        # 「住处不等于行踪」这条说明的开销（约 40 tokens）比信息本身还大；
+        # 而两者本来就互相解释——「晚上回去」需要同时知道「住处在一起」和
+        # 「今天的安排到哪儿为止」。
+        #
+        # `natural_topic` 时**不发**：那条路径的门控是为了防止模型把运行时事实
+        # 铺成开场场景（`recent_memory` 在同一模式下也被清空），而「今日安排」
+        # 正是最容易诱发「今天上午我在葡萄园……」式铺陈的素材。
+        # L3 的 `daily_routine` 不受此限——它是角色资料，不是今天的实况。
+        if not natural_topic:
+            daily_context = build_daily_context_card(
+                lives_with_player=safe_context["gameState"].get("livesWithPlayer"),
+                today_schedule=safe_context["gameState"].get("todaySchedule"),
+            )
+            if daily_context:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "daily_context",
+                        "content": _json(daily_context),
                     }
                 )
         relationship_world = safe_context["relationshipWorld"]

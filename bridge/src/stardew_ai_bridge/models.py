@@ -76,6 +76,19 @@ class NpcContext(ApiModel):
     )
 
 
+class ScheduleEntry(ApiModel):
+    """当日日程里的一条（游戏端已本地化的地点名 + 原始时刻）。
+
+    **刻意不做严格校验**：日程是可选增强，`ApiModel` 的 `extra="forbid"` 已经意味着
+    「字段不认识就 422、整轮对话退化成兜底回复」。再把取值卡死，会让一条怪日程
+    把一次正常对话打掉。所以这里只留防爆上限，合法性与范围判定交给
+    `today_schedule.project_today_schedule`（它丢弃、不抛异常）。
+    """
+
+    time: int = 0
+    location: str = Field(default="", max_length=200)
+
+
 class NpcGameState(ApiModel):
     npc_id: str | None = Field(default=None, alias="npcId", max_length=100)
     display_name: str | None = Field(
@@ -107,6 +120,23 @@ class NpcGameState(ApiModel):
         alias="childrenCount",
         ge=0,
         le=20,
+    )
+    lives_with_player: bool | None = Field(
+        default=None,
+        alias="livesWithPlayer",
+        description=(
+            "该 NPC 是否与玩家同住（配偶或室友）。**只代表住处、不代表行踪**："
+            "配偶 NPC 白天照样按日程外出；None 表示读不到（未知，不等于 False）。"
+        ),
+    )
+    today_schedule: list[ScheduleEntry] = Field(
+        default_factory=list,
+        alias="todaySchedule",
+        max_length=16,
+        description=(
+            "当日日程快照（游戏端 `NPC.Schedule` 的投影）。空列表 = 取不到日程，"
+            "prompt 侧不发「今日安排」卡；失效方向是退化成没有日程，不是给错地点。"
+        ),
     )
     completed_event_ids: list[str] = Field(
         default_factory=list,

@@ -77,6 +77,24 @@
           "sourceRefs": ["SVE/Characters/Dialogue/Sophia"]
         }
       ],
+      "dailyRoutine": [
+        {
+          "period": "morning",
+          "summary": "多数日子的早上都在葡萄园里忙：看藤、剪枝、摘果，或者把工具搬来搬去。"
+        },
+        {
+          "period": "day",
+          "summary": "白天通常待在酒窖或画架前，酿酒、贴标签，画起来容易忘记时间。"
+        },
+        {
+          "period": "evening",
+          "summary": "傍晚一般开始收尾：把工具归位、洗干净画笔，再慢慢收拾回屋。"
+        },
+        {
+          "period": "night",
+          "summary": "夜里大多待在家里，不太出门。"
+        }
+      ],
       "knowledgeRules": {
         "canDiscuss": ["自己已确认经历过的葡萄园、创作和小镇生活", "玩家明确告诉她的近况", "已在运行时确认的 SVE 事件"],
         "cannotAssume": ["玩家尚未经历的事件结果", "其他人的秘密、感情和家庭决定", "没有来源证据的传闻"],

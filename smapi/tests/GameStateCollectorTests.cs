@@ -157,6 +157,137 @@ public sealed class GameStateCollectorTests
             result.CompletedEventIds);
     }
 
+    // --- L2a 同住标记 ---------------------------------------------------------
+
+    [Fact]
+    public void Collect_exposes_lives_with_player_for_the_spouse()
+    {
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female", relationship: "married"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(
+                MarriageStatus: "married",
+                ChildrenCount: 1,
+                LivesWithPlayer: true));
+
+        Assert.True(result.LivesWithPlayer);
+    }
+
+    [Fact]
+    public void Collect_keeps_lives_with_player_false_when_married_to_someone_else()
+    {
+        // 「已婚但不是这个 NPC」是一个**确定的否**，不是未知——
+        // 三态里 false 与 null 的区别就是「玩家有配偶但不是我」和「读不到」。
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female", relationship: "friend"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(
+                MarriageStatus: "married",
+                ChildrenCount: 2,
+                LivesWithPlayer: false));
+
+        Assert.False(result.LivesWithPlayer);
+    }
+
+    [Fact]
+    public void Collect_keeps_lives_with_player_null_when_it_is_unknown()
+    {
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(MarriageStatus: "married"));
+
+        Assert.Null(result.LivesWithPlayer);
+    }
+
+    [Fact]
+    public void Collect_defaults_lives_with_player_to_null_without_story_state()
+    {
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female"),
+            World(),
+            new FakeModRegistry());
+
+        Assert.Null(result.LivesWithPlayer);
+        Assert.Empty(result.TodaySchedule);
+    }
+
+    // --- L2b 今日日程 ---------------------------------------------------------
+
+    [Fact]
+    public void Collect_exposes_the_projected_today_schedule()
+    {
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(
+                TodaySchedule: new[]
+                {
+                    new TodayScheduleEntry(900, "葡萄园"),
+                    new TodayScheduleEntry(1300, "酒窖"),
+                    new TodayScheduleEntry(2100, "家"),
+                }));
+
+        Assert.Equal(
+            new[] { "葡萄园", "酒窖", "家" },
+            result.TodaySchedule.Select(item => item.Location).ToArray());
+        Assert.Equal(
+            new[] { 900, 1300, 2100 },
+            result.TodaySchedule.Select(item => item.Time).ToArray());
+    }
+
+    [Fact]
+    public void Collect_normalizes_a_dirty_schedule_before_exposing_it()
+    {
+        // 采集路径之外的调用方（测试、视觉 harness、将来的别的采集器）可能直接塞
+        // 脏数据进来，规范化在 `Collect` 这一层兜底：非法时刻丢掉、空白地点丢掉、
+        // 空地点长度截断、条数收敛到上限。
+        var dirty = new List<TodayScheduleEntry>
+        {
+            new(0, "Town"),                              // 非法时刻
+            new(760, "Farm"),                            // 分钟位非法
+            new(900, "   "),                             // 空白地点
+            new(1200, new string('长', 200)),            // 超长地点
+            new(1500, "Saloon"),
+        };
+        dirty.AddRange(
+            Enumerable.Range(0, 20)
+                .Select(index => new TodayScheduleEntry(1600 + index * 100, $"Loc{index}")));
+
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(TodaySchedule: dirty));
+
+        Assert.Equal(TodayScheduleRules.MaxEntries, result.TodaySchedule.Count);
+        Assert.Equal(1200, result.TodaySchedule[0].Time);
+        Assert.Equal(
+            TodayScheduleRules.MaxLocationLength,
+            result.TodaySchedule[0].Location.Length);
+        Assert.Equal(1500, result.TodaySchedule[1].Time);
+        Assert.All(
+            result.TodaySchedule,
+            item => Assert.True(TodayScheduleRules.IsValidTime(item.Time)));
+    }
+
+    [Fact]
+    public void Collect_treats_a_null_schedule_as_no_schedule()
+    {
+        // 降级方向：取不到日程时是**空列表**，Bridge 侧据此不发卡。
+        var result = GameStateCollector.Collect(
+            Npc("Sophia", "Sophia", "Female"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(TodaySchedule: null));
+
+        Assert.Empty(result.TodaySchedule);
+    }
+
     [Fact]
     public void MaxCompletedEventIds_matches_the_bridge_contract()
     {

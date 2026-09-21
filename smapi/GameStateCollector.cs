@@ -48,6 +48,36 @@ public sealed class NpcGameState
     [JsonPropertyName("childrenCount")]
     public int? ChildrenCount { get; init; }
 
+    /// <summary>
+    /// 这个 NPC 是否与玩家同住（配偶或室友）。
+    /// </summary>
+    /// <remarks>
+    /// **语义边界（务必按注释使用）**：它回答的是「**住处**」，不是「**行踪**」。
+    /// 星露谷里配偶 NPC 白天照样按自己的日程外出上班、开店、钓鱼，只在夜里回屋；
+    /// 因此这个标记**不能**被下游解读成「他/她此刻在家」，也**不能**用来推断
+    /// 「刚从家里出来」。Bridge 侧的 <c>daily_context</c> 卡就是按这个口径写
+    /// instruction 的。
+    /// <para>
+    /// 三态：<c>true</c> = 同住、<c>false</c> = 玩家已婚/有室友但不是这个 NPC、
+    /// <c>null</c> = 读不到 <c>Game1.player.spouse</c>（未知，不要当成 false）。
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("livesWithPlayer")]
+    public bool? LivesWithPlayer { get; init; }
+
+    /// <summary>
+    /// 今日日程的投影（时刻 + 已本地化地点名），取不到时为**空列表**。
+    /// </summary>
+    /// <remarks>
+    /// 这是**快照**：它在请求发出的那一刻从 <c>NPC.Schedule</c> 读出，
+    /// 而游戏里的日程会因天气、节日、事件和自定义 NPC 的延迟加载而变。
+    /// Bridge 侧会把它再压成 2–3 条「今日安排」；压缩失败或数据为空时
+    /// 那张卡根本不出现——失效方向是「退化成没有日程」，不是「给出错的地点」。
+    /// </remarks>
+    [JsonPropertyName("todaySchedule")]
+    public IReadOnlyList<TodayScheduleEntry> TodaySchedule { get; init; } =
+        Array.Empty<TodayScheduleEntry>();
+
     [JsonPropertyName("completedEventIds")]
     public IReadOnlyList<string> CompletedEventIds { get; init; } = Array.Empty<string>();
 
@@ -69,7 +99,9 @@ public sealed record RuntimeNpcState(
 public sealed record RuntimeStoryState(
     string? MarriageStatus = null,
     int? ChildrenCount = null,
-    IReadOnlyList<string>? CompletedEventIds = null);
+    IReadOnlyList<string>? CompletedEventIds = null,
+    bool? LivesWithPlayer = null,
+    IReadOnlyList<TodayScheduleEntry>? TodaySchedule = null);
 
 public sealed record RuntimeWorldState(
     string? Season,
@@ -186,7 +218,7 @@ public static class GameStateCollector
             new RuntimeNpcState(npcId, displayName, gender, location, friendship, relationship),
             new RuntimeWorldState(season, day, isRaining, time),
             modRegistry,
-            ReadRuntimeStoryState(npcId, relationship));
+            ReadRuntimeStoryState(npcId, relationship, npc));
 
         return new NpcGameState
         {
@@ -203,6 +235,8 @@ public static class GameStateCollector
             Relationship = state.Relationship,
             MarriageStatus = state.MarriageStatus,
             ChildrenCount = state.ChildrenCount,
+            LivesWithPlayer = state.LivesWithPlayer,
+            TodaySchedule = state.TodaySchedule,
             CompletedEventIds = state.CompletedEventIds,
             SourceMods = state.SourceMods,
             Warnings = warnings.Concat(state.Warnings).Distinct().ToArray(),
@@ -260,6 +294,8 @@ public static class GameStateCollector
             Relationship = npc.Relationship,
             MarriageStatus = normalizedStory.MarriageStatus,
             ChildrenCount = normalizedStory.ChildrenCount,
+            LivesWithPlayer = normalizedStory.LivesWithPlayer,
+            TodaySchedule = normalizedStory.TodaySchedule ?? Array.Empty<TodayScheduleEntry>(),
             CompletedEventIds = normalizedStory.CompletedEventIds ?? Array.Empty<string>(),
             SourceMods = DetectSourceMods(registry, warnings),
             Warnings = warnings,
@@ -421,18 +457,31 @@ public static class GameStateCollector
 
     private static RuntimeStoryState ReadRuntimeStoryState(
         string? npcId,
-        string? relationship)
+        string? relationship,
+        object? npc = null)
     {
         var marriageStatus = DeriveMarriageStatus(relationship);
         var spouse = ReadString(Game1.player, "spouse");
-        var childrenCount = string.Equals(spouse, npcId, StringComparison.OrdinalIgnoreCase)
+        // L2a：这个布尔此前被算出来又直接丢掉（只拿它决定要不要数孩子）。
+        // 三态语义见 `NpcGameState.LivesWithPlayer`：读不到 spouse 才是 null。
+        // **它只代表住处**——配偶 NPC 白天照样按日程外出，不能当行踪用。
+        var livesWithPlayer = spouse is null
+            ? (bool?)null
+            : string.Equals(spouse, npcId, StringComparison.OrdinalIgnoreCase);
+        var childrenCount = livesWithPlayer == true
             ? ReadChildrenCount()
             : null;
         var completedEventIds = ReadEnumerableStrings(
             ReadMember(Game1.player, "eventsSeen"),
             maxCount: MaxCompletedEventIds);
 
-        return new RuntimeStoryState(marriageStatus, childrenCount, completedEventIds);
+        return new RuntimeStoryState(
+            marriageStatus,
+            childrenCount,
+            completedEventIds,
+            livesWithPlayer,
+            // L2b：当日日程快照。取不到时是空列表，Bridge 侧据此不发卡。
+            ReadTodaySchedule(npc));
     }
 
     private static RuntimeStoryState NormalizeStoryState(
@@ -454,7 +503,50 @@ public static class GameStateCollector
         return new RuntimeStoryState(
             string.IsNullOrWhiteSpace(marriageStatus) ? null : marriageStatus.Trim(),
             childrenCount,
-            NormalizeEventIds(story?.CompletedEventIds));
+            NormalizeEventIds(story?.CompletedEventIds),
+            story?.LivesWithPlayer,
+            NormalizeSchedule(story?.TodaySchedule));
+    }
+
+    /// <summary>
+    /// 日程条目的防御性规范化：调用方可能绕开 <see cref="TodayScheduleRules.Project"/>
+    /// 直接塞数据进来（测试、视觉 harness、将来别的采集路径）。
+    /// </summary>
+    private static IReadOnlyList<TodayScheduleEntry> NormalizeSchedule(
+        IReadOnlyList<TodayScheduleEntry>? entries)
+    {
+        if (entries is null || entries.Count == 0)
+        {
+            return Array.Empty<TodayScheduleEntry>();
+        }
+
+        var result = new List<TodayScheduleEntry>();
+        foreach (var entry in entries)
+        {
+            if (entry is null || !TodayScheduleRules.IsValidTime(entry.Time))
+            {
+                continue;
+            }
+
+            var location = entry.Location?.Trim();
+            if (string.IsNullOrEmpty(location))
+            {
+                continue;
+            }
+
+            if (location.Length > TodayScheduleRules.MaxLocationLength)
+            {
+                location = location[..TodayScheduleRules.MaxLocationLength];
+            }
+
+            result.Add(new TodayScheduleEntry(entry.Time, location));
+            if (result.Count >= TodayScheduleRules.MaxEntries)
+            {
+                break;
+            }
+        }
+
+        return result;
     }
 
     private static string? DeriveMarriageStatus(string? relationship)
@@ -495,6 +587,140 @@ public static class GameStateCollector
         }
 
         return Math.Max(0, count);
+    }
+
+    /// <summary>
+    /// <c>SchedulePathDescription</c> 里目标地点名的候选成员名。
+    /// </summary>
+    /// <remarks>
+    /// **成员名跨版本不同**：1.6.15 实测是 <c>targetLocationName</c>
+    /// （<c>StardewValley.Pathfinding.SchedulePathDescription</c> 的字段），
+    /// 而文档与旧版本写作 <c>targetLocation</c>。这里按候选顺序取第一个非空值，
+    /// 全都取不到就丢掉这一条日程——宁可少一段安排，也不要发一个空地点。
+    /// </remarks>
+    private static readonly string[] ScheduleLocationMembers =
+    {
+        "targetLocationName",
+        "targetLocation",
+    };
+
+    /// <summary>
+    /// 读取 <c>NPC.Schedule</c>（当天已解析好的日程表）并投影成待外发条目。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// **为什么读运行时对象、而不是自己解析 <c>Characters/schedules/*</c>**：
+    /// 当天用哪一条日程取决于季节、星期、日期、天气、节日、好感与事件
+    /// （<c>NOT friendship Sebastian 6</c> 这类条件），还有 <c>GOTO</c> 跳转和
+    /// <c>bed</c>（回家）这种需要 NPC 上下文的写法。游戏已经把当天那条解析进
+    /// <c>NPC.Schedule</c>，在外面重做一遍只会得到错的答案。
+    /// </para>
+    /// <para>
+    /// **降级**：SVE 等自定义 NPC 可能当天晚些才 <c>TryLoadSchedule</c>，
+    /// 此时 <c>Schedule</c> 是 null 或空字典 → 返回空列表 → Bridge 侧不发卡。
+    /// 任何异常同样返回空列表：失效方向是「没有日程」，不是「错的日程」。
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<TodayScheduleEntry> ReadTodaySchedule(object? npc)
+    {
+        try
+        {
+            if (npc is null || ReadMember(npc, "Schedule") is not IEnumerable pairs)
+            {
+                return Array.Empty<TodayScheduleEntry>();
+            }
+
+            var raw = new List<KeyValuePair<int, string?>>();
+            foreach (var pair in pairs)
+            {
+                var key = ReadMember(pair, "Key");
+                var value = ReadMember(pair, "Value");
+                if (key is null || value is null)
+                {
+                    continue;
+                }
+
+                int time;
+                try
+                {
+                    time = Convert.ToInt32(key, CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                raw.Add(
+                    new KeyValuePair<int, string?>(
+                        time,
+                        ReadScheduleLocationName(value)));
+            }
+
+            return TodayScheduleRules.Project(raw, LocalizeLocationName);
+        }
+        catch
+        {
+            return Array.Empty<TodayScheduleEntry>();
+        }
+    }
+
+    private static string? ReadScheduleLocationName(object? description)
+    {
+        foreach (var memberName in ScheduleLocationMembers)
+        {
+            // `bed`（回家睡觉）由 `NormalizeLocationName` 换成语义标记 `home`，
+            // Bridge 侧渲染成「家」。见 `TodayScheduleRules.HomeLocationMarker`。
+            var value = TodayScheduleRules.NormalizeLocationName(
+                ReadString(description, memberName));
+            if (!string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 地点标识符 → 游戏内显示名（<c>Town</c> → 「鹈鹕镇」）。
+    /// </summary>
+    /// <remarks>
+    /// 取不到时返回 null，交给 <see cref="TodayScheduleRules.Project"/> 回退到
+    /// 标识符本身。未解析的本地化 token（<c>Strings\Locations:Town</c>）比标识符
+    /// 更难读，按「取不到」处理，而不是把 token 当地点名发出去。
+    /// </remarks>
+    private static string? LocalizeLocationName(string name)
+    {
+        // 语义标记（`home`）不是地图名：查不到也不该查，直接走回退。
+        if (string.Equals(
+                name,
+                TodayScheduleRules.HomeLocationMarker,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            var location = Game1.getLocationFromName(name);
+            var display = ReadString(location, "DisplayName")?.Trim();
+            if (string.IsNullOrEmpty(display))
+            {
+                return null;
+            }
+
+            if (display.StartsWith("Strings\\", StringComparison.Ordinal) ||
+                display.StartsWith("Strings/", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return display;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<string> ReadEnumerableStrings(
