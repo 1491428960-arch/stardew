@@ -21,7 +21,11 @@ from .speech import (
     VOICE_ANCHOR_MAX_TEXT,
     voice_anchor_text_fits,
 )
-from .stage_policy import apply_relationship_event_gate, build_stage_policy
+from .stage_policy import (
+    apply_relationship_event_gate,
+    build_stage_policy,
+    rotation_topic_slot,
+)
 from .story_state import build_story_state
 from .today_schedule import build_daily_context_card
 from .source_aliases import source_matches
@@ -303,6 +307,16 @@ _MAX_STYLE_SAMPLES = 3
 _MAX_BEHAVIOR_EXAMPLES = 2
 _MAX_ORIGINAL_STYLE_EXAMPLES = 4
 _MAX_KNOWLEDGE_FACTS = 2
+# 常驻事实（数据侧标 `alwaysOn: true`）走**独立名额**，不与上面那两个抢位置。
+#
+# 为什么必须独立：普通闲聊只注入 1 条（`_is_plain_dialogue_input` 分支），
+# 而"取前 N 条"是按**位置**切片。把「Alex 有一条叫小灰的狗」追加进同一个数组，
+# 结果只能是二选一 —— 要么它被前排的身份事实挡住（永远选不中的老问题），
+# 要么把身份事实挤掉（`dailyRoutine` 那条注释记过同型风险）。
+# 这与 `speechEvidence[:4]` 拿不到「小灰」是**同一个结构性缺陷**：
+# 专有名词天生与多数玩家输入不相关，按位置切片永远轮不到它。
+# 所以这里给专有名词一条**不参与排序**的通道，而不是继续加大切片长度。
+_MAX_ALWAYS_ON_FACTS = 4
 _MAX_VOICE_CARD_TOPICS = 3
 # 通用对白证据文本的截断长度；**语气锚点不用它**——锚点必须传
 # `VOICE_ANCHOR_MAX_TEXT`（见 `_dialogue_evidence_text` 的 `limit` 参数）。
@@ -1417,17 +1431,25 @@ class ContextBuilder:
         # 落点池的唯一数据源：把**即将写进 persona_core 的那一份** preferredTopics
         # 交给 stage policy，于是「roleGuidance 要求落哪几类」与「prompt 里看得到
         # 哪几类」同源（2026-09-21；此前 roleGuidance 里硬编码了第二份，各自演化）。
+        #
+        # 2026-09-21 二次：这份列表**同时**是生活面轮换槽位的素材来源（见下方
+        # `rotation_topic_slot` 调用点）。原先槽位那边读的是
+        # `stage_policy.get("_preferredTopics")`——`build_stage_policy` 从不写这个键，
+        # 于是它永远拿到 `None`，"优先压该角色素材里占比最高的那一面 / 建议去一个
+        # **该角色素材里就有**的面"两条设计同时失效，退化成按码点挑一个面 + 泛泛建议。
+        # 这里提到局部变量，一份数据两处消费，不再有第二个来源。
         pool_voice_style = persona.get("voiceStyle")
+        pool_preferred_topics = _preferred_topics_for_prompt(
+            pool_voice_style.get("preferredTopics")
+            if isinstance(pool_voice_style, Mapping)
+            else None
+        )
         identity["stagePolicy"] = _sanitize_value(
             apply_relationship_event_gate(
                 build_stage_policy(
                     str(npc_id),
                     profile_stage,
-                    preferred_topics=_preferred_topics_for_prompt(
-                        pool_voice_style.get("preferredTopics")
-                        if isinstance(pool_voice_style, Mapping)
-                        else None
-                    ),
+                    preferred_topics=pool_preferred_topics,
                 ),
                 relationship_gate.as_prompt_dict(),
             )
@@ -1474,6 +1496,29 @@ class ContextBuilder:
                 history_item.update(_history_provenance(item))
                 history.append(history_item)
 
+        # 生活面轮换槽位（2026-09-21）：用户实测「强制做出对话的区分度」。
+        # 落点池（preferredTopics）与 roleGuidance 的轮换指令都只是**语义层软约束**，
+        # 压不过职业轴在词频层与具体性层的双重牵引 —— 索菲亚有 4 条跨簇素材、
+        # 也有动作式轮换指令，仍然连着 6 轮画／酒。这里改成**由代码按最近轮次算出
+        # 本轮该谈哪一面**，作为单一层级的硬槽位交给 `stage_execution_card`。
+        # 只在"最近两轮落在同一生活面"时产出，其余轮次零成本、字段不进 prompt。
+        #
+        # 素材来源是上面那份 `pool_preferred_topics`（与 persona_core 同源），
+        # 不是 `stage_policy` 里的某个键 —— 后者从来没有写过这个键。
+        if isinstance(identity.get("stagePolicy"), Mapping):
+            stage_policy_for_slot = dict(identity["stagePolicy"])
+            topic_slot = rotation_topic_slot(
+                pool_preferred_topics,
+                recent_replies=[
+                    item["content"]
+                    for item in history
+                    if item.get("role") == "assistant" and item.get("content")
+                ],
+            )
+            if topic_slot:
+                stage_policy_for_slot["topicSlot"] = topic_slot
+            identity["stagePolicy"] = _sanitize_value(stage_policy_for_slot)
+
         context: dict[str, Any] = {
             "npcIdentity": identity,
             "modSources": source_mod_list,
@@ -1481,6 +1526,7 @@ class ContextBuilder:
             "recentFacts": recent_facts,
             "history": history,
         }
+
         relationship_world = _first_value(
             values,
             "relationshipWorld",
@@ -2559,13 +2605,26 @@ def _preferred_topics_for_prompt(value: object) -> list[str]:
 
     与 `_compact_voice_style` 走同一个 `_compact_text_list(limit=...)`，
     所以落点池里出现过的类别，在 `persona_core` 里一定看得到。
+
+    2026-09-21 二次：**魔法证据文本一律排除**。`_compact_voice_style` 在
+    `plain_dialogue=True`（日常寒暄、也就是 `{topicPool}` 最常登场的那类输入）时
+    会滤掉 `_is_magic_evidence_text` 命中的 preferredTopics，而这里原先不过滤 ——
+    Wizard 的 `["魔法研究","星界与自然征兆","塔内日常","对承诺和边界的理解"]`
+    在 `persona_core` 里只剩后两条，落点池却点名四条，又是一次「要求落 A，
+    而 A 不在 prompt 里」。这里**无条件**排除：错位方向因此变成"落点池更窄"，
+    也就是**要求落的永远可见**；玩家主动问魔法时 `persona_core` 会多出两条，
+    那只是有素材没被点名，不是错位。反过来（池子点名了看不见的类别）才是 bug。
     """
 
-    return _compact_text_list(
-        value,
-        limit=_PREFERRED_TOPICS_LIMIT,
-        item_limit=80,
-    )
+    return [
+        item
+        for item in _compact_text_list(
+            value,
+            limit=_PREFERRED_TOPICS_LIMIT,
+            item_limit=80,
+        )
+        if not _is_magic_evidence_text(item)
+    ]
 
 
 def _compact_voice_style(
@@ -2846,6 +2905,32 @@ def _compact_stage_policy(
             lead["skipWhen"] = skip_when
         if lead:
             result["conversationLead"] = lead
+    # 生活面轮换槽位必须**显式**过白名单（2026-09-21）。
+    #
+    # 本函数是白名单重建，不是"照抄后删几个键"：凡是没在这里列出的顶层字段都会
+    # **静默消失**。诊断线新增 `topicSlot` 时只改了 `build_stage_policy` 的产出方，
+    # 于是线上（`compactPrompt=True`，也就是游戏实际走的那条）里
+    # `ctx.npcIdentity.stagePolicy.topicSlot` 有值、`stage_execution_card` 里却是
+    # `null`，整包 prompt 一个字节都到不了模型 —— 机制"写好了"但从未生效。
+    # 教训与 `topicPool` 缩进 bug、`knownCharacters` 被砍同类：**产出方改了，
+    # 必须同时确认消费方**；本文件里所有 `_compact_*` 都是这个形状。
+    topic_slot = value.get("topicSlot")
+    if isinstance(topic_slot, Mapping):
+        slot: dict[str, Any] = {}
+        banned = _text(topic_slot.get("bannedFacet"), limit=40)
+        if banned:
+            slot["bannedFacet"] = banned
+        instruction = _text(topic_slot.get("instruction"), limit=300)
+        if instruction:
+            slot["instruction"] = instruction
+        suggested_facet = _text(topic_slot.get("suggestedFacet"), limit=40)
+        if suggested_facet:
+            slot["suggestedFacet"] = suggested_facet
+        suggested_topic = _text(topic_slot.get("suggestedTopic"), limit=80)
+        if suggested_topic:
+            slot["suggestedTopic"] = suggested_topic
+        if slot:
+            result["topicSlot"] = slot
     return result
 
 
@@ -5014,6 +5099,10 @@ def _compact_knowledge_fact(value: object) -> dict[str, Any]:
         item = _text(value.get(key), limit=limit)
         if item:
             result[key] = item
+    # 常驻标记必须一起过白名单，否则数据侧标了 `alwaysOn` 也会在这里被静默丢掉，
+    # 事实退回普通通道、又被 `[:1]` 切片挡住 —— 与 `topicSlot` 那次是同一个坑。
+    if value.get("alwaysOn") is True:
+        result["alwaysOn"] = True
     return result
 
 
@@ -5490,9 +5579,17 @@ class PromptBuilder:
             safe_context_data["behaviorExamples"] = safe_context_data[
                 "behaviorExamples"
             ][:1]
-            safe_context_data["knowledgeFacts"] = safe_context_data[
-                "knowledgeFacts"
-            ][:1]
+            # 常驻事实（专有名词：宠物及其名字、家人、地名、角色自己的物件）
+            # **不参与**这一刀 `[:1]`。
+            #
+            # 这是同一个"按位置切片"的第五处：`_compact_knowledge_fact` 是白名单
+            # （保住 `alwaysOn`）、下方 `knowledge_facts` 卡是分栏（挑出常驻那组），
+            # 而**本行夹在两者中间**、先砍成 1 条 —— 只改另外两处，常驻事实到这里
+            # 就已经没了，卡片分栏再对也分不出东西。三处必须一起成立。
+            _facts = safe_context_data["knowledgeFacts"]
+            safe_context_data["knowledgeFacts"] = [
+                item for item in _facts if item.get("alwaysOn") is not True
+            ][:1] + [item for item in _facts if item.get("alwaysOn") is True]
             # 2026-09-21：`knownCharacters` 原先在这里被整块清空，于是 41 条已确认的
             # 人物关系（23 个 NPC 各 1–3 条）在游戏端**一条都进不了 prompt** ——
             # 数据在索引里、卡片渲染代码也在（下方的 `known_characters` 卡），
@@ -5573,6 +5670,20 @@ class PromptBuilder:
             "天气、时间和地点是当前场景的硬事实，不得与之矛盾；"
             "不要为了显得贴合而硬塞，除非玩家提及或确实影响回答。"
             "历史只用于承接当前对话，不是角色语气来源；若与角色资料冲突，以角色资料和原文样本为准。"
+            # 2026-09-21（用户实测：群聊里 Alex 说自己养了只叫「小黑」的狗）：
+            # 这条**不是**凭空编造 —— Alex 正典确有狗（Dusty，官方中文译名「小灰」），
+            # 模型说对了"有狗"、说错了名字。真因是名字进不了 prompt：
+            #   · `speechEvidence[:4]` 是**切片不是选择**（下方 `_MAX_SPEECH_EVIDENCE`），
+            #     Alex 的池子有 211 条，含「小灰」的 8 条排在深处，结构性永远取不到；
+            #   · 那 8 条全是 `event_dialogue`，还受 `completedEventIds` 门控；
+            #   · 常驻通道 `knowledgeFacts` / `knownCharacters` 都没有宠物信息。
+            # 而两侧 prompt 都**没有**一条"不得编造未确认具体物件"的通用兜底 ——
+            # 原有的"凭空添加"禁令只针对魔法现象（见下方 `_is_plain_dialogue_input` 分支）。
+            # 这里补通用版。注意措辞刻意收在"没有资料依据"上：**有依据的日常补全仍然允许**
+            # （用户口径见 `stardew-npc-invented-memories`：补角色自己的日常可以，
+            # 补玩家做过/说过的不行），所以不写成"禁止编造共同经历"那种通用禁令。
+            "没有资料依据的具体事物（宠物及其名字、家人、物件、行程、别人的近况）不要编；"
+            "资料里没有名字时就不要给它起名字，宁可只说态度、感受或笼统的日常。"
         )
         if natural_mode:
             safety_content += (
@@ -6065,24 +6176,43 @@ class PromptBuilder:
                 }
             )
         if safe_context["knowledgeFacts"]:
+            # 常驻事实（专有名词：宠物及其名字、家人、地名、角色自己的物件）
+            # 与普通事实分两栏。普通栏仍走原来的 1／2 条门控 —— 它的名额**不被动**，
+            # 所以新增常驻事实不会把身份事实挤掉；常驻栏自己有名额上限。
+            all_facts = safe_context["knowledgeFacts"]
+            always_on = [
+                fact for fact in all_facts if fact.get("alwaysOn") is True
+            ][:_MAX_ALWAYS_ON_FACTS]
+            rolling = [
+                fact for fact in all_facts if fact.get("alwaysOn") is not True
+            ]
+            fact_payload: dict[str, Any] = {
+                "knowledgeFacts": rolling[
+                    :(
+                        1
+                        if _is_plain_dialogue_input(player_input)
+                        else _MAX_KNOWLEDGE_FACTS
+                    )
+                ],
+                "instruction": (
+                    "只能把 knowledgeScope 为 canon_confirmed、"
+                    "runtime_confirmed 或 player_provided 的内容当作已知事实；"
+                    "其余内容必须保留不确定性。"
+                ),
+            }
+            if always_on:
+                fact_payload["alwaysKnownFacts"] = always_on
+                fact_payload["alwaysKnownInstruction"] = (
+                    "alwaysKnownFacts 是这个角色**固定拥有**的人和物（宠物、家人、"
+                    "住处、随身物件），与当前话题是否相关无关，任何时候都算已知；"
+                    "说到它们时必须用这里的名字，不得改名、换色或另起一个；"
+                    "但也只在话题自然涉及时才提，不要为了展示而报一遍。"
+                )
             messages.append(
                 {
                     "role": "system",
                     "name": "knowledge_facts",
-                    "content": _json({
-                        "knowledgeFacts": safe_context["knowledgeFacts"][
-                            :(
-                                1
-                                if _is_plain_dialogue_input(player_input)
-                                else _MAX_KNOWLEDGE_FACTS
-                            )
-                        ],
-                        "instruction": (
-                            "只能把 knowledgeScope 为 canon_confirmed、"
-                            "runtime_confirmed 或 player_provided 的内容当作已知事实；"
-                            "其余内容必须保留不确定性。"
-                        ),
-                    }),
+                    "content": _json(fact_payload),
                 }
             )
         if safe_context["knownCharacters"]:

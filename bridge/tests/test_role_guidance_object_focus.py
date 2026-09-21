@@ -83,7 +83,9 @@ def test_sophia_guidance_lands_on_objects_not_on_a_process() -> None:
     # 渲染进来 —— 模板层只钉得住「有上限、有占位符」，「四类都在」见下一条。
     # 四轮：上限句式改成动作式，歧义闸见
     # `test_sophia_rotation_rule_is_action_shaped`。
-    assert "连着两轮谈酿造或绘画" in text
+    # 五轮：触发条件从"连着两轮"收紧到"上一轮"，与新 `variationRule` 的
+    # 「不允许连续两轮同面」对齐（旧写法字面允许连着两轮 = 一松一紧取最松）。
+    assert "谈过酿造或绘画" in text
     assert "{topicPool}" in text
 
 
@@ -93,17 +95,23 @@ def test_sophia_rotation_rule_is_action_shaped() -> None:
     旧写法「同一类最多连续两次——酒和画算同一类生活面，连着两轮说同一个就该换」
     同时出现"同一类"与"同一个"两个层级，最松读法（画 → 画 → 酒）字面上满足
     "换了"，等于给"总是谈画"留了一条换成酒的出口。动作式写法只有一个层级：
-    点名被压的两个簇，并明确第三轮去哪里。
+    点名被压的两个簇，并明确下一轮去哪里。
+
+    2026-09-21 五轮：触发条件再收紧一轮 —— 旧句写「连着两轮……第三轮就换」，
+    字面**允许连着两轮**，而 `variationRule` 的新上限是「不允许连续两轮同面」。
+    两句并排又是一松一紧，模型会挑松的那个读。改成「谈过……下一轮就换」。
     """
 
     text = _CONVERSATION_LEAD_ROLE_GUIDANCE["Sophia"]
 
-    assert "连着两轮谈酿造或绘画" in text
-    assert "第三轮就换到镇上的事或她自己的近况" in text
+    assert "谈过酿造或绘画" in text
+    assert "下一轮就换到镇上的事或她自己的近况" in text
     # 层级词与旧句式不得回来——它们正是那个出口
     assert "同一类" not in text
     assert "生活面" not in text
     assert "连着两轮说同一个" not in text
+    # 五轮删掉的更松上限
+    assert "第三轮就换" not in text
 
 
 def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
@@ -122,9 +130,11 @@ def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
 
     assert "{topicPool}" not in guidance
     assert all(topic in guidance for topic in topics)
-    # 显式点名两个非酿造非绘画的簇：这是「总是谈画」的解药
-    assert "小镇日常" in guidance
-    assert "安全感与新开始" in guidance
+    # 显式点名两个**非酿造非绘画**的方向：这是「总是谈画」的解药。
+    # 2026-09-21 六轮（批次 4b）：这两条素材本身已从抽象元类目
+    # （「小镇日常」「安全感与新开始」）改写成可落座的具体物，断言跟着换词。
+    assert "镇上今天谁在广场上吵" in guidance
+    assert "她刚搬来镇上时住的那间旧房子" in guidance
 
 
 def test_no_role_guidance_asks_the_model_to_narrate_a_process() -> None:

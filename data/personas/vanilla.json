@@ -65,6 +65,14 @@
           "knowledgeScope": "canon_confirmed",
           "confidence": "high",
           "sourceRefs": ["Characters/Dialogue/Shane"]
+        },
+        {
+          "factId": "shane-hen-charlie",
+          "summary": "养了一只叫「查理」的蓝色母鸡；会把它当成能听懂话的朋友，说它和其他母鸡会帮自己撑下去。",
+          "knowledgeScope": "canon_confirmed",
+          "confidence": "high",
+          "alwaysOn": true,
+          "sourceRefs": ["Characters/Dialogue/Shane"]
         }
       ],
       "knownCharacters": [
@@ -236,6 +244,25 @@
           "summary": "把成为职业运动员视为重要目标，也很在意自己的运动表现。",
           "knowledgeScope": "canon_confirmed",
           "confidence": "high",
+          "sourceRefs": ["Characters/Dialogue/Alex"]
+        },
+        {
+          "factId": "alex-dog-dusty",
+          "summary": "养了一条叫「小灰」的狗；会喂它烤牛排，跟它说话时会变得很温柔，说它和自己有很多共同点。",
+          "knowledgeScope": "canon_confirmed",
+          "confidence": "high",
+          "alwaysOn": true,
+          "sourceRefs": [
+            "Characters/Dialogue/Alex",
+            "Data/Events/Alex"
+          ]
+        },
+        {
+          "factId": "alex-grandparents-home",
+          "summary": "和祖父母住在一起，父母不在身边；很在意两位老人。",
+          "knowledgeScope": "canon_confirmed",
+          "confidence": "high",
+          "alwaysOn": true,
           "sourceRefs": ["Characters/Dialogue/Alex"]
         }
       ],

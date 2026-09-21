@@ -295,6 +295,12 @@ def _normalise_knowledge_fact(
     required_event_id = str(raw_fact.get("requiredEventId", "")).strip()
     if required_event_id:
         result["requiredEventId"] = required_event_id
+    # 常驻标记（专有名词的事实）：从 persona 归一进索引时必须原样带过。
+    # 这是同一形态的**第四处**白名单（另外三处：本文件的 `_FACT_FIELDS`、
+    # `prompts._compact_knowledge_fact`、`prompts` 的 knowledge_facts 卡）。
+    # 少任何一处，数据侧写的 `alwaysOn` 都会静默消失、事实退回普通通道被切片挡住。
+    if raw_fact.get("alwaysOn") is True:
+        result["alwaysOn"] = True
     return result
 
 
@@ -1891,6 +1897,12 @@ class ProfileIndexStore:
         "confidence",
         "sourceRefs",
         "requiredEventId",
+        # 常驻标记（专有名词：宠物及其名字、家人、地名、角色自己的物件）。
+        # 这是**第三处**同型白名单：数据侧标了 `alwaysOn`，只要 `_FACT_FIELDS`
+        # 或 `prompts._compact_knowledge_fact` 有一处没列它，标记就会静默消失，
+        # 事实退回普通通道、又被 `knowledgeFacts[:1]` 切片挡住 —— 表面上数据
+        # "写进去了"，行为上一点没变。改数据形态时三处都要一起动。
+        "alwaysOn",
     )
     _KNOWN_CHARACTER_FIELDS = (
         "relationId",

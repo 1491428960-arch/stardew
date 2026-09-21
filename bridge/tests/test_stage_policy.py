@@ -117,7 +117,12 @@ def test_shane_conversation_lead_guidance_allows_guarded_short_careful_closing()
     [
         (
             "Wizard",
-            ("不要停在泛泛的‘你想聊什么’", "法师塔、研究记录、符文读数"),
+            # 2026-09-21 二次：原断言钉的是硬编码的「法师塔、研究记录、符文读数」。
+            # 那三个词已改成 `{topicPool}`（同源化，见
+            # `test_conversation_lead_variation.py`），而本测试不传
+            # preferred_topics，因此渲染成中性的兜底短语 —— 断言改为钉**句式**，
+            # 词表由同源化那条测试按数据源逐角色验。
+            ("不要停在泛泛的‘你想聊什么’", "选一个具体对象"),
         ),
         (
             "Sebastian",
@@ -204,14 +209,17 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     ]["roleGuidance"]
 
     assert "酒窖" in guidance  # 酿造方向：仍要接住玩家点名的当前对象
-    assert "绘画与创作" in guidance  # 创作方向（措辞取自数据源）
-    assert "小镇日常" in guidance  # 跨簇：preferredTopics 第 3 项
-    assert "安全感与新开始" in guidance  # 跨簇：preferredTopics 第 4 项
-    # 落点池与数据源同源：数据源里的每一类都要能在渲染结果里找到
-    assert all(topic in guidance for topic in topics)
+    # 2026-09-21 六轮（批次 4b）：素材从抽象元类目改写成可落座的具体物。
+    # 下面这四条断言**改成按数据源逐条验**，而不是钉死某几个词 ——
+    # 本轮改的正是"词"，钉词会让这条测试变成"素材不能改"的反向闸。
+    for topic in topics:
+        assert topic in guidance, topic
+    assert "画布上还没画完的那一块" in guidance  # 创作方向
+    assert "镇上今天谁在广场上吵" in guidance  # 跨簇：镇上方向
+    assert "她刚搬来镇上时住的那间旧房子" in guidance  # 跨簇：新开始方向
     assert "同一类最多连续两次" not in guidance  # 四轮：两层表述已换成动作式
-    assert "连着两轮谈酿造或绘画" in guidance  # 被压的两个簇要点名
-    assert "第三轮就换到镇上的事或她自己的近况" in guidance  # 出口要给死
+    assert "谈过酿造或绘画" in guidance  # 被压的两个簇要点名
+    assert "下一轮就换到镇上的事或她自己的近况" in guidance  # 出口要给死
     assert "因为是玩家才愿意分享" in guidance
     assert "{topicPool}" not in guidance  # 占位符不得残留到 prompt 里
 
@@ -226,7 +234,11 @@ def test_sophia_guidance_without_topic_pool_falls_back_to_a_readable_phrase() ->
     guidance = build_stage_policy("Sophia", "dating")["conversationLead"]["roleGuidance"]
 
     assert "{topicPool}" not in guidance
-    assert "她自己那些偏好主题之间轮换" in guidance
+    # 2026-09-21 五轮：兜底短语改为**性别中性**（「她自己」→「角色自己」）——
+    # `{topicPool}` 已推广到全部 8 个 conversationLead 角色，其中 Wizard / Sam 等
+    # 只有在 `female-bachelors` overlay 加载时才是女性化表达，未加载时同一句话里的
+    # "她自己"就是错的。中性说法在两种情况下都成立。
+    assert "角色自己那些偏好主题之间轮换" in guidance
 
 
 @pytest.mark.parametrize("npc_id", NEW_FEMALE_BACHELOR_CHARACTERS)

@@ -6,48 +6,102 @@
     当前话题**。」
 
 前半句要求变化，后半句明确鼓励延续——同一条规则自己抵消自己，于是同一个落点
-物件（哈维的早餐、酒、灯光）连着好几轮不换。本次只做两处最小改动：
+物件（哈维的早餐、酒、灯光）连着好几轮不换。
 
-1. `_CONVERSATION_LEAD_CARD["variationRule"]`：**允许**承接但给落点加上限
-   （同一落点最多连续两次，第三次换一个生活面）；
-2. 哈维的 `roleGuidance`：从「用一个具体照料」改成给出可轮换的落点池
-   （水／咖啡／外套／伞／诊所班次），不再让模型自己收敛到一个默认落点。
+2026-09-21 五轮（用户实测：索菲亚第 4 轮「收在画框边上」、第 5 轮「压在画框边上」）
+把上限与出口一起收紧，本文件随之从"允许两次"改钉三件事：
 
-本文件同时钉住这两处**确实到达线上紧凑路径**（`stage_execution_card` 会截断
-`variationRule` 与 `roleGuidance`，超 240 字就白改）。
+1. `_CONVERSATION_LEAD_CARD["variationRule"]`：单位提到「生活面」，
+   显式堵死"换物件 = 换面"，上限收紧为**不允许连续两轮同面**；
+2. **`{topicPool}` 同源化推广到全部 8 个 `conversationLead` 角色** ——
+   此前只有索菲亚一个模板含占位符，其余 7 个把职业对象硬编码在文案里
+   （哈维的「水／咖啡／外套／伞／诊所班次」就是其中之一），那是**第二份数据**，
+   会与角色自己的 `preferredTopics` 各自演化；
+3. 两张卡都要**到达线上紧凑路径**（`stage_execution_card` 会按 240 字截断
+   `variationRule` 与 `roleGuidance`，超了就白改）。
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from stardew_ai_bridge.prompts import PromptBuilder, _compact_stage_policy
 from stardew_ai_bridge.stage_policy import (
+    _CONVERSATION_LEAD_ROLE_GUIDANCE,
     CONVERSATION_LEAD_TRIAL_NPC_IDS,
     build_stage_policy,
 )
 
 STAGES = ("friend", "close", "dating", "married")
 
-# 哈维的可轮换照料落点（方案 B 指定的池子）。
-HARVEY_FALLPOINTS = ("水", "咖啡", "外套", "伞", "诊所")
+# 哈维旧版硬编码的照料落点（2026-09-21 五轮已删，改由 preferredTopics 同源生成）。
+HARVEY_OLD_HARDCODED_FALLPOINTS = ("外套", "伞", "诊所班次")
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _lead(npc_id: str, stage: str) -> dict[str, object]:
     return build_stage_policy(npc_id, stage)["conversationLead"]
 
 
-# --- 1. variationRule：允许承接但限制延续 ------------------------------------
+def _persona_preferred_topics(npc_id: str) -> list[str]:
+    """角色数据源里的 preferredTopics —— 落点池的唯一数据源。
+
+    与 `prompts._preferred_topics_for_prompt` 同源：从 persona 文件读原始列表。
+    只读模板层的断言验不到"渲染成什么"，所以凡涉及落点池内容的测试都要先取数据源。
+    """
+
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        profile = (payload.get("personas") or {}).get(npc_id)
+        if not isinstance(profile, dict):
+            continue
+        voice_style = profile.get("voiceStyle")
+        topics = (
+            voice_style.get("preferredTopics") if isinstance(voice_style, dict) else None
+        )
+        if topics:
+            return [str(topic) for topic in topics]
+    raise AssertionError(f"data/personas 里找不到 {npc_id} 的 preferredTopics")
 
 
-def test_variation_rule_allows_continuation_but_caps_the_fallpoint() -> None:
+def _rendered_guidance(npc_id: str) -> str:
+    return build_stage_policy(
+        npc_id,
+        "dating",
+        preferred_topics=_persona_preferred_topics(npc_id),
+    )["conversationLead"]["roleGuidance"]
+
+
+# --- 1. variationRule：单层、无出口、不允许连续两轮同面 -----------------------
+
+
+def test_variation_rule_allows_continuation_but_bans_two_in_a_row() -> None:
     rule = _lead("Harvey", "married")["variationRule"]
 
     assert "允许继续承接当前话题" in rule
-    assert "同一落点物件最多连续出现两次" in rule
-    assert "第三次换一个生活面" in rule
+    assert "同一个生活面不允许连续两轮出现" in rule
+    assert "只换物件、只换时段，或用另一种说法讲同一件事，都不算换" in rule
+
+
+def test_variation_rule_has_no_looser_second_copy() -> None:
+    """旧上限的两份表述都必须消失。
+
+    「同一落点物件最多连续出现两次」的单位是**物件**不是生活面，而
+    「第三次换一个生活面（换物件、换时段或换一件正在做的事）」的括号把
+    "换物件"写成了换面的合法途径 —— 画框 → 画笔就算交差，上限形同虚设。
+    旧文案允许连着两轮、新上限禁止连着两轮，两者并排就是"一松一紧取最松"。
+    """
+
+    for npc_id in CONVERSATION_LEAD_TRIAL_NPC_IDS:
+        for stage in STAGES:
+            rule = _lead(npc_id, stage)["variationRule"]
+            assert "最多连续出现两次" not in rule, (npc_id, stage)
+            assert "第三次换一个生活面" not in rule, (npc_id, stage)
+            assert "换一件正在做的事" not in rule, (npc_id, stage)
 
 
 def test_variation_rule_no_longer_encourages_open_ended_continuation() -> None:
@@ -69,16 +123,84 @@ def test_affection_variation_rule_is_untouched() -> None:
     )
 
 
-# --- 2. 哈维：可轮换落点 ------------------------------------------------------
+# --- 2. 落点池同源化：8/8 角色 -------------------------------------------------
 
 
-def test_harvey_guidance_offers_rotatable_fallpoints() -> None:
-    guidance = _lead("Harvey", "dating")["roleGuidance"]
+def test_every_conversation_lead_role_uses_the_topic_pool_placeholder() -> None:
+    """8 个角色**全部**同源：模板里不许再硬编码职业对象。
 
-    for fallpoint in HARVEY_FALLPOINTS:
-        assert fallpoint in guidance, fallpoint
+    此前只有索菲亚一个模板含 `{topicPool}`；其余 7 个点名的是写死在文案里的
+    第二份数据（Elliott「写作、海风、光线」、Wizard「法师塔、研究记录、符文读数」、
+    Sam「音乐、乐器、滑板或街上」、Alex「比赛、训练、好球或农场」、
+    Sebastian「音乐、耳机、电脑、摩托车或房间」、Harvey「水、咖啡、外套、伞、
+    诊所班次」、Shane 干脆没有落点池）。
+    """
+
+    missing = [
+        npc_id
+        for npc_id in sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS)
+        if "{topicPool}" not in _CONVERSATION_LEAD_ROLE_GUIDANCE[npc_id]
+    ]
+
+    assert missing == [], f"这些角色的 roleGuidance 还没同源化：{missing}"
+
+
+@pytest.mark.parametrize("npc_id", sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS))
+def test_rendered_guidance_contains_every_topic_of_its_own_source(npc_id: str) -> None:
+    """渲染结果必须包含**该角色数据源里的全部类别**，一个都不许漏。
+
+    这是同源化的实质承诺：落点池里出现过的类别，在 `persona_core` 里一定看得到。
+    反过来（点名了看不见的类别）就是 b307388 那种「要求落 A，而 A 不在 prompt 里」。
+    """
+
+    topics = _persona_preferred_topics(npc_id)
+    guidance = _rendered_guidance(npc_id)
+
+    assert topics, npc_id
+    for topic in topics:
+        assert topic in guidance, f"{npc_id} 的落点池漏了「{topic}」"
+    assert "{topicPool}" not in guidance  # 占位符不得残留到 prompt 里
+
+
+@pytest.mark.parametrize("npc_id", sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS))
+def test_rendered_guidance_stays_within_the_compact_limit(npc_id: str) -> None:
+    """`_compact_stage_policy` 按 240 字截断 roleGuidance；超了就白改。
+
+    同源化会把数据源铺进模板，池子越长越容易越界（Alex 的四条加起来 60+ 字）。
+    """
+
+    guidance = _rendered_guidance(npc_id)
+
+    assert len(guidance) <= 240, f"{npc_id} 的 roleGuidance 有 {len(guidance)} 字，会被截断"
+
+
+# --- 3. 哈维：落点池改由他自己的素材生成 --------------------------------------
+
+
+def test_harvey_guidance_pool_comes_from_his_own_topics() -> None:
+    topics = _persona_preferred_topics("Harvey")
+    guidance = _rendered_guidance("Harvey")
+
+    assert "照料落点在" in guidance
+    for topic in topics:
+        assert topic in guidance, topic
     assert "不要每轮都落到同一件事" in guidance
-    assert "同一个落点最多连续两次" in guidance
+
+
+def test_harvey_guidance_drops_the_old_hardcoded_pool_and_loose_cap() -> None:
+    """旧硬编码池与旧上限都必须消失。
+
+    「同一个落点最多连续两次」是 `variationRule` 上限的**第二份表述**，且比新上限
+    （不允许连续两轮）更松；两句并排会让模型挑最松的读法 —— 这正是
+    `stage_policy.py` 里记过两次的同型教训。
+    """
+
+    guidance = _rendered_guidance("Harvey")
+
+    for fallpoint in HARVEY_OLD_HARDCODED_FALLPOINTS:
+        assert fallpoint not in guidance, fallpoint
+    assert "同一个落点最多连续两次" not in guidance
+    assert "最多连续两次" not in guidance
 
 
 @pytest.mark.parametrize("stage", STAGES)
@@ -91,14 +213,27 @@ def test_harvey_guidance_keeps_its_original_care_boundary(stage: str) -> None:
     assert "不立刻诊断" in guidance
 
 
-def test_fallpoints_do_not_leak_into_other_roles() -> None:
+def test_old_hardcoded_fallpoints_do_not_leak_into_other_roles() -> None:
     for npc_id in CONVERSATION_LEAD_TRIAL_NPC_IDS - {"Harvey"}:
-        guidance = _lead(npc_id, "married")["roleGuidance"]
-        assert "外套" not in guidance, npc_id
-        assert "诊所班次" not in guidance, npc_id
+        guidance = _rendered_guidance(npc_id)
+        for fallpoint in HARVEY_OLD_HARDCODED_FALLPOINTS:
+            assert fallpoint not in guidance, (npc_id, fallpoint)
 
 
-# --- 3. 存活到线上紧凑路径 ----------------------------------------------------
+def test_no_role_guidance_keeps_a_looser_cap_sentence() -> None:
+    """全角色回归闸：任何 roleGuidance 里都不许再有"最多连续两次"这类更松的上限。"""
+
+    offenders = {
+        npc_id: _rendered_guidance(npc_id)
+        for npc_id in sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS)
+        if "最多连续两次" in _rendered_guidance(npc_id)
+        or "最多连续出现两次" in _rendered_guidance(npc_id)
+    }
+
+    assert offenders == {}
+
+
+# --- 4. 存活到线上紧凑路径 ----------------------------------------------------
 
 
 @pytest.mark.parametrize("stage", STAGES)
@@ -106,7 +241,11 @@ def test_compact_stage_card_keeps_both_texts_verbatim(stage: str) -> None:
     """紧凑卡按 240 字截断；超了就白改，所以逐字比对。"""
 
     for npc_id in CONVERSATION_LEAD_TRIAL_NPC_IDS:
-        policy = build_stage_policy(npc_id, stage)
+        policy = build_stage_policy(
+            npc_id,
+            stage,
+            preferred_topics=_persona_preferred_topics(npc_id),
+        )
         compact = _compact_stage_policy(policy, include_response_order=False)
         lead = compact["conversationLead"]
 
@@ -116,7 +255,7 @@ def test_compact_stage_card_keeps_both_texts_verbatim(stage: str) -> None:
         ), f"{npc_id}/{stage} 的 roleGuidance 被 compact 截断"
 
 
-def test_game_prompt_carries_the_rotation_rule_and_fallpoints() -> None:
+def test_game_prompt_carries_the_rotation_rule_and_the_sourced_pool() -> None:
     """线上（compact）请求里两张卡都要能看到这两处改动。"""
 
     body = {
@@ -126,7 +265,7 @@ def test_game_prompt_carries_the_rotation_rule_and_fallpoints() -> None:
         "provider": "fake",
         "compactPrompt": True,
         "channel": "face_to_face",
-        "sourceMods": [],
+        "sourceMods": ["female-bachelors", "vanilla"],
         "history": [],
         "gameState": {
             "npcId": "Harvey",
@@ -149,13 +288,13 @@ def test_game_prompt_carries_the_rotation_rule_and_fallpoints() -> None:
     messages = PromptBuilder().build(context, body["message"], compact=True)
     blob = json.dumps(messages, ensure_ascii=False)
 
-    assert "同一落点物件最多连续出现两次" in blob
-    assert "照料落点在水、咖啡、外套、伞、诊所班次" in blob
+    assert "同一个生活面不允许连续两轮出现" in blob
+    assert "照料落点在诊所和飞行爱好者的日常" in blob
     # 落点池必须出现在两张会进 prompt 的卡里（阶段执行卡 + 最终角色指纹）
     names = {message["name"] for message in messages}
     assert "stage_execution_card" in names
     for message in messages:
         if message["name"] == "stage_execution_card":
-            assert "照料落点在水、咖啡、外套、伞、诊所班次" in message["content"]
+            assert "照料落点在诊所和飞行爱好者的日常" in message["content"]
         if message["name"] == "final_role_voice_contract":
-            assert "照料落点在水、咖啡、外套、伞、诊所班次" in message["content"]
+            assert "照料落点在诊所和飞行爱好者的日常" in message["content"]

@@ -1582,7 +1582,10 @@ def test_natural_detail_turn_does_not_request_a_conversation_lead() -> None:
     [
         (
             "Wizard",
-            ("不要停在泛泛的‘你想聊什么’", "法师塔、研究记录、符文读数"),
+            # 2026-09-21 二次：原断言钉的是硬编码的「法师塔、研究记录、符文读数」，
+            # 那三个词已改成 `{topicPool}`（同源化）。本测试不传 preferred_topics，
+            # 渲染成中性兜底短语，所以断言改为钉**句式**。
+            ("不要停在泛泛的‘你想聊什么’", "选一个具体对象"),
         ),
         (
             "Sophia",
@@ -1641,6 +1644,13 @@ def test_topic_pool_stays_in_sync_with_persona_core_preferred_topics() -> None:
     `roleGuidance` 的落点池点名了 `preferredTopics` 第 4 类「安全感与新开始」，
     而 `persona_core` 当时按 limit=3 把它截掉了：**指令要求落 A，A 却不在
     prompt 里**。全量人设扫描，不只索菲亚。
+
+    2026-09-21 五轮：比较基准改成 `plain_dialogue=True` 的 `persona_core`。
+    `_compact_voice_style` 在**日常寒暄**（正是 `{topicPool}` 最常登场的那类输入）
+    下会额外滤掉 `_is_magic_evidence_text` 命中的类别，而落点池原先不过滤 ——
+    Wizard 的「魔法研究」「星界与自然征兆」在 persona_core 里消失、落点池却点名，
+    又是一次「要求落 A，而 A 不在 prompt 里」。取**最窄可见性**做基准之后，
+    `_preferred_topics_for_prompt` 也必须无条件滤掉同一批文本才能相等。
     """
 
     from stardew_ai_bridge.prompts import (
@@ -1662,13 +1672,48 @@ def test_topic_pool_stays_in_sync_with_persona_core_preferred_topics() -> None:
             if not source:
                 continue
             checked += 1
-            in_core = _compact_voice_style(voice_style).get("preferredTopics")
+            in_core = _compact_voice_style(
+                voice_style,
+                plain_dialogue=True,
+            ).get("preferredTopics") or []
             pool = _preferred_topics_for_prompt(source)
             if in_core != pool:
                 mismatches.append(f"{path.name}:{npc}: core={in_core} pool={pool}")
 
     assert checked > 0, "没扫到任何带 preferredTopics 的角色，断言会假通过"
     assert mismatches == []
+
+
+def test_topic_pool_never_names_a_magic_topic_hidden_from_persona_core() -> None:
+    """Wizard 是唯一带魔法 preferredTopics 的角色，单独钉一次。
+
+    `persona_core` 在寒暄轮次里看不到「魔法研究」「星界与自然征兆」，
+    而 Wizard 的 roleGuidance 是**唯一**会渲染落点池的谈话入口之一 ——
+    如果池子点名它们，模型就被要求落在一个看不见的类别上。
+    """
+
+    from stardew_ai_bridge.prompts import (
+        _compact_voice_style,
+        _is_magic_evidence_text,
+        _preferred_topics_for_prompt,
+    )
+
+    wizard_style = json.loads(
+        (PERSONAS_DIR / "vanilla.json").read_text(encoding="utf-8")
+    )["personas"]["Wizard"]["voiceStyle"]
+
+    source = wizard_style["preferredTopics"]
+    hidden = [topic for topic in source if _is_magic_evidence_text(topic)]
+    assert hidden, "Wizard 的素材里应当有会被魔法过滤挡掉的类别，否则本条测试失效"
+
+    pool = _preferred_topics_for_prompt(source)
+    assert pool, "过滤后不该为空（还剩「塔内日常」等非魔法类别）"
+    for topic in hidden:
+        assert topic not in pool, topic
+    in_core = _compact_voice_style(wizard_style, plain_dialogue=True)[
+        "preferredTopics"
+    ]
+    assert in_core == pool
 
 
 def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:
@@ -1721,11 +1766,18 @@ def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:
     guidance = json.loads(card["content"])["conversationLead"]["roleGuidance"]
 
     assert "{topicPool}" not in guidance
-    # 四类都要在（措辞取自 data/personas/sve.json，不是硬编码的第二份）
-    assert "葡萄园和酿造" in guidance
-    assert "绘画与创作" in guidance
-    assert "小镇日常" in guidance
-    assert "安全感与新开始" in guidance
+    # 四类都要在（措辞取自 data/personas/sve.json，不是硬编码的第二份）。
+    # 2026-09-21 六轮（批次 4b）：素材本身已从**抽象元类目**改写成**可落座的具体物**
+    # （「小镇日常」→「镇上今天谁在广场上吵」、「安全感与新开始」→
+    # 「她刚搬来镇上时住的那间旧房子」），所以这条的断言也跟着换词 ——
+    # 它验的是"渲染结果 = 数据源"，不是某几个固定的词。
+    for topic in (
+        "酒窖里这一批新酿",
+        "画布上还没画完的那一块",
+        "镇上今天谁在广场上吵",
+        "她刚搬来镇上时住的那间旧房子",
+    ):
+        assert topic in guidance, topic
 
 
 @pytest.mark.parametrize("npc_id", ("Wizard", "Sophia", "Shane", "Sebastian", "Alex"))
