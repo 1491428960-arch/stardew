@@ -937,7 +937,9 @@ def test_alex_cross_facet_topic_penetration_is_recorded() -> None:
     而文本里仍写着"投球"（被禁面的词）。这与"槽位禁某面、guidance 仍列该面"那种
     **同面冲突**不是一回事：`narrow_topic_pool` 一直按**主面**收窄，那条规则没变。
 
-    影响面是可数的：48 个角色里只有 Alex 的这一条素材跨界。真要连次要面一起摘，
+    影响面是**可数的，但远不止 Alex 一条**（第 7 批实测：全库 25 条跨面条目，
+    本轮还原原话新增了其中 3 条，见下面的
+    `test_secondary_facet_penetration_added_by_restoring`）。真要连次要面一起摘，
     得让 `narrow_topic_pool` / `_pick` 改用 `_facet_hits`（命中即摘）——那是另一轮
     机制改动，会改变全部角色的收窄口径，不在这里顺手做。
     """
@@ -977,6 +979,9 @@ FIVE_FACET_ROLES = frozenset(
         # 第 6 批：Birdie 从 4 面到 5 面 —— 词表补上「气候」「丈夫」之后，
         # 第 5 批为规避词表而改写的两条素材**换回原话**，家人面随之落地。
         "Birdie",
+        # 第 7 批：Pam 从 4 面到 5 面 —— 词表补上「爱好」之后，她原话里
+        # 「要是自己有个什么爱好就好了」终于判得出爱好面（此前"探不动"）。
+        "Pam",
     }
 )
 
@@ -1261,3 +1266,226 @@ def test_roles_still_below_three_facets_are_recorded() -> None:
         f"新掉到 3 面以下（回退）：{sorted(low - BELOW_THREE_FACET_ROLES)}；"
         f"已经补上 3 面、可以从名单里删掉：{sorted(BELOW_THREE_FACET_ROLES - low)}"
     )
+
+
+# --- 15. 2026-09-23 第 7 批：把"为绕开词表而改写的字面"换回原话 ----------------
+#
+# 起因是用户口径「主要是要自然一点，像真实对话，也要像这个人该说的话」：
+# 前几批为了让素材判得出生活面，把若干条**原话的字面改了**（`跳舞`→`舞蹈`、
+# `童年`→`小时候`、`儿子`→`孩子`…）。第 3 / 6 批把词表补齐之后，这些改写就
+# 失去了理由 —— 而**原话才是最像这个人说的话的那个版本**，所以本轮把它们还回去。
+#
+# 两类改写必须分开处理（这是本轮的方法论，不是凭感觉）：
+#
+#   · **A 类 = 当初只为绕开词表**：词表补上之后原话判得出面，**还原**；
+#   · **B 类 = 原话里的副面词会抢走主面**（`雾在毯子里看电视` 带上"下雨"就漂到
+#     天气面、Clint 的"铁匠"漂到工作面、Sandy 的"在镇上"漂到镇上或消遣…）：
+#     **保留改写**，那是有意的设计。
+#
+# 判据一律是 `_facet_of_topic` 回测：**预期面没变才还原**，变了就保留。
+# 逐条回测产物在 `.tmp/facet-coverage/b7-restore.txt`：25 条候选中
+# **还原 7 条 + 新增 1 条（Pam）= 8 条落进数据**，其余 17 条保留（下面三类理由各自可验证）。
+RESTORED_TO_THE_ORIGINAL_LINE: dict[str, tuple[str, str, str]] = {
+    # 角色: (还原后的素材, 还原前的改写, 面)
+    "Emily": ("我和海莉是姐妹，这事我跟你说过吗？", "海莉是我妹妹", "家人朋友"),
+    "Jas": ("我得自己发明游戏，感谢我的玩具们", "和玩具一起编出来的游戏", "爱好或消遣"),
+    "Robin": (
+        "现在的农田美得令人难以置信，我记得我读到过关于它的新闻",
+        "记得读到过关于这片农田的新闻",
+        "过去的回忆",
+    ),
+    # Kent 这条的还原版本之所以还判得出面，靠的是原话后半句的「疲惫」——
+    # 也就是说"失眠"本身仍然不在词表里，但整句是他的原话且面不变，所以还原。
+    "Kent": (
+        "我有失眠的毛病，所以如果我看起来很疲惫的话，请你不要介意",
+        "夜里睡不着的毛病",
+        "自己的状态或烦恼",
+    ),
+    "Vincent": (
+        "我爸爸几年前建造了那座木桥，这样我就可以在夏天去看潮汐池了",
+        "夏天去潮汐池看的那片浅水",
+        "天气季节",
+    ),
+    "Abigail": ("我父母弄的我压力好大", "他们弄得我压力好大", "自己的状态或烦恼"),
+    "Dwarf": (
+        "我有很多关于我的朋友和家人的回忆，他们都和那些矿井有关",
+        "很久没见的那些家人",
+        "家人朋友",
+    ),
+    # Pam 不是"还原"而是"新增"：她原话里的「爱好」二字原先判不出面，
+    # 所以第 5 批直接放弃了这个面（"探不动"），素材**一条都没有**。
+    "Pam": ("要是自己有个什么爱好就好了", "", "爱好或消遣"),
+}
+
+
+@pytest.mark.parametrize("npc_id", sorted(RESTORED_TO_THE_ORIGINAL_LINE))
+def test_restored_material_is_the_original_line_and_keeps_its_facet(npc_id: str) -> None:
+    """还原后的素材**真的在数据里**，而且面与还原前**一模一样**。
+
+    两个方向都要钉：① 新字面进去了；② 旧字面（那份为绕开词表而改写的说法）
+    不许再回来 —— 否则下一轮有人按旧报告"修回去"，面归属就悄悄变了。
+    """
+
+    restored, previous, facet = RESTORED_TO_THE_ORIGINAL_LINE[npc_id]
+
+    assert _facet_of_topic(restored) == facet, f"{npc_id} 的还原版没落到 {facet}"
+    if previous:
+        assert _facet_of_topic(previous) == facet, (
+            f"{npc_id} 的改写版本来就不在 {facet}，这条不是 A 类还原"
+        )
+
+    found = _persona_profile(npc_id)
+    assert found, f"找不到 {npc_id} 的 persona"
+    for fname, profile in found:
+        topics = profile["voiceStyle"]["preferredTopics"]
+        assert restored in topics, f"{fname} 里没有还原后的原话素材：{topics}"
+        if previous:
+            assert previous not in topics, f"{fname} 里旧改写还留着：{topics}"
+
+
+def test_pam_finally_has_a_hobby_facet() -> None:
+    """Pam 的爱好面是第 5 批公开记为"探不动"的那一个（词表不收「爱好」）。
+
+    第 6 批补词、第 7 批把她那句原话写进素材 —— 这条钉住"补词必须落到素材上"，
+    否则又是一次"词表认得出、而 material 里根本没有"的空转。
+    """
+
+    topics = _preferred_topics("Pam")
+    assert "要是自己有个什么爱好就好了" in topics
+    assert len(topics) == 6, f"Pam 的素材条数越过了 6 条上限：{topics}"
+
+    facets = {_facet_of_topic(topic) for topic in topics} - {None}
+    assert facets == {"工作或手艺", "吃喝", "家人朋友", "过去的回忆", "爱好或消遣"}, (
+        f"Pam 的面覆盖变了：{sorted(facets)}"
+    )
+    # 那条无面人设核心仍在（"每角色至多一条"，不许为了凑面数删掉）
+    assert "如何在麻烦里保留选择" in topics
+    assert _facet_of_topic("如何在麻烦里保留选择") is None
+
+
+# 还原原话的**代价**，一并记下来：原话比改写版"多带词"，其中三条带的是**别的面**的词。
+# 这不改变任何机制（`narrow_topic_pool` 一直按主面收窄），但会在两处看得见：
+#   ① `_facet_hits`（"她这一轮聊了哪些面"的统计口径，命中即算）会多记一个面；
+#   ② 禁那个次要面时，这条素材**仍留在落点池里**，文本里也仍写着被禁面的词。
+# 与 `test_alex_cross_facet_topic_penetration_is_recorded` 同一类事实，只是这三条
+# 是本轮**新引入**的 —— 所以单独钉住，免得日后被当成"机制坏了"。
+SECONDARY_FACET_PENETRATION_ADDED_BY_RESTORING: dict[str, tuple[str, str, str]] = {
+    # 角色: (还原后的素材, 主面, 原话里带出来的次要面)
+    "Emily": ("我和海莉是姐妹，这事我跟你说过吗？", "家人朋友", "玩家自己"),
+    "Vincent": (
+        "我爸爸几年前建造了那座木桥，这样我就可以在夏天去看潮汐池了",
+        "天气季节",
+        "家人朋友",
+    ),
+    "Dwarf": (
+        "我有很多关于我的朋友和家人的回忆，他们都和那些矿井有关",
+        "家人朋友",
+        "过去的回忆",
+    ),
+}
+
+
+@pytest.mark.parametrize("npc_id", sorted(SECONDARY_FACET_PENETRATION_ADDED_BY_RESTORING))
+def test_secondary_facet_penetration_added_by_restoring(npc_id: str) -> None:
+    """三条还原后的素材**多带了一个次要面** —— 记录事实，不是判 bug。"""
+
+    topic, main, secondary = SECONDARY_FACET_PENETRATION_ADDED_BY_RESTORING[npc_id]
+
+    assert _facet_of_topic(topic) == main
+    assert _facet_hits(topic) == {main, secondary}
+    # 主面收窄的规则没变：禁**次要**面时它仍留在池子里
+    assert topic in narrow_topic_pool(_prompt_topics(npc_id), secondary)
+    # 而禁**主**面时它会（正确地）被摘掉
+    assert topic not in narrow_topic_pool(_prompt_topics(npc_id), main)
+
+
+# B 类改写**保留**的逐句理由：原话里的那个副面词会改主面，所以不能还原。
+# 这不是"忘了还原"，是**有意的设计** —— 这里把理由本身钉成断言，
+# 让下一个想"顺手还原"的人先看到回测结果（第 7 批 25 条候选里 17 条属于这一类）。
+#
+# 每条的值为 `(原因, 原话现在落在哪个面)`：
+#
+#   * `drift`        —— 原话落**别的面**，会抢走主面；
+#   * `no-facet`     —— 原话**判不出任何面**，还原等于让这条素材永远选不上
+#                       （`rotation_topic_slot._pick` 会直接跳过无面条目）；
+#   * `same-fragile` —— 面没变，但靠的是词表里的**巧合子串**，且原话本身
+#                       读起来不像一条落点（Lewis 那句是他自己嘀咕的省略句）。
+KEPT_REWRITES_WHOSE_ORIGINAL_WOULD_DRIFT: dict[tuple[str, str, str], tuple[str, str]] = {
+    # (角色, 保留的改写, 原话): (原因, 原话的面)
+    ("Shane", "忙起来那股压力", "工作压力"): ("drift", "工作或手艺"),
+    ("Sophia", "窝在毯子里看电视", "下雨了！在这样的日子里，我只想窝在毯子里看电视。"): (
+        "drift", "天气季节",
+    ),
+    ("Sophia", "记得刚搬来那阵子住的那间旧房子", "她刚搬来镇上时住的那间旧房子"): (
+        "drift", "镇上或邻里",
+    ),
+    ("Sandy", "如果你遇见我的朋友艾米丽，记得帮我打个招呼",
+     "啊你好！如果你在镇上遇见我的朋友艾米丽，记得帮我打个招呼？"): ("drift", "镇上或邻里"),
+    ("Clint", "我爸爸以前也是干这一行的", "我当这个铁匠都是因为我爸爸非要让我当啊"): (
+        "drift", "工作或手艺",
+    ),
+    ("Clint", "我小时候想干的根本不是这行", "我小时候的梦想不是当铁匠"): ("drift", "工作或手艺"),
+    ("Demetrius", "女儿玛鲁总在屋里帮我打下手", "玛鲁有时也会在实验室里帮我一把"): (
+        "drift", "工作或手艺",
+    ),
+    ("Vincent", "在镇上到处乱跑找虫子", "我想去捉虫子，但每次搞得脏兮兮又会被妈妈骂"): (
+        "drift", "家人朋友",
+    ),
+    ("Gunther", "镇上那些跑野外的探险的人", "不久之后，探险家公会在小镇里成立"): (
+        "drift", "工作或手艺",
+    ),
+    ("Sam", "以前住在城里的那段日子", "我有告诉过你我们一家人曾经是住在城里的吗？"): (
+        "drift", "家人朋友",
+    ),
+    ("Alex", "祖父母把我带大", "我别无他法只能搬到我的爷爷奶奶那里去住"): ("no-facet", ""),
+    ("Alex", "小时候那些不太快乐的日子", "我的童年或许不怎么快乐，但至少它让我变得很坚强"): (
+        "no-facet", "",
+    ),
+    ("Claire", "没人的时候偷偷练的舞蹈", "我在没人的时候练习跳舞。我还没被别人看到过呢！"): (
+        "no-facet", "",
+    ),
+    ("Claire", "换完班之后那股疲惫", "每次换班后我都觉得精疲力尽，但我又确实需要用钱"): (
+        "no-facet", "",
+    ),
+    ("Leah", "以前那间又小又旧的小木屋", "这房子比我旧旧的小木屋好多了！我不想念它。"): (
+        "no-facet", "",
+    ),
+    ("Marnie", "Shane 和 Jas 这两个孩子", "我的侄子谢恩已经在我这待了几个月了"): ("no-facet", ""),
+    # Lewis 的原话「哼……收税……春季节日开销……」之所以仍落在天气面，是因为
+    # **「春季节日开销」里含子串「季节」** —— 巧合命中，不是语义命中；而那句
+    # 断断续续的自言自语作为落点条目也不合格。保留改写版更稳。
+    ("Lewis", "春天收税和节日的开销", "哼……收税……春季节日开销……"): (
+        "same-fragile", "天气季节",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("npc_id", "kept", "original", "kind", "expected_original_facet"),
+    [(npc, kept, original, kind, facet) for (npc, kept, original), (kind, facet) in
+     KEPT_REWRITES_WHOSE_ORIGINAL_WOULD_DRIFT.items()],
+)
+def test_kept_rewrites_are_kept_for_a_reason(
+    npc_id: str, kept: str, original: str, kind: str, expected_original_facet: str
+) -> None:
+    """保留改写的三类理由，逐句可验证（这条红了说明词表变了，要重新裁决）。"""
+
+    kept_facet = _facet_of_topic(kept)
+    assert kept_facet is not None, f"{npc_id} 保留的素材本身判不出面：{kept}"
+
+    original_facet = _facet_of_topic(original)
+    assert original_facet == (expected_original_facet or None), (
+        f"{npc_id} 的原话现在落在「{original_facet}」（回测记的是 "
+        f"「{expected_original_facet or '无面'}」）—— 词表变了，这条改写该不该留要重新判"
+    )
+
+    if kind == "drift":
+        assert original_facet != kept_facet, (
+            f"{npc_id} 的原话不再漂到别的面（现在与改写版同为「{kept_facet}」）—— "
+            f"可以还原了，改数据 + 重跑全量回测"
+        )
+    elif kind == "no-facet":
+        assert original_facet is None
+    else:
+        assert kind == "same-fragile"
+        assert original_facet == kept_facet
