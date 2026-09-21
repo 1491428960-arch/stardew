@@ -374,7 +374,8 @@ public sealed class FaceToFaceStateRulesTests
                 null!,
                 ConversationChannel.FaceToFace,
                 hasSpeaker: true,
-                speakerStillHere: true));
+                speakerStillHere: true,
+                openedFromPrivateChatRoster: false));
     }
 
     // ── 2026-09-21：用户第二次反馈「线上退出后又弹」────────────────────────
@@ -386,7 +387,7 @@ public sealed class FaceToFaceStateRulesTests
 
     /// <summary>
     /// **穷举**两个出口共用的那个判定：只有「面对面频道 + 待续聊 + 有说话人 +
-    /// 人还在旁边」才弹。协调器的两条出口都调
+    /// 人还在旁边 + 不是从 F8 名单打开的」才弹。协调器的两条出口都调
     /// <see cref="FaceToFaceStateRules.ShouldOfferContinuationAfterExit"/>，
     /// 所以把这个输入空间整个走一遍，等于把两条出口都覆盖了。
     /// </summary>
@@ -407,27 +408,38 @@ public sealed class FaceToFaceStateRulesTests
                 {
                     foreach (var nearby in new[] { false, true })
                     {
-                        var state = new FaceToFaceConversationState(stateValue, "Rasmodia");
-                        var expected =
-                            stateValue == FaceToFaceState.AwaitingContinuationChoice &&
-                            hasSpeaker &&
-                            nearby &&
-                            !FaceToFaceStateRules.IsRemoteChannel(channel);
+                        foreach (var fromRoster in new[] { false, true })
+                        {
+                            var state = new FaceToFaceConversationState(stateValue, "Rasmodia");
+                            var expected =
+                                stateValue == FaceToFaceState.AwaitingContinuationChoice &&
+                                hasSpeaker &&
+                                nearby &&
+                                !fromRoster &&
+                                !FaceToFaceStateRules.IsRemoteChannel(channel);
 
-                        Assert.Equal(
-                            expected,
-                            FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
-                                state,
-                                channel,
-                                hasSpeaker,
-                                nearby));
+                            Assert.Equal(
+                                expected,
+                                FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+                                    state,
+                                    channel,
+                                    hasSpeaker,
+                                    nearby,
+                                    openedFromPrivateChatRoster: fromRoster));
+                        }
                     }
                 }
             }
         }
     }
 
-    /// <summary>线上频道在任何组合下都不弹 —— 与 04773f6 那条判定逐项一致。</summary>
+    /// <summary>
+    /// 线上频道在任何组合下都不弹 —— 与 04773f6 那条判定逐项一致。
+    ///
+    /// 这里固定 <c>openedFromPrivateChatRoster: false</c>：名单来源是
+    /// <see cref="FaceToFaceStateRules.ShouldOfferContinuationAfterExit"/> **额外**多出的一关，
+    /// 不属于「两条出口共用同一个频道/说话人判定」这层等价关系（它另有专门用例）。
+    /// </summary>
     [Fact]
     public void Both_exit_points_share_one_verdict()
     {
@@ -447,7 +459,8 @@ public sealed class FaceToFaceStateRulesTests
                             state,
                             remote ? ConversationChannel.Remote : ConversationChannel.FaceToFace,
                             hasSpeaker: hasSpeaker,
-                            speakerStillHere: true));
+                            speakerStillHere: true,
+                            openedFromPrivateChatRoster: false));
                 }
             }
         }
@@ -469,12 +482,14 @@ public sealed class FaceToFaceStateRulesTests
             awaiting,
             ConversationChannel.FaceToFace,
             hasSpeaker: true,
-            speakerStillHere: true));
+            speakerStillHere: true,
+            openedFromPrivateChatRoster: false));
         Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
             awaiting,
             ConversationChannel.FaceToFace,
             hasSpeaker: true,
-            speakerStillHere: false));
+            speakerStillHere: false,
+            openedFromPrivateChatRoster: false));
     }
 
     /// <summary>
@@ -494,7 +509,8 @@ public sealed class FaceToFaceStateRulesTests
             pushed,
             ConversationChannel.Remote,
             hasSpeaker: false,
-            speakerStillHere: false));
+            speakerStillHere: false,
+            openedFromPrivateChatRoster: false));
     }
 
     /// <summary>
@@ -520,5 +536,88 @@ public sealed class FaceToFaceStateRulesTests
                 FaceToFaceStateRules.ShouldObserveDialogueOpened(
                     new FaceToFaceConversationState(stateValue, "Rasmodia")));
         }
+    }
+
+    // ── F8 名单（2026-09-21 用户口径「F8 一律不算当面」）────────────────────
+    //
+    // 用户原话：「不管人在不在旁边，F8 打开的一律当线上，退出永不弹续聊窗；
+    // 想当面续聊就走过去按交互键。」
+    //
+    // 落地时**只改这句提问**，不改频道：名单打开的人只要同处一地，走的仍是
+    // face_to_face（送礼、亲吻、当面描述都靠它分叉），所以下面钉的是
+    // 「名单来源 → 不弹」，而不是「名单来源 → 变成线上」。频道侧不变由
+    // PrivateChatRosterRulesTests / ItemInteractionRulesTests 的既有用例守住。
+
+    /// <summary>
+    /// 名单打开的会话退出后不弹 —— **哪怕那个人就站在续聊距离内**。
+    /// 这正是用户报的那条：F8 选了身边的人，关掉窗口照样冒出「要继续聊聊吗？」。
+    /// </summary>
+    [Fact]
+    public void A_roster_opened_chat_never_offers_continuation_even_with_the_npc_right_next_to_you()
+    {
+        var awaiting = new FaceToFaceConversationState(
+            FaceToFaceState.AwaitingContinuationChoice,
+            "Rasmodia");
+
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            awaiting,
+            ConversationChannel.FaceToFace,
+            hasSpeaker: true,
+            speakerStillHere: true,
+            openedFromPrivateChatRoster: true));
+    }
+
+    /// <summary>
+    /// 对照组：**同样的关闭**，只要不是名单打开的（走到跟前按交互键、原版寒暄后
+    /// 选「继续聊聊」），这句提问照旧要弹 —— F8 那条规则不许漏到别的入口上。
+    /// </summary>
+    [Fact]
+    public void The_same_close_from_an_interaction_key_chat_still_offers_continuation()
+    {
+        var awaiting = new FaceToFaceConversationState(
+            FaceToFaceState.AwaitingContinuationChoice,
+            "Rasmodia");
+
+        Assert.True(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            awaiting,
+            ConversationChannel.FaceToFace,
+            hasSpeaker: true,
+            speakerStillHere: true,
+            openedFromPrivateChatRoster: false));
+    }
+
+    /// <summary>
+    /// 名单会话的遗留**不许活到下一次对话**：关窗口时不弹，还要把「待续聊」这个
+    /// 跨会话中间态一并收掉，否则下一次任意 <c>DialogueBox</c> 关闭都会把它捡起来弹
+    /// （协调器的 <c>ClearContinuationLeftover</c> 做的就是这一步）。
+    /// </summary>
+    [Fact]
+    public void A_roster_session_leftover_cannot_survive_into_the_next_dialogue()
+    {
+        // 名单会话走到结束：OnChatClosed 把 Composing 推成「待续聊」。
+        var afterChatClosed = FaceToFaceStateRules.ObserveDialogueClosed(
+            new FaceToFaceConversationState(FaceToFaceState.Composing, "Rasmodia"));
+        Assert.Equal(FaceToFaceState.AwaitingContinuationChoice, afterChatClosed.State);
+
+        // 出口一：名单来源 → 不弹。
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            afterChatClosed,
+            ConversationChannel.FaceToFace,
+            hasSpeaker: true,
+            speakerStillHere: true,
+            openedFromPrivateChatRoster: true));
+
+        // 不弹的同时收敛（规则层的这一步对应协调器的 ClearContinuationLeftover）。
+        var cleared = FaceToFaceStateRules.DismissContinuationChoice(afterChatClosed);
+        Assert.Equal(FaceToFaceState.Idle, cleared.State);
+        Assert.Null(cleared.NpcId);
+
+        // 出口二：之后原版对话开一次再关，残留已不在，照样不弹。
+        Assert.False(FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+            FaceToFaceStateRules.ObserveDialogueClosed(cleared),
+            ConversationChannel.FaceToFace,
+            hasSpeaker: true,
+            speakerStillHere: true,
+            openedFromPrivateChatRoster: false));
     }
 }

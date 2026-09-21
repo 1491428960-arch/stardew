@@ -158,6 +158,13 @@ public static class FaceToFaceStateRules
     ///
     /// 现在两个出口都走这里：想弹就得同时过「不是线上频道」「状态是待续聊」
     /// 「手里有说话人」「那个人此刻真的还在旁边」四关。
+    ///
+    /// 2026-09-21（用户口径「**F8 一律不算当面**」）再加一关：
+    /// <paramref name="openedFromPrivateChatRoster"/> 为真时一律不弹——
+    /// 不管那个人是不是就站在续聊距离内。它**只**关掉这句提问，
+    /// 不动频道本身：F8 打开的人只要同处一地，仍是面对面频道（照样能送礼、
+    /// 照样按频道描述当面反应），这与「不是从名单打开的会话」完全一致。
+    /// 想当面续聊的玩家走过去按交互键即可，那条路不受影响。
     /// </summary>
     /// <param name="sessionChannel">刚结束的那次会话挂在哪条频道上（取值见 <see cref="ConversationChannel"/>）。</param>
     /// <param name="speakerStillHere">
@@ -165,14 +172,20 @@ public static class FaceToFaceStateRules
     /// （<c>TryOpenRepeatChat</c>）本来就要求这一条，弹窗不该比它更宽松 ——
     /// 否则残留的上一任角色会让一个**根本用不了**的提问冒出来。
     /// </param>
+    /// <param name="openedFromPrivateChatRoster">
+    /// 刚结束的这次会话是不是从私聊名单（F8）打开的
+    /// （来源见 <see cref="ChatInputMenu.OpenedFromPrivateChatRoster"/>）。
+    /// </param>
     public static bool ShouldOfferContinuationAfterExit(
         FaceToFaceConversationState state,
         string? sessionChannel,
         bool hasSpeaker,
-        bool speakerStillHere)
+        bool speakerStillHere,
+        bool openedFromPrivateChatRoster)
     {
         ArgumentNullException.ThrowIfNull(state);
-        return speakerStillHere &&
+        return !openedFromPrivateChatRoster &&
+            speakerStillHere &&
             ShouldOfferContinuationAfterChatClosed(
                 state,
                 remoteChannelClosed: IsRemoteChannel(sessionChannel),

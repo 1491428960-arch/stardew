@@ -992,6 +992,10 @@ public sealed class ModEntry : Mod
     /// 名单里选了一位：同处一地的走面对面频道，不在同一地点的走线上频道
     /// （频道由 <see cref="PrivateChatRosterRules.ResolveChannel"/> 算好，这里只负责接线）。
     ///
+    /// 两条路都会把「这次是从名单打开的」一并交给协调器（用户口径「F8 一律不算当面」）：
+    /// 名单打开的会话**退出后不再问一句要不要继续聊聊**——人在旁边也一样，
+    /// 想当面续聊就走过去按交互键。频道本身不变，所以送礼、亲吻、当面描述照旧。
+    ///
     /// 返回值告诉名单菜单**私聊到底开没开起来**：false 时菜单要保持可见，
     /// 让玩家改选一位或按 Esc 退出——否则会留下一个画不出、也退不掉的空菜单。
     /// </summary>
@@ -1007,8 +1011,12 @@ public sealed class ModEntry : Mod
 
         var opened =
             string.Equals(entry.Channel, ConversationChannel.FaceToFace, StringComparison.Ordinal)
-                ? faceToFaceCoordinator?.TryOpenChat(target) == true
-                : faceToFaceCoordinator?.TryOpenRemoteChat(target) == true;
+                ? faceToFaceCoordinator?.TryOpenChat(
+                    target,
+                    openedFromPrivateChatRoster: true) == true
+                : faceToFaceCoordinator?.TryOpenRemoteChat(
+                    target,
+                    openedFromPrivateChatRoster: true) == true;
         if (!opened)
         {
             Monitor.Log($"打开与 {target.Name} 的私聊失败（对话功能可能刚被关掉）。", LogLevel.Warn);

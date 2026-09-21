@@ -68,7 +68,17 @@ public sealed class FaceToFaceConversationCoordinator
         activeChannel = null;
     }
 
-    public bool TryOpenChat(StardewNpc target)
+    /// <summary>
+    /// 从私聊名单（F8）里选了一位**同处一地**的角色：走面对面频道。
+    ///
+    /// 本方法是**名单专用入口**（唯一的调用点是 <c>ModEntry.StartPrivateChat</c>），
+    /// 所以 <paramref name="openedFromPrivateChatRoster"/> 由调用方显式给出、
+    /// 不给默认值——将来若多了别的调用点，必须自己回答「这次算不算 F8 打开的」。
+    ///
+    /// 名单来源只影响「退出后要不要问一句要继续聊聊吗」（用户口径「F8 一律不算当面」），
+    /// 频道本身仍是面对面：送礼、亲吻、当面描述都不因此改变。
+    /// </summary>
+    public bool TryOpenChat(StardewNpc target, bool openedFromPrivateChatRoster)
     {
         ArgumentNullException.ThrowIfNull(target);
         if (disposed || conversationService is null ||
@@ -82,7 +92,7 @@ public sealed class FaceToFaceConversationCoordinator
         state = new FaceToFaceConversationState(
             FaceToFaceState.Composing,
             target.Name);
-        OpenChatMenu(target);
+        OpenChatMenu(target, openedFromPrivateChatRoster);
         return true;
     }
 
@@ -103,7 +113,7 @@ public sealed class FaceToFaceConversationCoordinator
     /// <c>AwaitingContinuationChoice</c>＋上一位面对面角色就会把续聊提问弹出来
     /// （用户实测反馈）。
     /// </summary>
-    public bool TryOpenRemoteChat(StardewNpc target)
+    public bool TryOpenRemoteChat(StardewNpc target, bool openedFromPrivateChatRoster)
     {
         ArgumentNullException.ThrowIfNull(target);
         if (disposed || conversationService is null ||
@@ -122,6 +132,7 @@ public sealed class FaceToFaceConversationCoordinator
             OnRemoteChatClosed,
             initialMessages: conversationService.RecentMessages(target.Name),
             conversationChannel: ConversationChannel.Remote,
+            openedFromPrivateChatRoster: openedFromPrivateChatRoster,
             shareFriendshipLedger: shareFriendshipLedger);
         return true;
     }
@@ -207,7 +218,7 @@ public sealed class FaceToFaceConversationCoordinator
         state = new FaceToFaceConversationState(
             FaceToFaceState.Composing,
             candidate!.Name);
-        OpenChatMenu(candidate);
+        OpenChatMenu(candidate, openedFromPrivateChatRoster: false);
         return true;
     }
     public void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
@@ -278,19 +289,29 @@ public sealed class FaceToFaceConversationCoordinator
         }
 
         // 面对面会话退出：照旧问一句要不要继续。判定与第二个出口（DialogueBox 关闭）
-        // 共用 ShouldOfferContinuationAfterExit，频道与「人还在不在旁边」都是输入。
+        // 共用 ShouldOfferContinuationAfterExit，频道、「人还在不在旁边」、
+        // 以及「这次是不是从 F8 名单打开的」都是输入。
+        //
+        // 最前面那条线上分支已经带走了 remote 窗口；走到这里的窗口**都是面对面频道**，
+        // 包括 F8 打开、而人恰好站在旁边的那些——它们由窗口自己的来源标记挡住提问。
         if (e.OldMenu is ChatInputMenu faceToFaceChat)
         {
             activeChannel = null;
-            if (e.NewMenu is null &&
-                FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
-                    state,
-                    faceToFaceChat.ChatChannel,
-                    hasSpeaker: npc is not null,
-                    speakerStillHere: npc is not null && IsSameLocationAndNearby(npc)))
+            if (e.NewMenu is null)
             {
-                OfferContinuationChoice(npc!);
-                return;
+                if (FaceToFaceStateRules.ShouldOfferContinuationAfterExit(
+                        state,
+                        faceToFaceChat.ChatChannel,
+                        hasSpeaker: npc is not null,
+                        speakerStillHere: npc is not null && IsSameLocationAndNearby(npc),
+                        openedFromPrivateChatRoster: faceToFaceChat.OpenedFromPrivateChatRoster))
+                {
+                    OfferContinuationChoice(npc!);
+                    return;
+                }
+
+                // 不弹也得把残留收干净：见 ClearContinuationLeftover 的注释。
+                ClearContinuationLeftover();
             }
         }
 
@@ -367,12 +388,27 @@ public sealed class FaceToFaceConversationCoordinator
                 state,
                 activeChannel,
                 hasSpeaker: npc is not null,
-                speakerStillHere: npc is not null && IsSameLocationAndNearby(npc)))
+                speakerStillHere: npc is not null && IsSameLocationAndNearby(npc),
+                openedFromPrivateChatRoster: IsRosterChatStillOpen()))
         {
             OfferContinuationChoice(npc!);
             return;
         }
 
+        ClearContinuationLeftover();
+    }
+
+    /// <summary>
+    /// 会话结束却不弹续聊提问时，把**还能弹出来的残留**收干净。
+    ///
+    /// 能弹的残留只有一种：状态停在 <see cref="FaceToFaceState.AwaitingContinuationChoice"/>。
+    /// 它是**跨会话**的字段，一旦留着，之后任意一次 <c>DialogueBox</c> 关闭都会经
+    /// <see cref="ObserveDialogueClosed"/> 把它推成那句提问——与本次会话是谁毫无关系。
+    /// 两个出口（聊天窗关闭、原版 DialogueBox 关闭）在不弹时都必须调用这里，
+    /// 否则「不弹」只是把提问推迟到下一次对话。
+    /// </summary>
+    private void ClearContinuationLeftover()
+    {
         if (state.State == FaceToFaceState.AwaitingContinuationChoice)
         {
             state = FaceToFaceStateRules.DismissContinuationChoice(state);
@@ -382,6 +418,22 @@ public sealed class FaceToFaceConversationCoordinator
         {
             npc = null;
         }
+    }
+
+    /// <summary>
+    /// 走「原版 DialogueBox 关闭」这条出口时，那个**从名单打开的聊天窗**是不是还挂在
+    /// <c>Game1.activeClickableMenu</c> 上。
+    ///
+    /// 名单会话的窗口关闭走的是第一个出口（那时新菜单为 <c>null</c>，OldMenu 就是它自己），
+    /// 所以这条出口原则上碰不到名单会话；保留这一问是为了两个出口对「名单来源」的读法同源，
+    /// 而不是让第二个出口凭一句写死的 false 假装名单不存在。
+    /// </summary>
+    private static bool IsRosterChatStillOpen()
+    {
+        return Game1.activeClickableMenu is ChatInputMenu
+        {
+            OpenedFromPrivateChatRoster: true,
+        };
     }
 
     /// <summary>
@@ -439,7 +491,7 @@ public sealed class FaceToFaceConversationCoordinator
 
         npc = speaker;
         // 与另外两个面对面入口共用同一处构造（参数逐字相同，改前这里是第二份拷贝）。
-        OpenChatMenu(speaker);
+        OpenChatMenu(speaker, openedFromPrivateChatRoster: false);
     }
 
     private void OnChatClosed(bool valuableRelationshipRepair)
@@ -527,7 +579,7 @@ public sealed class FaceToFaceConversationCoordinator
         RememberRepeatTarget(kissedNpc);
     }
 
-    private void OpenChatMenu(StardewNpc target)
+    private void OpenChatMenu(StardewNpc target, bool openedFromPrivateChatRoster)
     {
         if (conversationService is null)
         {
@@ -537,6 +589,10 @@ public sealed class FaceToFaceConversationCoordinator
         // 打开时先把已累积的历史铺进消息区（只读回看），之后本次会话的新消息继续往后追加。
         // 历史来自 SMAPI 侧的记忆，读多少、怎么映射见 ChatHistoryRules；
         // 发给模型的窗口不受影响。
+        //
+        // 三个调用点里只有名单入口（TryOpenChat）会传 true；续聊入口
+        // （TryOpenRepeatChat／HandleContinuationChoice）都是「玩家走到跟前按了交互键」
+        // 那条路，退出后该照旧问一句要不要继续。
         activeChannel = ConversationChannel.FaceToFace;
         Game1.activeClickableMenu = new ChatInputMenu(
             target,
@@ -545,6 +601,7 @@ public sealed class FaceToFaceConversationCoordinator
             OnChatClosed,
             initialMessages: conversationService.RecentMessages(target.Name),
             conversationChannel: ConversationChannel.FaceToFace,
+            openedFromPrivateChatRoster: openedFromPrivateChatRoster,
             shareFriendshipLedger: shareFriendshipLedger);
     }
 

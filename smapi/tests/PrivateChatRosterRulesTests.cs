@@ -242,6 +242,28 @@ public sealed class PrivateChatRosterRulesTests
         Assert.Equal("同处一地", entry.StatusLabel);
     }
 
+    /// <summary>
+    /// 2026-09-21（用户口径「F8 一律不算当面」）：名单来源只关掉退出后的那句
+    /// 「要继续聊聊吗」，**不参与频道判定**——同处一地的人从名单打开仍是面对面频道，
+    /// 于是「当面才能赠送」这条也跟着不变（否则人会站在旁边却送不出礼物）。
+    /// 这条用例把两者钉在一起：将来若有人把名单标记接到频道上，它会立刻失败。
+    /// </summary>
+    [Fact]
+    public void The_roster_entry_point_does_not_change_the_channel_or_gifting()
+    {
+        var present = PrivateChatRosterRules.Build(new[]
+        {
+            Source("Emily", isPresent: true, distanceInTiles: 1f),
+        }).Single();
+
+        Assert.Equal(ConversationChannel.FaceToFace, present.Channel);
+        Assert.True(ItemInteractionRules.CanGift(present.Channel));
+
+        var channel = PrivateChatRosterRules.ResolveChannel(isPresent: true);
+        Assert.Equal(ConversationChannel.FaceToFace, channel);
+        Assert.True(ItemInteractionRules.CanGift(channel));
+    }
+
     [Theory]
     [InlineData(true, 0f, true)]
     [InlineData(true, 2.5f, true)]

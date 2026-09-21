@@ -29,6 +29,7 @@ public class ChatInputMenu : IClickableMenu
     private readonly Action<bool> onClosed;
     private readonly int? friendshipHeartsOverride;
     private readonly string conversationChannel;
+    private readonly bool openedFromPrivateChatRoster;
     private readonly CancellationTokenSource cancellationSource = new();
     private readonly List<ChatDisplayMessage> messages = new();
     private readonly KeyboardSubscriberLease<IKeyboardSubscriber> keyboardSubscriberLease;
@@ -56,6 +57,7 @@ public class ChatInputMenu : IClickableMenu
         IReadOnlyList<ChatDisplayMessage>? initialMessages = null,
         int? friendshipHeartsOverride = null,
         string conversationChannel = ConversationChannel.Remote,
+        bool openedFromPrivateChatRoster = false,
         ShareFriendshipLedger? shareFriendshipLedger = null)
         : base(0, 0, 1, 1)
     {
@@ -67,6 +69,7 @@ public class ChatInputMenu : IClickableMenu
         this.shareFriendshipLedger = shareFriendshipLedger ?? new ShareFriendshipLedger();
         this.onClosed = onClosed ?? throw new ArgumentNullException(nameof(onClosed));
         this.friendshipHeartsOverride = friendshipHeartsOverride;
+        this.openedFromPrivateChatRoster = openedFromPrivateChatRoster;
         this.conversationChannel = string.Equals(
             conversationChannel,
             ConversationChannel.FaceToFace,
@@ -125,6 +128,21 @@ public class ChatInputMenu : IClickableMenu
     /// 哪条频道的会话」不能依赖状态字段的副作用（那条回调并不是每条退出路径都会调）。
     /// </summary>
     public string ChatChannel => conversationChannel;
+
+    /// <summary>
+    /// 这次会话是不是**从私聊名单（F8）打开的**——只影响「关掉之后要不要问一句
+    /// 要继续聊聊吗」，不参与其它按频道分叉的行为（送礼、亲吻、当面描述都不看它）。
+    ///
+    /// 2026-09-21（用户口径「F8 一律不算当面：不管人在不在旁边，F8 打开的一律当线上，
+    /// 退出永不弹续聊窗；想当面续聊就走过去按交互键」）：F8 打开的人若正好站在续聊距离内，
+    /// 走的是面对面频道，于是退出时会弹出那句提问——用户要的是把这句去掉，
+    /// 又不想连带丢掉「站在旁边的人还能送礼」这类靠频道区分的语义。
+    /// 所以来源标记**单独**挂在窗口上，而不是让名单把频道改成 <c>remote</c>。
+    ///
+    /// 标记跟着**窗口对象**走（而不是协调器上的一个字段）：聊天窗中途被背包选择器顶掉、
+    /// 取消后回到同一个窗口时它仍在，退出时照旧不弹。
+    /// </summary>
+    public bool OpenedFromPrivateChatRoster => openedFromPrivateChatRoster;
 
     protected StardewNpc Npc => npc;
 
