@@ -14,9 +14,15 @@
 2026-09-21 二轮（同一天，用户实测「总是谈画」）：索菲亚那条又从「对象导向」推进到
 「**跨语义簇的落点池 + 同一类最多连续两次**」——一轮那次的四个落点（葡萄／酒窖／
 画笔／画里的具体东西）仍全在酿造 + 绘画这一簇里，模型照样连着几轮不换。
-本文件的"不讲过程"闸保持不变，跨簇与轮换上限由
-`test_stage_policy.py::test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics`
-钉住。
+
+2026-09-21 三轮：落点池从**硬编码四个类别**改成 `{topicPool}` 占位符 + 由
+`preferredTopics` 渲染（同源，见 `test_stage_policy.py`）。于是本文件的断言也分两层：
+模板层只钉「不讲过程」与「有轮换上限 + 有占位符」，**跨簇改由渲染结果断言**
+（`test_rendered_sophia_guidance_spans_semantic_clusters`）——只读模板会永远失败，
+只读数据源又验不到渲染。
+
+本文件的"不讲过程"闸保持不变，跨簇与轮换上限另见
+`test_stage_policy.py::test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics`。
 
 刻意**不**禁用「过程」两个字本身：`female-bachelors.json` 里 Shane 的
 avoid「把恢复过程说成已经彻底解决」是在**禁止**把过程说死，方向相反。
@@ -31,11 +37,32 @@ from pathlib import Path
 
 import pytest
 
-from stardew_ai_bridge.stage_policy import _CONVERSATION_LEAD_ROLE_GUIDANCE
+from stardew_ai_bridge.stage_policy import (
+    _CONVERSATION_LEAD_ROLE_GUIDANCE,
+    build_stage_policy,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
 _PROCESS_DIRECTIVE = re.compile(r"(从|说|讲|落到|挑)[^。；]{0,24}过程")
+
+
+def _sophia_preferred_topics() -> list[str]:
+    """索菲亚数据源里的偏好主题 —— 落点池的唯一数据源（与 stage_policy 同源）。"""
+
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        for npc, profile in _persona_profiles(path):
+            if npc != "Sophia":
+                continue
+            voice_style = profile.get("voiceStyle")
+            topics = (
+                voice_style.get("preferredTopics")
+                if isinstance(voice_style, dict)
+                else None
+            )
+            if topics:
+                return [str(topic) for topic in topics]
+    raise AssertionError("data/personas 里找不到索菲亚的 preferredTopics")
 
 
 def test_sophia_guidance_lands_on_objects_not_on_a_process() -> None:
@@ -45,11 +72,31 @@ def test_sophia_guidance_lands_on_objects_not_on_a_process() -> None:
     assert "发酵过程" not in text
     assert _PROCESS_DIRECTIVE.search(text) is None
     # 2026-09-21 二轮：落点池从「同一个语义簇里的四个词」改成「跨簇 + 轮换上限」。
-    # 一轮那次改的是措辞形状（对象而非工序），没有解决「总是谈画」——四个落点
-    # 仍然全在酿造 + 绘画这一簇里。跨簇与上限由这两条钉住。
+    # 三轮：模板里的四个类别换成 `{topicPool}` 占位符，由调用方从 `preferredTopics`
+    # 渲染进来 —— 模板层只钉得住「有上限、有占位符」，「四类都在」见下一条。
     assert "同一类最多连续两次" in text
-    assert "小镇日常" in text
-    assert "安全感与新开始" in text
+    assert "{topicPool}" in text
+
+
+def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
+    """占位符必须被渲染成数据源里的**全部**类别，一个都不许漏。
+
+    三轮把落点池改成「模板 + 数据源」之后，「跨簇」不再是模板的属性，而是
+    **渲染结果**的属性。数据源第 4 类「安全感与新开始」在 `preferredTopics`
+    limit=3 的时代进不了 prompt，落点池却点名了它 —— 那正是这次要堵的错位
+    （要求落 A，而 A 恰好是被截断的那一类）。
+    """
+
+    topics = _sophia_preferred_topics()
+    guidance = build_stage_policy("Sophia", "dating", preferred_topics=topics)[
+        "conversationLead"
+    ]["roleGuidance"]
+
+    assert "{topicPool}" not in guidance
+    assert all(topic in guidance for topic in topics)
+    # 显式点名两个非酿造非绘画的簇：这是「总是谈画」的解药
+    assert "小镇日常" in guidance
+    assert "安全感与新开始" in guidance
 
 
 def test_no_role_guidance_asks_the_model_to_narrate_a_process() -> None:

@@ -1414,9 +1414,21 @@ class ContextBuilder:
                 identity["stageProfile"] = _sanitize_value(
                     {"stage": profile_stage, **dict(selected_profile)}
                 )
+        # 落点池的唯一数据源：把**即将写进 persona_core 的那一份** preferredTopics
+        # 交给 stage policy，于是「roleGuidance 要求落哪几类」与「prompt 里看得到
+        # 哪几类」同源（2026-09-21；此前 roleGuidance 里硬编码了第二份，各自演化）。
+        pool_voice_style = persona.get("voiceStyle")
         identity["stagePolicy"] = _sanitize_value(
             apply_relationship_event_gate(
-                build_stage_policy(str(npc_id), profile_stage),
+                build_stage_policy(
+                    str(npc_id),
+                    profile_stage,
+                    preferred_topics=_preferred_topics_for_prompt(
+                        pool_voice_style.get("preferredTopics")
+                        if isinstance(pool_voice_style, Mapping)
+                        else None
+                    ),
+                ),
                 relationship_gate.as_prompt_dict(),
             )
         )
@@ -2532,6 +2544,30 @@ def _compact_energy_profile(value: object) -> dict[str, str]:
     return result
 
 
+# 落点池与 `persona_core` 的 `preferredTopics` **必须同源**（2026-09-21）：
+# 这个上限同时决定「prompt 里能看到哪几类」与「roleGuidance 要求落哪几类」。
+# 两处读同一个常量，就不会再出现「要求落 A，而 A 恰恰是被截断的那一类」。
+#
+# 2026-09-21 由 3 提到 4：索菲亚的第 4 类「安全感与新开始」是全 prompt 里唯一的
+# 非酒非画方向，却在 `persona_core` 这一步就被砍掉，而 roleGuidance 又要求她
+# 在四类之间轮换——典型的「两份数据各写各的」。提到 4 之后数据源的 4 条全部可见。
+_PREFERRED_TOPICS_LIMIT = 4
+
+
+def _preferred_topics_for_prompt(value: object) -> list[str]:
+    """该角色**将要写进 prompt** 的那一份 preferredTopics。
+
+    与 `_compact_voice_style` 走同一个 `_compact_text_list(limit=...)`，
+    所以落点池里出现过的类别，在 `persona_core` 里一定看得到。
+    """
+
+    return _compact_text_list(
+        value,
+        limit=_PREFERRED_TOPICS_LIMIT,
+        item_limit=80,
+    )
+
+
 def _compact_voice_style(
     value: object,
     *,
@@ -2545,7 +2581,7 @@ def _compact_voice_style(
         ("sentencePattern", 2, 65),
         ("responseRules", 2, 75),
         ("signatureMoves", 2, 140),
-        ("preferredTopics", 3, 80),
+        ("preferredTopics", _PREFERRED_TOPICS_LIMIT, 80),
         ("avoid", 2, 60),
         ("emotionRange", 4, 45),
     ):

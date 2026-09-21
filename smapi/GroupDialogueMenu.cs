@@ -142,7 +142,7 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
     /// <summary>诊断用：只读回看时这一屏从第几条开始画（跟随最新时就是最后一屏的起点）。</summary>
     internal int VisualTestScrollStartIndex => followLatest
-        ? GroupReadOnlyRules.MaxScrollStart(visibleMessages.Count, GroupDialogueLayoutRules.MaxVisibleMessages)
+        ? GroupReadOnlyRules.MaxScrollStart(visibleMessages.Count, CurrentCapacity())
         : scrollStartIndex;
 
     /// <summary>
@@ -157,8 +157,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
     /// <summary>诊断用：这一屏从第几条开始画（可发言与只读共用同一条取值）。</summary>
     internal int VisibleWindowStart => GroupReadOnlyRules.VisibleWindow(
         visibleMessages.Count,
-        GroupDialogueLayoutRules.MaxVisibleMessages,
+        CurrentCapacity(),
         GroupTranscriptRules.WindowStartIndex(followLatest, scrollStartIndex)).Start;
+
+    /// <summary>诊断用：这一屏画得下几条（按高度算出来的真实容量，不是固定 10 条）。</summary>
+    internal int VisibleCapacity => CurrentCapacity();
 
     /// <summary>诊断用：是不是还在跟随最新（翻到历史里之后为 false）。</summary>
     internal bool IsFollowingLatest => followLatest;
@@ -219,12 +222,12 @@ public sealed class GroupDialogueMenu : IClickableMenu
             return;
         }
 
-        if (key == Keys.PageUp && ScrollBy(1))
+        if (key == Keys.PageUp && ScrollBy(1, byPage: true))
         {
             return;
         }
 
-        if (key == Keys.PageDown && ScrollBy(-1))
+        if (key == Keys.PageDown && ScrollBy(-1, byPage: true))
         {
             return;
         }
@@ -238,13 +241,21 @@ public sealed class GroupDialogueMenu : IClickableMenu
     ///
     /// 2026-09-21：改前这里只在只读模式翻页（<c>if (!readOnly) return;</c>），
     /// 正常对话时一屏装不下就再也看不到前面的——用户口径「群聊没有翻页功能，这个得加」。
+    /// 同一天的第二处修正：<c>maxStart</c> 原先按固定 10 条算，现在按
+    /// <see cref="CurrentCapacity"/> 的真实容量算（见 <see cref="GroupDialogueLayoutRules.VisibleCapacity"/>）。
     /// </summary>
+    /// <param name="byPage">
+    /// true = 翻**一屏**（PageUp/PageDown），false = 逐条（滚轮）。
+    /// 步长取当前实测容量而不是照抄 F8 的常量 3：F9 的「一屏」本身已经是算出来的，
+    /// 步长与它同源才不会出现「翻一屏却翻过了头/没翻到头」。
+    /// </param>
     /// <returns>这一次滚轮/按键是否真的移动了视口。</returns>
-    private bool ScrollBy(int direction)
+    private bool ScrollBy(int direction, bool byPage = false)
     {
+        var capacity = CurrentCapacity();
         var maxStart = GroupReadOnlyRules.MaxScrollStart(
             visibleMessages.Count,
-            GroupDialogueLayoutRules.MaxVisibleMessages);
+            capacity);
         if (direction == 0 || maxStart <= 0)
         {
             // 装得下一屏：没有可翻的，保持跟随。
@@ -257,7 +268,8 @@ public sealed class GroupDialogueMenu : IClickableMenu
             scrollStartIndex,
             direction,
             visibleMessages.Count,
-            GroupDialogueLayoutRules.MaxVisibleMessages);
+            capacity,
+            byPage ? capacity : 1);
         scrollStartIndex = start;
         followLatest = follow;
         if (followLatest)
@@ -482,18 +494,21 @@ public sealed class GroupDialogueMenu : IClickableMenu
         // 与 F8 私聊共用 ChatBubbleDrawing：换行宽度、角色配色、图标徽章
         // 只有一处定义。此前这里是一行 "{发言人}：{内容}" 纯文本，长句既不
         // 换行又会溢出面板。
-        var bubbleLeft = messageArea.X + 12;
-        var bubbleRight = messageArea.Right - 12;
+        var bubbleLeft = messageArea.X + GroupDialogueLayoutRules.MessageInset;
+        var bubbleRight = messageArea.Right - GroupDialogueLayoutRules.MessageInset;
         var contentWidth = ChatBubbleDrawing.ContentWidth(bubbleRight - bubbleLeft);
         var measure = (string value) => Game1.smallFont.MeasureString(value).X;
-        var y = messageArea.Y + 12;
+        var y = messageArea.Y + GroupDialogueLayoutRules.MessageInset;
         // 这一屏画哪一段：可发言与只读**共用同一条算术**（GroupReadOnlyRules.VisibleWindow），
         // 区别只在喂给它的起点——跟随最新时取一个必然被夹到末尾的值，翻页时取滚动位置。
         // 可发言时的「不拽回」是这条算术的自然结果：消息变多只会让 maxStart 变大，
         // 起点不动，视口因此停在原处（见 AppendRevealedTurns）。
+        //
+        // 容量（第三个入参）由 CurrentCapacity() 按气泡区**高度**算出来（F8 同一套算术），
+        // 不再是固定 10 条——那正是「5～10 条时画面装不下却翻不动」的根因。
         var window = GroupReadOnlyRules.VisibleWindow(
             visibleMessages.Count,
-            GroupDialogueLayoutRules.MaxVisibleMessages,
+            CurrentCapacity(),
             GroupTranscriptRules.WindowStartIndex(followLatest, scrollStartIndex));
         // 按发言人计次：边框构图随 occurrence 在三套布局间轮换（与回放页一致）。
         // 此前一律传 0，于是同一角色多次发言的构图固定不变。
@@ -891,7 +906,7 @@ public sealed class GroupDialogueMenu : IClickableMenu
     {
         var window = GroupReadOnlyRules.VisibleWindow(
             visibleMessages.Count,
-            GroupDialogueLayoutRules.MaxVisibleMessages,
+            CurrentCapacity(),
             GroupTranscriptRules.WindowStartIndex(followLatest, scrollStartIndex));
         return readOnly
             ? GroupReadOnlyRules.ScrollHintText(
@@ -909,6 +924,45 @@ public sealed class GroupDialogueMenu : IClickableMenu
     {
         _ = sender;
         _ = SendCurrentAsync();
+    }
+
+    /// <summary>
+    /// 当前这一屏**按高度**装得下几条（不是 <see cref="GroupDialogueLayoutRules.MaxVisibleMessages"/>
+    /// 那个上限）。翻页门槛、提示行、绘制窗口三处都取它，于是「一屏」只有一个口径。
+    ///
+    /// 与绘制同源：每条的高度仍由 <see cref="ChatBubbleDrawing.MeasureMessage"/> 量、
+    /// 容量仍由 <see cref="ChatTextLayoutRules.SelectLatestThatFit"/> 算（都是 F8 那一套），
+    /// 这里只负责走一遍「消息内容 → 换行 → 高度」这条链。
+    ///
+    /// **不缓存**：容量随消息内容（长回复占两行）与视口变化，缓存一帧就会与绘制错开；
+    /// 十几条消息的测量远低于一帧绘制本身的代价。
+    /// </summary>
+    private int CurrentCapacity()
+    {
+        var messageArea = layout.MessageArea;
+        var contentWidth = ChatBubbleDrawing.ContentWidth(
+            (messageArea.Right - GroupDialogueLayoutRules.MessageInset)
+                - (messageArea.X + GroupDialogueLayoutRules.MessageInset));
+        var measure = (string value) => Game1.smallFont.MeasureString(value).X;
+        var heights = new List<int>(visibleMessages.Count);
+        foreach (var message in visibleMessages)
+        {
+            var lines = ChatTextLayoutRules.Wrap(
+                message.Content ?? string.Empty,
+                contentWidth,
+                measure);
+            // 空内容在 draw 里被 continue 掉、不占高度，这里也必须记 0 而不是当成一行，
+            // 否则容量会被几条空消息算小。
+            heights.Add(
+                lines.Count == 0
+                    ? 0
+                    : ChatBubbleDrawing.MeasureMessage(message.SpeakerType, lines));
+        }
+
+        return GroupDialogueLayoutRules.VisibleCapacity(
+            GroupDialogueLayoutRules.CapacityBubbleAreaHeight(messageArea.Height),
+            heights,
+            GroupDialogueLayoutRules.MaxVisibleMessages);
     }
 
     private void Close()

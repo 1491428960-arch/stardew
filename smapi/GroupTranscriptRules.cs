@@ -51,15 +51,23 @@ public static class GroupTranscriptRules
         followLatest ? int.MaxValue : scrollStartIndex;
 
     /// <summary>
-    /// 滚轮之后视口落在哪。与原版一致：<paramref name="direction"/> &gt; 0 是往上滚
+    /// 滚轮/翻页之后视口落在哪。与原版一致：<paramref name="direction"/> &gt; 0 是往上滚
     /// = 看**更早**的发言。装得下一屏（<c>maxStart == 0</c>）时不动，并保持跟随。
     /// </summary>
+    /// <param name="step">
+    /// 一次移动几条。滚轮传 1（逐条），PageUp/PageDown 传**当前一屏的容量**
+    /// （2026-09-21 修正：改前 PageUp/PageDown 也只移 1 条，与 F8 私聊的
+    /// <c>ScrollPageStep = 3</c> 不是一回事，视觉上近乎没动）。
+    /// 步长取实测容量而不是照抄 F8 的常量，是为了与「一屏」同源——
+    /// 容量已经是算出来的，步长再写一个固定值就会再次漂移。
+    /// </param>
     public static (int Start, bool FollowLatest) Scroll(
         bool followLatest,
         int scrollStartIndex,
         int direction,
         int totalCount,
-        int maxVisible)
+        int maxVisible,
+        int step = 1)
     {
         var maxStart = GroupReadOnlyRules.MaxScrollStart(totalCount, maxVisible);
         if (direction == 0 || maxStart <= 0)
@@ -67,12 +75,15 @@ public static class GroupTranscriptRules
             return (0, true);
         }
 
+        // 步长至少 1：传 0 或负数会让 PageUp/PageDown 变成「按了没反应」，
+        // 那正是这一次要修掉的现象，不能从参数上再放进来。
+        var delta = Math.Max(1, step);
         var current = followLatest
             ? maxStart
             : ChatScrollRules.ClampStartIndex(scrollStartIndex, maxStart);
         var next = ChatScrollRules.MoveStartIndex(
             current,
-            direction > 0 ? -1 : 1,
+            direction > 0 ? -delta : delta,
             maxStart);
         // 滚到底就恢复跟随，玩家不用再按一次「回到底部」。
         return (next, next >= maxStart);

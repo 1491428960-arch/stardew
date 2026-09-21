@@ -1585,7 +1585,10 @@ def test_natural_detail_turn_does_not_request_a_conversation_lead() -> None:
         ),
         (
             "Sophia",
-            ("保留玩家点名的核心对象和数量", "酒窖、酒或一杯"),
+            # 2026-09-21：原文「保留玩家点名的**核心**对象和数量」改成
+            # 「**前半句**保留玩家点名的对象和数量」——把"保留什么"限定到句子位置上，
+            # 比原来的形容词更可执行；意图（不许把玩家点的对象换掉）没变。
+            ("前半句保留玩家点名的对象和数量", "酒窖、酒或一杯"),
         ),
         (
             "Sebastian",
@@ -1627,6 +1630,101 @@ def test_chat_prompt_projects_role_specific_conversation_lead_guidance(
         for fragment in required_fragments
     )
     assert all(fragment in payload["instruction"] for fragment in required_fragments)
+
+
+def test_topic_pool_stays_in_sync_with_persona_core_preferred_topics() -> None:
+    """落点池与 `persona_core` 的 preferredTopics 必须**同源**（2026-09-21 三轮）。
+
+    两处读同一个 `_PREFERRED_TOPICS_LIMIT`：落点池点名的类别，在 prompt 的
+    `persona_core` 里一定看得到。这条防的是 b307388 那种错位 ——
+    `roleGuidance` 的落点池点名了 `preferredTopics` 第 4 类「安全感与新开始」，
+    而 `persona_core` 当时按 limit=3 把它截掉了：**指令要求落 A，A 却不在
+    prompt 里**。全量人设扫描，不只索菲亚。
+    """
+
+    from stardew_ai_bridge.prompts import (
+        _compact_voice_style,
+        _preferred_topics_for_prompt,
+    )
+
+    checked = 0
+    mismatches: list[str] = []
+    for path in sorted(PERSONAS_DIR.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for npc, profile in (payload.get("personas") or {}).items():
+            voice_style = (
+                profile.get("voiceStyle") if isinstance(profile, dict) else None
+            )
+            if not isinstance(voice_style, dict):
+                continue
+            source = voice_style.get("preferredTopics")
+            if not source:
+                continue
+            checked += 1
+            in_core = _compact_voice_style(voice_style).get("preferredTopics")
+            pool = _preferred_topics_for_prompt(source)
+            if in_core != pool:
+                mismatches.append(f"{path.name}:{npc}: core={in_core} pool={pool}")
+
+    assert checked > 0, "没扫到任何带 preferredTopics 的角色，断言会假通过"
+    assert mismatches == []
+
+
+def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:
+    """落点池必须**接线到游戏路径**：prompt 里的卡片要能看到四个类别。
+
+    三轮把落点池改成参数注入（`build_stage_policy(..., preferred_topics=...)`），
+    于是多了一个**静默失败**的出口：`ContextBuilder.build()` 忘了传，落点池就退回
+    「她自己那些偏好主题之间」——渲染函数本身的测试照样全绿，只有游戏里的指令
+    变模糊。本条走 `_build_context`（游戏端同一条路，`compactPrompt=True`），
+    验到真正的卡片文本。
+
+    看的是 `stage_execution_card` 而不是 `conversation_lead`：紧凑路径下
+    `conversation_lead` 整张被砍，roleGuidance 是由前者带进 prompt 的。
+    """
+
+    from stardew_ai_bridge.app import _build_context
+
+    payload = {
+        "npcId": "Sophia",
+        "message": "今天过得怎么样？",
+        "intent": "chat",
+        "provider": "fake",
+        "compactPrompt": True,
+        "sourceMods": [
+            "SVE",
+            "FlashShifter.SVECode",
+            "FlashShifter.StardewValleyExpandedCP",
+        ],
+        "recentFacts": [],
+        "history": [],
+        "gameState": {
+            "npcId": "Sophia",
+            "displayName": "Sophia",
+            "season": "spring",
+            "date": "25",
+            "weather": "clear",
+            "location": "Forest",
+            "time": 900,
+            "friendship": 1500,
+            "friendshipHearts": 10,
+            "relationshipStage": "dating",
+            "relationship": "friend",
+        },
+    }
+
+    _, prompt = _build_context(payload)
+    card = next(
+        message for message in prompt if message.get("name") == "stage_execution_card"
+    )
+    guidance = json.loads(card["content"])["conversationLead"]["roleGuidance"]
+
+    assert "{topicPool}" not in guidance
+    # 四类都要在（措辞取自 data/personas/sve.json，不是硬编码的第二份）
+    assert "葡萄园和酿造" in guidance
+    assert "绘画与创作" in guidance
+    assert "小镇日常" in guidance
+    assert "安全感与新开始" in guidance
 
 
 @pytest.mark.parametrize("npc_id", ("Wizard", "Sophia", "Shane", "Sebastian", "Alex"))

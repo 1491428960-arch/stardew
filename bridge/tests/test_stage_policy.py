@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from stardew_ai_bridge.stage_policy import (
 )
 
 
+PERSONAS_DIR = Path(__file__).resolve().parents[2] / "data" / "personas"
 CHARACTERS = ("Wizard", "Sophia", "Shane", "Sebastian", "Alex")
 NEW_FEMALE_BACHELOR_CHARACTERS = ("Elliott", "Harvey", "Sam")
 STAGES = ("stranger", "acquaintance", "friend", "close")
@@ -137,12 +139,44 @@ def test_role_specific_conversation_lead_guidance_targets_known_quality_gaps(
 
 
 def test_sophia_conversation_lead_guidance_connects_current_object_to_small_plan() -> None:
+    """整条链路仍在：接住当前对象 → 保留对象与数量 → 个人感受 → 可商量的小安排。
+
+    2026-09-21 三处修正之一：原文「保留玩家点名的**核心**对象和数量」改成
+    「**前半句**保留玩家点名的对象和数量」。删掉「核心」不是放宽——新措辞把
+    「保留什么」限定在了句子的位置（前半句）上，比原来的形容词更可执行；
+    「接住对象」这个意图由本条继续钉住。
+    """
+
     guidance = build_stage_policy("Sophia", "dating")["conversationLead"]["roleGuidance"]
 
     assert "先明确接住玩家点名的酒、酒窖、喝一口等当前对象" in guidance
-    assert "保留玩家点名的核心对象和数量" in guidance
+    assert "前半句保留玩家点名的对象和数量" in guidance
     assert "再写因玩家而产生的个人感受" in guidance
     assert "最后给一个具体、可商量的小安排" in guidance
+
+
+def _sophia_preferred_topics() -> list[str]:
+    """索菲亚**数据源**里的偏好主题 —— 也就是落点池的唯一数据源。
+
+    2026-09-21 三次修正之一：落点池不再硬编码在 `stage_policy.py` 里，而是由调用方
+    把「**即将写进 prompt 的那一份** preferredTopics」传进来
+    （`prompts._preferred_topics_for_prompt`）。所以这条测试必须从同一个数据源取，
+    否则它验的是另一个世界：硬编码一份词、渲染看另一份词，正是 b307388 那次
+    「要求落 A，而 A 恰好是被 `persona_core` 截断的那一类」的成因。
+    """
+
+    for path in sorted(PERSONAS_DIR.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        profile = (payload.get("personas") or {}).get("Sophia")
+        if not isinstance(profile, dict):
+            continue
+        voice_style = profile.get("voiceStyle")
+        topics = (
+            voice_style.get("preferredTopics") if isinstance(voice_style, dict) else None
+        )
+        if topics:
+            return [str(topic) for topic in topics]
+    raise AssertionError("data/personas 里找不到索菲亚的 preferredTopics")
 
 
 def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() -> None:
@@ -154,17 +188,40 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     2026-09-21 二轮：对象导向的四个落点**仍全在同一个语义簇**（酿造 + 绘画）里，
     「总是谈画」没有解决。改成按 `preferredTopics` 铺开的跨簇落点池 +
     「同一类最多连续两次」，与 Harvey 那条同源。
+    2026-09-21 三轮：落点池**由数据源渲染**（`{topicPool}`），模板里不再有具体
+    类别名。于是本条也要**传数据源**再断言渲染结果——只读模板会永远失败，
+    而只读数据源又验不到渲染。注意渲染出来的措辞跟着数据源走：数据源是
+    「绘画**与**创作」，二轮硬编码的「绘画**和**创作」因此不再出现。
     过程导向的回归闸见 `test_role_guidance_object_focus.py`。
+    """
+
+    topics = _sophia_preferred_topics()
+    guidance = build_stage_policy("Sophia", "dating", preferred_topics=topics)[
+        "conversationLead"
+    ]["roleGuidance"]
+
+    assert "酒窖" in guidance  # 酿造方向：仍要接住玩家点名的当前对象
+    assert "绘画与创作" in guidance  # 创作方向（措辞取自数据源）
+    assert "小镇日常" in guidance  # 跨簇：preferredTopics 第 3 项
+    assert "安全感与新开始" in guidance  # 跨簇：preferredTopics 第 4 项
+    # 落点池与数据源同源：数据源里的每一类都要能在渲染结果里找到
+    assert all(topic in guidance for topic in topics)
+    assert "同一类最多连续两次" in guidance  # 轮换上限，与 variationRule 对齐
+    assert "因为是玩家才愿意分享" in guidance
+    assert "{topicPool}" not in guidance  # 占位符不得残留到 prompt 里
+
+
+def test_sophia_guidance_without_topic_pool_falls_back_to_a_readable_phrase() -> None:
+    """拿不到 preferredTopics 时退回不点名的说法，绝不留下空占位符。
+
+    老调用点（只传 npc_id）与部分测试走这条路。`_DEFAULT_TOPIC_POOL_PHRASE` 是
+    刻意的降级：`{topicPool}` 原样留在 prompt 里是读不通的指令，比不点名更糟。
     """
 
     guidance = build_stage_policy("Sophia", "dating")["conversationLead"]["roleGuidance"]
 
-    assert "酒窖" in guidance  # 酿造方向：仍要接住玩家点名的当前对象
-    assert "绘画和创作" in guidance  # 创作方向
-    assert "小镇日常" in guidance  # 跨簇：preferredTopics 第 3 项
-    assert "安全感与新开始" in guidance  # 跨簇：preferredTopics 第 4 项
-    assert "同一类最多连续两次" in guidance  # 轮换上限，与 variationRule 对齐
-    assert "因为是玩家才愿意分享" in guidance
+    assert "{topicPool}" not in guidance
+    assert "她自己那些偏好主题之间轮换" in guidance
 
 
 @pytest.mark.parametrize("npc_id", NEW_FEMALE_BACHELOR_CHARACTERS)

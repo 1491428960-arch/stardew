@@ -67,6 +67,40 @@ CONVERSATION_LEAD_TRIAL_NPC_IDS = frozenset(
     }
 )
 
+# 落点池**从角色自己的 `voiceStyle.preferredTopics` 生成**，不再在这里另写一份
+# （2026-09-21）：两份各写各的就会出现「要求落 A，但 A 根本不在 prompt 里」——
+# 游戏路径的 `persona_core` 按同一个条数上限截断 preferredTopics，而硬编码的池子
+# 可以点名它截掉的那一类。同源之后这类错位不可能再发生。
+#
+# 拿不到 preferredTopics 时（例如只传 npc_id 的老调用点）退回不点名的说法，
+# 而不是留下空占位符——「落点在之间轮换」是读不通的指令。
+_TOPIC_POOL_PLACEHOLDER = "{topicPool}"
+_DEFAULT_TOPIC_POOL_PHRASE = "她自己那些偏好主题之间"
+
+
+def _topic_pool_phrase(preferred_topics: object) -> str:
+    """把角色的偏好主题铺成落点池短语；拿不到时退回不点名的说法。"""
+
+    if isinstance(preferred_topics, (list, tuple)):
+        items = [
+            str(item).strip()
+            for item in preferred_topics
+            if isinstance(item, str) and str(item).strip()
+        ]
+        if items:
+            return "、".join(items) + "之间"
+    return _DEFAULT_TOPIC_POOL_PHRASE
+
+
+def _render_role_guidance(template: str, preferred_topics: object) -> str:
+    if _TOPIC_POOL_PLACEHOLDER not in template:
+        return template
+    return template.replace(
+        _TOPIC_POOL_PLACEHOLDER,
+        _topic_pool_phrase(preferred_topics),
+    )
+
+
 _CONVERSATION_LEAD_ALLOWED_KINDS_BY_ROLE: dict[str, tuple[str, ...]] = {
     "Wizard": ("self_share", "specific_follow_up", "topic_bridge"),
     "Sophia": ("self_share", "specific_follow_up", "choice_prompt"),
@@ -89,7 +123,7 @@ _CONVERSATION_LEAD_ROLE_GUIDANCE: dict[str, str] = {
         "或眼前的魔法细节中选一个具体对象，给出一个细节、判断或二选一。"
     ),
     "Sophia": (
-        "先明确接住玩家点名的酒、酒窖、喝一口等当前对象，回复前半句保留玩家点名的核心对象和数量"
+        "先明确接住玩家点名的酒、酒窖、喝一口等当前对象，前半句保留玩家点名的对象和数量"
         "（例如酒窖、酒或一杯），再写因玩家而产生的个人感受；"
         # 2026-09-21（用户实测「刚把最后一层罩光放到窗边」）：原文是
         # 「可以从葡萄品种、发酵过程或绘画过程选一个具体细节」——**过程导向**。
@@ -104,9 +138,24 @@ _CONVERSATION_LEAD_ROLE_GUIDANCE: dict[str, str] = {
         # `preferredTopics` 的四项铺开（原先只用到前两项），并和 variationRule
         # 的「最多连续两次」对齐。工序术语那条约束仍由 `voiceStyle.avoid`
         # （"把画画说成行业术语或工序名"）承担，不在这里重复。
-        "落点在葡萄园和酿造、绘画和创作、小镇日常、安全感与新开始这四类之间轮换，"
-        "不要每轮都落到同一类，同一类最多连续两次；"
-        "专业或创作分享要带出‘因为是玩家才愿意分享’的亲近理由，"
+        #
+        # 2026-09-21 三次，三处修正：
+        # ① **落点池改由 `preferredTopics` 生成**（`{topicPool}`）：原先那四类是
+        #    硬编码的第二份数据，而 `persona_core` 里的 preferredTopics 有自己的
+        #    条数上限——上限一改（本轮 3→4）两份就错位，出现「要求落 A，而 A
+        #    根本不在 prompt 里」。同源之后这类错位不可能再发生。
+        # ② 「专业或创作分享要带出亲近理由」→「分享今天做的事」：亲近理由原先
+        #    只有"创作"能兑现，而她在 prompt 里的酒全是劳作形态（葡萄园、酒窖、
+        #    贴标签），于是这一位实际成了画独占——用户体感「只聊画」的来源之一。
+        # ③ **补回被删掉的压制**：`b307388` 删掉了旧文案里的「不要只反复说‘酒’」，
+        #    那是 prompt 里**唯一**明确压酒的点，删后没有任何替代。该 commit 的
+        #    「葡萄簇 52→41」是全量词频口径（含被动接住玩家点名的酒），不能用来
+        #    说明主动落点，因此不能当作"不必补"的证据。这里换成**双向**写法：
+        #    酒和画算同一类生活面，连着说同一个就换——既补回压酒，也压住
+        #    "连着几轮只说画"（用户体感的那一面）。
+        "落点在{topicPool}轮换，不要每轮都落到同一类，同一类最多连续两次——"
+        "酒和画算同一类生活面，连着两轮说同一个就该换；"
+        "分享今天做的事（酿酒、画、镇上的见闻都算）要带出‘因为是玩家才愿意分享’的亲近理由，"
         "最后给一个具体、可商量的小安排；不要只用泛问句或单纯‘陪你’。"
     ),
     "Shane": (
@@ -898,8 +947,20 @@ def relationship_discussion_policy(
     }
 
 
-def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
-    """返回当前 NPC 和关系阶段唯一应执行的行为策略。"""
+def build_stage_policy(
+    npc_id: object,
+    stage: object,
+    *,
+    preferred_topics: object = None,
+) -> dict[str, Any]:
+    """返回当前 NPC 和关系阶段唯一应执行的行为策略。
+
+    ``preferred_topics`` 是**落点池的唯一数据源**：调用方
+    （``prompts.build_prompt``）传进该角色**即将写进 ``persona_core`` 的那一份**
+    preferredTopics，于是「要求落哪几类」与「prompt 里能看到哪几类」永远是
+    同一份数据、同一个条数上限。省略时退回不点名的说法，老调用点与既有测试
+    行为不变。
+    """
 
     canonical_id = canonical_npc_id(npc_id)
     role_key = next(
@@ -928,7 +989,10 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
         )
         role_guidance = _CONVERSATION_LEAD_ROLE_GUIDANCE.get(role_key)
         if role_guidance:
-            conversation_lead["roleGuidance"] = role_guidance
+            conversation_lead["roleGuidance"] = _render_role_guidance(
+                role_guidance,
+                preferred_topics,
+            )
         if stage_key == "friend":
             conversation_lead["required"] = "optional"
         result["conversationLead"] = conversation_lead
