@@ -237,7 +237,25 @@ def test_compact_prompt_omits_structured_game_state_message_for_cloud_relay() ->
         compact=True,
     )
 
+    # 省预算的行为保持不变：线上仍不发完整 game_state 卡
+    # （含 friendship/friendshipHearts/relationship/marriageStatus 等关系字段，
+    #  它们已由 stage 系卡片覆盖）。
     assert all(message.get("name") != "game_state" for message in messages)
+
+    # 但**场景硬事实不能跟着一起丢**：`safety_rules` 承诺
+    # 「天气、时间和地点是当前场景的硬事实」，此前紧凑路径一个字都没给，
+    # 于是模型只能按先验自补场景（表现为「早上说晚上的话」）。
+    # 现在由一张精简场景卡兜底，见 bridge/tests/test_compact_scene_card.py。
+    scene = next(message for message in messages if message.get("name") == "scene")
+    scene_card = json.loads(scene["content"])
+    # ROOT_PAYLOAD 的 gameState.time 是 1830（傍晚 18:30），season/weather/location
+    # 分别是 Summer / rain / WizardTower。
+    assert scene_card["季节"] == "夏天"
+    assert scene_card["天气"] == "雨天"
+    assert scene_card["地点"] == "WizardTower"
+    assert scene_card["时段"] == "傍晚（18:30）"
+    assert "friendshipHearts" not in scene["content"]
+    assert "relationship" not in scene["content"]
 
 
 def test_regular_compact_prompt_keeps_game_state_for_quality_evaluation() -> None:

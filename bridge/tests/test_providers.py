@@ -89,7 +89,10 @@ def test_fake_provider_returns_contextual_local_demo_result() -> None:
     assert "Rasmodia" in result.reply
     assert "春" in result.reply
     assert "雨" in result.reply
-    assert "早上" in result.reply
+    # 演示文案用 `scene.time_of_day_label(..., include_clock=False)` 的短形式。
+    # 此前这里是粗粒度的「早上」（<1200 一律叫早上），8:30 被说成"早上"并不准确；
+    # 时段细化后 830 落在「上午」。
+    assert "上午" in result.reply
     assert result.reply != different.reply
     assert result.provider == "fake"
     assert result.fallback is False

@@ -18,6 +18,7 @@ from .config import BridgeSettings, ProviderSettings
 from .models import DialogueTestRequest, OpenLoopSignal, ProviderResult, ProviderUsage
 from .vertex_auth import AccessTokenSource, AdcAccessTokenSource, VertexAuthError
 from .relationship_gating import relationship_stage_from_state
+from .scene import season_label, time_of_day_label, weather_label
 
 
 log = logging.getLogger(__name__)
@@ -207,31 +208,6 @@ class FakeProvider(Provider):
     }
     _GROUP_LABELS.update({"wizard": "Rasmodia", "rasmodia": "Rasmodia"})
 
-    _SEASONS = {
-        "spring": "春天",
-        "summer": "夏天",
-        "fall": "秋天",
-        "autumn": "秋天",
-        "winter": "冬天",
-        "春": "春天",
-        "夏": "夏天",
-        "秋": "秋天",
-        "冬": "冬天",
-    }
-    _WEATHER = {
-        "sunny": "晴天",
-        "sun": "晴天",
-        "rain": "雨天",
-        "rainy": "雨天",
-        "storm": "雷雨天",
-        "wind": "有风的天气",
-        "snow": "雪天",
-        "festival": "节日天气",
-        "晴": "晴天",
-        "雨": "雨天",
-        "雷": "雷雨天",
-        "雪": "雪天",
-    }
     _RELATIONSHIP_LABELS = {
         "stranger": "初识",
         "acquaintance": "熟悉",
@@ -272,13 +248,15 @@ class FakeProvider(Provider):
         state = request.game_state
         context_parts: list[str] = []
         if state is not None:
-            season = self._normalise_context(state.season, self._SEASONS)
-            weather = self._normalise_context(state.weather, self._WEATHER)
+            season = season_label(state.season)
+            weather = weather_label(state.weather)
             if season:
                 context_parts.append(season)
             if weather:
                 context_parts.append(weather)
-            time_label = self._time_label(state.time)
+            # 演示文案是给人读的一句通顺话，所以只取时段词（「清晨」），
+            # 不带场景卡那种括号时刻（`清晨（6:00）`）。
+            time_label = time_of_day_label(state.time, include_clock=False)
             if time_label:
                 context_parts.append(time_label)
 
@@ -368,30 +346,6 @@ class FakeProvider(Provider):
             )
         return json.dumps({"turns": turns}, ensure_ascii=False)
 
-    @staticmethod
-    def _normalise_context(
-        value: str | None,
-        mapping: dict[str, str],
-    ) -> str | None:
-        if not value:
-            return None
-        normalized = value.strip().lower()
-        if normalized in mapping:
-            return mapping[normalized]
-        for marker, label in mapping.items():
-            if marker in normalized:
-                return label
-        return None
-
-    @staticmethod
-    def _time_label(time_value: int | None) -> str | None:
-        if time_value is None:
-            return None
-        if time_value < 1200:
-            return "早上"
-        if time_value < 1800:
-            return "下午"
-        return "晚上"
 
     @classmethod
     def _relationship_stage(cls, state: NpcGameState | None) -> str:

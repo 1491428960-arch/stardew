@@ -16,6 +16,7 @@ from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
 from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate, relationship_stage_from_state
 from .relationship_world import project_relationship_context
+from .scene import season_label, time_of_day_label, weather_label
 from .speech import (
     VOICE_ANCHOR_MAX_TEXT,
     voice_anchor_text_fits,
@@ -5293,6 +5294,44 @@ class PromptBuilder:
                     }),
                 }
             )
+        else:
+            # 线上紧凑路径的场景硬事实。
+            #
+            # 此前 `else` 不存在，于是游戏端（`smapi/BridgeClient.CompactPrompt` 默认
+            # true）**一个字都收不到**季节/日期/天气/时段/地点，而同一份 prompt 的
+            # safety_rules 却写着「天气、时间和地点是当前场景的硬事实，不得与之矛盾」
+            # ——等于向模型承诺了一个没给的事实，模型只能按先验自补，
+            # 于是出现「早上说晚上的话」。
+            #
+            # 这里只补最小可用集：**人类可读**的中文键名与标签，不含
+            # friendship / hearts / relationship / marriageStatus / childrenCount
+            # ——那些字段已由 stage_execution_card 等卡片覆盖，重复只会白占预算。
+            # 键名直接用中文，是刻意的：省掉 `gameState` 包装与英文枚举名的开销，
+            # 模型读到的就是结论，不需要再翻译一次 `clear` / `spring`。
+            scene: dict[str, Any] = {}
+            game_state = safe_context["gameState"]
+            if season := season_label(game_state.get("season")):
+                scene["季节"] = season
+            if date := _text(game_state.get("date"), limit=20):
+                scene["日期"] = date
+            if weather := weather_label(game_state.get("weather")):
+                scene["天气"] = weather
+            # `timeOfDay` 而非 `time`：完整卡里是裸整数（`time: 600`），
+            # 这里给已经读得懂的时段，名字也一并换掉，避免两处同名不同义。
+            if time_of_day := time_of_day_label(game_state.get("time")):
+                scene["时段"] = time_of_day
+            # 地点不做枚举映射（地图名是开放集合），认不出就原样透传：
+            # 给模型一个 `Hospital` 也比让它不知道身在何处要好。
+            if location := _text(game_state.get("location"), limit=60):
+                scene["地点"] = location
+            if scene:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "scene",
+                        "content": _json(scene),
+                    }
+                )
         relationship_world = safe_context["relationshipWorld"]
         if relationship_world:
             messages.append(
