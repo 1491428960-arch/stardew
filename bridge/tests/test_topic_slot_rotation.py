@@ -963,7 +963,7 @@ def test_alex_cross_facet_topic_penetration_is_recorded() -> None:
 # 为之**（Claire 的「新生活里的小变化」、Krobus 的「下水道生活」、Kent 的
 # 「家庭日常」…），它仍会进 `{topicPool}` 当方向提示；两条以上就是纯占位。
 
-# 已达 5 个生活面的角色（第 4 批的数据层事实，按**并集**口径统计）。
+# 已达 5 个生活面的角色（第 4 批 + 第 5 批的数据层事实，按**并集**口径统计）。
 # 补素材会让这份名单变化，那时按新数据更新即可 —— 这条哨兵的作用是"改少了会报警"。
 FIVE_FACET_ROLES = frozenset(
     {
@@ -971,14 +971,19 @@ FIVE_FACET_ROLES = frozenset(
         "Kent", "Krobus", "Lance", "Leah", "Lewis", "Linus", "Maru", "Morris",
         "Olivia", "Penny", "Pierre", "Robin", "Sandy", "Sophia", "Victor", "Willy",
         "Wizard",
+        # 第 5 批（16 个角色收尾）：除 Birdie 停在 4 面、Marlon 挖不动之外全部到 5 面
+        "Abigail", "Caroline", "Emily", "George", "Gus", "Haley", "Harvey", "Jodi",
+        "Marnie", "Sam", "Sebastian", "Shane", "Vincent",
     }
 )
 
 # 还没做素材横向推广的角色（它们的无面抽象条目还没被具体素材换掉）。
 # 这份清单是**待办**，不是事实断言：补掉其中一个从清单里删掉即可，不删也不会变红。
-UNFILLED_NO_FACET_ROLES = frozenset(
-    {"Birdie", "Haley", "Jodi", "Marlon", "Shane", "Vincent"}
-)
+#
+# 第 5 批清空到只剩 Marlon：Birdie（用 `Data/ExtraDialogue` 的原话补了 4 面）、
+# Haley／Jodi／Shane／Vincent 都已补到 5 面且各自只剩 1 条无面核心。删掉它们让这条
+# 哨兵**对它们生效**——否则回退到 2 条无面也不会有人报警。
+UNFILLED_NO_FACET_ROLES = frozenset({"Marlon"})
 
 
 def _personas_topics():
@@ -1045,4 +1050,79 @@ def test_roles_lifted_to_five_facets_are_recorded() -> None:
     assert reached == FIVE_FACET_ROLES, (
         f"新达到 5 面（补过头或确实补上了）：{sorted(reached - FIVE_FACET_ROLES)}；"
         f"退回 5 面以下：{sorted(FIVE_FACET_ROLES - reached)}"
+    )
+
+
+# --- 12. 2026-09-23 第 5 批：两个只可能靠"人"守住的边界 -----------------------
+#
+# 第 5 批是横向推广的收尾：16 个角色补完，**2 个生活面的角色清零**。补完之后
+# 低于 3 面的**只剩 Marlon 一个**（6 个面的 own 命中全 0，见第 4 批 §3.1），
+# 次低的是 Birdie 的 4 面。两者都不是"还没做"，是**做不了**——所以它们值得一条断言，
+# 否则下一轮很容易被误当成待办重新挖一遍。
+
+BELOW_THREE_FACET_ROLES = frozenset({"Marlon"})
+
+
+def test_birdie_material_comes_from_extra_dialogue_not_the_index() -> None:
+    """Birdie 是全库唯一"索引里 0 条语料却仍有素材"的角色。
+
+    第 5 批查清的根因（**这是索引器的缺口，不是素材问题**）：
+
+    * Stardew 1.6 把 `CanSocialize=FALSE`／`SocialTab=HiddenAlways` 的 NPC（Birdie）
+      的台词集中放进 `Content (unpacked)/Data/ExtraDialogue.<locale>.json`
+      （zh-CN 下 15 条，键名 `Birdie0`…`Birdie_NoGift`），**没有**
+      `Characters/Dialogue/Birdie.json`；
+    * 索引器的两个 vanilla 入口是 ①解包后的 `Characters/Dialogue/*.json`（用**文件名**
+      当 npcId）②`Data/Events/*.json`（从事件脚本提参与者）——**都不含 `Data/ExtraDialogue`**；
+    * 而 `Data/Events/*.json` 里一个 "Birdie" 字样都没有，三条路全断，所以她 0 条。
+
+    影响面已核算：45 个 persona 角色里**只有她一个**被漏（`Rasmodia` 也是 0 条，但它经
+    `canonical_npc_id()` 归一到 `Wizard`，语料在 Wizard 名下）。
+
+    这条断言钉住两件事：**她的 5 条素材确实来自那 15 句原话**（不是编的），
+    以及**她的面数没有掉回 4 面以下**——防止有人按"索引里没有 = 没素材"的口径
+    把她清理掉。
+    """
+
+    found = [
+        topics
+        for _fname, name, topics in _personas_topics()
+        if canonical_npc_id(name) == "Birdie"
+    ]
+    assert len(found) == 1, f"Birdie 应该只在 vanilla.json 里有一份，实际 {len(found)} 份"
+
+    topics = found[0]
+    assert len(topics) == 5, f"Birdie 的素材条数变了：{topics}"
+
+    facets = {_facet_of_topic(topic) for topic in topics} - {None}
+    assert facets == {"吃喝", "天气季节", "过去的回忆", "爱好或消遣"}, (
+        f"Birdie 的面覆盖变了：{sorted(facets)}"
+    )
+    # 这四条逐条对应 `Data/ExtraDialogue.zh-CN.json` 的原话
+    assert "早餐那碗芋泥和一杯鲜榨芒果汁" in topics  # Birdie4
+    assert "每天都要在海滩上散步，看看冲上岸的新东西" in topics  # Birdie5
+    assert "很久以前，岛上住着矮人" in topics  # Birdie1
+    assert "这里的天气一年到头都暖和" in topics  # Birdie17（「气候」改写成词表收的「天气」）
+
+
+def test_roles_still_below_three_facets_are_recorded() -> None:
+    """第 5 批收尾时，低于 3 个生活面的角色只剩两个（遍历全库）。
+
+    与 `test_roles_lifted_to_five_facets_are_recorded` 反方向：那条记"补到了多少"，
+    这条记"还差多少"。两条都失败在**回退**上——某个角色掉出 3 面却没人发现，
+    在真机上表现为"翻来覆去只有一两个方向可聊"，而数据层一声不响。
+    """
+
+    covered: dict[str, set[str]] = {}
+    for _fname, name, topics in _personas_topics():
+        for topic in topics:
+            facet = _facet_of_topic(topic)
+            if facet:
+                covered.setdefault(canonical_npc_id(name), set()).add(facet)
+
+    low = frozenset(cid for cid, facets in covered.items() if len(facets) < 3)
+
+    assert low == BELOW_THREE_FACET_ROLES, (
+        f"新掉到 3 面以下（回退）：{sorted(low - BELOW_THREE_FACET_ROLES)}；"
+        f"已经补上 3 面、可以从名单里删掉：{sorted(BELOW_THREE_FACET_ROLES - low)}"
     )
