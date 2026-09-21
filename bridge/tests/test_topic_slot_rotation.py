@@ -857,13 +857,21 @@ def test_work_patterns_did_not_get_swept_into_hobbies(text: str) -> None:
 
 
 def test_alex_topics_land_on_their_new_facets() -> None:
-    """拆面的结果本身：4 条素材的新归属（第 4 条仍不映射任何面）。"""
+    """拆面的结果本身：6 条素材的新归属（2026-09-22 第 4 批补到 5 面）。
+
+    前三条是 2026-09-21 三次拆面的结果（原第 4 条「职业选手目标，以及后来发现的
+    微不足道的小事」判不出任何面，**永远不会被 `_pick` 选为落点**，第 4 批用三条
+    具体素材换掉了它）。补上的三条同时保住了那条拆面结论的**前提**：Alex 名下
+    仍然没有任何工作面条目（否则 `test_narrow_material_roles_are_recorded` 会红）。
+    """
 
     assert {topic: _facet_of_topic(topic) for topic in _prompt_topics("Alex")} == {
         "全明星四分卫和夹克上的小星星": "爱好或消遣",
         "海滩、投球和镇上的朋友": "镇上或邻里",
         "俯卧撑、酸痛与进步": "爱好或消遣",
-        "职业选手目标，以及后来发现的微不足道的小事": None,
+        "夏天是一年里最有活力的季节": "天气季节",
+        "祖父母把我带大": "家人朋友",
+        "小时候那些不太快乐的日子": "过去的回忆",
     }
 
 
@@ -939,3 +947,102 @@ def test_alex_cross_facet_topic_penetration_is_recorded() -> None:
     assert _facet_of_topic(topic) == "镇上或邻里"
     assert _facet_hits(topic) == {"爱好或消遣", "镇上或邻里", "家人朋友"}
     assert topic in narrow_topic_pool(_prompt_topics("Alex"), "爱好或消遣")
+
+
+# --- 11. 2026-09-22 第 4 批：素材横向推广的两条不变式（**遍历全部角色**） ------
+#
+# 第 4 批把 12 个角色的素材从 1~2 面补到 5 面（Sophia／Elliott 在更早的批次到 5 面）。
+# 补素材有**两个静默的失败方向**，各自做成一条遍历全库的断言：
+#
+#   ① **写了也白写**：素材条数超过 `_PREFERRED_TOPICS_LIMIT` —— 已由第 9 节的
+#      `test_preferred_topics_fit_the_prompt_limit` 覆盖（逐 key 口径）。
+#   ② **写了也选不中**：条目**判不出任何生活面**。槽位的 `_pick` 会跳过它，所以它
+#      既不会被选为落点，也永远不会被禁 —— 每一条都白占 6 条上限里的一个位置。
+#
+# ② 的口径是"每角色**至多一条**无面素材"：留一条最能定义人设的抽象方向是**有意
+# 为之**（Claire 的「新生活里的小变化」、Krobus 的「下水道生活」、Kent 的
+# 「家庭日常」…），它仍会进 `{topicPool}` 当方向提示；两条以上就是纯占位。
+
+# 已达 5 个生活面的角色（第 4 批的数据层事实，按**并集**口径统计）。
+# 补素材会让这份名单变化，那时按新数据更新即可 —— 这条哨兵的作用是"改少了会报警"。
+FIVE_FACET_ROLES = frozenset(
+    {
+        "Alex", "Andy", "Claire", "Clint", "Demetrius", "Dwarf", "Elliott", "Evelyn",
+        "Kent", "Krobus", "Lance", "Leah", "Lewis", "Linus", "Maru", "Morris",
+        "Olivia", "Penny", "Pierre", "Robin", "Sandy", "Sophia", "Victor", "Willy",
+        "Wizard",
+    }
+)
+
+# 还没做素材横向推广的角色（它们的无面抽象条目还没被具体素材换掉）。
+# 这份清单是**待办**，不是事实断言：补掉其中一个从清单里删掉即可，不删也不会变红。
+UNFILLED_NO_FACET_ROLES = frozenset(
+    {"Birdie", "Haley", "Jodi", "Marlon", "Shane", "Vincent"}
+)
+
+
+def _personas_topics():
+    """遍历 data/personas 的每个 key：(文件名, key, preferredTopics)。"""
+
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for name, profile in (payload.get("personas") or {}).items():
+            voice_style = (profile or {}).get("voiceStyle")
+            topics = (
+                voice_style.get("preferredTopics") if isinstance(voice_style, dict) else None
+            )
+            yield path.name, name, list(topics or ())
+
+
+def test_no_lifted_role_carries_more_than_one_no_facet_topic() -> None:
+    """② 已补角色的无面素材预算：每角色至多一条。
+
+    口径是**子集**，不是相等：
+
+    * `UNFILLED_NO_FACET_ROLES` 是**还没补素材**的角色 —— 它们手里那 2~4 条无面
+      抽象条目是历史遗留，第 4 批不动（下一批横向推广时处理）。补掉一个不会让这条
+      哨兵变红，所以它不会变成"每补一个角色就要改一次测试"的负担；
+    * 真正会红的是**回退**：某个已经补过素材的角色又被写出 2 条以上判不出面的条目。
+      那正是这条哨兵要拦的事 —— 每一条无面素材都白占 6 条上限里的一个位置，而且
+      `_pick` 会直接跳过它，**不会报错**。
+    """
+
+    offenders: dict[str, list[str]] = {}
+    all_roles: set[str] = set()
+    for _fname, name, topics in _personas_topics():
+        cid = canonical_npc_id(name)
+        all_roles.add(cid)
+        no_facet = [topic for topic in topics if _facet_of_topic(topic) is None]
+        if len(no_facet) > 1:
+            offenders.setdefault(cid, []).extend(no_facet)
+
+    unknown = UNFILLED_NO_FACET_ROLES - all_roles
+    assert unknown == frozenset(), f"这份清单里有已经不存在的角色（改名或删除了？）：{sorted(unknown)}"
+
+    regressions = sorted(set(offenders) - UNFILLED_NO_FACET_ROLES)
+    assert regressions == [], (
+        f"这些角色已经补过素材，却又保留了 2 条以上判不出生活面的条目（回退）："
+        f"{ {cid: offenders[cid] for cid in regressions} }"
+    )
+
+
+def test_roles_lifted_to_five_facets_are_recorded() -> None:
+    """第 4 批的覆盖结果（数据层事实）：这些角色现在有 5 个生活面。
+
+    与 `test_narrow_material_roles_are_recorded` 同一性质：记录事实，不是判 bug。
+    失败时先看是"补过头"还是"退回 5 面以下"，再按新数据更新这份名单。
+    """
+
+    covered: dict[str, set[str]] = {}
+    for _fname, name, topics in _personas_topics():
+        for topic in topics:
+            facet = _facet_of_topic(topic)
+            if facet:
+                covered.setdefault(canonical_npc_id(name), set()).add(facet)
+
+    reached = frozenset(cid for cid, facets in covered.items() if len(facets) >= 5)
+
+    assert reached == FIVE_FACET_ROLES, (
+        f"新达到 5 面（补过头或确实补上了）：{sorted(reached - FIVE_FACET_ROLES)}；"
+        f"退回 5 面以下：{sorted(FIVE_FACET_ROLES - reached)}"
+    )

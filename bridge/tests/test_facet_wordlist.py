@@ -152,6 +152,37 @@ def test_real_weather_wind_still_matches(text: str) -> None:
     assert "天气季节" in _facet_hits(text), text
 
 
+def test_risk_is_not_weather() -> None:
+    """**第四处误判**（2026-09-22 第 4 批）：`风` → `(?<!什么)风(?!险)`。
+
+    「**风险**」与天气无关，却是"风"字最常见的搭配之一。它出现在两条**冒险者**
+    素材的条目名里 —— Lance「冒险者准则和风险判断」、Marlon「经验和风险判断」——
+    两条都被派到"天气季节"：对冒险者来说那既是不存在的一面，又会让换面统计把
+    "他刚聊了天气"记上一笔。
+
+    与"什么风"那次同样的取舍：**只排除这一个紧邻搭配**，`风` 后接任何其它字
+    （风雨／风车／风口）照旧命中。
+
+    修完之后两条素材各自归位，而归位结果正说明这条收窄是对的：
+
+    * Lance「冒险者准则和**风险**判断」→ 落到"工作或手艺"（"**冒险**"命中）——
+      冒险者的准则本来就该在工作面，而不是在一个他根本没有素材的天气面；
+    * Marlon「经验和**风险**判断」→ 判不出面（该条没有别的面词）。这也好过派到一个
+      假面上：判不出面的条目至少不会被误计成"他刚聊了天气"。
+    """
+
+    assert "天气季节" not in _facet_hits("冒险者准则和风险判断")
+    assert _facet_of_topic("冒险者准则和风险判断") == "工作或手艺"
+    assert _facet_of_topic("经验和风险判断") is None
+
+
+@pytest.mark.parametrize("text", ["外面风雨很大，别出海。", "风车转得飞快。", "风口那儿最冷。"])
+def test_wind_before_other_characters_still_matches(text: str) -> None:
+    """收窄的另一侧：「风险」以外的"风"字搭配一条都没跟着走。"""
+
+    assert "天气季节" in _facet_hits(text), text
+
+
 def test_neighbor_and_children_by_gender_are_no_longer_missing() -> None:
     """两个**漏词**：审批报告里"写了也判不出面"的候选正是被它们卡住的。
 
