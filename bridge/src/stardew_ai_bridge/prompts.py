@@ -2233,14 +2233,26 @@ def _compact_emotion_texture(value: object) -> object:
     return _text(value, limit=140)
 
 
+# 只有首字是语气叹词的短片段才算“口语颗粒”。`openers` 里的「你好」「欢迎」
+# 「我听着」这类实义短语一旦被整段切出来，就会变成模型反复复用的固定台词。
+# 「嗨」「唔」同样是真实叹词，不能漏（否则 Emily、Maru、Sebastian 等人会
+# 直接被清空颗粒 —— openers 本身不进任何 prompt，清空就是净损失）。
+_INTERJECTION_HEADS = frozenset("嗯啊哦噢嘿唉欸呀哇哈呃哎嗨唔")
+
+
 def _speech_particle_hints(value: object) -> list[str]:
     """只保留开场/收尾中的短口语颗粒，不把整句模板交给模型复用。"""
 
     hints: list[str] = []
     for item in _compact_text_list(value, limit=6, item_limit=60):
         match = re.match(r"^([\u4e00-\u9fffA-Za-z]{1,3})(?=[，,。！？!?…]|$)", item)
-        if match and match.group(1) not in hints:
-            hints.append(match.group(1))
+        if not match:
+            continue
+        head = match.group(1)
+        if head[0] not in _INTERJECTION_HEADS:
+            continue
+        if head not in hints:
+            hints.append(head)
     return hints[:4]
 
 
@@ -3895,30 +3907,39 @@ def _build_voice_execution_card(
         limit=4,
         item_limit=12,
     )
-    # 取词顺序：角色专属的 signatureMoves 先占名额，命中不了就自然回落到
-    # sentencePattern，最后才是所有角色共用的 responseRules。
-    # 命中 signatureMoves 时 responseRules 只取 1 条，把名额让给角色特征；
-    # 未命中时取 2 条，保持旧版的兜底信息量。
+    # 取词顺序：角色专属的 signatureMoves 先占名额；命中签名动作时，余下名额
+    # 交给所有角色共用的 responseRules（防跑题、防角色滑走），不再取
+    # sentencePattern。sentencePattern[0] 改以一句话并入 instruction，句长和
+    # 语域控制不会因此从卡里消失。未命中签名动作时保持旧行为，用
+    # sentencePattern 兜底。
+    sentence_pattern = _compact_text_list(
+        voice_style.get("sentencePattern"),
+        limit=2,
+        item_limit=75,
+    )
     signature_moves = _compact_text_list(
         voice_style.get("signatureMoves"),
         limit=2,
         item_limit=140,
     )
     voice_actions: list[str] = list(signature_moves)
-    voice_actions.extend(
-        _compact_text_list(
-            voice_style.get("sentencePattern"),
-            limit=2,
-            item_limit=75,
+    if signature_moves:
+        voice_actions.extend(
+            _compact_text_list(
+                voice_style.get("responseRules"),
+                limit=2,
+                item_limit=75,
+            )
         )
-    )
-    voice_actions.extend(
-        _compact_text_list(
-            voice_style.get("responseRules"),
-            limit=1 if signature_moves else 2,
-            item_limit=75,
+    else:
+        voice_actions.extend(sentence_pattern)
+        voice_actions.extend(
+            _compact_text_list(
+                voice_style.get("responseRules"),
+                limit=2,
+                item_limit=75,
+            )
         )
-    )
     voice_actions = voice_actions[:3]
     avoid = _compact_text_list(voice_style.get("avoid"), limit=2, item_limit=60)
     tone = _text(voice_style.get("tone"), limit=120)
@@ -3949,6 +3970,13 @@ def _build_voice_execution_card(
         card["tone"] = tone
     if speech_particles:
         card["speechParticles"] = speech_particles
+    if signature_moves and sentence_pattern:
+        # 命中签名动作时 sentencePattern 不再占 voiceActions 名额，这里把它最
+        # 有句长/语域信息量的第一条并进 instruction，避免角色丢掉句式锚点。
+        # 未命中时 sentencePattern[0] 仍在 voiceActions 里，不重复追加。
+        card["instruction"] += (
+            "角色常态句式参考（控制句长和语域）：" + sentence_pattern[0]
+        )
     if avoid_speech_particles:
         card["avoidSpeechParticles"] = avoid_speech_particles
         card["instruction"] += (

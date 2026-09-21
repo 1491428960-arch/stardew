@@ -5731,20 +5731,22 @@ def test_prompt_emits_structured_opening_avoidance_constraints() -> None:
 
 
 def test_prompt_marks_recent_voice_particles_as_non_reusable() -> None:
+    # openers 兜底只认可真正的语气叹词：这里的「嘿」「哦」会被切成颗粒，
+    # 而「当然」这类实义短语不再当作语气颗粒（见 _speech_particle_hints）。
     context = {
         "npcIdentity": {
             "npcId": "Alex",
             "displayName": "Alex",
             "voiceStyle": {
                 "tone": "外向、爱炫耀一点",
-                "openers": ["嘿，怎么了？", "当然，怎么了？"],
+                "openers": ["嘿，怎么了？", "哦，嘿。"],
             },
         },
         "modSources": ["vanilla"],
         "gameState": {},
         "history": [
             {"role": "user", "content": "今天训练得怎么样？"},
-            {"role": "assistant", "content": "当然不错！刚跑完一圈。"},
+            {"role": "assistant", "content": "哦，还好！刚跑完一圈。"},
             {"role": "user", "content": "明天还练吗？"},
             {"role": "assistant", "content": "嘿，当然。看你能不能跟上。"},
         ],
@@ -5759,7 +5761,7 @@ def test_prompt_marks_recent_voice_particles_as_non_reusable() -> None:
         )["content"]
     )
 
-    assert card["avoidSpeechParticles"] == ["嘿", "当然"]
+    assert card["avoidSpeechParticles"] == ["嘿", "哦"]
     assert "默认不用" in card["instruction"]
     assert "avoidSpeechParticles" in card["instruction"]
 
@@ -8521,8 +8523,10 @@ def test_natural_role_texture_exposes_non_overlapping_signature_moves() -> None:
     assert ras["signatureMoves"]
     assert sophia["signatureMoves"]
     assert set(ras["signatureMoves"]).isdisjoint(sophia["signatureMoves"])
+    # 特征词只用来证明「两人的签名动作不同」，跟着 persona 文案走，
+    # 不锁定某一版具体措辞。
     assert any("判断" in item and "嗯" in item for item in ras["signatureMoves"])
-    assert any("生活细节" in item and "结论" in item for item in sophia["signatureMoves"])
+    assert any("第一反应" in item and "追加" in item for item in sophia["signatureMoves"])
 
 
 def test_natural_role_texture_exposes_role_specific_rhythm_profiles() -> None:
