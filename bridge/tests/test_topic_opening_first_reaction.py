@@ -94,8 +94,97 @@ def _contract(messages: list[dict[str, str]]) -> str:
 def test_topic_contract_allows_an_opening_beat_before_the_source_clause() -> None:
     contract = _contract(_topic_messages(HARVEY_MOVES))
 
-    assert "来源句不必是第一条分句" in contract
+    assert "顺序可以换，来源不能省" in contract
     assert "开场那一拍按角色自己的说话习惯来" in contract
+
+
+# --- 2026-09-21 二次收紧：三处改动各钉一条 -----------------------------------
+
+
+def test_opening_beat_is_limited_to_a_short_reaction_or_greeting() -> None:
+    """改动一：那一拍不再是「观察或判断都算」这种无边界敞口。"""
+
+    contract = _contract(_topic_messages(HARVEY_MOVES))
+
+    assert "但这一拍只算一声反应或短招呼（十个字以内" in contract
+    assert "不含新对象、不含指代" in contract
+    assert "‘它／这个／那个’这类还没交代过的指代" in contract
+    # 旧措辞正是本次实测问题的敞口，必须已从契约里消失。
+    assert "一声反应、招呼、观察或判断都算" not in contract
+
+
+def test_source_sentence_is_promoted_to_a_standalone_requirement() -> None:
+    """改动二：从「只要…就…」的条件从句提为独立硬要求，并显式给出位置。"""
+
+    contract = _contract(_topic_messages(HARVEY_MOVES))
+
+    assert "同一条消息里必须有来源句，位置在开场那一拍之后" in contract
+    assert "只要在同一条消息里紧接着把来源补上" not in contract
+
+
+def test_the_new_clause_does_not_open_with_a_permissive_word() -> None:
+    """改动三：不再用「不必」起手——那读起来像在放松要求。"""
+
+    contract = _contract(_topic_messages(HARVEY_MOVES))
+
+    assert "来源句不必是第一条分句" not in contract
+
+
+# --- 离线检查：新措辞不再覆盖索菲亚那种形态 -----------------------------------
+
+# 用户实测原文（2026-09-21「找话题」）。起句「还没完全干透」是一个**零形式指代**
+# 的状态描述——字面上既没有「它」也没有「那个」。
+_SOPHIA_LEAKED_REPLY = (
+    "还没完全干透，我不想让颜色在灯下变了样。"
+    "等它放到画架前，你先看第一眼，然后告诉我最喜欢哪块颜色，好吗？"
+)
+# 旧措辞放行这一拍的那半句。它是本次问题的敞口，必须已从契约里删掉。
+_OLD_PERMISSIVE_CLAUSE = "一声反应、招呼、观察或判断都算"
+
+
+def test_the_leaked_opening_shape_is_no_longer_licensed() -> None:
+    """本次实测那句的形态，在新措辞下找不到任何许可。
+
+    旧放行面是「一声反应、招呼、观察或判断都算」——「还没完全干透」是一个关于
+    未交代对象的**观察**，正好落在里面，于是它被当成合法的开场那一拍，来源句
+    就此省掉。收紧要成立，就得让这个形态不再被任何一句覆盖。
+    """
+
+    contract = _contract(_topic_messages(SOPHIA_MOVES))
+
+    # 1) 旧敞口句已经不存在；
+    assert _OLD_PERMISSIVE_CLAUSE not in contract
+    # 2) 新放行面把「观察／判断」这一整类排除在那一拍之外；
+    beat_clause = contract.split("但这一拍只算")[1].split("同一条消息里必须有")[0]
+    assert "观察" not in beat_clause
+    assert "判断" not in beat_clause
+    # 3) 并且点名了零形式指代——只列「它／这个／那个」挡不住这句。
+    assert "省掉主语的描述" in contract
+    assert "‘还没干透’" in contract
+
+
+def test_the_length_cap_alone_would_not_have_stopped_that_reply() -> None:
+    """长度门槛只是必要条件：那句 7 字，光靠「十个字以内」挡不住。"""
+
+    first_beat = _SOPHIA_LEAKED_REPLY.split("，")[0]
+
+    assert first_beat == "还没完全干透"
+    assert len(first_beat) <= 10
+    contract = _contract(_topic_messages(SOPHIA_MOVES))
+    assert "十个字以内" in contract
+    # 真正起作用的是禁用面，不是长度。
+    assert "不含新对象、不含指代" in contract
+
+
+@pytest.mark.parametrize("moves", [SOPHIA_MOVES, ABIGAIL_MOVES, ELLIOTT_MOVES])
+def test_reaction_permission_is_tightened_symmetrically(moves: list[str]) -> None:
+    """对称保护：拿到许可句的正是索菲亚这类角色，许可不能比公共契约松。"""
+
+    contract = _contract(_topic_messages(moves))
+
+    assert "第一反应是一声感叹或招呼，不是对某样东西的描述" in contract
+    assert "省掉主语的描述" in contract
+    assert "来源句也不能省" in contract
 
 
 def test_topic_contract_keeps_the_source_sentence_requirement() -> None:

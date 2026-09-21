@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     项目一键验证：SMAPI 测试、Bridge 测试与语法编译、工作树空白检查。
 
@@ -71,12 +71,18 @@ if (-not $SkipSmapi) {
     }
     else {
         $output = & dotnet test $project -p:GamePath="$GamePath" 2>&1 | Out-String
+        # ⚠ 这里必须容错：dotnet test 在**编译失败**时不会打印「已通过!／失败!」，
+        # $line 会是 $null，而 $null.Trim() 会抛异常 —— 异常一旦抛出，
+        # Add-Result 就不执行，SMAPI 结果**不进汇总**，脚本仍然打印「全部通过」并 exit 0。
+        # 那会**掩盖真实的 SMAPI 失败**（2026-09-21 实际踩到）。
         $line = ($output -split "`n" | Where-Object { $_ -match '已通过!|失败!' } | Select-Object -Last 1)
-        if ($LASTEXITCODE -eq 0) {
-            Add-Result 'SMAPI 测试' 'PASS' ($line.Trim() -replace '\s+', ' ')
+        $detail = if ($line) { $line.Trim() -replace '\s+', ' ' } else { '（未解析到 dotnet test 结果行，可能是编译失败）' }
+        # 保守口径：exit 0 但解析不到结果行也算异常，按 FAIL 报出来，不再静默通过。
+        if ($LASTEXITCODE -eq 0 -and $line) {
+            Add-Result 'SMAPI 测试' 'PASS' $detail
         }
         else {
-            Add-Result 'SMAPI 测试' 'FAIL' ($line.Trim() -replace '\s+', ' ')
+            Add-Result 'SMAPI 测试' 'FAIL' $detail
         }
     }
 }
