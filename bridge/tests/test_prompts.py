@@ -8484,7 +8484,10 @@ def test_natural_light_turn_keeps_distinct_role_texture_for_ras_and_sophia() -> 
     assert sophia["npcId"] == "Sophia"
     assert ras["voiceFingerprint"] != sophia["voiceFingerprint"]
     assert "不把普通话题说成预言" in ras["voiceFingerprint"]
-    assert "葡萄、酿造或画面细节" in sophia["voiceFingerprint"]
+    # 2026-09-21：索菲亚的指纹原先写死「葡萄、酿造或画面细节」，是 prompt 里第 7 处
+    # 指向同一语义簇（酿造 + 绘画）的点名。落点池改由 roleGuidance 跨簇给出后，
+    # 指纹只说「具体细节」，不再指定对象。
+    assert "手里正在做的事冒出一个具体细节" in sophia["voiceFingerprint"]
     assert any("先直接回应玩家" in item for item in ras["responseRules"])
     assert any("先轻声回应眼前的话题" in item for item in sophia["responseRules"])
     assert any("魔法当作事实" in item for item in ras["avoid"])

@@ -11,7 +11,12 @@
     泛日常没有可提取的具体对象……**具体话题仍然必须命中**，只有泛日常示例允许走这个
     保守兜底。
 
-所以下面既测“拒绝”（未审核、空文本、具体话题不命中），也测“兜底”（泛日常 + 无重复主题）。
+2026-09-21 起，兜底的最后一步从「没有 plain 样例就返回空」改成「降级到该角色
+任一样例」——`return []` 让 39/44 角色在泛寒暄下一条示范都拿不到（实测注入数 0）。
+具体话题仍必须命中：非泛日常输入走不到这条分支。
+
+所以下面既测“拒绝”（未审核、空文本、具体话题不命中），也测“兜底”（泛日常 +
+无重复主题）。
 """
 
 from __future__ import annotations
@@ -108,11 +113,23 @@ def test_a_matching_specific_topic_is_selected() -> None:
 # --- 泛日常的保守兜底 -------------------------------------------------------
 
 
-def test_generic_small_talk_without_plain_candidates_yields_nothing() -> None:
-    # 泛日常输入 + 样例的主题都不在“日常主题”白名单里 → 不兜底。
+def test_generic_small_talk_without_plain_candidates_falls_back_to_any_example() -> None:
+    """2026-09-21 改口径：没有 plain 样例时**降级到任一样例**，不再返回空。
+
+    原先这里断言「不兜底」（`return []`）。实测后果是 39/44 角色的行为样例
+    注入数为 **0**：它们的样例 topic 全是主题型（farm_work / clinic_and_coffee /
+    music_practice …），没有一条落在 `_PLAIN_BEHAVIOR_TOPICS` 里，而「你好」
+    「今天过得怎么样」这类泛寒暄恰好是玩家最常用的开场——也就是这批角色在
+    最常见场景下拿不到任何说话示范。降级后至少保留该角色第一条样例。
+    """
+
     example = _example(topic="farm_work", topic_keywords=("鸡舍",))
 
-    assert _select_behavior_examples([example], "最近怎么样") == []
+    got = _select_behavior_examples([example], "最近怎么样")
+
+    assert len(got) == 1
+    assert got[0]["topic"] == "farm_work"
+    assert got[0]["playerInput"] == example["playerInput"]
 
 
 def test_generic_small_talk_with_a_plain_candidate_is_selected() -> None:

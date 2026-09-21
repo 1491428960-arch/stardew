@@ -9,7 +9,14 @@
 「可以从葡萄品种、**发酵过程或绘画过程**选一个具体细节」——
 模型被要求讲「过程」，而「过程」在模型先验里就是工序名（罩光、罩染、打底）。
 
-本文件钉住改写后的口径：**要求仍然具体，但落在一个东西上，不落在一道工序上。**
+本文件钉住改写后的口径：**要求仍然具体，但落在一道工序上的写法不许回来。**
+
+2026-09-21 二轮（同一天，用户实测「总是谈画」）：索菲亚那条又从「对象导向」推进到
+「**跨语义簇的落点池 + 同一类最多连续两次**」——一轮那次的四个落点（葡萄／酒窖／
+画笔／画里的具体东西）仍全在酿造 + 绘画这一簇里，模型照样连着几轮不换。
+本文件的"不讲过程"闸保持不变，跨簇与轮换上限由
+`test_stage_policy.py::test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics`
+钉住。
 
 刻意**不**禁用「过程」两个字本身：`female-bachelors.json` 里 Shane 的
 avoid「把恢复过程说成已经彻底解决」是在**禁止**把过程说死，方向相反。
@@ -36,8 +43,13 @@ def test_sophia_guidance_lands_on_objects_not_on_a_process() -> None:
 
     assert "绘画过程" not in text
     assert "发酵过程" not in text
-    assert "画里的具体东西" in text
     assert _PROCESS_DIRECTIVE.search(text) is None
+    # 2026-09-21 二轮：落点池从「同一个语义簇里的四个词」改成「跨簇 + 轮换上限」。
+    # 一轮那次改的是措辞形状（对象而非工序），没有解决「总是谈画」——四个落点
+    # 仍然全在酿造 + 绘画这一簇里。跨簇与上限由这两条钉住。
+    assert "同一类最多连续两次" in text
+    assert "小镇日常" in text
+    assert "安全感与新开始" in text
 
 
 def test_no_role_guidance_asks_the_model_to_narrate_a_process() -> None:

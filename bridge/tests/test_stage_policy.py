@@ -146,20 +146,24 @@ def test_sophia_conversation_lead_guidance_connects_current_object_to_small_plan
 
 
 def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() -> None:
-    """本条的意图是「酒窖方向与创作方向都要覆盖」，不是钉死某几个词。
+    """本条的意图是「落点池跨语义簇 + 有轮换上限」，不是钉死某几个词。
 
-    2026-09-21：原断言写的是「葡萄品种 / 发酵过程 / 绘画过程」。后两个词是
-    **过程导向**，会把模型推向工序名（用户实测「刚把最后一层罩光放到窗边」）。
-    改成对象导向后，桥接意图由「酒窖」与「画笔／画里的具体东西」承担。
+    2026-09-21 一轮：原断言写的是「葡萄品种 / 发酵过程 / 绘画过程」。后两个词是
+    **过程导向**，会把模型推向工序名（用户实测「刚把最后一层罩光放到窗边」），
+    改成对象导向后桥接意图由「酒窖」与「画笔／画里的具体东西」承担。
+    2026-09-21 二轮：对象导向的四个落点**仍全在同一个语义簇**（酿造 + 绘画）里，
+    「总是谈画」没有解决。改成按 `preferredTopics` 铺开的跨簇落点池 +
+    「同一类最多连续两次」，与 Harvey 那条同源。
     过程导向的回归闸见 `test_role_guidance_object_focus.py`。
     """
 
     guidance = build_stage_policy("Sophia", "dating")["conversationLead"]["roleGuidance"]
 
-    assert "葡萄" in guidance
-    assert "酒窖" in guidance  # 酿造方向
-    assert "画笔" in guidance  # 创作方向
-    assert "画里的具体东西" in guidance
+    assert "酒窖" in guidance  # 酿造方向：仍要接住玩家点名的当前对象
+    assert "绘画和创作" in guidance  # 创作方向
+    assert "小镇日常" in guidance  # 跨簇：preferredTopics 第 3 项
+    assert "安全感与新开始" in guidance  # 跨簇：preferredTopics 第 4 项
+    assert "同一类最多连续两次" in guidance  # 轮换上限，与 variationRule 对齐
     assert "因为是玩家才愿意分享" in guidance
 
 
@@ -237,9 +241,11 @@ def test_each_evaluation_character_has_a_distinct_executable_voice_fingerprint()
     }
 
     assert len(set(fingerprints.values())) == len(CHARACTERS)
+    # 2026-09-21：索菲亚那条原为 ("轻柔接住", "葡萄")。指纹里的「葡萄／酿造／画面」
+    # 是 prompt 中第 7 处指向同一语义簇的点名，已删；指纹本身仍在（见上方断言）。
     expected_fragments = {
         "Wizard": ("短判断", "观察"),
-        "Sophia": ("轻柔接住", "葡萄"),
+        "Sophia": ("轻柔接住", "具体细节"),
         "Shane": ("短答", "自嘲"),
         "Sebastian": ("具体对象", "冷幽默"),
         "Alex": ("短答", "具体细节", "挑战"),

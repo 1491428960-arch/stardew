@@ -2381,6 +2381,15 @@ class ProfileIndexStore:
             return []
         source_mod_list = list(source_mods)
         candidates: list[tuple[int, int, dict[str, Any]]] = []
+        # 泛寒暄（「你好」「今天过得怎么样」）里没有可提取的具体对象，主题型样例
+        # 的得分必然是 0。原先把它们直接丢掉，于是 39/44 角色的行为样例注入数是
+        # **0** —— 而这恰是玩家最常用的开场。这里把它们留作兜底候选：只有本轮
+        # 一条得分样例都没有、且输入确实是泛寒暄时才启用（2026-09-21）。
+        # 兜底不绕过上面任何一道门（来源 Mod / 关系阶段 / 渠道）。
+        generic_input = bool(player_input.strip()) and _is_generic_small_talk_input(
+            player_input
+        )
+        fallback: list[tuple[int, int, dict[str, Any]]] = []
         raw_examples = self._index.get("behaviorExamples", [])
         if not isinstance(raw_examples, list):
             return []
@@ -2402,11 +2411,17 @@ class ProfileIndexStore:
             if not _behavior_dimension_matches(raw_example, "channels", channel):
                 continue
             score = _behavior_topic_score(raw_example, player_input)
-            if player_input.strip() and score == 0:
+            if player_input.strip() and score == 0 and not generic_input:
                 continue
             selected = self._select_fields(raw_example, self._BEHAVIOR_FIELDS)
             selected["npcId"] = canonical_npc_id(selected.get("npcId", canonical_id))
+            if player_input.strip() and score == 0:
+                # 排序键取正数：它们永远排在所有得分样例之后。
+                fallback.append((1, original_index, selected))
+                continue
             candidates.append((-score, original_index, selected))
+        if not candidates and fallback:
+            candidates = fallback
         candidates.sort(key=lambda item: (item[0], item[1]))
         return [item[2] for item in candidates[:capped_limit]]
 

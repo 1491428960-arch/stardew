@@ -217,10 +217,14 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     # 上面那条 ✓ 例**只有来源句和口子、没有反应拍**，等于没示范本契约刚放开的那种
     # 正确形态——模型只能照抄「来源句打头」这一种写法。补一条**同时有反应拍和来源句**
     # 的正例。刻意不把用户实测那句里的「还没干透」写进来：它正是契约明令禁止拿来起句的
-    # 「省掉主语的描述」，放进正例会稀释那条禁令。示例对象用「新画」而不是抽象名词，
-    # 与旁边那条「记录簿——星图」同一写法：示范的是**步骤**，不是内容。
+    # 「省掉主语的描述」，放进正例会稀释那条禁令。
+    #
+    # 2026-09-21 换中性对象：这一条正例是**全角色共用**的，原先示范的对象是「新画／颜料」，
+    # 等于给所有命中「先脱口说第一反应」的角色（索菲亚、Abigail、Elliott…）都示范了画画，
+    # 与偏窄的角色落点池同向叠加。改成一件任何角色都可能做的日常小事（收床单），
+    # 示范的仍然只是**步骤**，不指向任何角色的爱好、职业或关系。
     "✓ 招牌动作是‘先脱口说第一反应’的角色，反应拍和来源句要在同一条消息里一起出现："
-    "‘哇——我刚把新画晾到窗边，颜料还没干。你要不要看一眼？’"
+    "‘哇——我刚把晒好的床单收进来，上面还带着太阳的温度。你要不要帮我叠一半？’"
     "三条示例只示范反应拍、来源句和口子这三个步骤，句式和对象随角色与场景变化，里面的事实不要当作当前剧情。"
 )
 # 角色卡里「先脱口说第一反应」这一类句首动作的识别词。命中时这个角色要**额外**
@@ -2256,7 +2260,18 @@ def _select_behavior_examples(
             in _PLAIN_BEHAVIOR_TOPICS
         ]
         if not plain_candidates:
-            return []
+            # 2026-09-21：原先在这里 `return []`，后果是 39/44 角色的行为样例
+            # **一条都不注入**——它们的样例 topic 全是主题型（farm_work /
+            # clinic_and_coffee / music_practice …），没有一条落在
+            # `_PLAIN_BEHAVIOR_TOPICS` 里；而「你好」「今天过得怎么样」这类
+            # 泛寒暄恰好是玩家最常用的开场，也就是这批角色在最常见场景下
+            # 拿不到任何说话示范（实测 chat 路径注入数 0，不是 1）。
+            # 降级：保留该角色任一条（已过 sourceType 白名单、已过滤空文本的）
+            # 样例，让它至少在泛寒暄时有一条“怎么说”的参考；排序仍按原索引，
+            # 因此拿到的就是该角色第一条样例。样例卡自身带 instruction
+            # （“不是当前会话历史，不要把其中事实当作当前剧情”），
+            # 主题不匹配的风险由那条 instruction 承担。
+            plain_candidates = candidates
         candidates = [
             (-1, index, example)
             for _, index, example in plain_candidates
@@ -2596,10 +2611,16 @@ def _compact_stage_profile(value: object) -> dict[str, Any]:
         text = _text(value.get(key), limit=100)
         if text:
             result[key] = text
+    # 2026-09-21 修缩进缺陷：`if items:` 原先落在 `for` 循环**外面**，于是
+    # `items` 只保留最后一次循环（`boundaries`）的值、`key` 也泄漏成 `"boundaries"`，
+    # `topicPool` **从来没有写进 `result`**。影响面是全部角色的
+    # `stageProfiles.<stage>.topicPool`（44 角色 × 7 阶段 × 3 条 = 924 条），
+    # 这批数据从未进入 prompt。修复后当前阶段（`profile_stage`）的 3 条随
+    # `persona_core` 一起发出，`limit=3` 的语义正好是「只发当前阶段那 3 条」。
     for key in ("topicPool", "boundaries"):
         items = _compact_text_list(value.get(key), limit=3, item_limit=80)
-    if items:
-        result[key] = items
+        if items:
+            result[key] = items
     stage = _text(value.get("stage"), limit=32).casefold()
     if stage in {"dating", "married", "parent"}:
         raw_policy = value.get("endearmentPolicy")
@@ -5434,13 +5455,22 @@ class PromptBuilder:
         if not topic_request and _is_generic_small_talk_input(player_input):
             # 泛日常只需要一个“怎么说”的示范；带有研究、训练、葡萄园等
             # 具体主题的示范会把上下文里的主题误当成玩家当前在问的事。
-            selected_behavior_examples = [
+            plain_only = [
                 example
                 for example in selected_behavior_examples
                 if not _text(example.get("topic"), limit=80)
                 or _text(example.get("topic"), limit=80).casefold()
                 in _PLAIN_BEHAVIOR_TOPICS
-            ][:1]
+            ]
+            if plain_only:
+                selected_behavior_examples = plain_only[:1]
+            else:
+                # 2026-09-21：39/44 角色没有任何 plain 主题样例，上面那道过滤会把
+                # `_select_behavior_examples` 里的降级结果**再清空一次**——只改选择
+                # 函数时实测注入数仍然是 0。这里保留降级结果的第一条：泛寒暄下
+                # 「有一条该角色的说话参考」比「一条都不给」更接近人设，
+                # 而样例卡的 instruction 已经把“主题不是当前话题”说清楚了。
+                selected_behavior_examples = selected_behavior_examples[:1]
         identity = safe_context["npcIdentity"]
         overlay = {
             "modSources": safe_context["modSources"],

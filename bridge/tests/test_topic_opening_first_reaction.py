@@ -283,12 +283,20 @@ def test_contract_demonstrates_a_reaction_beat_plus_source_sentence() -> None:
 
     上一版两条 ✓ 例里**没有一条带反应拍**，等于只示范了「来源句打头」这一种写法，
     模型照抄的正是那一种。
+
+    2026-09-21 换中性对象：这条正例是**全角色共用**的，原先示范的对象是「新画／
+    颜料」——等于给所有命中「先脱口说第一反应」的角色都示范了画画。改成一件事先
+    任何角色都可能做的日常小事（收床单），示范的仍然只是步骤。
     """
 
     contract = _contract(_topic_messages(SOPHIA_MOVES))
 
     assert "反应拍和来源句要在同一条消息里一起出现" in contract
-    assert "哇——我刚把新画晾到窗边，颜料还没干。你要不要看一眼？" in contract
+    assert (
+        "哇——我刚把晒好的床单收进来，上面还带着太阳的温度。你要不要帮我叠一半？"
+        in contract
+    )
+    assert "新画" not in contract
 
 
 def test_the_new_example_keeps_the_banned_opening_shape_out() -> None:
@@ -302,7 +310,7 @@ def test_the_new_example_keeps_the_banned_opening_shape_out() -> None:
     assert "还没干透" in contract
     example = contract.split("✓ 招牌动作是", 1)[1].split("三条示例", 1)[0]
     assert "还没干透" not in example
-    assert "颜料还没干" in example
+    assert "还带着太阳的温度" in example
 
 
 # --- 识别函数本身 ------------------------------------------------------------
