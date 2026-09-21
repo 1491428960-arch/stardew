@@ -296,8 +296,15 @@ public static class GroupSessionRules
     }
 
     /// <summary>
-    /// F8 面板要铺的那条时间线：私聊记录 + 这位 NPC 在场的每一场群聊，
+    /// 场次 → F8 面板显示条目的转换：私聊记录 + 这位 NPC 在场的每一场群聊，
     /// 按 <see cref="ChatDisplayMessage.Sequence"/> 合在一起。
+    ///
+    /// ⚠ **2026-09-21 起没有生产调用点**：用户口径改成「F8 只显示私聊和私聊相关的记录，
+    /// 群聊记录各归各位放到 F9 的邀约卡里」（见 <c>ConversationService.RecentMessages</c>
+    /// 与 <c>GroupDialogueMenu</c> 的只读模式）。这一份连同分节线绘制
+    /// （<see cref="ChatHistoryRules.SessionRole"/>、<c>ChatBubbleDrawing.DrawDivider</c>）
+    /// 因此暂时只被测试使用，留着是为了「哪天要再并回 F8」时不必重写一遍。
+    /// 新代码**不要**把它接回 F8 —— 那会与当前口径冲突。
     ///
     /// 排序规则（三种情况都要成立）：
     /// 1. 同一场里的发言前后顺序按记录里的顺序（分节线在该场第一条之前）；

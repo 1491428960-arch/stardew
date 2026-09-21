@@ -26,6 +26,15 @@ public sealed class GroupDialogueMenu : IClickableMenu
     private bool closed;
     // 整场只自动开场一次；由 GroupDialogueSessionRules.ShouldOpenWithNpc 判定时机。
     private bool openingRequested;
+    /// <summary>
+    /// 只读回看模式（2026-09-21）：这一场已经到期，界面上只准翻看、不准发言。
+    /// 输入框、发送/重试、自动开场、键盘租约四处都看它（判据见 <see cref="GroupReadOnlyRules"/>）。
+    /// </summary>
+    private readonly bool readOnly;
+    /// <summary>只读回看时的滚动起点；与 <see cref="followLatest"/> 一起决定这一屏画哪一段。</summary>
+    private int scrollStartIndex;
+    /// <summary>是否跟随最新一条。滚轮往上翻会关掉它，翻回底部自动打开。</summary>
+    private bool followLatest = true;
 
     public GroupDialogueMenu(
         BridgeClient? bridgeClient,
@@ -33,14 +42,16 @@ public sealed class GroupDialogueMenu : IClickableMenu
         GroupDialogueInvitationRecord invitation,
         IReadOnlyList<GroupDialogueParticipant> participants,
         Action? onClosed = null,
-        IReadOnlyList<GroupDialogueHistoryEntry>? initialHistory = null)
+        IReadOnlyList<GroupDialogueHistoryEntry>? initialHistory = null,
+        bool readOnly = false)
         : base(0, 0, 1, 1)
     {
         this.bridgeClient = bridgeClient;
         this.storyStateStore = storyStateStore ?? throw new ArgumentNullException(nameof(storyStateStore));
         this.participants = participants ?? throw new ArgumentNullException(nameof(participants));
         this.onClosed = onClosed;
-        // 续读（2026-09-21）：存档里那一场的发言序列由调用方从回看档案取出交进来，
+        this.readOnly = readOnly;
+        // 续读 / 回看（2026-09-21）：存档里那一场的发言序列由调用方从回看档案取出交进来，
         // 于是「关掉菜单再打开」接的是同一场，而不是一片空白。
         var restored = (initialHistory ?? Array.Empty<GroupDialogueHistoryEntry>())
             .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.Content))
@@ -62,12 +73,23 @@ public sealed class GroupDialogueMenu : IClickableMenu
         // 与 F8 同源：输入框的绘制矩形只有 MenuSkinRules.InputBoxVisual 一处定义，
         // 命中判定继续用 layout.InputBox。
         UpdateInputBoxBounds();
-        inputBox.OnEnterPressed += OnInputEnterPressed;
         keyboardSubscriberLease = new KeyboardSubscriberLease<IKeyboardSubscriber>(
             () => Game1.keyboardDispatcher.Subscriber,
             subscriber => Game1.keyboardDispatcher.Subscriber = subscriber);
-        keyboardSubscriberLease.Acquire(inputBox);
-        inputBox.SelectMe();
+        if (readOnly)
+        {
+            // 只读回看：**不获取键盘租约、也不把输入框设成焦点**。输入框在这个模式下
+            // 根本不画（那个位置画的是一句说明），若仍抢走键盘，玩家打出来的字会进到一个
+            // 看不见的框里，看起来像界面卡住。发送与回车两条路径另由
+            // <see cref="SendCurrentAsync"/> 的闸门挡住，这里只是第一道。
+            hint = GroupReadOnlyRules.ReadOnlyHintText(restored.Length);
+        }
+        else
+        {
+            inputBox.OnEnterPressed += OnInputEnterPressed;
+            keyboardSubscriberLease.Acquire(inputBox);
+            inputBox.SelectMe();
+        }
     }
 
     public GroupDialogueSession Session => session;
@@ -91,6 +113,14 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
     /// <summary>诊断用：最近一次群聊响应的完整 JSON（含 warnings / providerCalls / usage）。</summary>
     internal string? LastResponseJson { get; private set; }
+
+    /// <summary>诊断用：当前是不是只读回看模式（视觉测试据此核对按钮与输入区）。</summary>
+    internal bool IsReadOnly => readOnly;
+
+    /// <summary>诊断用：只读回看时这一屏从第几条开始画（跟随最新时就是最后一屏的起点）。</summary>
+    internal int VisualTestScrollStartIndex => followLatest
+        ? GroupReadOnlyRules.MaxScrollStart(visibleMessages.Count, GroupDialogueLayoutRules.MaxVisibleMessages)
+        : scrollStartIndex;
 
     public override void receiveLeftClick(int x, int y, bool playSound = true)
     {
@@ -137,6 +167,40 @@ public sealed class GroupDialogueMenu : IClickableMenu
         base.receiveKeyPress(key);
     }
 
+    /// <summary>
+    /// 只读回看里用滚轮翻整场记录。可发言时不接管滚轮（沿用改前的行为），
+    /// 因为这个面板在那时始终跟着最新一条走。
+    /// </summary>
+    public override void receiveScrollWheelAction(int direction)
+    {
+        if (closed)
+        {
+            return;
+        }
+
+        if (!readOnly)
+        {
+            base.receiveScrollWheelAction(direction);
+            return;
+        }
+
+        var maxStart = GroupReadOnlyRules.MaxScrollStart(
+            visibleMessages.Count,
+            GroupDialogueLayoutRules.MaxVisibleMessages);
+        if (direction == 0 || maxStart <= 0)
+        {
+            return;
+        }
+
+        // 与原版一致：direction > 0 是往上滚 = 看更早的发言。
+        scrollStartIndex = ChatScrollRules.MoveStartIndex(
+            followLatest ? maxStart : scrollStartIndex,
+            direction > 0 ? -1 : 1,
+            maxStart);
+        followLatest = scrollStartIndex >= maxStart;
+        hint = ScrollHint();
+    }
+
     public override void update(GameTime time)
     {
         if (closed)
@@ -146,7 +210,8 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
         // 刚开一场群聊时由 NPC 先起头：玩家接受邀约后还没说话，
         // 若等玩家先开口，邀约就起不到引导作用（2026-09-20 用户反馈）。
-        if (GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingRequested))
+        // 只读回看**不自动开场**：那一场已经结束，这里一句都不该发出去。
+        if (!readOnly && GroupDialogueSessionRules.ShouldOpenWithNpc(session, openingRequested))
         {
             openingRequested = true;
             _ = SendCurrentAsync(opening: true);
@@ -218,10 +283,16 @@ public sealed class GroupDialogueMenu : IClickableMenu
         var contentWidth = ChatBubbleDrawing.ContentWidth(bubbleRight - bubbleLeft);
         var measure = (string value) => Game1.smallFont.MeasureString(value).X;
         var y = messageArea.Y + 12;
+        // 这一屏画哪一段：可发言时恒等于改前的 TakeLast(MaxVisibleMessages)（始终跟最新），
+        // 只读回看时才由滚轮决定起点。
+        var window = GroupReadOnlyRules.VisibleWindow(
+            visibleMessages.Count,
+            GroupDialogueLayoutRules.MaxVisibleMessages,
+            followLatest ? int.MaxValue : scrollStartIndex);
         // 按发言人计次：边框构图随 occurrence 在三套布局间轮换（与回放页一致）。
         // 此前一律传 0，于是同一角色多次发言的构图固定不变。
         var seenBySpeaker = new Dictionary<string, int>(System.StringComparer.OrdinalIgnoreCase);
-        foreach (var message in visibleMessages.TakeLast(GroupDialogueLayoutRules.MaxVisibleMessages))
+        foreach (var message in visibleMessages.Skip(window.Start).Take(window.Count))
         {
             var speakerKey = message.SpeakerId ?? string.Empty;
             var occurrence = seenBySpeaker.TryGetValue(speakerKey, out var seen) ? seen : 0;
@@ -265,10 +336,35 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
         // 输入区凹槽 + 按钮两档 tint（发送=主，重试/关闭=次）。
         MenuSkinDrawing.DrawInset(b, layout.InputBox);
-        MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", !sending, MenuSkinRules.PrimaryButtonTint);
-        MenuButtonDrawing.DrawButton(b, layout.RetryButton, "重试", !sending && session.CanRetry, MenuSkinRules.SecondaryButtonTint);
+        if (readOnly)
+        {
+            // 只读回看的输入区：**不画输入框**，同一个矩形里换成一句说明。
+            // 三个选择里取这一个的理由：
+            // · 隐藏输入框（整条空掉）会让面板像缺了一块，玩家看不出这里本来是什么；
+            // · 把输入框画成灰的，读起来像「暂时不能打字，等会儿就行」，而这一场是**永久**
+            //   结束了，语义是错的；
+            // · 换成一行说明则位置不变、布局零改动，一句话讲清「为什么不能说话」。
+            // 发送/重试留在原位但置灰（不是凭空消失）：灰色表达「原本能做的事现在不能做」，
+            // 位置与命中区一个都没动，点击由 SendCurrentAsync 的闸门挡住。
+            var placeholderVisual = MenuSkinRules.InputBoxVisual(layout.InputBox);
+            b.DrawString(
+                Game1.smallFont,
+                GroupReadOnlyRules.InputPlaceholderText(session.Invitation.ExpiresTotalDays),
+                new Vector2(
+                    placeholderVisual.X + 12,
+                    placeholderVisual.Center.Y - (Game1.smallFont.LineSpacing / 2f)),
+                MenuSkinRules.InkSoft);
+            MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", false, MenuSkinRules.PrimaryButtonTint);
+            MenuButtonDrawing.DrawButton(b, layout.RetryButton, "重试", false, MenuSkinRules.SecondaryButtonTint);
+        }
+        else
+        {
+            MenuButtonDrawing.DrawButton(b, layout.SendButton, "发送", !sending, MenuSkinRules.PrimaryButtonTint);
+            MenuButtonDrawing.DrawButton(b, layout.RetryButton, "重试", !sending && session.CanRetry, MenuSkinRules.SecondaryButtonTint);
+            inputBox.Draw(b, drawShadow: true);
+        }
+
         MenuButtonDrawing.DrawButton(b, layout.CloseButton, "关闭", true, MenuSkinRules.SecondaryButtonTint);
-        inputBox.Draw(b, drawShadow: true);
         if (hintNeedsBottomRow)
         {
             b.DrawString(
@@ -300,6 +396,14 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
     private Task SendCurrentAsync(bool retry = false, bool opening = false)
     {
+        // 只读回看的闸门：发送按钮、回车、重试三条路径最后都汇到这里，判据只有
+        // GroupReadOnlyRules.CanSpeak 一处（分散写三遍必然漏掉一处，那「只读」就是空话）。
+        if (!GroupReadOnlyRules.CanSpeak(readOnly))
+        {
+            hint = GroupReadOnlyRules.InputPlaceholderText(session.Invitation.ExpiresTotalDays);
+            return Task.CompletedTask;
+        }
+
         if (sending || closed || bridgeClient is null)
         {
             if (bridgeClient is null)
@@ -497,6 +601,13 @@ public sealed class GroupDialogueMenu : IClickableMenu
         string? playerMessage)
     {
         ArgumentNullException.ThrowIfNull(response);
+        if (!GroupReadOnlyRules.CanSpeak(readOnly))
+        {
+            // 只读回看里不该有「刚刚那一轮的回复」被排进来：视觉测试若在只读菜单上排队，
+            // 说明场景本身拼错了，直接不给进（而不是让屏幕上的记录被改写）。
+            return;
+        }
+
         pendingPlayerMessage = string.IsNullOrWhiteSpace(playerMessage)
             ? null
             : playerMessage.Trim();
@@ -506,14 +617,32 @@ public sealed class GroupDialogueMenu : IClickableMenu
 
     /// <summary>
     /// 视觉测试专用入口：像玩家一样填好输入框并点击“发送”。
-    /// 它走的是 receiveLeftClick 的发送按钮分支，因此与手动点击完全同一条代码路径。
+    /// 它走的是 receiveLeftClick 的发送按钮分支，因此与手动点击完全同一条代码路径
+    /// （只读回看时会被同一个闸门挡住，不会真的发出去）。
     /// </summary>
     internal void PressSendForVisualTest(string message)
     {
         inputBox.Text = message ?? string.Empty;
-        inputBox.SelectMe();
+        if (!readOnly)
+        {
+            inputBox.SelectMe();
+        }
+
         layout = CalculateLayout();
         receiveLeftClick(layout.SendButton.Center.X, layout.SendButton.Center.Y);
+    }
+
+    /// <summary>只读回看的滚动位置提示（画在标题旁那一行）。</summary>
+    private string ScrollHint()
+    {
+        var window = GroupReadOnlyRules.VisibleWindow(
+            visibleMessages.Count,
+            GroupDialogueLayoutRules.MaxVisibleMessages,
+            scrollStartIndex);
+        return GroupReadOnlyRules.ScrollHintText(
+            window.Start,
+            window.Count,
+            visibleMessages.Count);
     }
 
     private void OnInputEnterPressed(TextBox sender)

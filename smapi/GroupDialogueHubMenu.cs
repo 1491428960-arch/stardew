@@ -53,30 +53,40 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
         this.onClosed = onClosed;
 
         RefreshLayout();
+        // 保留哪些卡、按什么顺序排，判据全在 GroupInvitationRules 里（纯函数，可单测）：
+        // 已聊过（有存档场次）的卡一律留着 —— 到期之后它是只读回看的入口；
+        // 没聊过的卡沿用旧规则，到期即消失。
         visibleInvitations = storyStateStore.State.GroupDialogueInvitations
-            .Where(invitation =>
-                invitation.Status is not GroupInvitationStatus.Expired and
-                    not GroupInvitationStatus.Dismissed &&
-                // 已聊过（Completed）的卡留在列表里**当且仅当这一场有存档记录**：
-                // 没有记录就没有可回看/可续的东西，列表也不该被历史卡片塞满。
-                // 有了它，玩家聊完一场可以先关掉、之后再进来接着聊或回看
-                // （2026-09-21 群聊场次；此前 Completed 一律隐藏，于是「重开 F9」根本没有入口）。
-                (invitation.Status != GroupInvitationStatus.Completed ||
-                    HasArchivedSession(invitation)) &&
-                !GroupInvitationRules.IsExpired(
-                    CurrentTotalDays(),
-                    invitation.CreatedTotalDays,
-                    invitation.ExpiresTotalDays))
-            .OrderByDescending(invitation => invitation.CreatedTotalDays)
+            .Where(invitation => GroupInvitationRules.ShouldShowInHub(
+                invitation,
+                CurrentTotalDays(),
+                HasArchivedSession(invitation)))
+            // 先按「聊过 / 没聊过」分档，档内新的在前：这样已聊过的卡不会把新邀约挤出这一屏。
+            .OrderBy(invitation => GroupInvitationRules.HubSortTier(HasArchivedSession(invitation)))
+            .ThenByDescending(invitation => invitation.CreatedTotalDays)
             .Take(GroupInvitationRules.MaxVisibleInvitations)
             .ToList();
     }
 
-    /// <summary>这一场在回看档案里有没有记录（决定它还能不能被打开）。</summary>
+    /// <summary>这一场在回看档案里有没有记录（决定它还能不能被打开、打开是续聊还是回看）。</summary>
     private bool HasArchivedSession(GroupDialogueInvitationRecord invitation)
     {
         return bridgeClient?.GroupSession(invitation.InvitationId) is not null;
     }
+
+    /// <summary>这张卡点进去是只读回看还是能接着聊（到期日之后就不能再发言了）。</summary>
+    private static bool IsReadOnly(GroupDialogueInvitationRecord invitation)
+    {
+        return GroupInvitationRules.IsReadOnly(CurrentTotalDays(), invitation);
+    }
+
+    /// <summary>视觉测试/诊断用：当前列表里每张卡的主按钮文案（「接受」「继续」「回看」）。</summary>
+    internal IReadOnlyList<string> VisualTestPrimaryActionLabels =>
+        visibleInvitations
+            .Select(invitation => GroupInvitationRules.PrimaryActionLabel(
+                HasArchivedSession(invitation),
+                IsReadOnly(invitation)))
+            .ToArray();
 
     public override void receiveLeftClick(int x, int y, bool playSound = true)
     {
@@ -156,6 +166,8 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             {
                 var row = new Rectangle(panel.X + 32, y, panel.Width - 64, 92);
                 invitationRows.Add(row);
+                var hasSession = HasArchivedSession(invitation);
+                var readOnly = IsReadOnly(invitation);
                 drawTextureBox(
                     b,
                     row.X,
@@ -171,16 +183,17 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                 // 三个按钮的命中区一个都没动。
                 b.DrawString(
                     Game1.smallFont,
-                    $"主题：{invitation.Topic} · {FormatStatus(invitation.Status)} · 到期第 {invitation.ExpiresTotalDays} 天",
+                    $"主题：{invitation.Topic} · {FormatStatus(invitation.Status)} · {FormatDeadline(invitation, readOnly)}",
                     new Vector2(row.X + 18, row.Y + MenuSkinRules.HubCardSecondRowOffset),
                     MenuSkinRules.InkSoft);
                 // 按钮矩形与点击判定同源：GroupInvitationActionLayoutRules。
                 // 两档 tint：接受=主按钮，稍后/忽略=次按钮。
-                // 已聊过的那张卡写「继续」：它接的是同一场（历史从存档回来），不是重新开一场。
+                // 文案三档（接受／继续／回看）由 GroupInvitationRules 给出：
+                // 已聊过的那张卡接的是同一场（历史从存档回来）；到期之后同一张卡只能回看。
                 MenuButtonDrawing.DrawButton(
                     b,
                     GroupInvitationActionLayoutRules.AcceptButton(row),
-                    HasArchivedSession(invitation) ? "继续" : "接受",
+                    GroupInvitationRules.PrimaryActionLabel(hasSession, readOnly),
                     true,
                     MenuSkinRules.PrimaryButtonTint);
                 MenuButtonDrawing.DrawButton(b, GroupInvitationActionLayoutRules.DeferButton(row), "稍后", true, MenuSkinRules.SecondaryButtonTint);
@@ -209,7 +222,12 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             return;
         }
 
-        if (!storyStateStore.TrySetGroupInvitationStatus(invitation.InvitationId, GroupInvitationStatus.Accepted))
+        var readOnly = IsReadOnly(invitation);
+        // 只读的卡**不改状态**：那一场已经结束，把 Completed 改回 Accepted 会让日切
+        // 把它当成「进行中」并过期掉，玩家下次进来这个记录入口就没了
+        // （GroupDialogueCoordinator.ExpireInvitations 会动 Accepted，不动 Completed）。
+        if (!readOnly &&
+            !storyStateStore.TrySetGroupInvitationStatus(invitation.InvitationId, GroupInvitationStatus.Accepted))
         {
             hint = "这张邀约卡已经失效，请重新打开多人对话中心。";
             return;
@@ -220,16 +238,17 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
                 npcId,
                 invitation.ParticipantDisplayNames.ElementAtOrDefault(index) ?? npcId))
             .ToArray();
-        // 续读：这一场在回看档案里的发言序列交给菜单，于是重开同一张卡接的是同一场
+        // 续读 / 回看：这一场在回看档案里的发言序列交给菜单，于是重开同一张卡接的是同一场
         // （PublicHistory 与面板气泡都从这里回来），而不是一片空白。
         var restored = bridgeClient?.GroupSession(invitation.InvitationId)?.Lines;
         Game1.activeClickableMenu = new GroupDialogueMenu(
             bridgeClient,
             storyStateStore,
-            invitation with { Status = GroupInvitationStatus.Accepted },
+            readOnly ? invitation : invitation with { Status = GroupInvitationStatus.Accepted },
             participants,
             Close,
-            restored);
+            restored,
+            readOnly: readOnly);
         closed = true;
     }
 
@@ -273,6 +292,15 @@ public sealed class GroupDialogueHubMenu : IClickableMenu
             GroupInvitationStatus.Completed => "已聊过",
             _ => status.ToString(),
         };
+    }
+
+    /// <summary>
+    /// 状态行里那截日期。到期之后写「已到期，只能回看」而不是一个日子：
+    /// 玩家看到的应该是**为什么按钮变成「回看」**，而不是自己去做减法。
+    /// </summary>
+    private static string FormatDeadline(GroupDialogueInvitationRecord invitation, bool readOnly)
+    {
+        return readOnly ? "已到期，只能回看" : $"到期第 {invitation.ExpiresTotalDays} 天";
     }
 
     private static int CurrentTotalDays()

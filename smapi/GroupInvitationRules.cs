@@ -111,6 +111,74 @@ public static class GroupInvitationRules
     }
 
     /// <summary>
+    /// 这张卡在多人对话中心的列表里还看不看得见。
+    ///
+    /// 2026-09-21 用户口径：邀约「聊完不删」，到期之后「不能继续聊，但可以点进去看记录」。
+    /// 于是可见性不再只看时间：
+    /// 1. **有存档记录**（<paramref name="hasArchivedSession"/>，即那一场还在档案里）一律留着 ——
+    ///    它是那一场唯一的入口，状态或日期过期了也留，点进去是只读回看；
+    /// 2. 没有记录的卡沿用旧规则（状态已过期、或到达到期日 → 消失），否则列表会被一堆
+    ///    从没聊过、也没有任何东西可看的旧卡塞满；
+    /// 3. 玩家自己按过「忽略」（<see cref="GroupInvitationStatus.Dismissed"/>）的仍然立即消失 ——
+    ///    那是一个明确的「我不想再看到它」，不该被「记录还在」覆盖掉。
+    /// </summary>
+    public static bool ShouldShowInHub(
+        GroupDialogueInvitationRecord invitation,
+        int currentTotalDays,
+        bool hasArchivedSession)
+    {
+        ArgumentNullException.ThrowIfNull(invitation);
+        if (invitation.Status == GroupInvitationStatus.Dismissed)
+        {
+            return false;
+        }
+
+        if (hasArchivedSession)
+        {
+            return true;
+        }
+
+        return invitation.Status != GroupInvitationStatus.Expired
+            && !IsExpired(currentTotalDays, invitation.CreatedTotalDays, invitation.ExpiresTotalDays);
+    }
+
+    /// <summary>
+    /// 这张卡点进去是**只读回看**、还是能接着聊。到期日一到就不能再往这一场里加新发言
+    /// （那个话题已经过期），但记录本身不设期限。
+    ///
+    /// 判据用**时间**而不是状态：<c>Completed</c> 永远不会被日切改成 <c>Expired</c>
+    /// （见 <c>GroupDialogueCoordinator.ExpireInvitations</c> 只动未决状态），
+    /// 所以「已聊过」的卡是不是过期了只能算出来。
+    /// </summary>
+    public static bool IsReadOnly(int currentTotalDays, GroupDialogueInvitationRecord invitation)
+    {
+        ArgumentNullException.ThrowIfNull(invitation);
+        return IsExpired(currentTotalDays, invitation.CreatedTotalDays, invitation.ExpiresTotalDays);
+    }
+
+    /// <summary>
+    /// 卡片主按钮的文案：没聊过是「接受」，聊过还能接着聊是「继续」，到期之后是「回看」。
+    /// 三档必须在**按钮上**就分得出来 —— 否则玩家点下去才发现不能发言，会以为界面坏了。
+    /// </summary>
+    public static string PrimaryActionLabel(bool hasArchivedSession, bool readOnly)
+    {
+        if (!hasArchivedSession)
+        {
+            return "接受";
+        }
+
+        return readOnly ? GroupReadOnlyRules.ActionLabel : "继续";
+    }
+
+    /// <summary>
+    /// 列表排序的档位：**没聊过的排在前面**。一屏只放得下
+    /// <see cref="MaxVisibleInvitations"/> 张卡，若让已聊过的卡按创建日和它们混排，
+    /// 玩家聊几场之后新邀约就会被挤出屏幕 —— 看起来就像「不再刷了」
+    /// （2026-09-20 那轮反馈的同一个坑，只是换了个由头）。
+    /// </summary>
+    public static int HubSortTier(bool hasArchivedSession) => hasArchivedSession ? 1 : 0;
+
+    /// <summary>
     /// 模板 ID 是否合法。
     ///
     /// 2026-09-20：模板改成按「主题 × 角色组合」**按需生成**之后，

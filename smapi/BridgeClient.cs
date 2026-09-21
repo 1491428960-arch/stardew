@@ -596,8 +596,10 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
 
     /// <summary>
     /// 只读回看入口：这位 NPC **在场**的每一场群聊（一场一条，含完整发言序列）。
-    /// 与 <see cref="RecentHistory"/> 合起来构成 F8 面板要铺的那条时间线
-    /// （合并与排序见 <see cref="GroupSessionRules.ToTimeline"/>）。
+    ///
+    /// ⚠ 2026-09-21 用户口径：这一份**不再并进 F8**（F8 只显示私聊）。群聊记录的出口是
+    /// F9 那张邀约卡 —— <see cref="GroupSession"/> 按邀约 id 取回同一场，点开就是整场
+    /// 发言序列（只读）。按 NPC 查询这一头保留给诊断与将来的「他参与过哪几场」。
     /// </summary>
     public IReadOnlyList<GroupChatSessionRecord> RecentGroupSessions(string? npcId)
     {
@@ -632,7 +634,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     /// 也免得将来有人误以为窗口能靠存档恢复。
     ///
     /// 群聊场次与私聊档案同属这一份，一起写进同一段 JSON（同一个存档键、同一次 Saving）——
-    /// 它们本来就是「玩家往上翻时看到的东西」的两种形态。
+    /// 它们是同一批「发生过的事」的两种形态，只是**看的入口不同**：私聊回 F8 面板，
+    /// 群聊回 F9 那张邀约卡（2026-09-21 用户口径，见 <see cref="GroupDialogueHubMenu"/>）。
+    /// 入口换了，存档格式与键都没动 —— 老档案照旧读得进，场次一条不丢。
     /// </summary>
     /// <param name="saveFolder">当前存档的文件夹名；写入时会被归一化成存档 ID 存下来。</param>
     public string SerializeDisplayHistory(string? saveFolder)

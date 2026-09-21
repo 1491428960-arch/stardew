@@ -102,17 +102,19 @@ public sealed class ConversationService : IDisposable
     }
 
     /// <summary>
-    /// 只读回看：该 NPC 最近的历史对话**加上它在场的群聊场次**，并成一条按发生顺序排列的
-    /// 时间线（角色、条数、合并与排序规则见 <see cref="GroupSessionRules.ToTimeline"/>）。
-    /// F8 面板打开时铺进消息区，之后新消息继续追加；
+    /// 只读回看：该 NPC 的**私聊**历史。
+    ///
+    /// 2026-09-21 用户口径调整：群聊场次**不再并进 F8**（此前这里会把
+    /// <see cref="IConversationTransport.RecentGroupSessions"/> 也铺进来，面板上于是出现
+    /// 分节线与整场群聊气泡）。群聊记录各归各位 —— 它在 F9 那张邀约卡里，点开就是整场
+    /// 发言序列（见 <c>GroupDialogueHubMenu</c> 与 <c>GroupDialogueMenu</c> 的只读模式）。
+    /// **存档里的场次一条没少**：<see cref="ChatHistoryArchive"/> 照旧读写，只是换了地方看。
+    ///
     /// 这条路径不发送任何请求，也不会改变发给模型的那份窗口。
     /// </summary>
     public IReadOnlyList<ChatDisplayMessage> RecentMessages(string npcId)
     {
-        return GroupSessionRules.ToTimeline(
-            transport.RecentHistory(npcId),
-            transport.RecentGroupSessions(npcId),
-            npcId);
+        return ChatHistoryRules.ToDisplayMessages(transport.RecentHistory(npcId));
     }
 
     public void Dispose()

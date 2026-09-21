@@ -326,9 +326,11 @@ public sealed class GroupSessionArchiveTests
     }
 
     [Fact]
-    public async Task RecentMessages_merges_the_private_history_with_the_group_session()
+    public async Task F8_panel_shows_private_chat_only_while_the_session_stays_in_the_archive()
     {
-        // F8 面板真正看到的东西：私聊记录 + 整场群聊，按发生顺序。
+        // 2026-09-21 用户口径：F8 里**不再显示**群聊场次（回到「只显示私聊和私聊相关的记录」），
+        // 群聊记录各归各位到 F9 那张邀约卡里。⚠ 存档层的场次一条不少 —— 这条用例两头都钉住：
+        // 面板上看不到了，但整场发言序列仍从档案里拿得到（F9 点进去看的就是它）。
         var client = CreateClient(out _);
         await SendPrivateAsync(client, "Abigail", "私聊第一句");
         await SendGroupAsync(client, "invite-1", "群聊第一句");
@@ -338,24 +340,18 @@ public sealed class GroupSessionArchiveTests
         var messages = service.RecentMessages("Abigail");
 
         Assert.Equal(
-            new[]
-            {
-                "私聊第一句",
-                "私聊回复0",
-                // 场次抬头：一句话说清「这是一整场群聊、当时谁在、哪天、聊什么」。
-                "线上多人对话 · 阿比盖尔、艾米丽 · 秋 12 · 主题：最近的公共小事",
-                "群聊第一句",
-                "回应：群聊第一句",
-                "私聊第二句",
-                "私聊回复1",
-            },
+            new[] { "私聊第一句", "私聊回复0", "私聊第二句", "私聊回复1" },
             messages.Select(message => message.Content).ToArray());
-        Assert.Equal(ChatHistoryRules.SessionRole, messages[2].Role);
-        // 玩家自己的话有独立气泡，NPC 的话带自己的名字。
-        Assert.Equal(ChatHistoryRules.PlayerRole, messages[3].Role);
-        Assert.Equal("player", messages[3].SpeakerId);
-        Assert.Equal(ChatHistoryRules.NpcRole, messages[4].Role);
-        Assert.Equal("阿比盖尔", messages[4].SpeakerName);
+        // 分节线那一档在 F8 里彻底不出现（它是群聊场次的抬头）。
+        Assert.DoesNotContain(messages, message => message.Role == ChatHistoryRules.SessionRole);
+        Assert.DoesNotContain(messages, message => message.Content.Contains("线上多人对话"));
+
+        // 记录本体仍在存档里，一场一条、含完整发言序列（玩家与 NPC 都在）。
+        var session = Assert.Single(client.RecentGroupSessions("Abigail"));
+        Assert.Same(session, client.GroupSession("invite-1"));
+        Assert.Equal(
+            new[] { "群聊第一句", "回应：群聊第一句" },
+            session.Lines.Select(line => line.Content).ToArray());
     }
 
     [Fact]

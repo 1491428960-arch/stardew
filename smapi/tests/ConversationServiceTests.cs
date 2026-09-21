@@ -263,6 +263,56 @@ public sealed class ConversationServiceTests
         Assert.Empty(service.RecentMessages("  "));
     }
 
+    [Fact]
+    public void F8_timeline_keeps_private_chat_only_and_drops_group_sessions()
+    {
+        // 2026-09-21 用户口径：F8 里**不再显示**群聊场次（分节线 + 整场群聊气泡）。
+        // 群聊记录的出口是 F9 那张邀约卡，所以即使 transport 手里有场次，
+        // 这条时间线也必须一条都不带。
+        var service = new ConversationService(new GroupSessionTransport(), new StoryStateStore());
+
+        var messages = service.RecentMessages("Abigail");
+
+        Assert.Equal(new[] { ChatHistoryRules.PlayerRole, ChatHistoryRules.NpcRole }, messages.Select(m => m.Role));
+        Assert.DoesNotContain(messages, message => message.Role == ChatHistoryRules.SessionRole);
+        Assert.DoesNotContain(messages, message => message.Content.Contains("线上多人对话"));
+        Assert.DoesNotContain(messages, message => message.Content.Contains("我在改一条裙子"));
+    }
+
+    private sealed class GroupSessionTransport : IConversationTransport
+    {
+        public Task<BridgeDialogueResponse> SendAsync(
+            ConversationRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new BridgeDialogueResponse { Reply = "收到。", Provider = "fake" });
+
+        public IReadOnlyList<BridgeDialogueHistoryItem> RecentHistory(string npcId) => new[]
+        {
+            new BridgeDialogueHistoryItem { Role = "user", Content = "今天去矿洞吗？", Sequence = 1 },
+            new BridgeDialogueHistoryItem { Role = "assistant", Content = "去啊，我准备了两把剑。", Sequence = 2 },
+        };
+
+        public IReadOnlyList<GroupChatSessionRecord> RecentGroupSessions(string npcId) => new[]
+        {
+            new GroupChatSessionRecord
+            {
+                SessionId = "invite-1",
+                Title = "公共话题",
+                Topic = "最近的小事",
+                DateLabel = "秋 12",
+                Participants = new[] { "Abigail", "Emily" },
+                ParticipantDisplayNames = new[] { "阿比盖尔", "艾米丽" },
+                Sequence = 3,
+                Lines = new[]
+                {
+                    new GroupDialogueHistoryEntry("player", "player", "你们最近都在忙什么？"),
+                    new GroupDialogueHistoryEntry("npc", "Abigail", "我在练鼓。"),
+                    new GroupDialogueHistoryEntry("npc", "Emily", "我在改一条裙子！"),
+                },
+            },
+        };
+    }
+
     private static NpcGameState TestNpcState()
     {
         return new NpcGameState
