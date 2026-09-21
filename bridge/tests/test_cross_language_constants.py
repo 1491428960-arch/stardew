@@ -22,10 +22,11 @@ from stardew_ai_bridge import app as bridge_app
 from stardew_ai_bridge.config import DEFAULT_FALLBACK_REPLY, BridgeSettings
 from stardew_ai_bridge.fallback import FallbackProvider
 from stardew_ai_bridge.guard import ResponseGuard
-from stardew_ai_bridge.models import DialogueTestRequest
+from stardew_ai_bridge.models import MAX_COMPLETED_EVENT_IDS, DialogueTestRequest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BRIDGE_CLIENT = _REPO_ROOT / "smapi" / "BridgeClient.cs"
+_GAME_STATE_COLLECTOR = _REPO_ROOT / "smapi" / "GameStateCollector.cs"
 
 
 def _csharp_source() -> str:
@@ -111,4 +112,47 @@ def test_compact_prompt_defaults_are_intentionally_different() -> None:
     assert match.group(1) == "true", (
         "C# 的 CompactPrompt 默认值被改了：它与 Bridge 侧的 False 是刻意不同的一对，"
         "改动前请先确认所有调用方都显式传值，并同步这一条护栏与代码注释"
+    )
+
+
+# --- #49 `completedEventIds` 上限：两处必须同值 ---------------------------------
+#
+# 2026-09-21：这个上限曾是 128，在 C# 与 Python 里各写一份，于是「只改一处」会以
+# 两种不同的方式坏掉 —— C# 侧更小是**静默截断**（事件链被判成没走完，已完成的门控
+# 事件被丢掉，14 心已婚被压回 acquaintance），Python 侧更小是**直接 422**
+# （请求被拒、退化成兜底回复）。用户存档 391 条撞上的正是前者。
+#
+# 现在两边各自收敛到一个具名常量，再用本测试把它们钉在一起，
+# 并禁止 C# 侧再出现第二份字面量上限。
+
+
+def test_completed_event_id_cap_matches_between_csharp_and_python() -> None:
+    source = _GAME_STATE_COLLECTOR.read_text(encoding="utf-8-sig")
+    match = re.search(r"MaxCompletedEventIds\s*=\s*(\d+)\s*;", source)
+    assert match, "GameStateCollector 里找不到 MaxCompletedEventIds 常量"
+
+    assert int(match.group(1)) == MAX_COMPLETED_EVENT_IDS, (
+        "SMAPI 的 GameStateCollector.MaxCompletedEventIds 与 Bridge 的 "
+        "models.MAX_COMPLETED_EVENT_IDS 不一致：C# 侧更小会静默丢掉已完成的事件、"
+        "让事件门控误判；Python 侧更小会让请求 422 退化成兜底回复"
+    )
+
+
+def test_csharp_event_cap_has_a_single_literal() -> None:
+    """C# 侧的两处消费点都必须走同一个常量，不能再冒出字面量上限。"""
+
+    source = _GAME_STATE_COLLECTOR.read_text(encoding="utf-8-sig")
+
+    assert "maxCount: MaxCompletedEventIds" in source, (
+        "ReadEnumerableStrings(eventsSeen, ...) 的 maxCount 不再是常量："
+        "这里写死数字会与 Bridge 的上限各走各的"
+    )
+    assert ".Take(MaxCompletedEventIds)" in source, (
+        "NormalizeEventIds 的 Take 不再是常量：只改上面一处会被这里二次截断"
+    )
+    assert not re.search(r"maxCount:\s*\d+", source), (
+        "GameStateCollector 里出现了字面量 maxCount —— 事件上限必须只有一份来源"
+    )
+    assert not re.search(r"\.Take\(\s*\d+\s*\)", source), (
+        "GameStateCollector 里出现了字面量 Take(N) —— 事件上限必须只有一份来源"
     )

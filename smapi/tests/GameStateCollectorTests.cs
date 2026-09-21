@@ -107,6 +107,65 @@ public sealed class GameStateCollectorTests
         Assert.Empty(result.CompletedEventIds);
     }
 
+    /// <summary>
+    /// 存档真值：用户存档 <c>test2_412086775</c> 的 <c>eventsSeen</c> 有 391 条。
+    /// 上限曾是 128，截断后事件门控把已完成的事件判成未完成，
+    /// 把 14 心已婚的叙事亲密权限压回 <c>acquaintance</c>
+    /// （7 个配了事件门的角色里 6 个被压级）。
+    /// </summary>
+    private const int SaveEventCount = 391;
+
+    [Fact]
+    public void Collect_keeps_every_event_from_a_real_save()
+    {
+        var events = Enumerable.Range(0, SaveEventCount)
+            .Select(index => $"evt-{index}")
+            .ToArray();
+
+        var result = GameStateCollector.Collect(
+            Npc("Harvey", "Harvey", "Male", friendship: 3500, relationship: "married"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(
+                MarriageStatus: "married",
+                ChildrenCount: 0,
+                CompletedEventIds: events));
+
+        Assert.Equal(SaveEventCount, result.CompletedEventIds.Count);
+        Assert.Equal(events, result.CompletedEventIds);
+    }
+
+    [Fact]
+    public void Collect_caps_completed_event_ids_at_the_shared_limit()
+    {
+        var events = Enumerable.Range(0, GameStateCollector.MaxCompletedEventIds + 40)
+            .Select(index => $"evt-{index}")
+            .ToArray();
+
+        var result = GameStateCollector.Collect(
+            Npc("Harvey", "Harvey", "Male", friendship: 3500, relationship: "married"),
+            World(),
+            new FakeModRegistry(),
+            new RuntimeStoryState(
+                MarriageStatus: "married",
+                ChildrenCount: 0,
+                CompletedEventIds: events));
+
+        Assert.Equal(GameStateCollector.MaxCompletedEventIds, result.CompletedEventIds.Count);
+        Assert.Equal(
+            events.Take(GameStateCollector.MaxCompletedEventIds),
+            result.CompletedEventIds);
+    }
+
+    [Fact]
+    public void MaxCompletedEventIds_matches_the_bridge_contract()
+    {
+        // 契约：Bridge 侧 `models.MAX_COMPLETED_EVENT_IDS`（`NpcGameState.completed_event_ids`
+        // 的 `max_length`）必须与此相同。超限时 Bridge 会 422 并退化成兜底回复，
+        // 所以两边是「一起改」而不是「各自有上限」。
+        Assert.Equal(512, GameStateCollector.MaxCompletedEventIds);
+    }
+
     private static RuntimeNpcState Npc(
         string npcId,
         string displayName,

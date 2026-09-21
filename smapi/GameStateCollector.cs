@@ -84,6 +84,19 @@ public interface IModRegistryStatus
 
 public static class GameStateCollector
 {
+    /// <summary>
+    /// 发往 Bridge 的 <c>completedEventIds</c> 上限。
+    /// </summary>
+    /// <remarks>
+    /// 事件链门控（Bridge 侧 <c>resolve_relationship_gate</c>）要求「已完成的全部事件」，
+    /// 截断会让门控把已完成的事件误判成未完成，从而把已婚等既成关系压回 <c>acquaintance</c>
+    /// （2026-09-21：用户存档 391 条被截到 128 条，7 个配了事件门的角色里 6 个被压级）。
+    /// 因此这里只做防御性上限、不再承担业务语义；512 覆盖正常存档（含 SVE 等大型扩展）的
+    /// 事件总量，Bridge 侧 <c>NpcGameState.completed_event_ids</c> 的上限必须与此保持一致，
+    /// 否则超出部分会被 422 拒绝（<c>extra="forbid"</c> + 长度校验）。
+    /// </remarks>
+    public const int MaxCompletedEventIds = 512;
+
     private static readonly IModRegistryStatus EmptyModRegistry = new EmptyModRegistryStatus();
     private static IModRegistryStatus modRegistry = EmptyModRegistry;
 
@@ -417,7 +430,7 @@ public static class GameStateCollector
             : null;
         var completedEventIds = ReadEnumerableStrings(
             ReadMember(Game1.player, "eventsSeen"),
-            maxCount: 128);
+            maxCount: MaxCompletedEventIds);
 
         return new RuntimeStoryState(marriageStatus, childrenCount, completedEventIds);
     }
@@ -524,7 +537,7 @@ public static class GameStateCollector
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
             .Distinct(StringComparer.Ordinal)
-            .Take(128)
+            .Take(MaxCompletedEventIds)
             .ToArray();
     }
 

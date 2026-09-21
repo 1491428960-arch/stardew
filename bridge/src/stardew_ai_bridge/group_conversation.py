@@ -274,7 +274,15 @@ def build_group_prompt(
             entry["voice"] = dict(voice)
         roster.append(entry)
     scene = (
-        shared_game_state.model_dump(by_alias=True, exclude_none=True)
+        shared_game_state.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            # `completedEventIds` 是事件门控的输入，不是 prompt 内容：它随存档
+            # 单调增长（正常存档数百条），模型无法据此生成对白，整卡渲染只占预算。
+            # 与 `prompts._PROMPT_HIDDEN_STATE_FIELDS` 是同一条规矩；主路径的
+            # 参与者角色卡走 `PromptBuilder`，已在那边挡掉。
+            exclude={"completed_event_ids"},
+        )
         if shared_game_state is not None
         else {}
     )

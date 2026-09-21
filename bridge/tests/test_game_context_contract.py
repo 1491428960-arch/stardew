@@ -108,11 +108,24 @@ def test_request_context_accepts_vanilla_story_state_fields() -> None:
     assert context["gameState"]["marriageStatus"] == "married"
     assert context["gameState"]["childrenCount"] == 2
     assert context["gameState"]["completedEventIds"] == ["evt-1", "evt-2"]
-    rendered = json.dumps(PromptBuilder().build(context, payload["message"]), ensure_ascii=False)
+    messages = PromptBuilder().build(context, payload["message"])
+    rendered = json.dumps(messages, ensure_ascii=False)
     assert "friendshipHearts" in rendered
     assert "marriageStatus" in rendered
     assert "childrenCount" in rendered
-    assert "evt-1" in rendered
+    # `completedEventIds` 是门控输入，不进 prompt：它随存档单调增长，整卡渲染只占
+    # 预算，模型也无法据此生成对白。但它必须留在 context 里——上面的
+    # `context["gameState"]["completedEventIds"]` 断言与
+    # `test_relationship_gating.py` 的门控用例共同守住这一点。
+    # 这里只检查 `game_state` 卡：别处的 instruction 里会**提到**这个字段名
+    # （那是解释规则用的措辞，不是渲染数据）。
+    game_state_cards = [
+        message for message in messages if message.get("name") == "game_state"
+    ]
+    assert game_state_cards, "game_state 卡必须仍然存在"
+    for card in game_state_cards:
+        assert "evt-1" not in card["content"]
+        assert "completedEventIds" not in card["content"]
 
 
 def test_prompt_contains_persona_state_mods_facts_and_history() -> None:

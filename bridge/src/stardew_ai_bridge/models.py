@@ -13,6 +13,20 @@ class ApiModel(BaseModel):
     )
 
 
+# `completedEventIds` 的权威上限，必须与 SMAPI 侧
+# `GameStateCollector.MaxCompletedEventIds` 一致。
+#
+# 事件链门控（`relationship_gating.resolve_relationship_gate`）需要「已完成的**全部**
+# 事件」才能正确判断事件链是否走完；一旦被截断，已完成的事件会被当成未完成，
+# 已婚等既成关系就会被压回 `acquaintance`，prompt 里随之出现「不得使用爱称、
+# 主动暧昧、事件后专属熟稔」（2026-09-21：用户存档 391 条被截到 128，
+# 7 个配了事件门的角色里 6 个被压级）。
+#
+# `extra="forbid"` + 长度校验意味着**超限会直接 422**、退化成兜底回复，
+# 所以这个数字两处必须同步改。
+MAX_COMPLETED_EVENT_IDS = 512
+
+
 def _strip_text(value: object) -> object:
     if isinstance(value, str):
         stripped = value.strip()
@@ -97,7 +111,7 @@ class NpcGameState(ApiModel):
     completed_event_ids: list[str] = Field(
         default_factory=list,
         alias="completedEventIds",
-        max_length=128,
+        max_length=MAX_COMPLETED_EVENT_IDS,
     )
     source_mods: list[str] = Field(
         default_factory=list,

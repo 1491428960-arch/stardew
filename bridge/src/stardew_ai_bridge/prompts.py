@@ -11,6 +11,7 @@ from .behavior_quality import (
     normalize_conversation_lead_skeleton,
 )
 from .evidence import has_dialogue_control_residue
+from .models import MAX_COMPLETED_EVENT_IDS
 from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
 from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate, relationship_stage_from_state
@@ -54,6 +55,20 @@ _STATE_FIELDS = (
     "childrenCount",
     "completedEventIds",
 )
+
+# 只作为**门控输入**、不进任何 prompt 卡片的运行时字段。
+#
+# `completedEventIds` 的消费者全是门控与检索，没有一个需要模型看见它：
+#   · `resolve_relationship_gate(completed_event_ids=...)`  —— 关系阶段事件门
+#   · `build_story_state(..., completed_event_ids, ...)`    —— 剧情进度
+#   · `profile_index.speech_evidence(completed_event_ids=...)` —— 语料是否已解锁
+#   · `profile_index.known_characters(completed_event_ids=...)`
+# 而这些消费者读的都是 `_build_context_core` 里的**局部变量**（见下方
+# `completed_event_ids`），不是渲染出来的卡片。它随存档单调增长（正常存档数百条），
+# 整卡渲染只是白占 prompt 预算（512 条约 6KB），所以这里只把它挡在渲染之外：
+# `context["gameState"]` 保持完整，门控 / 语料检索 / `/api/context/preview` 都不受影响。
+_PROMPT_HIDDEN_STATE_FIELDS = frozenset({"completedEventIds"})
+
 _INTERACTION_INTENTS = {"chat", "topic", "item"}
 _CONVERSATION_CHANNELS = {"remote", "face_to_face"}
 _QUALITY_FLIRT_INTENSITIES = {"none", "light", "direct", "explicit"}
@@ -1132,7 +1147,7 @@ class ContextBuilder:
                         _remove_secret_labels(_text(item, limit=120))
                         for item in event_values
                         if _text(item, limit=120)
-                    ][:128]
+                    ][:MAX_COMPLETED_EVENT_IDS]
                 else:
                     game_state[key] = (
                         _sanitize_value(_text(value))
@@ -5223,7 +5238,15 @@ class PromptBuilder:
             ]
         )
         if not runtime_compact:
-            prompt_game_state = safe_context["gameState"]
+            # 门控专用字段（`completedEventIds`）不进 prompt：它的消费者全是门控与
+            # 语料检索，模型看见一串数字只会白占预算。挡在这里而不是
+            # `context["gameState"]` 里，是为了让门控、语料检索与
+            # `/api/context/preview` 仍拿到完整字段（见 `_PROMPT_HIDDEN_STATE_FIELDS`）。
+            prompt_game_state = {
+                key: value
+                for key, value in safe_context["gameState"].items()
+                if key not in _PROMPT_HIDDEN_STATE_FIELDS
+            }
             prompt_recent_facts = safe_context["recentFacts"]
             if natural_topic:
                 prompt_game_state = {
