@@ -192,6 +192,9 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     类别名。于是本条也要**传数据源**再断言渲染结果——只读模板会永远失败，
     而只读数据源又验不到渲染。注意渲染出来的措辞跟着数据源走：数据源是
     「绘画**与**创作」，二轮硬编码的「绘画**和**创作」因此不再出现。
+    2026-09-21 四轮：轮换上限那句（「同一类最多连续两次——酒和画算同一类生活面」）
+    自带"把画换成酒"的出口，改成**动作式**：点名酿造 / 绘画两个簇，并明确第三轮
+    换到镇上的事或她自己的近况。渲染层断言因此跟着改。
     过程导向的回归闸见 `test_role_guidance_object_focus.py`。
     """
 
@@ -206,7 +209,9 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     assert "安全感与新开始" in guidance  # 跨簇：preferredTopics 第 4 项
     # 落点池与数据源同源：数据源里的每一类都要能在渲染结果里找到
     assert all(topic in guidance for topic in topics)
-    assert "同一类最多连续两次" in guidance  # 轮换上限，与 variationRule 对齐
+    assert "同一类最多连续两次" not in guidance  # 四轮：两层表述已换成动作式
+    assert "连着两轮谈酿造或绘画" in guidance  # 被压的两个簇要点名
+    assert "第三轮就换到镇上的事或她自己的近况" in guidance  # 出口要给死
     assert "因为是玩家才愿意分享" in guidance
     assert "{topicPool}" not in guidance  # 占位符不得残留到 prompt 里
 

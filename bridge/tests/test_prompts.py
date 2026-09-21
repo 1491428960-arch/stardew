@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -6812,7 +6813,71 @@ def test_prompt_adds_player_echo_guard_after_role_contract() -> None:
     assert names.index("player_echo_guard") < names.index("player_input")
     assert "禁止把玩家的问题原样回显后再回答" in guard["content"]
     assert "只保留必要对象词" in guard["content"]
-    assert "今天在葡萄园忙不忙" in guard["content"]
+    assert "今天忙不忙" in guard["content"]
+
+
+def _persona_owned_object_words() -> set[str]:
+    """从全部人设的 `voiceStyle.preferredTopics` 拆出「角色自己的物件」词表。
+
+    `preferredTopics` 是项目里角色专有资产的权威数据源（44 个角色 × 3–5 条），
+    条目多是「葡萄园和酿造」「绘画与创作」这种并列短语，所以按连接符再切一层。
+    """
+
+    words: set[str] = set()
+    for path in sorted(PERSONAS_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        personas = data.get("personas") if isinstance(data, dict) else None
+        if not isinstance(personas, dict):
+            continue
+        for profile in personas.values():
+            voice_style = profile.get("voiceStyle") if isinstance(profile, dict) else None
+            topics = (
+                voice_style.get("preferredTopics")
+                if isinstance(voice_style, dict)
+                else None
+            )
+            if not isinstance(topics, list):
+                continue
+            for topic in topics:
+                if not isinstance(topic, str):
+                    continue
+                for piece in re.split(r"[、，,/／]|以及|和|与|及", topic):
+                    piece = piece.strip()
+                    if len(piece) >= 2:
+                        words.add(piece)
+    return words
+
+
+def test_player_echo_guard_example_uses_no_character_specific_objects() -> None:
+    """这条 guard 全角色共用，示例里不许出现任何角色的专有对象（2026-09-21 修）。
+
+    原示例是索菲亚的葡萄园场景（「今天在葡萄园忙不忙？」→「今天挺忙，最近都在
+    修剪藤蔓。」）。葡萄园、藤蔓、酒窖都是**她一个人的资产**，四十七个别的角色
+    读到的是**错误示范**——而示范形态比规则更容易被模仿（与"通用契约正例不能
+    示范画画"同一个坑）。示例因此中性化：只示范"不回显问句、直接给状态"这个
+    **形状**，不示范任何角色的内容。
+
+    判据分两层：`preferredTopics` 拆出的全角色物件词一个都不许出现（覆盖将来
+    别的角色资产溜进来），外加本次修掉的旧示例词作回归钉子。
+    """
+
+    from stardew_ai_bridge.prompts import (
+        _PLAYER_ECHO_GUARD_EXAMPLE_QUESTION,
+        _PLAYER_ECHO_GUARD_EXAMPLE_REPLY,
+        _build_player_echo_guard,
+    )
+
+    guard = _build_player_echo_guard()
+
+    # 示例必须还在：删掉示例等于删掉"示范形态"，规则会退回纯抽象要求
+    assert _PLAYER_ECHO_GUARD_EXAMPLE_QUESTION in guard
+    assert _PLAYER_ECHO_GUARD_EXAMPLE_REPLY in guard
+    # 旧示例（索菲亚的葡萄园劳作）不得回来
+    assert "葡萄园" not in guard
+    assert "藤蔓" not in guard
+    # 全部角色的专有对象词，一个都不许出现在这条共用文案里
+    offenders = sorted(word for word in _persona_owned_object_words() if word in guard)
+    assert offenders == []
 
 
 def test_elliott_natural_prompt_prioritizes_original_voice_over_behavior_card() -> None:

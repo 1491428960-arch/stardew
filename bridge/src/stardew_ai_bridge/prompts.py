@@ -4063,13 +4063,27 @@ def _build_natural_topic_role_override(
     return card
 
 
+# 这是**全角色共用**的固定文案，示例必须与角色无关（2026-09-21 修）：
+# 原文硬编码的是索菲亚的葡萄园场景（「今天在葡萄园忙不忙？」→「今天挺忙，最近都在
+# 修剪藤蔓。」），对另外 47 个角色就是**错误示范**——而示范形态比规则更容易被模仿。
+# 中性示例只承担"形状"：不回显问句、直接给出 NPC 自己的状态；对象词只留玩家问句里
+# 本来就有的那一个，不引入任何角色的资产（葡萄园、藤蔓、酒窖、诊所班次……）。
+# 若将来真要按角色生成，请连同
+# `test_player_echo_guard_example_uses_no_character_specific_objects` 一起改，
+# 而不是往示例里塞某一个角色的东西。
+_PLAYER_ECHO_GUARD_EXAMPLE_QUESTION = "今天忙不忙？"
+_PLAYER_ECHO_GUARD_EXAMPLE_REPLY = "挺忙的，这会儿刚歇下来。"
+
+
 def _build_player_echo_guard() -> str:
     """在最终生成前阻止把玩家问句原样搬到 NPC 开头。"""
 
     return (
         "玩家原话只用于理解；禁止把玩家的问题原样回显后再回答，也禁止逐字改写。"
-        "只保留必要对象词，直接给出 NPC 自己的状态、反应或新信息。若玩家问‘今天在葡萄园忙不忙？’，"
-        "不要写‘今天在葡萄园忙不忙？……’，应直接说‘今天挺忙，最近都在修剪藤蔓。’。"
+        "只保留必要对象词，直接给出 NPC 自己的状态、反应或新信息。"
+        f"若玩家问‘{_PLAYER_ECHO_GUARD_EXAMPLE_QUESTION}’，"
+        f"不要写‘{_PLAYER_ECHO_GUARD_EXAMPLE_QUESTION}……’，"
+        f"应直接说‘{_PLAYER_ECHO_GUARD_EXAMPLE_REPLY}’。"
         "不要复制完整问句、问句结构或开头；保留一个必要对象词，推进对话并保持角色语气。"
     )
 

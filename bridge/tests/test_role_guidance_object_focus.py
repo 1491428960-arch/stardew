@@ -21,6 +21,13 @@
 （`test_rendered_sophia_guidance_spans_semantic_clusters`）——只读模板会永远失败，
 只读数据源又验不到渲染。
 
+2026-09-21 四轮（用户指出歧义）：「同一类最多连续两次」这句**自带一个出口**，
+二轮想压的那两面因此没压住。它同时引入**两个层级**（同一类 = 生活面，
+同一个 = 落点），而**最松读法**（画 → 画 → 酒）在字面上就算"换了"——模型把画
+换成酒即可交差。改成**动作式**：「连着两轮谈酿造或绘画，第三轮就换到镇上的事或
+她自己的近况」，单层、点名两个簇、给出出口。模板层断言随之改成钉这一句
+（`test_sophia_rotation_rule_is_action_shaped`），并加闸防止层级词回来。
+
 本文件的"不讲过程"闸保持不变，跨簇与轮换上限另见
 `test_stage_policy.py::test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics`。
 
@@ -74,8 +81,29 @@ def test_sophia_guidance_lands_on_objects_not_on_a_process() -> None:
     # 2026-09-21 二轮：落点池从「同一个语义簇里的四个词」改成「跨簇 + 轮换上限」。
     # 三轮：模板里的四个类别换成 `{topicPool}` 占位符，由调用方从 `preferredTopics`
     # 渲染进来 —— 模板层只钉得住「有上限、有占位符」，「四类都在」见下一条。
-    assert "同一类最多连续两次" in text
+    # 四轮：上限句式改成动作式，歧义闸见
+    # `test_sophia_rotation_rule_is_action_shaped`。
+    assert "连着两轮谈酿造或绘画" in text
     assert "{topicPool}" in text
+
+
+def test_sophia_rotation_rule_is_action_shaped() -> None:
+    """轮换规则要写「做什么」，不再是「别超过几类」（2026-09-21 四轮）。
+
+    旧写法「同一类最多连续两次——酒和画算同一类生活面，连着两轮说同一个就该换」
+    同时出现"同一类"与"同一个"两个层级，最松读法（画 → 画 → 酒）字面上满足
+    "换了"，等于给"总是谈画"留了一条换成酒的出口。动作式写法只有一个层级：
+    点名被压的两个簇，并明确第三轮去哪里。
+    """
+
+    text = _CONVERSATION_LEAD_ROLE_GUIDANCE["Sophia"]
+
+    assert "连着两轮谈酿造或绘画" in text
+    assert "第三轮就换到镇上的事或她自己的近况" in text
+    # 层级词与旧句式不得回来——它们正是那个出口
+    assert "同一类" not in text
+    assert "生活面" not in text
+    assert "连着两轮说同一个" not in text
 
 
 def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
