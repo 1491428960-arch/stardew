@@ -72,6 +72,42 @@ public sealed class FaceToFaceConversationCoordinator
         return true;
     }
 
+    /// <summary>
+    /// 从私聊名单里选了一位**不在同一地点**的角色：走线上频道（B26）。
+    ///
+    /// <c>channel=remote</c> 与 F9 群聊是同一条语义：只表达当前想法或提出待确认的安排、
+    /// 不写成已经见面；不传送 NPC、不改日程。Bridge 侧对这条频道有独立的越界判定，
+    /// 以及「线上留下的约定等见面再兑现」的 open loop 规则，所以这里不需要额外处理。
+    ///
+    /// 刻意**不**进入面对面的状态机：续聊提问与吻别的前提都是人就在旁边。
+    /// 关闭后不记续聊目标、不武装亲吻，直接回到世界（名单随时可以再开）。
+    /// </summary>
+    public bool TryOpenRemoteChat(StardewNpc target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (disposed || conversationService is null ||
+            kissNpc is not null || state.State == FaceToFaceState.Kissing)
+        {
+            return false;
+        }
+
+        Game1.activeClickableMenu = new ChatInputMenu(
+            target,
+            conversationService,
+            storyStateStore,
+            OnRemoteChatClosed,
+            initialMessages: conversationService.RecentMessages(target.Name),
+            conversationChannel: ConversationChannel.Remote,
+            shareFriendshipLedger: shareFriendshipLedger);
+        return true;
+    }
+
+    private void OnRemoteChatClosed(bool valuableRelationshipRepair)
+    {
+        _ = valuableRelationshipRepair;
+        npc = null;
+    }
+
     public bool TryConsumePendingKiss(Vector2 interactionTile)
     {
         if (state.State == FaceToFaceState.Kissing)

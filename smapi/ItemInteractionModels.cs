@@ -184,6 +184,23 @@ public static class ItemInteractionRules
         return preview.Action == ItemInteractionAction.Gift && confirmed;
     }
 
+    /// <summary>
+    /// 赠送只在**当面**成立。
+    ///
+    /// 原版收礼是「当场把东西递到对方手里」的动作（随即触发 NPC 的反应），
+    /// 而线上频道 <see cref="ConversationChannel.Remote"/> 的语义正是
+    /// 「只表达当前想法或提出待确认的安排，**不写成已经见面**」——
+    /// 隔着地图把礼物塞过去比那还过分，所以线上私聊（B26）里不接赠送。
+    ///
+    /// 分享与展示不受影响：那两样本来就是「给你看看／分你一点」的线上说法。
+    /// </summary>
+    public static bool CanGift(string? channel)
+    {
+        // 大小写不敏感：生产路径上的 channel 已经归一化过，这里是防御性判定，
+        // 宁可把 "REMOTE" 也拦住，也不要因为大小写差异放过一次隔空送礼。
+        return !string.Equals(channel, ConversationChannel.Remote, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static int ReadGiftTaste(StardewNpc npc, Item item)
     {
         ArgumentNullException.ThrowIfNull(npc);

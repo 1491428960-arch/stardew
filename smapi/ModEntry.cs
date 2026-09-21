@@ -143,7 +143,7 @@ public sealed class ModEntry : Mod
         helper.Events.GameLoop.Saved += OnSaved;
         helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
         Monitor.Log(
-            $"AI NPC 原型已加载。按 {dialogueKey} 与当前地点 NPC 进行单人对话，按 {groupDialogueKey} 打开线上多人对话。",
+            $"AI NPC 原型已加载。按 {dialogueKey} 打开私聊名单选人（走到 NPC 面前按交互键则是当面聊），按 {groupDialogueKey} 打开线上多人对话。",
             LogLevel.Info);
     }
 
@@ -587,7 +587,8 @@ public sealed class ModEntry : Mod
             () => config.DialogueKey,
             value => config.DialogueKey = value.IsBound ? value : new KeybindList(SButton.F8),
             () => "Dialogue key",
-            () => "启动与当前地点有好感度记录的 NPC 对话。",
+            () => "打开私聊名单选人。名单里只有已经认识的村民（随游戏进度解锁）；"
+                + "同处一地的角色当面聊，其他角色线上聊。",
             "DialogueKey");
         api.AddBoolOption(
             ModManifest,
@@ -881,57 +882,144 @@ public sealed class ModEntry : Mod
             return;
         }
 
-        var target = ResolveFriendshipTarget(e.Cursor.GrabTile);
-        if (target is null)
-        {
-            Monitor.Log(
-                "当前地点没有可聊天的友谊 NPC；请走近一个存在好感度记录的 NPC。",
-                LogLevel.Warn);
-            return;
-        }
-
-        if (faceToFaceCoordinator is null ||
-            !faceToFaceCoordinator.TryOpenChat(target))
-        {
-            return;
-        }
+        // 把鼠标所在格一并交出去：名单打开时要预选「鼠标正指着的那位」，
+        // 这条口径与 F8 改前的自动选人共用同一份规则（NpcTargetResolver）。
+        OpenPrivateChatRoster(e.Cursor.GrabTile);
     }
 
-    private static StardewNpc? ResolveFriendshipTarget(Vector2 interactionTile)
+    /// <summary>
+    /// F8 的入口（B26：私聊选角色）：先开名单让玩家自己选人。
+    ///
+    /// 改前 F8 会自己猜一个目标——当前地点里有好感度记录的、鼠标指向优先、否则最近
+    /// （<c>NpcTargetResolver.SelectFriendshipTarget</c>）。床边那类贴着玩家站的克隆体
+    /// 因此长期霸占那个「最近」；对「婚后角色都在同一间屋里」的存档来说，
+    /// 自动选择既猜不准也不可预期，所以改成显式选择。
+    ///
+    /// 那套自动选择**没有消失，只是降级成预选**：名单打开时默认选中的就是它挑出来的那位
+    /// （见 <see cref="PrivateChatRosterRules.DefaultSelectedIndex"/>），玩家可以改。
+    ///
+    /// 「一键和身边的人聊」也还在：走到他面前按交互键仍是原版寒暄 + 续聊那条路。
+    /// </summary>
+    private void OpenPrivateChatRoster(Vector2 interactionTile)
     {
-        var location = Game1.currentLocation;
-        if (location is null || Game1.player is null)
+        var entries = BuildPrivateChatRoster(interactionTile);
+        if (entries.Count == 0)
         {
-            return null;
+            Monitor.Log(
+                "私聊名单是空的：存档里还没有任何好感度记录，先在小镇上认识几位村民。",
+                LogLevel.Info);
+            NotifyPlayer("还没有认识的角色：先在镇上跟村民说说话");
+            return;
         }
 
-        var candidates = location.characters
-            .Select(npc => new
-            {
-                Npc = npc,
-                Candidate = new NpcTargetCandidate(
-                    npc.Name,
-                    FriendshipDataAccessor.HasRecord(Game1.player, npc.Name) ||
-                        TestNpcPlacementRules.IsDialogueTargetWithoutFriendshipRecord(npc.Name),
-                    ReferenceEquals(npc.currentLocation, location),
-                    Vector2.Distance(Game1.player.Position, npc.Position) / Game1.tileSize,
-                    FaceToFaceStateRules.InteractionTargetsRememberedNpc(
-                        npc.GetBoundingBox(),
-                        interactionTile,
-                        Game1.tileSize)),
-            })
-            .ToArray();
+        // 只有一位候选时不开列表：没有可选项，让玩家为一个已经确定的答案再按一次回车
+        // 纯属多事（刚认识第一个人、或单人存档都会走到这里）。
+        if (!PrivateChatRosterRules.ShouldShowRoster(entries.Count))
+        {
+            StartPrivateChat(entries[0]);
+            return;
+        }
 
-        var selected = NpcTargetResolver.SelectFriendshipTarget(
-            candidates.Select(item => item.Candidate));
-        return selected is null
-            ? null
-            : candidates.First(item =>
-                string.Equals(
-                    item.Candidate.NpcId,
-                    selected.NpcId,
-                    StringComparison.OrdinalIgnoreCase) &&
-                item.Candidate.Distance == selected.Distance).Npc;
+        Game1.activeClickableMenu = new PrivateChatRosterMenu(entries, StartPrivateChat);
+    }
+
+    /// <summary>
+    /// 名单数据 = **已认识**的角色（<see cref="KnownNpcResolver"/>，与 F9 群聊同一份解析，
+    /// 「谁能聊」的口径不另写一套）+ 此刻在不在同一地点、离多远、鼠标是不是正指着他。
+    ///
+    /// 好感度记录正是星露谷里「玩家已经遇到过这个人」的标志（游戏里「社交」页显示的
+    /// 就是这一份：跟他说上话、或被剧情正式介绍过才会有），所以名单天然随游戏进度解锁，
+    /// 不需要另外维护一份解锁表。程序集元数据里**没有**别的可用信号——
+    /// <c>hasMetPlayer</c>／<c>NPCsMetToday</c>／<c>visibilityGrid</c> 这些名字在
+    /// <c>Stardew Valley.dll</c> 里一个都不存在（已逐个核对）。
+    /// </summary>
+    private IReadOnlyList<PrivateChatRosterEntry> BuildPrivateChatRoster(Vector2 interactionTile)
+    {
+        var player = Game1.player;
+        if (player is null)
+        {
+            return Array.Empty<PrivateChatRosterEntry>();
+        }
+
+        var friendshipData = FriendshipDataAccessor.ReadData(player);
+        var known = KnownNpcResolver.Resolve(
+            FriendshipDataAccessor.Keys(friendshipData),
+            npcId =>
+            {
+                var npc = Game1.getCharacterFromName(npcId);
+                return npc is null ? null : new KnownNpc(npc.Name, npc.displayName);
+            });
+        return PrivateChatRosterRules.Build(
+            known.Select(npc => BuildRosterSource(player, npc, interactionTile)));
+    }
+
+    private static PrivateChatRosterSource BuildRosterSource(
+        Farmer player,
+        KnownNpc known,
+        Vector2 interactionTile)
+    {
+        var character = Game1.getCharacterFromName(known.NpcId);
+        if (character is null)
+        {
+            // 取不到角色对象（还没进过场等）：给一个取不到的距离，
+            // 由规则层统一排到列表后段，而不是当成 0 挤进「身边」那一档。
+            return new PrivateChatRosterSource(
+                known.NpcId,
+                known.DisplayName,
+                IsPresent: false,
+                DistanceInTiles: float.MaxValue,
+                IsInteractionTarget: false);
+        }
+
+        var isPresent = ReferenceEquals(character.currentLocation, Game1.currentLocation);
+        return new PrivateChatRosterSource(
+            known.NpcId,
+            known.DisplayName,
+            isPresent,
+            isPresent
+                ? Vector2.Distance(character.Position, player.Position) / Game1.tileSize
+                : float.MaxValue,
+            // 鼠标指着谁，名单就预选谁——与 F8 改前那条自动选人规则同一个判据，
+            // 复用同一个方法，不另写一遍矩形判定。
+            FaceToFaceStateRules.InteractionTargetsRememberedNpc(
+                character.GetBoundingBox(),
+                interactionTile,
+                Game1.tileSize));
+    }
+
+    /// <summary>
+    /// 名单里选了一位：同处一地的走面对面频道，不在同一地点的走线上频道
+    /// （频道由 <see cref="PrivateChatRosterRules.ResolveChannel"/> 算好，这里只负责接线）。
+    ///
+    /// 返回值告诉名单菜单**私聊到底开没开起来**：false 时菜单要保持可见，
+    /// 让玩家改选一位或按 Esc 退出——否则会留下一个画不出、也退不掉的空菜单。
+    /// </summary>
+    private bool StartPrivateChat(PrivateChatRosterEntry entry)
+    {
+        var target = Game1.getCharacterFromName(entry.NpcId);
+        if (target is null)
+        {
+            Monitor.Log($"私聊名单里的 {entry.NpcId} 当前取不到角色对象，已跳过。", LogLevel.Warn);
+            NotifyPlayer("找不到这位角色，可能已经离开");
+            return false;
+        }
+
+        var opened =
+            string.Equals(entry.Channel, ConversationChannel.FaceToFace, StringComparison.Ordinal)
+                ? faceToFaceCoordinator?.TryOpenChat(target) == true
+                : faceToFaceCoordinator?.TryOpenRemoteChat(target) == true;
+        if (!opened)
+        {
+            Monitor.Log($"打开与 {target.Name} 的私聊失败（对话功能可能刚被关掉）。", LogLevel.Warn);
+            NotifyPlayer("现在打不开私聊：对话功能可能已关闭");
+            return false;
+        }
+
+        Monitor.Log(
+            $"[StardewAI.Chat] 私聊目标={target.Name}；频道={entry.Channel}；" +
+            $"在场={entry.IsPresent}；身边={entry.IsNearby}",
+            LogLevel.Info);
+        return true;
     }
 
     /// <summary>

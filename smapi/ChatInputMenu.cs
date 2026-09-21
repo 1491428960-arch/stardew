@@ -440,6 +440,15 @@ public class ChatInputMenu : IClickableMenu
 
         if (selection.Action == ItemInteractionAction.Gift)
         {
+            // 线上频道（人不在同一地点）不接赠送：原版收礼是当场把东西递过去，
+            // 隔着地图触发既怪，也越过 remote 频道「不写成已经见面」的边界。
+            // 分享与展示不受影响。判定本身在规则层（ItemInteractionRules.CanGift）。
+            if (!ItemInteractionRules.CanGift(conversationChannel))
+            {
+                uiHint = $"{npc.displayName} 不在身边，礼物留到见面再送吧。";
+                return;
+            }
+
             pendingGiftSelection = selection;
             OfferGiftConfirmation(selection);
             return;

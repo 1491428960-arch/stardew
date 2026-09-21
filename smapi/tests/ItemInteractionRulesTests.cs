@@ -88,4 +88,19 @@ public sealed class ItemInteractionRulesTests
                 ItemInteractionKind.Artifact,
                 roll: 0));
     }
+
+    /// <summary>
+    /// B26 的线上私聊不能让礼物隔空送达：原版收礼是当场递过去，
+    /// 而 remote 频道的语义是「不写成已经见面」。分享／展示不受这条限制。
+    /// </summary>
+    [Theory]
+    [InlineData(ConversationChannel.FaceToFace, true)]
+    [InlineData(ConversationChannel.Remote, false)]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("REMOTE", false)]
+    public void Gifting_requires_being_face_to_face(string? channel, bool expected)
+    {
+        Assert.Equal(expected, ItemInteractionRules.CanGift(channel));
+    }
 }
