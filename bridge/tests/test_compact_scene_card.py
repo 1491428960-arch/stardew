@@ -29,6 +29,7 @@ def _payload(
     date: object = "25",
     weather: object = "clear",
     location: object = "Hospital",
+    channel: str | None = "face_to_face",
     compact: bool = True,
     extra_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -59,18 +60,20 @@ def _payload(
     if extra_state:
         state.update(extra_state)
 
-    return {
+    body: dict[str, object] = {
         "npcId": NPC_ID,
         "message": MESSAGE,
         "intent": "chat",
         "provider": "fake",
         "compactPrompt": compact,
-        "channel": "face_to_face",
         "sourceMods": [],
         "recentFacts": [],
         "history": [],
         "gameState": state,
     }
+    if channel is not None:
+        body["channel"] = channel
+    return body
 
 
 def _messages(**kwargs: object) -> list[dict[str, str]]:
@@ -95,6 +98,7 @@ def test_compact_prompt_renders_scene_card_with_readable_hard_facts() -> None:
         "天气": "晴天",
         "时段": "清晨（6:00）",
         "地点": "Hospital",
+        "场合": "当面",
     }
 
 
@@ -105,21 +109,33 @@ def test_compact_scene_card_drops_fields_already_covered_by_other_cards() -> Non
     card = next(m for m in prompt if m.get("name") == "scene")
     scene = json.loads(card["content"])
 
-    assert set(scene) == {"季节", "日期", "天气", "时段", "地点"}, (
-        "场景卡只保留场景硬事实，关系/好感字段不重复渲染"
+    assert set(scene) == {"季节", "日期", "天气", "时段", "地点", "场合"}, (
+        "场景卡只保留场景硬事实与渠道结论，关系/好感字段不重复渲染"
     )
     # 硬事实的**来源字段**仍在 context 里（门控与语料检索照旧拿得到）
     assert context["gameState"]["friendshipHearts"] == 6
 
 
 def test_compact_scene_card_renders_nothing_when_every_field_is_missing() -> None:
-    """空 gameState 不该产出一张空卡（省预算，也避免给模型一张无信息的卡）。"""
+    """完全没有信息（场景字段与渠道都缺）时不产空卡。"""
 
     prompt = _messages(
-        time=None, season=None, date=None, weather=None, location=None
+        time=None, season=None, date=None, weather=None, location=None, channel=None
     )
 
     assert all(m.get("name") != "scene" for m in prompt)
+
+
+def test_compact_scene_card_survives_on_channel_alone() -> None:
+    """场景字段全空但渠道在场时仍产卡。
+
+    `interaction` 卡（承载 `channelInstruction`）在紧凑路径被跳过，
+    所以「场合」是这条路径上唯一的渠道信息——它不是可有可无的附赠字段。
+    """
+
+    assert _scene(
+        time=None, season=None, date=None, weather=None, location=None
+    ) == {"场合": "当面"}
 
 
 # --- 时段可读化与跨日边界 -----------------------------------------------------

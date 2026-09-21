@@ -145,6 +145,13 @@ _CHANNEL_INSTRUCTIONS = {
         "不要写成发消息或线上约定，也不要把已经发生的面对面互动写成稍后才见面。"
     ),
 }
+# `_CHANNEL_INSTRUCTIONS` 的短标签版：紧凑路径只给渠道**结论**（8–10 字符），
+# 不搬整段行为约束——整段约 +60 tokens，线上每轮都付不值当。
+# 键集合必须与 `_CHANNEL_INSTRUCTIONS` 一致，两处放一起就是为了不改漏。
+_CHANNEL_LABELS = {
+    "remote": "远程",
+    "face_to_face": "当面",
+}
 _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     "允许从角色自己的近况、记忆、兴趣或眼前观察主动开启新话题，不要求玩家先铺垫；"
     "但第一次提到一个新对象、事件、人物或记忆时，必须在同一条消息给出最小背景："
@@ -685,6 +692,55 @@ def select_memory_facts(facts: object, *, npc_id: str = "") -> list[str]:
     for text in plain:
         add(text)
     return picked
+
+
+# 线上 `recentFacts` 里「状态差异行」的固定骨架（`smapi/BridgeClient.cs:1086-1110`）：
+#
+#     `{label}从“{旧值}”变为“{新值}”`
+#
+# 11 个 label 是 C# 侧 `BuildRecentFacts` 的固定取值（`BridgeClient.cs:999-1009`
+# 与 `AddEventChanges` 的 `剧情事件`）。这些行不是记忆，而是「上一次请求之后
+# 什么状态变了」，且仅在**第 2 次成功请求起**才可能出现。
+#
+# 锚定整行（`^…$`）是刻意的：记忆行以 `记忆（…）：` 或 `玩家说：“…”` 开头，
+# 即使玩家原话里含「时间从“1”变为“2”」也不会被误杀——**误杀记忆是危险方向，
+# 漏放状态行只是多花 token**，所以规则刻意偏保守。若 C# 改了文案，
+# 失效方向是这些行重新混进 prompt（多花 token），不会丢记忆。
+_STATE_DELTA_LABELS = (
+    "季节",
+    "日期",
+    "天气",
+    "地点",
+    "时间",
+    "好感",
+    "心级",
+    "关系",
+    "婚姻状态",
+    "孩子数量",
+    "剧情事件",
+)
+_STATE_DELTA_FACT = re.compile(
+    "^(?:" + "|".join(_STATE_DELTA_LABELS) + ")从“.+”变为“.+”$"
+)
+
+
+def is_state_delta_fact(fact: str) -> bool:
+    """判断一行 `recentFacts` 是否是「状态差异」而非记忆。"""
+
+    return bool(_STATE_DELTA_FACT.match(fact.strip()))
+
+
+def select_compact_memory_facts(facts: Iterable[str]) -> list[str]:
+    """紧凑路径该带的记忆：`select_memory_facts` 筛选后，再剔掉状态差异行。
+
+    **为什么只留记忆行**：紧凑路径已有一张 `scene` 卡给出当前季节/日期/天气/
+    时段/地点，于是 `时间从“1830”变为“1840”` 这类差异行变成纯冗余
+    （当前值就在场景卡里，历史值对模型没有增量）。真正有增量的是跨会话记忆。
+    实测代价：只留记忆行约 +158 tokens，连状态差异行一起留约 +175 tokens
+    （见 `docs/diagnosis-compact-scene-hard-facts-2026-09-21.md` §4.4）。
+    """
+
+    return [fact for fact in facts if not is_state_delta_fact(fact)]
 
 
 def _first_value(values: Mapping[str, Any], *names: str) -> Any:
@@ -5324,12 +5380,46 @@ class PromptBuilder:
             # 给模型一个 `Hospital` 也比让它不知道身在何处要好。
             if location := _text(game_state.get("location"), limit=60):
                 scene["地点"] = location
+            # 渠道只给结论。紧凑路径此前唯一的渠道信息是
+            # `post_history_voice_guard.channel` 里一个没有解释的英文 token
+            # （`"face_to_face"`）——模型知道渠道"叫什么"，不知道"该怎么表现"。
+            # 变量名不复用下方的 `interaction`，避免遮蔽后者的语义。
+            scene_interaction = safe_context.get("interaction")
+            if isinstance(scene_interaction, Mapping):
+                channel_label = _CHANNEL_LABELS.get(
+                    _text(scene_interaction.get("channel"), limit=30).casefold()
+                )
+                if channel_label:
+                    scene["场合"] = channel_label
             if scene:
                 messages.append(
                     {
                         "role": "system",
                         "name": "scene",
                         "content": _json(scene),
+                    }
+                )
+            # 跨会话记忆：此前与 `gameState` 挤在同一个门控里被整块牺牲掉，
+            # 于是游戏内模型只有本轮窗口（历史 4 条 + story_state + openLoops），
+            # 没有任何跨会话记忆——用户反馈的「没头没尾」「不记得之前的事」与此直接相关。
+            # `safe_context["recentFacts"]` 已经是 `select_memory_facts` 的产物，
+            # 这里只再剔掉状态差异行（当前值已在 `scene` 卡里，冗余）。
+            #
+            # `natural_topic` 时不带记忆：与完整路径的门控保持一致
+            # （那条路径同样在该模式下清空 recentFacts）。游戏端不传
+            # `qualityContext`、naturalMode 恒 false，所以线上不受此分支影响；
+            # 保持一致是为了让「紧凑 = 完整减去冗余」这条心智模型成立。
+            compact_facts = (
+                []
+                if natural_topic
+                else select_compact_memory_facts(safe_context.get("recentFacts", ()))
+            )
+            if compact_facts:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "recent_memory",
+                        "content": _json({"近期记忆": compact_facts}),
                     }
                 )
         relationship_world = safe_context["relationshipWorld"]
