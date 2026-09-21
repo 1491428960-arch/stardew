@@ -484,13 +484,62 @@ def reply_avoids_speech_particle(reply: object, particles: tuple[str, ...]) -> b
     )
 
 
+# 句首语气颗粒：只是开口语气，不构成开场结构本身。
+#
+# 2026-09-21（用户实测「开场结构逐字重复」）：`reply_opens_with_marker` 原先用
+# **逐字前缀**匹配，多一个「嘿，」就完全不命中——索菲亚第 1 轮
+# 「我刚从蓝月亮葡萄园回来……」与第 3 轮「嘿，我刚从蓝月亮葡萄园回来……」
+# 正是这样逃逸的：同一个开场在相邻两轮复用，运行时却判「没有重复」。
+# 表放在本模块是因为这里是不 import 任何 bridge 模块的底层，
+# `prompts`（生成 avoidOpenings/前缀）与 `guard`、`dialogue_style_quality`（判定）
+# 共用同一份，避免又出现「两处各写一套、结论相反」。
+LEADING_SPEECH_PARTICLES: tuple[str, ...] = (
+    "嘿",
+    "嗨",
+    "嗯",
+    "哦",
+    "啊",
+    "唔",
+    "呃",
+    "唉",
+    "呀",
+    "哎",
+    "喂",
+)
+_LEADING_SPEECH_PARTICLE_PATTERN = re.compile(
+    r"^(?:"
+    + "|".join(map(re.escape, LEADING_SPEECH_PARTICLES))
+    + r")[，,、。！？!?…\s]*"
+)
+
+
+def strip_leading_speech_particles(text: str) -> str:
+    """剥掉句首的语气颗粒及紧随的停顿标点；没有颗粒时原样返回。"""
+
+    if not isinstance(text, str) or not text:
+        return text if isinstance(text, str) else ""
+    return _LEADING_SPEECH_PARTICLE_PATTERN.sub("", text, count=1)
+
+
 def reply_opens_with_marker(reply: object, markers: tuple[str, ...]) -> bool:
-    """回复是否以给定标记（或其前缀）开头（P1 #23）。"""
+    """回复是否以给定标记（或其前缀）开头（P1 #23）。
+
+    比对**忽略句首语气颗粒**：这条判定问的是「有没有复用历史开场」，而「嘿，」
+    这类开口语气不属于开场结构本身。逐字匹配时「嘿，我刚从……回来」不会命中
+    历史里的「我刚从……回来」，同一条开场便可在相邻两轮逐字复用而无人拦下
+    （2026-09-21 用户实测的索菲亚第 1/3 轮）。
+    """
 
     if not isinstance(reply, str) or not reply.strip() or not markers:
         return False
     text = reply.strip()
-    return any(text.startswith(marker) for marker in markers if marker)
+    candidates = (text, strip_leading_speech_particles(text))
+    return any(
+        candidate.startswith(marker)
+        for candidate in candidates
+        for marker in markers
+        if marker
+    )
 
 
 def repeats_affection_shape(

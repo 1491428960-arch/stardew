@@ -10,6 +10,7 @@ from .behavior_quality import (
     diagnose_conversation_lead,
     normalize_conversation_lead_skeleton,
 )
+from .dialogue_boundaries import strip_leading_speech_particles
 from .evidence import has_dialogue_control_residue
 from .models import MAX_COMPLETED_EVENT_IDS
 from .personas import PersonaStore
@@ -1932,6 +1933,29 @@ def _prompt_quality_context(value: Mapping[str, Any]) -> dict[str, Any]:
     return projected
 
 
+# --- 开场反重复的准入窗口（2026-09-21） --------------------------------------
+#
+# 用户实测「开场结构逐字重复」（索菲亚第 1 轮与第 3 轮）暴露出这条链路**离线**，
+# 而不是"拦了没拦住"：
+#
+#   1. 长度窗口原先写死 24，而第 1 轮那条被复用的开场
+#      「我刚从蓝月亮葡萄园回来，手上还沾着葡萄藤的青涩味儿」首分句正好 **25 字**，
+#      整条被丢弃 ⇒ `avoidOpenings` 为空 ⇒ `post_history_voice_guard` 里那句
+#      「不要重复历史中的开场」**没有任何依据可依**，`guard._has_repeated_opening`
+#      也永远返回 False。端到端实测（compact 路径）确认 `avoidOpenings == []`。
+#      规律是：越像完整叙述句的开场越容易被复用，也越容易超长——阈值定在短语气词
+#      量级，恰好把最该拦的那一类全部放过。放宽到 40 后 prompt 增量最多 3×16 字。
+#   2. `reply_opens_with_marker` 是**逐字前缀**匹配，多一个前导语气词就逃逸：
+#      第 3 轮「嘿，我刚从蓝月亮葡萄园回来……」。实测只放宽长度阈值时 prefix 已是
+#      「我刚」，整句仍判 False；剥掉「嘿，」后才判 True。
+#
+# 两处必须同时修：只修任一处，索菲亚那条 case 仍然漏过。
+_HISTORY_OPENING_LIMIT = 40
+
+# 只看最近几条开场（与 guard 的重试预算、prompt 体积共同决定）。
+_HISTORY_OPENING_COUNT = 3
+
+
 def _history_openings(history: object) -> list[str]:
     """提取近期 NPC 开场短语，作为反重复提示而不是新剧情事实。"""
 
@@ -1946,9 +1970,9 @@ def _history_openings(history: object) -> list[str]:
             continue
         # 逗号通常仍属于同一个自然开场（如“嘿，你！”），不能在这里截断。
         opening = re.split(r"[。！？!?；;\n]", content, maxsplit=1)[0].strip()
-        if 1 < len(opening) <= 24 and opening not in openings:
+        if 1 < len(opening) <= _HISTORY_OPENING_LIMIT and opening not in openings:
             openings.append(opening)
-        if len(openings) >= 3:
+        if len(openings) >= _HISTORY_OPENING_COUNT:
             break
     return list(reversed(openings))
 
@@ -1958,12 +1982,25 @@ def _opening_prefixes(openings: Iterable[str]) -> list[str]:
 
     prefixes: list[str] = []
     for opening in openings:
-        text = _text(opening, limit=24)
-        match = re.match(r"^([\u4e00-\u9fffA-Za-z]{1,3})(?=[，,。！？!?…]|$)", text)
-        prefix = match.group(1) if match else text[:2]
-        if prefix and prefix not in prefixes:
-            prefixes.append(prefix)
-    return prefixes[:3]
+        text = _text(opening, limit=_HISTORY_OPENING_LIMIT)
+        # 两条候选：原样、以及剥掉前导语气颗粒后的形式。后者是为了覆盖
+        # 「嘿，我刚从……回来」这类在被复用时多带一个语气词的写法——
+        # `reply_opens_with_marker` 是逐字前缀匹配，多一个「嘿，」就完全不命中。
+        for candidate in (text, strip_leading_speech_particles(text)):
+            prefix = _opening_prefix_of(candidate)
+            if prefix and prefix not in prefixes:
+                prefixes.append(prefix)
+    return prefixes[:4]
+
+
+def _opening_prefix_of(text: str) -> str:
+    """单个开场前缀：优先取「1–3 字 + 标点」的口语颗粒，否则退回前两个字。"""
+
+    value = text.strip()
+    if not value:
+        return ""
+    match = re.match(r"^([\u4e00-\u9fffA-Za-z]{1,3})(?=[，,。！？!?…]|$)", value)
+    return match.group(1) if match else value[:2]
 
 
 def _contains_voice_particle(text: str, particle: str) -> bool:
