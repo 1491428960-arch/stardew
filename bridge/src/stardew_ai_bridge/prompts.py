@@ -5443,7 +5443,37 @@ class PromptBuilder:
             safe_context_data["knowledgeFacts"] = safe_context_data[
                 "knowledgeFacts"
             ][:1]
-            safe_context_data["knownCharacters"] = []
+            # 2026-09-21：`knownCharacters` 原先在这里被整块清空，于是 41 条已确认的
+            # 人物关系（23 个 NPC 各 1–3 条）在游戏端**一条都进不了 prompt** ——
+            # 数据在索引里、卡片渲染代码也在（下方的 `known_characters` 卡），
+            # 只有这一行把它们扔了。与 `recentFacts` 被 `if not runtime_compact:`
+            # 整块挡住是同一形态：资料在，代码把它扔了。
+            #
+            # 紧凑路径裁「字段」而不是「条数」：单 NPC 的候选本来就只有 1–3 条
+            # （`known_characters` 的 `limit=8` 在单角色上根本不触顶），
+            # 所以「只给前 N 条」省不出东西。真正对模型没用的是每条里的构建侧字段：
+            #   · `npcId`      —— 就是当前 NPC 自己，整张卡已知；
+            #   · `relationId` —— 内部条目 id（`Jodi:knows:Kent:0`）；
+            #   · `sourceMod` / `sourceRefs` —— 构建侧审计信息，与
+            #     `_safe_voice_card` 的「文件路径只服务审计、不放入提示词」同口径；
+            #   · `knowledgeScope` —— 41 条**全部**是 `canon_confirmed`，零信息量；
+            #   · `confidence` —— 供访问器筛选用的构建侧标记，`low` 那批早已被
+            #     `ProfileIndexStore.known_characters` 挡在外面。
+            # 保留 `knownNpcId` / `relation` / `summary`。`summary` 已经是给模型读的
+            # 那句话，但存在不含关系词的写法（`Lewis→Marnie` 的 summary 只说
+            # 「属于已确认的个人信息边界」），所以 `relation` 必须一起留下。
+            safe_context_data["knownCharacters"] = [
+                {
+                    key: item[key]
+                    for key in ("knownNpcId", "relation", "summary")
+                    if key in item
+                }
+                for item in safe_context_data["knownCharacters"]
+            ]
+            # `storyEvents` 仍然清空，但原因与上面**不同**：索引里它就是 0 条
+            # （根因是 SVE 的 55 个 xnb 未解包，不是在这里丢的），放开也拿不到内容。
+            # 数据侧补齐后再按 `knownCharacters` 同款策略放开；届时需要单独评估成本，
+            # 因为单条 `summary` 的上限是 240 字符，比人物关系这条通道长得多。
             safe_context_data["storyEvents"] = []
         safe_context = _sanitize_value(safe_context_data)
         selected_behavior_examples = _select_behavior_examples(
