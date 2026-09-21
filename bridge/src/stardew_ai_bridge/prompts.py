@@ -157,7 +157,16 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     "但第一次提到一个新对象、事件、人物或记忆时，必须在同一条消息给出最小背景："
     "它是什么、刚发生了什么，或为什么此刻想到它；"
     "无论话题从哪来，都必须有一句来源句，用‘我刚把…’‘我最近在…’‘刚才看到…’说清它是从哪来的，"
-    "不能把它当成双方已经知道的东西，不要用‘X 不会…’‘X 还是…’这类预设对方已知的句式开头。"
+    "不能把它当成双方已经知道的东西。"
+    # 2026-09-21：来源句此前读起来像「开场第一句必须是来源句」，于是角色的招牌
+    # 句首动作（先脱口说第一反应／先叫人／先给判断）在找话题时被整条压掉——
+    # 索菲亚这类角色的 signatureMoves 第一条就是「先脱口说第一反应（哇、等等、
+    # 你看）」，两者直接互斥，实测模型一律选择先交代来源。这里把**顺序**放开、
+    # 把来源句保留成同一条消息内的硬要求，两边不再二选一。
+    "来源句不必是第一条分句：开场那一拍按角色自己的说话习惯来"
+    "（角色卡里 signatureMoves、sentencePattern 怎么写就怎么开口，一声反应、招呼、观察或判断都算），"
+    "只要在同一条消息里紧接着把来源补上；不要为了先交代来源而省掉这一拍，"
+    "也不要用‘X 不会…’‘X 还是…’这类预设对方已知的句式开头。"
     "玩家不需要知道此前未说过的前提；不要只说‘那件事、那首歌、最近那个、后来怎么样了’，"
     "也不要用‘你还记得吧’把缺失背景推给玩家。"
     "说完后给玩家留一个能接的口子，三选一：一个真问题、一件把玩家拉进来的具体事、"
@@ -167,6 +176,54 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     "✓ 应该这样：‘我刚把今天的记录簿合上——上面半页星图怎么算都不对。你今天在农场忙完了吗？’"
     "两条示例只示范来源句和口子这两个步骤，句式和对象随角色与场景变化，里面的事实不要当作当前剧情。"
 )
+# 角色卡里「先脱口说第一反应」这一类句首动作的识别词。命中时找话题契约要**额外**
+# 说明这个反应可以放在来源句前面，否则 `voice_execution_card` 里的招牌动作会被
+# 上面那条来源句硬要求压掉（见 `_TOPIC_OPENING_GROUNDING_INSTRUCTION` 的注释）。
+#
+# 刻意只收「以一声反应起句」这一种：`招呼`／`叫住`／`先给判断` 这些句首动作在
+# 上面那条通用放行里已经覆盖，单独再加邀请只会让没有这个习惯的角色也用「哇」开场。
+_REACTION_OPENING_MARKERS = (
+    "第一反应",
+    "脱口",
+    "短反应",
+    "即时反应",
+)
+# 只在命中时追加的一句（约 +55 tokens），不放进公共契约：
+# 没有这类句首动作的角色不需要被邀请用「哇」开场。
+_TOPIC_REACTION_OPENING_PERMISSION = (
+    "这个角色的招牌动作就是在句首选脱口而出的第一反应：先用一声短反应（哇、等等、你看）起句，"
+    "紧接着在同一条消息里补上来源句和口子；两拍用句号或感叹号断开，"
+    "不要为了先交代来源而把这个反应省掉，也不要只留一声反应、把来源和口子都丢掉。"
+)
+
+
+def has_reaction_opening_move(identity: object) -> bool:
+    """角色的 ``signatureMoves`` 是否把「先脱口说第一反应」放在句首。
+
+    只看第一条：`signatureMoves` 是有序的，第一条才是开场动作，其余条目讲的是
+    停顿、改口或收束。缺数据、字段类型不对时一律 False——宁可不加这句许可，
+    也不要给没有这个说话习惯的角色发一张「用哇开场」的邀请。
+    """
+
+    if not isinstance(identity, Mapping):
+        return False
+    voice_style = identity.get("voiceStyle")
+    if not isinstance(voice_style, Mapping):
+        return False
+    moves = voice_style.get("signatureMoves")
+    if not isinstance(moves, (list, tuple)):
+        return False
+    first = next(
+        (
+            item.strip()
+            for item in moves
+            if isinstance(item, str) and item.strip()
+        ),
+        "",
+    )
+    if not first:
+        return False
+    return any(marker in first for marker in _REACTION_OPENING_MARKERS)
 _HISTORY_LIMIT = 12
 _PROMPT_HISTORY_LIMIT = 12
 _MAX_SPEECH_EVIDENCE = 4
@@ -722,12 +779,24 @@ _STATE_DELTA_LABELS = (
 _STATE_DELTA_FACT = re.compile(
     "^(?:" + "|".join(_STATE_DELTA_LABELS) + ")从“.+”变为“.+”$"
 )
+# 「地点变化」是唯一有轨迹价值的一类状态差异行：当前地点在 `scene` 卡里，
+# 但**从哪里来**只有这一行写着（`BridgeClient.cs:1002` 的
+# `AddStringChange(facts, "地点", previous.Location, current.Location)`）。
+# 它是全系统唯一能体现「白天在葡萄园、晚上回家」的载体：
+# 季节/日期/时间/好感的旧值对模型没有增量，地点的旧值有。
+_LOCATION_DELTA_FACT = re.compile(r"^地点从“.+”变为“.+”$")
 
 
 def is_state_delta_fact(fact: str) -> bool:
     """判断一行 `recentFacts` 是否是「状态差异」而非记忆。"""
 
     return bool(_STATE_DELTA_FACT.match(fact.strip()))
+
+
+def is_location_delta_fact(fact: str) -> bool:
+    """判断一行状态差异是否是「地点变化」，即唯一保留轨迹价值的那一类。"""
+
+    return bool(_LOCATION_DELTA_FACT.match(fact.strip()))
 
 
 def select_compact_memory_facts(facts: Iterable[str]) -> list[str]:
@@ -738,9 +807,28 @@ def select_compact_memory_facts(facts: Iterable[str]) -> list[str]:
     （当前值就在场景卡里，历史值对模型没有增量）。真正有增量的是跨会话记忆。
     实测代价：只留记忆行约 +158 tokens，连状态差异行一起留约 +175 tokens
     （见 `docs/diagnosis-compact-scene-hard-facts-2026-09-21.md` §4.4）。
+
+    **例外（2026-09-21）**：`地点从“A”变为“B”` 保留一条。
+    `scene` 卡给的是玩家**现在**在哪，给不出「刚刚从哪来」——而这是紧凑路径里
+    唯一能体现「白天在葡萄园、晚上回家」这类轨迹的信号。只留最近一条
+    （同一次请求至多产出一条，见 `BridgeClient.cs:1002`；真出现多条时更新的
+    那条才有用），实测 +10 tokens，且**只在真的换了地点那一轮**才出现。
     """
 
-    return [fact for fact in facts if not is_state_delta_fact(fact)]
+    kept: list[str] = []
+    location_at: int | None = None
+    for fact in facts:
+        if not is_state_delta_fact(fact):
+            kept.append(fact)
+            continue
+        if not is_location_delta_fact(fact):
+            continue
+        if location_at is None:
+            location_at = len(kept)
+            kept.append(fact)
+        else:
+            kept[location_at] = fact
+    return kept
 
 
 def _first_value(values: Mapping[str, Any], *names: str) -> Any:
@@ -6308,6 +6396,8 @@ class PromptBuilder:
                     "示例的渠道限制不能覆盖当前渠道规则。"
                 )
             topic_instruction += _TOPIC_OPENING_GROUNDING_INSTRUCTION
+            if has_reaction_opening_move(identity):
+                topic_instruction += _TOPIC_REACTION_OPENING_PERMISSION
             topic_context: dict[str, Any] = {"instruction": topic_instruction}
             topic_seed = _text(
                 quality_context.get("topicSeed"),

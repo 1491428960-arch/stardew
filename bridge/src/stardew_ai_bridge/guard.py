@@ -312,6 +312,16 @@ class ResponseGuard:
     )
     _stage_direction = re.compile(r"(?:（[^（）\r\n]{1,80}）|\([^()\r\n]{1,80}\))")
     _english_word = re.compile(r"(?<![A-Za-z])[A-Za-z]{3,}(?![A-Za-z])")
+    # 中文对白不会以逗号／顿号／分号／冒号起句。上游偶发把整段开头的标点留下
+    # （删掉前一分句却没删标点，或从长句中间截断），玩家看到的就是
+    # 「，哇，今天……」这种标点排在气泡最前面的形态。
+    #
+    # **刻意不含「……」**：省略号是中文里合法的停顿开场（实测占输出 0.044%），
+    # 拦它会把「……嗯。」这类正常犹豫也判成噪声。
+    _leading_punctuation = re.compile(r"^\s*[，,、；;：:]")
+    # 兜底剥离用：同一个字符集，但**连续剥离**并连带吃掉中间的空格。
+    # 两个模式必须一起改——`check` 剥完还会再跑一次 `format_issue` 自查。
+    _leading_punctuation_strip = re.compile(r"^[\s，,、；;：:]+")
     _allowed_english = frozenset(
         {
             "ai",
@@ -375,7 +385,18 @@ class ResponseGuard:
                 return GuardResult(False, "state_modification", "")
             format_issue = self.format_issue(text)
             if format_issue:
-                return GuardResult(False, f"format_{format_issue}", "")
+                if format_issue != "leading_punctuation":
+                    return GuardResult(False, f"format_{format_issue}", "")
+                # 前导标点是这里最轻的一类噪声：`retry_for_format_noise` 已经
+                # 借 format 重试修过一次。仍没修好时**不按其他格式噪声判死**
+                # （判死会把一条只是开头多一个逗号的对白换成 fallback 回复，
+                # 玩家拿到的东西反而更糟），剥掉标点后按同一条回复继续验收。
+                text = self.strip_leading_punctuation(text)
+                if not text:
+                    return GuardResult(False, "empty", "")
+                remaining = self.format_issue(text)
+                if remaining:
+                    return GuardResult(False, f"format_{remaining}", "")
             if len(text) > self.max_chars:
                 return GuardResult(True, "truncated", text[: self.max_chars])
             return GuardResult(True, "accepted", text)
@@ -398,7 +419,19 @@ class ResponseGuard:
         for match in cls._english_word.finditer(text):
             if match.group(0).casefold() not in cls._allowed_english:
                 return "english"
+        # 前导标点放在最后：它比 markdown、动作括号和英文词都轻，别的噪声
+        # 先报出来，重试方向才不会被一个逗号带跑。
+        if cls._leading_punctuation.match(text):
+            return "leading_punctuation"
         return None
+
+    @classmethod
+    def strip_leading_punctuation(cls, reply: object) -> str:
+        """剥掉开头的逗号／顿号／分号／冒号，其余文字原样保留。"""
+
+        if not isinstance(reply, str):
+            return ""
+        return cls._leading_punctuation_strip.sub("", reply)
 
     @classmethod
     def is_topic_prompt_echo(cls, reply: object) -> bool:

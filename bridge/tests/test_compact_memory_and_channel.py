@@ -7,6 +7,9 @@
   ——而这套记忆刚经过 `select_memory_facts` 的长度/去重/排序筛选，等于白做。
   现在紧凑分支单独渲染一张 `recent_memory` 卡，且**只留记忆行**：
   `scene` 卡已给出当前状态，`时间从“1830”变为“1840”` 这类差异行成了纯冗余。
+* **§3b（2026-09-21）**：唯一的例外是 `地点从“A”变为“B”` —— `scene` 卡给的是
+  「现在在哪」，给不出「刚从哪来」，于是这一行是紧凑路径里**唯一**能体现
+  「白天在葡萄园、晚上回家」这类轨迹的信号，保留一条（+15 tokens/轮）。
 * **§4**：紧凑路径此前唯一的渠道信息是 `post_history_voice_guard.channel` 里
   一个没有解释的英文 token（`"face_to_face"`）。`scene` 卡补一个 `场合` 结论。
 
@@ -25,6 +28,7 @@ from pathlib import Path
 from stardew_ai_bridge.prompts import (
     ContextBuilder,
     PromptBuilder,
+    is_location_delta_fact,
     is_state_delta_fact,
     select_compact_memory_facts,
     select_memory_facts,
@@ -52,6 +56,12 @@ MIXED_FACTS = [
 ]
 
 MEMORY_ONLY = MIXED_FACTS[4:]
+
+# `MIXED_FACTS` 里唯一保留的状态差异行（轨迹信号，见 §3b）。
+LOCATION_DELTA = MIXED_FACTS[1]
+
+# 不含地点变化的纯状态差异：这些仍然一条都不该进 prompt。
+OTHER_STATE_DELTAS = [MIXED_FACTS[0], MIXED_FACTS[2], MIXED_FACTS[3]]
 
 
 def _payload(
@@ -125,11 +135,42 @@ def test_state_delta_detection_ignores_ordinary_memory_text() -> None:
         assert not is_state_delta_fact(fact)
 
 
+def test_location_delta_detection_covers_only_the_location_label() -> None:
+    """11 个 label 里只有「地点」算轨迹信号。"""
+
+    for label in STATE_DELTA_LABELS:
+        expected = label == "地点"
+        assert is_location_delta_fact(f"{label}从“旧”变为“新”") is expected, label
+
+
+def test_location_delta_detection_requires_whole_line_match() -> None:
+    assert not is_location_delta_fact("记忆（14）：地点从“SeedShop”变为“Town”")
+    assert not is_location_delta_fact("地点从“SeedShop”变为“Town”，对吧")
+    assert not is_location_delta_fact("玩家说：“地点从“A”变为“B””；NPC回应：“嗯。”")
+
+
 def test_select_compact_memory_facts_keeps_memory_and_order() -> None:
-    assert select_compact_memory_facts(MIXED_FACTS) == MEMORY_ONLY
+    assert select_compact_memory_facts(MIXED_FACTS) == [LOCATION_DELTA, *MEMORY_ONLY]
     # 全是记忆时原样返回，不重排、不去重（那是 select_memory_facts 的职责）
     assert select_compact_memory_facts(MEMORY_ONLY) == MEMORY_ONLY
     assert select_compact_memory_facts([]) == []
+
+
+def test_select_compact_memory_facts_keeps_only_the_latest_location_delta() -> None:
+    """真出现多条地点变化时只留最近一条，仍占一行。"""
+
+    older = "地点从“Farm”变为“SeedShop”"
+    newer = "地点从“SeedShop”变为“Town”"
+
+    assert select_compact_memory_facts([older, *MEMORY_ONLY, newer]) == [
+        newer,
+        *MEMORY_ONLY,
+    ]
+    assert select_compact_memory_facts([older, newer]) == [newer]
+
+
+def test_select_compact_memory_facts_drops_other_state_deltas() -> None:
+    assert select_compact_memory_facts(OTHER_STATE_DELTAS) == []
 
 
 # --- §3 端到端：记忆确实进 prompt --------------------------------------------
@@ -140,18 +181,32 @@ def test_compact_prompt_restores_cross_session_memory() -> None:
 
     memory = _card(prompt, "recent_memory")
     assert memory is not None, "紧凑路径必须带上跨会话记忆"
-    assert memory["近期记忆"] == MEMORY_ONLY
+    assert memory["近期记忆"] == [LOCATION_DELTA, *MEMORY_ONLY]
 
 
-def test_compact_prompt_drops_redundant_state_delta_facts() -> None:
-    """状态差异行的当前值已在 `scene` 卡里，再带一遍是纯冗余。"""
+def test_compact_prompt_keeps_the_location_delta_for_trajectory() -> None:
+    """§3b：地点变化是全系统唯一能体现「白天在葡萄园、晚上回家」的信号。"""
+
+    memory = _card(_build(), "recent_memory")
+
+    assert LOCATION_DELTA in memory["近期记忆"]
+
+
+def test_compact_prompt_drops_the_other_redundant_state_delta_facts() -> None:
+    """时间／好感／剧情事件的当前值已在 `scene` 卡里，再带一遍是纯冗余。"""
 
     prompt = _build()
     blob = json.dumps(prompt, ensure_ascii=False)
 
-    for fact in MIXED_FACTS[:4]:
+    for fact in OTHER_STATE_DELTAS:
         assert fact not in blob, f"状态差异行不该进 prompt：{fact}"
-    assert "变为" not in json.dumps(_card(prompt, "recent_memory"), ensure_ascii=False)
+    # 记忆卡里只剩一条状态差异行（地点），其余都是记忆
+    deltas = [
+        fact
+        for fact in _card(prompt, "recent_memory")["近期记忆"]
+        if "变为" in fact
+    ]
+    assert deltas == [LOCATION_DELTA]
 
 
 def test_compact_memory_card_matches_select_memory_facts_pipeline() -> None:
@@ -184,9 +239,17 @@ def test_compact_memory_card_keeps_select_memory_facts_deduplication() -> None:
 def test_compact_prompt_omits_memory_card_when_there_is_no_memory() -> None:
     """纯状态差异（首次对话常见）或空记忆时不该产空卡。"""
 
-    for facts in ([], MIXED_FACTS[:4]):
+    for facts in ([], OTHER_STATE_DELTAS):
         prompt = _build(facts=facts)
         assert _card(prompt, "recent_memory") is None, f"facts={facts} 不该产卡"
+
+
+def test_compact_prompt_renders_the_card_for_a_lonely_location_delta() -> None:
+    """只有地点变化时也产卡：那正是「刚换了地方」最需要被说出来的一轮。"""
+
+    memory = _card(_build(facts=[LOCATION_DELTA]), "recent_memory")
+
+    assert memory == {"近期记忆": [LOCATION_DELTA]}
 
 
 def test_offline_compact_path_has_no_recent_memory_card() -> None:
