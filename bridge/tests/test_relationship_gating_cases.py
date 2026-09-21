@@ -67,12 +67,19 @@ def test_relationship_gating_cases_project_before_after_into_prompt_state() -> N
             },
         }
         gate = builder.build(payload)["npcIdentity"]["relationshipGate"]
+        # 2026-09-21（用户拍板）：before/after 的差异不再表现为"已婚被压级"，
+        # 而是同一 married 阶段下的熟稔度差分（生疏 ↔ 已磨合）。
+        assert gate["eventGateApplied"] is False
+        assert gate["effectiveIntimacyStage"] == "close"
+        assert gate["relationshipStage"] == "married"
         if case.event_condition == "before":
-            assert gate["eventGateApplied"] is True
-            assert gate["effectiveIntimacyStage"] == "acquaintance"
+            assert gate["familiarity"] == "unfamiliar"
+            assert gate["familiarityLabel"] == "生疏"
+            assert gate["missingEventIds"]
         else:
-            assert gate["eventGateApplied"] is False
-            assert gate["effectiveIntimacyStage"] == "close"
+            assert gate["familiarity"] == "settled"
+            assert gate["familiarityLabel"] == "已磨合"
+            assert gate["missingEventIds"] == []
 
 
 def test_relationship_gating_pairs_share_a_neutral_grounded_chat_context() -> None:

@@ -37,6 +37,8 @@ def test_all_event_gate_roles_cover_unknown_before_and_after_matrix(
     assert unknown.effective_intimacy_stage == "married"
     assert unknown.event_gate_applied is False
     assert unknown.relationship_status_preserved is True
+    # 没有事件状态就不做熟稔度推断（不能把"没提供"当成"没经历过"）。
+    assert unknown.familiarity == "unknown"
 
     before = resolve_relationship_gate(
         npc_id,
@@ -44,10 +46,13 @@ def test_all_event_gate_roles_cover_unknown_before_and_after_matrix(
         friendship_hearts=10,
         completed_event_ids=(),
     )
+    # 2026-09-21（用户拍板）：已婚是"玩家必须实际走完流程"才能达成的既成事实，
+    # 事件锁不再把它压到 close 以下——没走完的剧情只体现为熟稔度「生疏」。
     assert before.effective_stage == "married"
-    assert before.effective_intimacy_stage == "acquaintance"
-    assert before.event_gate_applied is True
+    assert before.effective_intimacy_stage == "close"
+    assert before.event_gate_applied is False
     assert before.relationship_status_preserved is True
+    assert before.familiarity == "unfamiliar"
     assert before.missing_event_ids == gates[0].required_event_ids
 
     after = resolve_relationship_gate(
@@ -61,6 +66,8 @@ def test_all_event_gate_roles_cover_unknown_before_and_after_matrix(
     assert after.event_gate_applied is False
     assert after.relationship_status_preserved is True
     assert after.missing_event_ids == ()
+    assert after.familiarity == "settled"
+    assert after.familiarity_label == "已磨合"
 
 
 def test_high_hearts_without_first_event_are_capped_at_acquaintance() -> None:
@@ -102,7 +109,14 @@ def test_missing_event_state_does_not_trigger_an_assumed_downgrade() -> None:
     assert result.event_gate_applied is False
 
 
-def test_marriage_status_is_preserved_while_event_gate_caps_intimacy() -> None:
+def test_marriage_status_is_preserved_without_capping_intimacy() -> None:
+    """2026-09-21（用户拍板）：已婚是既成事实，事件锁不下调它。
+
+    此前这条断言的是"关系标签保留、亲密权限压到 acquaintance"，
+    结果是婚后 prompt 里写着「不得使用爱称、主动暧昧」。现在同样输入下
+    阶段与亲密权限都保持满配，缺的事件只体现为熟稔度「生疏」。
+    """
+
     result = resolve_relationship_gate(
         "Sebastian",
         relationship_stage="married",
@@ -111,8 +125,12 @@ def test_marriage_status_is_preserved_while_event_gate_caps_intimacy() -> None:
     )
 
     assert result.effective_stage == "married"
-    assert result.effective_intimacy_stage == "acquaintance"
+    assert result.effective_intimacy_stage == "close"
+    assert result.event_gate_applied is False
     assert result.relationship_status_preserved is True
+    assert result.familiarity == "unfamiliar"
+    assert result.familiarity_label == "生疏"
+    assert result.event_unlocked_stage == "acquaintance"  # 真相仍保留在诊断字段里
 
 
 def test_completed_event_chain_does_not_leave_marriage_gate_active() -> None:

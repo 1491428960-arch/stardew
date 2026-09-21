@@ -5,7 +5,12 @@ from collections.abc import Mapping
 from typing import Any
 
 from .personas import canonical_npc_id
-from .relationship_gating import INTIMATE_STAGES, CONVERSATION_LEAD_STAGES
+from .relationship_gating import (
+    CONVERSATION_LEAD_STAGES,
+    FAMILIARITY_LABELS,
+    INTIMATE_STAGES,
+    INTIMATE_STAGE_FLOOR,
+)
 
 
 _STAGES = (
@@ -923,24 +928,108 @@ def build_stage_policy(npc_id: object, stage: object) -> dict[str, Any]:
     return result
 
 
+# 2026-09-21（用户拍板）：事件完成度对既成亲密关系只投影成**熟稔度语气差分**。
+# 此前这里在事件未完成时把已婚的 affectionInitiative 打成 initiativeMode=none、
+# 删掉 warmthSignals/personalSignals，并写下「不得使用固定爱称、主动暧昧」——
+# 结果婚后对话完全不像夫妻。现在已婚/恋爱的阶段权限保持满配，
+# 只有依赖共同经历的那部分表达（爱称、内部梗、事件后专属熟稔）按熟稔度分档。
+_STAGE_LABELS_ZH: dict[str, str] = {
+    "dating": "恋人",
+    "married": "夫妻",
+    "parent": "有孩子的伴侣",
+}
+
+_FAMILIARITY_GUIDANCE: dict[str, str] = {
+    "unfamiliar": (
+        "两人已经是{stage}，这是既成事实：不得说成还不熟、刚认识或退回朋友式距离。"
+        "但共同经历还少，像刚在一起、还在磨合——可以说在乎、想念、照顾和眼前的共同安排，"
+        "先不用只有长期相处才有的内部梗、固定爱称和没发生过的共同回忆。"
+    ),
+    "warming": (
+        "两人已经是{stage}，已经一起经历过一部分事情，正在逐渐熟络："
+        "可以用共同生活的具体细节和自然的亲近表达；"
+        "只剩最强的那层专属梗、固定爱称和事件后的专属熟稔还没解锁，"
+        "等其余经历走完再自然用。"
+    ),
+    "settled": (
+        "两人已经是{stage}，共同经历已经完整走过："
+        "可以自然使用只有彼此才懂的内部梗、固定爱称和事件后的专属熟稔。"
+    ),
+}
+
+
+def _apply_intimate_familiarity(
+    policy: dict[str, Any],
+    gate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """把事件完成度投影成熟稔度，**不下调**既成亲密关系的阶段与权限。
+
+    熟稔度是独立维度：`unfamiliar / warming / settled` 只改变爱称、内部梗、
+    事件后专属熟稔的程度，任何一档都不会把已婚说成"还不熟"。
+    """
+
+    familiarity = str(gate.get("familiarity", "")).strip().casefold()
+    guidance = _FAMILIARITY_GUIDANCE.get(familiarity)
+    if guidance is None:
+        # 事件状态未知（调用方没提供 completedEventIds）：不做任何熟稔度推断，
+        # 按阶段本身执行——这与 `resolve_relationship_gate` 的既有约定一致。
+        return policy
+
+    stage = str(policy.get("stage", "")).strip().casefold()
+    instruction = guidance.format(stage=_STAGE_LABELS_ZH.get(stage, "伴侣"))
+    missing = [
+        str(value).strip()
+        for value in gate.get("missingEventIds", ())
+        if str(value).strip()
+    ]
+    floor = str(gate.get("effectiveIntimacyStage") or INTIMATE_STAGE_FLOOR).strip()
+    label = FAMILIARITY_LABELS.get(familiarity, "")
+    policy["familiarity"] = {
+        "stage": familiarity,
+        "label": label,
+        "relationshipStage": stage,
+        "missingEventIds": missing,
+        "instruction": instruction,
+    }
+    # `eventGate` 是熟稔度**唯一能进 prompt 的载体**：`PromptBuilder` 对
+    # `npcIdentity` 无条件走 `_compact_identity`（prompts.py:4885），其中
+    # `_compact_stage_policy` 只保留 stage/responseShape/selfDisclosure/
+    # initiative/followUp/boundaryMode + eventGate + voiceFingerprint +
+    # affectionInitiative + conversationLead。因此上面 `familiarity` 卡只服务
+    # 直接调用本函数的评测/工具，语气差分必须写进 `eventGate.instruction`。
+    policy["eventGate"] = {
+        "effectiveIntimacyStage": floor,
+        "familiarity": familiarity,
+        "familiarityLabel": label,
+        "missingEventIds": missing,
+        "instruction": instruction,
+    }
+    return policy
+
+
 def apply_relationship_event_gate(
     policy: Mapping[str, Any],
     gate: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """把事件锁投影为当前轮可执行的亲密边界。
+    """把事件状态投影为当前轮可执行的边界。
 
-    dating/married/parent 仍保留真实关系标签；事件未完成时只收窄其
-    高阶段的主动亲密、私人披露和主动换题权限。
+    * 既成亲密关系（dating/married/parent）：事件完成度只投影成熟稔度语气
+      差分（见 `_apply_intimate_familiarity`），阶段与亲密权限保持满配。
+    * 普通心级阶段：事件链仍是叙事证据，未解锁时继续收窄到对应阶段，
+      避免数值到了高心级却直接使用最高开放程度。
     """
 
     result = deepcopy(dict(policy))
+    stage = str(result.get("stage", "")).strip().casefold()
+    if stage in INTIMATE_STAGES:
+        return _apply_intimate_familiarity(result, gate)
+
     if not gate.get("eventGateApplied"):
         return result
 
     effective_intimacy = str(
         gate.get("effectiveIntimacyStage", "stranger")
     ).strip().casefold()
-    intimacy_rank = _STAGES.index(effective_intimacy) if effective_intimacy in _STAGES else 0
     result["eventGate"] = {
         "effectiveIntimacyStage": effective_intimacy,
         "missingEventIds": list(gate.get("missingEventIds", ())),
@@ -950,26 +1039,4 @@ def apply_relationship_event_gate(
             "固定爱称或事件后专属熟稔；普通日常和已确认事实仍可正常回应。"
         ),
     }
-
-    if result.get("stage") in INTIMATE_STAGES:
-        if intimacy_rank < _STAGES.index("friend"):
-            result.pop("conversationLead", None)
-        affection = result.get("affectionInitiative")
-        if isinstance(affection, Mapping) and intimacy_rank < _STAGES.index("close"):
-            reduced_affection = deepcopy(dict(affection))
-            reduced_affection["initiativeMode"] = "none"
-            reduced_affection["allowedIntensities"] = ["light"]
-            reduced_affection["minimumExpression"] = (
-                "事件解锁前只保留当前话题中的自然温度；不要主动升级为专属爱意。"
-            )
-            reduced_affection.pop("personalSignals", None)
-            reduced_affection.pop("warmthSignals", None)
-            result["affectionInitiative"] = reduced_affection
-        result["selfDisclosure"] = (
-            f"真实关系为 {result['stage']}，但事件尚未解锁到更高亲密度；"
-            "只分享当前话题相关的日常，不提前暴露高级阶段的脆弱或专属经历。"
-        )
-        result["initiative"] = (
-            "只围绕当前话题回应或给一个眼前的小动作，不主动开启高级亲密话题。"
-        )
     return result

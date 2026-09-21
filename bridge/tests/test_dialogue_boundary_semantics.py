@@ -352,11 +352,14 @@ def _event_gate_case(completed_event_ids: tuple[str, ...]) -> object:
     2026-09-20 补数据后，`shane-close-boundary` 自身已带完整的 close 档链
     （`611944 / 3910674 / 3910975 / 3900074`）；这里显式传入进度覆盖它，
     让「锁住 / 解锁」成为唯一变量。
+
+    2026-09-21（用户拍板）：已婚／恋爱不再被事件锁下调阶段，所以"被锁"的
+    对照必须落在**普通心级阶段**——这里用 close 而不是 dating。
     """
 
     return replace(
         character_quality_eval.case_by_id("shane-close-boundary"),
-        relationship_stage="dating",
+        relationship_stage="close",
         friendship_hearts=8,
         expected_terms=(),
         completed_event_ids=completed_event_ids,

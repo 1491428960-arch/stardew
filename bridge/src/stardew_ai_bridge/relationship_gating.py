@@ -2,6 +2,19 @@
 
 游戏里的 friendship hearts 是数值状态，heart event 才是角色关系已经经历过的
 叙事证据。两者不一致时，回复不能直接使用最高心级的开放程度。
+
+2026-09-21（用户拍板）：事件完成度此前**同时**决定「关系阶段」与「亲密权限」，
+于是"玩家没走完那条链也可能达成"的婚姻被压成朋友。现在拆成两个维度：
+
+* **关系阶段**（`stranger → acquaintance → friend → close → dating → married`）
+  由婚姻状态 + 心数决定。`dating / married / parent` 是玩家必须实际走完
+  （送礼表白 / 结婚流程）才能达成的既成事实，**本身就是强证据**：
+  事件锁不得把它们压到 `close` 以下（`INTIMATE_STAGE_FLOOR`）。
+* **熟稔度**（`unfamiliar / warming / settled`）由事件完成度决定，是**独立调节量**，
+  只影响爱称、内部梗、事件后专属熟稔与主动亲密的**程度**，不影响阶段本身。
+
+两者不再互相覆盖：已婚可以在事件链未走完时表现为「生疏」，
+但不会被说成"还不熟"或退回朋友。
 """
 
 from __future__ import annotations
@@ -36,6 +49,20 @@ STAGE_RANK = {
 # 现在 ① 不再影响阶段；② 仍判 parent，且 **parent 继承 married 的亲密契约**。
 # 需要判断“算不算既成亲密关系”的地方，用 INTIMATE_STAGES，不要各写一份字面量。
 INTIMATE_STAGES = frozenset({"dating", "married", "parent"})
+
+# 2026-09-21（用户拍板）：既成亲密关系的**阶段下限**。
+# 结婚（以及送礼确认关系）没法靠刷好感度达成，必须实际走完流程，
+# 所以它本身就是强证据——事件链没走完只降低熟稔度，不把这个阶段压下去。
+INTIMATE_STAGE_FLOOR = "close"
+
+# 熟稔度：事件完成度的独立投影。只调节表达程度，不改变阶段。
+FAMILIARITY_UNKNOWN = "unknown"
+FAMILIARITY_STAGES = ("unfamiliar", "warming", "settled")
+FAMILIARITY_LABELS = {
+    "unfamiliar": "生疏",
+    "warming": "逐渐熟络",
+    "settled": "已磨合",
+}
 
 CONVERSATION_LEAD_STAGES = frozenset({"friend", "close", "dating", "married"})
 CONVERSATION_LEAD_STAGE_ORDER = {
@@ -108,7 +135,7 @@ class RelationshipEventGate:
 
 @dataclass(frozen=True)
 class RelationshipGateResult:
-    """同时保留游戏真实关系状态和事件锁定后的亲密权限。"""
+    """同时保留游戏真实关系状态、事件锁定后的亲密权限与独立熟稔度。"""
 
     relationship_stage: str
     heart_stage: str | None
@@ -119,6 +146,15 @@ class RelationshipGateResult:
     event_gate_applied: bool
     relationship_status_preserved: bool
     missing_event_ids: tuple[str, ...]
+    # 熟稔度是**独立维度**：事件完成度只调节表达程度，不改变关系阶段。
+    # `unknown` 表示调用方没有提供事件状态，此时不做任何熟稔度推断。
+    familiarity: str = FAMILIARITY_UNKNOWN
+
+    @property
+    def familiarity_label(self) -> str:
+        """熟稔度的中文表达（生疏 / 逐渐熟络 / 已磨合）。"""
+
+        return FAMILIARITY_LABELS.get(self.familiarity, "")
 
     def as_prompt_dict(self) -> dict[str, object]:
         return {
@@ -131,6 +167,8 @@ class RelationshipGateResult:
             "eventGateApplied": self.event_gate_applied,
             "relationshipStatusPreserved": self.relationship_status_preserved,
             "missingEventIds": list(self.missing_event_ids),
+            "familiarity": self.familiarity,
+            "familiarityLabel": self.familiarity_label,
         }
 
 
@@ -207,6 +245,32 @@ def relationship_event_gates(npc_id: object) -> tuple[RelationshipEventGate, ...
     return _EVENT_GATES.get(canonical_id, ())
 
 
+def familiarity_from_event_progress(
+    *,
+    unlocked_stage: object,
+    missing_event_ids: Iterable[object] = (),
+) -> str:
+    """事件完成度 → 熟稔度（**独立于关系阶段**的第二维度）。
+
+    * `settled`（已磨合）：该心数能触达的事件链全部完成，close 档也已解锁。
+    * `warming`（逐渐熟络）：链没走完，但已经走过中段（friend 档及以上）。
+    * `unfamiliar`（生疏）：链只走到 acquaintance，或连第一个事件都没有。
+
+    熟稔度只调节爱称、内部梗、事件后专属熟稔与主动亲密的程度，
+    任何一档都**不**推翻既成关系（见 `INTIMATE_STAGE_FLOOR`）。
+    """
+
+    unlocked = _normalise_stage(unlocked_stage)
+    missing = tuple(
+        str(value).strip() for value in missing_event_ids if str(value).strip()
+    )
+    if not missing and STAGE_RANK[unlocked] >= STAGE_RANK["close"]:
+        return "settled"
+    if STAGE_RANK[unlocked] >= STAGE_RANK["friend"]:
+        return "warming"
+    return "unfamiliar"
+
+
 def resolve_relationship_gate(
     npc_id: object,
     *,
@@ -214,10 +278,11 @@ def resolve_relationship_gate(
     friendship_hearts: object,
     completed_event_ids: Iterable[object] | None = None,
 ) -> RelationshipGateResult:
-    """返回真实关系状态与事件解锁后的有效亲密权限。
+    """返回真实关系状态、事件解锁后的有效亲密权限与独立熟稔度。
 
-    对 dating/married/parent 不篡改关系标签，只降低其可使用的亲密权限；
-    对普通心级阶段则直接选择不超过事件上限的 stage profile。
+    对普通心级阶段，事件锁仍然决定可用阶段（心数 ≠ 叙事证据）。
+    对 dating/married/parent，事件锁**不再**下调关系阶段，也不再把亲密权限
+    压到 `INTIMATE_STAGE_FLOOR` 以下：它们只投影成 `familiarity` 熟稔度。
     """
 
     raw_stage = _normalise_stage(relationship_stage)
@@ -237,6 +302,7 @@ def resolve_relationship_gate(
             event_gate_applied=False,
             relationship_status_preserved=raw_stage in STATUS_STAGES,
             missing_event_ids=(),
+            familiarity=FAMILIARITY_UNKNOWN,
         )
 
     completed = {
@@ -266,35 +332,29 @@ def resolve_relationship_gate(
             break
         unlocked_stage = gate.stage
 
+    familiarity = familiarity_from_event_progress(
+        unlocked_stage=unlocked_stage,
+        missing_event_ids=missing,
+    )
+
     if raw_stage in HEART_STAGES:
+        # 普通心级：事件链仍是叙事证据，继续按解锁上限选择阶段。
         effective_stage = min(
             (raw_stage, unlocked_stage),
             key=lambda item: STAGE_RANK[item],
         )
         effective_intimacy_stage = effective_stage
         status_preserved = False
-    else:
-        # 婚姻/恋爱是游戏事实，不因为缺事件而伪装成普通朋友；只限制
-        # 私人披露、主动亲密和高级事件式关系表达。
-        status_base = "close"
-        effective_intimacy_stage = min(
-            (status_base, heart_stage, unlocked_stage),
-            key=lambda item: STAGE_RANK[item],
-        )
-        effective_stage = raw_stage
-        status_preserved = True
-
-    if raw_stage in HEART_STAGES:
         applied = effective_stage != raw_stage
     else:
-        # dating/married/parent 用 close 作为最高的普通亲密基线；不能拿
-        # relationshipStage 本身和 close 比较，否则即使事件链全部完成，
-        # "married" 也会被误判成仍处于事件锁定状态。
-        unrestricted_intimacy = min(
-            ("close", heart_stage),
-            key=lambda item: STAGE_RANK[item],
-        )
-        applied = effective_intimacy_stage != unrestricted_intimacy
+        # 2026-09-21（用户拍板）：结婚／确认关系没法靠刷好感度达成，必须实际
+        # 走完流程，因此 dating/married/parent 本身就是强证据。事件链没走完
+        # 只降低**熟稔度**（生疏 / 逐渐熟络），不再下调阶段，也不再把亲密权限
+        # 压到 close 以下——已婚永远不该被说成"朋友"或"还不熟"。
+        effective_stage = raw_stage
+        effective_intimacy_stage = INTIMATE_STAGE_FLOOR
+        status_preserved = True
+        applied = False
 
     return RelationshipGateResult(
         relationship_stage=raw_stage,
@@ -306,7 +366,9 @@ def resolve_relationship_gate(
         event_gate_applied=applied,
         relationship_status_preserved=status_preserved,
         missing_event_ids=missing,
+        familiarity=familiarity,
     )
+
 
 # 2026-09-20（系统性排查 · 语义层）：下面两个换算此前被复制到多处，且**已经漂移**：
 # - `providers.py` 的分档把「2 心」判成 stranger，而 prompts/corpus/本模块都判

@@ -13,8 +13,13 @@ completed_event_ids` 默认空元组）而被事件锁收窄到 acquaintance，�
 - B 类｜数据写错：`topic-start-event-impact` 的 after 侧原本只声明单个被测事件
   （其中 112／384882／8185290 甚至不在该角色的登记链里），改成「被测事件 +
   该角色 close 档完整链」；before 侧保持空元组。
-- C 类｜确实该锁着：before 对照组的语义就是「这段剧情还没发生」，保持空元组，
-  行为不变。
+- C 类｜确实该锁着：before 对照组的语义就是「这段剧情还没发生」，保持空元组。
+
+2026-09-21（用户拍板）语义变更：**已婚/恋爱不再被事件锁下调阶段**。
+C 类对照组因此不再表现为"已婚被压成朋友"，而是同一 married 阶段的
+**熟稔度差分**（`familiarity=unfamiliar` ↔ `settled`）。
+`event_gate_applied` 对既成亲密关系恒为 False；事件链未走完时仍然生效的地方
+是普通心级阶段（见 `test_dialogue_boundary_semantics` 的 Shane 对照）。
 
 每一个事件 ID 的来源都在案例文件里逐条注明，本文件只校验「案例声明的事件链
 必须与登记表同名档位一致」，不参与生成。
@@ -54,10 +59,11 @@ _STAGE_TO_GATE = {
     "parent": "close",
 }
 
-# C 类：语义就是「这段剧情还没发生」的对照组，必须继续被事件锁收窄。
-# 数量与内容都是有意写死的；任何新增的「被锁案例」都会让第一条测试失败，
-# 从而逼出一次显式判断（补数据 or 归入 C 类），而不是静默通过。
-_INTENTIONAL_LOCKED_CASE_IDS = frozenset(
+# C 类：语义就是「这段剧情还没发生」的对照组。2026-09-21 之后它们**不再**被
+# 事件锁收窄阶段（已婚是既成事实），但仍必须是「刻意声明空事件链」的那批案例。
+# 数量与内容都是有意写死的；任何新增的「空事件链案例」都会让第一条测试失败，
+# 从而逼出一次显式判断，而不是静默通过。
+_INTENTIONAL_EMPTY_CHAIN_CASE_IDS = frozenset(
     {
         # topic-start-event-impact 的 before 侧
         "event-impact-wizard-112-before",
@@ -77,6 +83,9 @@ _INTENTIONAL_LOCKED_CASE_IDS = frozenset(
         "relationship-gate-harvey-before",
     }
 )
+
+# 兼容旧名字（此前叫 _INTENTIONAL_LOCKED_CASE_IDS）。
+_INTENTIONAL_LOCKED_CASE_IDS = _INTENTIONAL_EMPTY_CHAIN_CASE_IDS
 
 
 def _all_cases() -> list[object]:
@@ -112,8 +121,13 @@ def _gate_chain(npc_id: str, stage: str) -> tuple[str, ...] | None:
     return None
 
 
-def test_only_intentional_control_cases_remain_event_gated() -> None:
-    """补数据后仍被事件锁收窄的案例，只允许是 C 类对照组。"""
+def test_no_quality_case_is_silently_event_gated() -> None:
+    """没有任何案例可以因为「忘了声明事件链」被静默压级。
+
+    2026-09-21 之后，既成亲密关系（dating/married/parent）不再被事件锁下调，
+    所以这里的期望集合是**空集**；一旦将来出现普通心级阶段的案例忘了补链，
+    这条会立刻失败，逼出一次显式判断（补数据 or 归入 C 类）。
+    """
 
     locked = {
         case.case_id
@@ -121,7 +135,17 @@ def test_only_intentional_control_cases_remain_event_gated() -> None:
         if _gate(case).event_gate_applied
     }
 
-    assert locked == set(_INTENTIONAL_LOCKED_CASE_IDS)
+    assert locked == set()
+
+    # C 类对照组的空事件链仍然是有意保留的，并且必须与非对照组区分开。
+    # 只统计**配置了事件门**的角色：没有门的角色本来就不需要声明事件链。
+    empty_chain = {
+        case.case_id
+        for case in _all_cases()
+        if case.completed_event_ids == ()
+        and relationship_event_gates(case.npc_id)
+    }
+    assert empty_chain == set(_INTENTIONAL_EMPTY_CHAIN_CASE_IDS)
 
 
 def test_a_class_cases_declare_the_gate_chain_of_their_stage() -> None:
@@ -147,8 +171,8 @@ def test_a_class_cases_declare_the_gate_chain_of_their_stage() -> None:
     assert checked >= 190
 
 
-def test_b_class_event_impact_after_unlocks_and_before_stays_locked() -> None:
-    """B 类：after 侧解锁，before 侧保持锁定。"""
+def test_b_class_event_impact_before_and_after_differ_only_by_familiarity() -> None:
+    """B 类：after 与 before 在 married 阶段下只差熟稔度，不差阶段。"""
 
     cases = quality_cases_for_suite("topic-start-event-impact")
     pairs: dict[str, list[object]] = {}
@@ -162,11 +186,17 @@ def test_b_class_event_impact_after_unlocks_and_before_stays_locked() -> None:
         after = by_condition["after"]
 
         assert before.completed_event_ids == (), pair_id
-        assert _gate(before).event_gate_applied is True, pair_id
-        assert _gate(before).effective_intimacy_stage == "acquaintance", pair_id
+        before_gate = _gate(before)
+        assert before_gate.event_gate_applied is False, pair_id
+        assert before_gate.effective_stage == "married", pair_id
+        assert before_gate.effective_intimacy_stage == "close", pair_id
+        assert before_gate.familiarity == "unfamiliar", pair_id
 
-        assert _gate(after).event_gate_applied is False, pair_id
-        assert _gate(after).effective_intimacy_stage == "close", pair_id
+        after_gate = _gate(after)
+        assert after_gate.event_gate_applied is False, pair_id
+        assert after_gate.effective_stage == "married", pair_id
+        assert after_gate.effective_intimacy_stage == "close", pair_id
+        assert after_gate.familiarity == "settled", pair_id
         # after 声明的是「被测事件 + 该角色 close 档完整链」。
         chain = _gate_chain(after.npc_id, after.relationship_stage)
         assert chain is not None, pair_id
@@ -174,19 +204,22 @@ def test_b_class_event_impact_after_unlocks_and_before_stays_locked() -> None:
         assert after.event_id in after.completed_event_ids, pair_id
 
 
-def test_c_class_before_cases_keep_their_locked_behaviour() -> None:
-    """C 类：before 对照组的锁定行为不变（这是被刻意保留的语义）。"""
+def test_c_class_before_cases_keep_their_empty_chain_and_read_as_unfamiliar() -> None:
+    """C 类：空事件链的语义不变（这段剧情没发生），只是不再压阶段。"""
 
-    for case_id in sorted(_INTENTIONAL_LOCKED_CASE_IDS):
+    for case_id in sorted(_INTENTIONAL_EMPTY_CHAIN_CASE_IDS):
         if case_id.startswith("event-impact-"):
             case = _case_from_suite("topic-start-event-impact", case_id)
         else:
             case = _case_from_suite("relationship-stage-gating", case_id)
         assert case.completed_event_ids == (), case_id
         gate = _gate(case)
-        assert gate.event_gate_applied is True, case_id
-        assert gate.effective_intimacy_stage == "acquaintance", case_id
         assert gate.relationship_stage == "married", case_id
+        assert gate.effective_stage == "married", case_id
+        assert gate.effective_intimacy_stage == "close", case_id
+        assert gate.event_gate_applied is False, case_id
+        assert gate.familiarity == "unfamiliar", case_id
+        assert gate.missing_event_ids, case_id
 
 
 def test_case_factories_require_explicit_event_state() -> None:
@@ -227,10 +260,12 @@ def test_married_case_intimacy_line_is_no_longer_gated() -> None:
     assert score["passed"] is True
 
 
-def test_the_same_line_still_fails_while_the_event_gate_is_closed() -> None:
-    """对照：同一句主动亲密在 C 类（事件链未完成）案例里仍然越界。
+def test_the_same_line_is_no_longer_blocked_for_a_married_case() -> None:
+    """对照反转（2026-09-21 用户拍板）：已婚不再因事件链未走完被判"主动亲密越界"。
 
-    这条同时钉住「只补数据、没有关掉 `passed` 里的规则」。
+    同一句话在**普通心级阶段**仍然越界——事件锁没有失效，只是不再作用于
+    既成亲密关系；那条对照在 `test_dialogue_boundary_semantics` 的 Shane
+    close 案例里。
     """
 
     case = _case_from_suite("relationship-stage-gating", "relationship-gate-wizard-before")
@@ -242,5 +277,4 @@ def test_the_same_line_still_fails_while_the_event_gate_is_closed() -> None:
         turn=case.dialogue_turns()[0],
     )
 
-    assert "event_gate_intimacy" in score["tags"]
-    assert score["passed"] is False
+    assert "event_gate_intimacy" not in score["tags"]
