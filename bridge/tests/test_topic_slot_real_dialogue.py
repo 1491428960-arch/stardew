@@ -259,6 +259,115 @@ def test_player_topic_request_fires_on_the_first_asking() -> None:
     assert "明确要你换个话题" in slot["instruction"]
 
 
+def test_topic_request_on_a_blank_history_does_not_land_back_on_her_trade() -> None:
+    """**S13**：玩家开口第一句就是「换个话题吧」，她一句都还没说过。
+
+    这是 2026-09-23 那次云端验证挖出来的空白：`bannedFacet` **只由 `facetRepeat`
+    提供**，零历史时它是空的 ⇒ instruction 落进"随便挑一面"那条分支。而"随便挑"
+    并不随机：`_pick` 在无禁令、`used` 为空时确定性地返回**素材第一条**，也就是这个
+    角色的职业主面。真机渲染出来的原文正是：
+
+        「…本轮由你主动把话头换一次，不要再绕着刚才那一面打转。改从「工作或手艺」
+          这一面挑一件…（例如「酒窖里这一批新酿」这个方向）…」
+
+    —— 玩家要求换话题，这句话却把她推回酒上（而"刚才那一面"在零历史下还无所指）。
+    修后禁令**降级**到"她惯常的落点"，并且这**同一个**禁令把落点池里工作面的素材
+    一并摘掉（单一层级的实质）。
+    """
+
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload("Sophia", [], "换个话题吧", SOPHIA_MODS)
+    context, _ = _build_context(body)
+    card = _card(
+        PromptBuilder().build(context, "换个话题吧", compact=True),
+        "stage_execution_card",
+    )
+    slot = card["topicSlot"]
+
+    assert slot["trigger"] == "playerAsksNewTopic"
+    # 禁令落在她**惯常的落点**上 —— 也就是素材第一条那一面（`_pick` 的默认返回值）
+    assert slot["bannedFacet"] == _facet_of_topic(SOPHIA_TOPICS[0]) == "工作或手艺"
+    assert slot["suggestedFacet"] != slot["bannedFacet"]
+    # 方向本身不许再点名她的职业主面
+    assert "酒窖里这一批新酿" not in slot["instruction"]
+    assert "画布上还没画完的那一块" not in slot["instruction"]
+    # 同一张卡里，被禁面的素材一条都不许留在落点池
+    guidance = card["conversationLead"]["roleGuidance"]
+    assert "酒窖里这一批新酿" not in guidance
+    assert "画布上还没画完的那一块" not in guidance
+    assert "镇上今天谁在广场上吵" in guidance
+
+
+def test_topic_request_after_a_few_turns_bans_the_facet_he_just_saw() -> None:
+    """聊了几轮之后再要求换话题：禁令用**她最近一轮的面**，不是素材第一条。
+
+    两句回复都是真机原文（S3 R1＝工作面、S11 R3＝镇上面）。拼在一起是为了造出
+    "最近窗口里没有重复面"这条形状：现存实录里窗口内大多带着"酒窖"（真机上"酒窖"
+    出现得太密），凑不出干净的降级场景。两面各一次的窗口 ⇒ `facetRepeat` 不成立，
+    唯一的理由仍然是 `playerAsksNewTopic`。
+
+    玩家说的"换个话题"指的就是他刚看到的**最后那一轮**，所以禁令落在镇上面。
+    """
+
+    # 玩家那两句只作占位：这两轮**她的话自带实词**，轮次共指（`_facet_per_turn`）
+    # 不会介入，所以槽位读到的面完全由她的话决定。
+    history = [
+        {"role": "user", "content": "最近在忙些什么呀？"},
+        {"role": "assistant", "content": S3[0][1]},
+        {"role": "user", "content": "还有呢"},
+        {"role": "assistant", "content": S11[2][1]},
+    ]
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload("Sophia", history, "换个话题吧", SOPHIA_MODS)
+    context, _ = _build_context(body)
+    slot = _card(
+        PromptBuilder().build(context, "换个话题吧", compact=True),
+        "stage_execution_card",
+    )["topicSlot"]
+
+    assert slot["trigger"] == "playerAsksNewTopic"
+    assert slot["bannedFacet"] == "镇上或邻里"
+    assert slot["suggestedFacet"] != slot["bannedFacet"]
+    # 理由句与来源一致：有"最近一面"时不许写成"你惯常的落点"
+    assert "你最近谈的还是「镇上或邻里」这一面" in slot["instruction"]
+    assert "你惯常的落点" not in slot["instruction"]
+
+
+def test_topic_request_when_her_last_line_has_no_facet_still_bans_something() -> None:
+    """有历史、但**她最近一轮判不出面**（S3 R2 是纯指代）⇒ 仍要给出禁令。
+
+    这一级已经拿不到"她最近一面"，退到"她惯常的落点"。措辞**不许**声称"你最近谈的
+    是" —— 那一轮根本没有面，说得出这句话就是编的（也正是本项目记过的"理由句与
+    真实触发不符"）。
+    """
+
+    history = [
+        {"role": "user", "content": S3[0][0]},
+        {"role": "assistant", "content": S3[0][1]},
+        {"role": "user", "content": S3[1][0]},
+        {"role": "assistant", "content": S3[1][1]},
+    ]
+    from stardew_ai_bridge.app import _build_context
+    from stardew_ai_bridge.prompts import PromptBuilder
+
+    body = _payload("Sophia", history, "换个话题吧", SOPHIA_MODS)
+    context, _ = _build_context(body)
+    slot = _card(
+        PromptBuilder().build(context, "换个话题吧", compact=True),
+        "stage_execution_card",
+    )["topicSlot"]
+
+    assert slot["trigger"] == "playerAsksNewTopic"
+    assert slot["bannedFacet"] == _facet_of_topic(SOPHIA_TOPICS[0])
+    assert slot["suggestedFacet"] != slot["bannedFacet"]
+    assert "你惯常的落点" in slot["instruction"]
+    assert "你最近谈的还是" not in slot["instruction"]
+
+
 def test_a_polite_excuse_is_no_longer_read_as_a_short_reply() -> None:
     """「那你去忙吧」不是敷衍 —— 它既不是空转词拼成的整句，也不是「换个话题」。
 

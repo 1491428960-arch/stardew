@@ -160,6 +160,23 @@ def test_slot_falls_back_to_a_readable_phrase_without_material() -> None:
             assert facet in slot["instruction"], facet
 
 
+def test_zero_history_phrasing_has_no_dangling_reference() -> None:
+    """零历史时不许出现"刚才那一面" —— 她没有"刚才"（S13 的另一半）。
+
+    B/C 理由共用那条 `else` 措辞。零历史 + 玩家开口第一句就说「换个话题」时，
+    "刚才那一面"是一个**没有先行词**的指代；而若该角色连素材都没有
+    （`preferredTopics` 为空），"她惯常的落点"这一级也拿不到禁令 —— 此时整条
+    instruction 不该点名任何面，也不该留下指代。
+    """
+
+    slot = rotation_topic_slot(None, recent_replies=[], player_replies=["换个话题吧"])
+
+    assert slot["trigger"] == "playerAsksNewTopic"
+    assert "bannedFacet" not in slot
+    assert "刚才那一面" not in slot["instruction"]
+    assert "新的话头" in slot["instruction"]
+
+
 # --- 2. 面映射必须是确定的 ----------------------------------------------------
 
 

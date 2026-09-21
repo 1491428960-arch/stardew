@@ -630,6 +630,9 @@ def rotation_topic_slot(
       也是"主动权在 NPC 手里"的信号源 —— 不用玩家去点"找话题"。
     * ``playerAsksNewTopic``：玩家**本轮**明确要求换个话题。
 
+    `bannedFacet`（"本轮要换掉的那一面"）与 `trigger` **不再等价**（2026-09-23）：
+    前者有三级证据来源（见函数内的 `banned_source`），后者只报**触发理由**。
+
     两条**不产出槽位**的路径（都写在常量区的防误判里）：玩家在划边界
     （``_PLAYER_REFUSAL_MARKERS``，交给 `boundaryMode` 收口）；玩家本轮自己
     把话带回了被禁的那个面 —— 见下面对"撤回"的说明。
@@ -684,14 +687,89 @@ def rotation_topic_slot(
     # 一个确定的"，而声明顺序是把「工作或手艺」排在第一位的那份优先级表 ——
     # 语义上"素材占比相同时，先压更靠前的那一面"。
     facet_order = {name: index for index, (name, _) in enumerate(_LIFE_FACET_PATTERNS)}
-    banned = (
-        max(
-            repeated,
+
+    def _strongest(candidates: set[str]) -> str:
+        """候选面里挑**本轮要压的那一个**：先比素材占比，再比声明顺序。
+
+        下面三级证据（重复面／她最近一面／她惯常的落点）共用这一个选择器 —— 它们是
+        **同一个字段**（`bannedFacet`）的三个证据来源，不是三个可比对象。
+        """
+
+        return max(
+            candidates,
             key=lambda facet: (topic_facets.count(facet), -facet_order.get(facet, 0)),
         )
-        if repeated
-        else ""
-    )
+
+    # 建议去哪个面：优先该角色**自己素材里就有**、最近没用过、且不与禁令同面的那一条。
+    #
+    # 降级（2026-09-21 二次）：候选为空时不再直接放弃，而是退一步 —— 允许回到最近几轮
+    # 用过、但**没有被禁**的面。用户点名的"隔一轮提同一件事"形状下，素材只覆盖两个面
+    # 的角色（索菲亚＝工作／镇上）会让 `used` 立刻等于它的全部素材面，旧写法于是**每一
+    # 轮**都落进"没有候选"的泛化分支，建议指向它根本没有素材的面（吃喝、天气、家人…）
+    # ——"换到空的"比不换更差。禁令只针对 `banned` 这一面，回到别的面并不违规。
+    #
+    # 2026-09-23：本块**上移**到 `banned` 之前。下面的「她惯常的落点」那一级要用它 ——
+    # 那正是它在"无禁令、不拿 `used` 筛"时会返回的那一条。复制一份等价逻辑会让
+    # "默认落点"有两份定义（本项目记过的形状），所以宁可在同一个函数里把顺序调过来。
+    used = set().union(*per_reply) if per_reply else set()
+
+    def _pick(allow_used: bool) -> tuple[str, str]:
+        for topic in topics:
+            facet = _facet_of_topic(topic)
+            if not facet or facet == banned:
+                continue
+            if not allow_used and facet in used:
+                continue
+            return topic, facet
+        return "", ""
+
+    # 本轮**要换掉的那一面**（`bannedFacet`）。三级证据、逐级降级（`banned_source`）：
+    #   · `repeat`：重复面（`facetRepeat`，现状）；
+    #   · `latest`：她最近一轮的面（`playerAsksNewTopic` 单独触发时，N=1）；
+    #   · `default`：她惯常的落点（连 `latest` 都拿不到时）。
+    # 三级产出的都是**同一个字段**，措辞层也只有一个禁令句 —— 不新增第二个可比对象。
+    # 编号刻意不用 ①②③：本函数前半段已经用它标了"玩家划边界"与"撤回"两个分支。
+    banned = _strongest(repeated) if repeated else ""
+    banned_source = "repeat" if banned else ""
+
+    # `playerAsksNewTopic` **单独**触发时补上参照物（2026-09-23）。
+    #
+    # 玩家明确说「换个话题」时，代码得知道"换掉哪一面"才谈得上换。在此之前
+    # `bannedFacet` **只由 `facetRepeat` 提供**，于是没有重复面的轮次里它是空的，
+    # instruction 落进"随便挑一面"那条分支 —— 而"随便挑"并不随机：`_pick` 在无禁令、
+    # `used` 为空时确定性地返回**素材第一条**，也就是这个角色的职业主面。
+    # 真机 S13（玩家开口第一句就是「换个话题吧」）渲染出来的是：
+    #     「…本轮由你主动把话头换一次，不要再绕着刚才那一面打转。改从「工作或手艺」
+    #       这一面挑一件…（例如「酒窖里这一批新酿」这个方向）…」
+    # —— 玩家要换话题，她照着这句去聊酒；而"刚才那一面"在零历史下**无所指**。
+    #
+    # 两级降级：
+    #   · `latest`：有历史但没有重复 ⇒ 用**最近一轮她自己的面**。玩家说的"换个话题"
+    #     指的就是他刚看到的最后那一轮，所以这一级与 `anchor`（同样取 `replies[-1]`）
+    #     **同轮同源**，不会出现"接住这一轮、却换掉另一轮"的错位。
+    #   · `default`：最近一轮判不出面、或一句历史都没有 ⇒ 用**她惯常的落点**（`_pick`
+    #     不加任何筛选时会返回的那一条）。这一级不声称"她刚才在聊"，只声明"别又起在
+    #     这一面"。
+    #     "干脆让她自由挑"在这里**不成立**：自由挑的实现就是回到素材第一条，而
+    #     `narrow_topic_pool` 也会因为没有禁令、把这一面的素材照旧留在落点池里 ——
+    #     S13 那个"要她换话题、她偏聊酒"正是这两层一起造成的。
+    if not banned and asks_new_topic:
+        latest = per_reply[-1] if per_reply else set()
+        if latest:
+            banned = _strongest(latest)
+            banned_source = "latest"
+        else:
+            # 「她惯常的落点」＝素材里第一条**判得出面**的条目，也就是**不加任何筛选**
+            # 时 `_pick` 会返回的那一条（这里 `allow_used=True` 读作"别拿 `used` 筛"）。
+            #
+            # **不能**用 `allow_used=False`：那一支挑的是"最近**没**用过"的面，于是有
+            # 历史时这一级给出的禁令由 `used` 决定，不再是"她惯常的落点"。具体代价：
+            # S3 前两轮（R1 工作面、R2 是纯指代判不出面）下它会禁掉**镇上**、把她推回
+            # 工作面 —— 而她最近聊的正是工作面，与"换个话题"正好相反。
+            _, default_facet = _pick(allow_used=True)
+            if default_facet:
+                banned = default_facet
+                banned_source = "default"
 
     # ② **撤回**：玩家本轮自己把话带回了被禁的那个面 —— 整轮不产出槽位。
     #
@@ -705,27 +783,12 @@ def rotation_topic_slot(
     #
     # 判据复用 `_LIFE_FACET_PATTERNS`（不另建词表）：玩家这条话**落在被禁的那个
     # 生活面上**就算。只聊别的面不算，否则"玩家说了任何实质内容"都会取消换面。
+    #
+    # 2026-09-23：判定对象跟着 `bannedFacet` 一起变宽（`latest` / `default` 两级的
+    # 禁令也参与撤回）。语义没变，反而更完整：玩家本轮把话带回了"这一轮本来要换掉的
+    # 那一面" ⇒ 那就不换。
     if banned and player_text and banned in _facet_hits(player_text):
         return {}
-
-    # 建议去哪个面：优先该角色**自己素材里就有**、最近没用过、且不与禁令同面的那一条。
-    #
-    # 降级（2026-09-21 二次）：候选为空时不再直接放弃，而是退一步 —— 允许回到最近几轮
-    # 用过、但**没有被禁**的面。用户点名的"隔一轮提同一件事"形状下，素材只覆盖两个面
-    # 的角色（索菲亚＝工作／镇上）会让 `used` 立刻等于它的全部素材面，旧写法于是**每一
-    # 轮**都落进"没有候选"的泛化分支，建议指向它根本没有素材的面（吃喝、天气、家人…）
-    # ——"换到空的"比不换更差。禁令只针对 `banned` 这一面，回到别的面并不违规。
-    used = set().union(*per_reply) if per_reply else set()
-
-    def _pick(allow_used: bool) -> tuple[str, str]:
-        for topic in topics:
-            facet = _facet_of_topic(topic)
-            if not facet or facet == banned:
-                continue
-            if not allow_used and facet in used:
-                continue
-            return topic, facet
-        return "", ""
 
     suggested_topic, suggested_facet = _pick(allow_used=False)
     if not suggested_topic:
@@ -744,13 +807,22 @@ def rotation_topic_slot(
     #    方向聊"——主动权在角色（由她拉线换面），方向盘在玩家（他拉回来她就跟）。
     # ③ **理由句与触发一致**：没有 `facetRepeat` 时不许出现"最近N轮里有M轮在谈"，
     #    否则模型读到的理由与真实触发不符（B 触发时那一面并没有被禁）。
+    #    2026-09-23：禁令的来源变成三级（`banned_source`），理由句跟着分三支 ——
+    #    三支都必须**点名**那个面，否则下面"别再以**这一面**做新的落点"无所指。
     anchor = _bridge_anchor(replies[-1]) if replies else ""
     player_quote = player_text[:_PLAYER_QUOTE_LIMIT]
     parts: list[str] = []
-    if banned:
+    if banned_source == "repeat":
         parts.append(
             f"最近{len(replies)}轮里有{counts.get(banned, 0)}轮在谈「{banned}」这一面；"
         )
+    elif banned_source == "latest":
+        parts.append(f"你最近谈的还是「{banned}」这一面；")
+    elif banned_source == "default":
+        # 措辞与另外两支**同型**（都是"她落在哪一面"的陈述），因为这一支同时覆盖
+        # 两种进入路径：真的零历史、以及有历史但她最近一轮判不出面。"别再往…起头"
+        # 放在"玩家明确要你换个话题"**之前**会读成因果倒置。
+        parts.append(f"你惯常的落点是「{banned}」这一面；")
     if short_reply:
         parts.append(f"玩家最近只回了「{player_quote}」几个字，没接住你的话头；")
     if asks_new_topic:
@@ -771,9 +843,16 @@ def rotation_topic_slot(
             "别再以这一面做新的落点；换物件、换时段或换个说法讲同一件事都不算换。"
         )
     else:
-        # 没有重复面可禁（B/C 理由）：要的是"换个落点"，不是封口——凭空禁一面会把
+        # 没有面可禁（B/C 理由）：要的是"换个落点"，不是封口——凭空禁一面会把
         # 玩家正在聊的东西一起压掉。
-        parts.append("本轮由你主动把话头换一次，不要再绕着刚才那一面打转。")
+        # 2026-09-23：零历史（她一句都还没说过）时"刚才那一面"**无所指** —— 玩家开口
+        # 第一句就是「嗯」、或第一句就说「换个话题」而该角色连素材都没有，都会落到这里。
+        # 换成不指代的说法，否则模型读到的"那一面"是一个没有先行词的指代。
+        parts.append(
+            "本轮由你主动把话头换一次，不要再绕着刚才那一面打转。"
+            if replies
+            else "本轮由你起一个新的话头，不要沿用你惯常的那种开场。"
+        )
     if suggested_topic:
         # 「建议的面最近刚用过」是**素材缺口**下的常态，不是 bug：索菲亚 4 条素材
         # 只覆盖两个面（工作／镇上），对话到第三轮就穷尽，`_pick` 的第一轮（不许
@@ -802,7 +881,10 @@ def rotation_topic_slot(
     triggers = [
         name
         for name, active in (
-            ("facetRepeat", bool(banned)),
+            # 2026-09-23：判据从 `bool(banned)` 改回 `bool(repeated)`。禁令现在也可能由
+            # `playerAsksNewTopic` 的降级提供，而 `trigger` 说的是**理由** ——
+            # 不能因为禁令在场就报出一个并没有发生的 `facetRepeat`。
+            ("facetRepeat", bool(repeated)),
             ("playerShortReply", short_reply),
             ("playerAsksNewTopic", asks_new_topic),
         )
