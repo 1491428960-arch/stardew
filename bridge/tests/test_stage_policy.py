@@ -146,11 +146,20 @@ def test_sophia_conversation_lead_guidance_connects_current_object_to_small_plan
 
 
 def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() -> None:
+    """本条的意图是「酒窖方向与创作方向都要覆盖」，不是钉死某几个词。
+
+    2026-09-21：原断言写的是「葡萄品种 / 发酵过程 / 绘画过程」。后两个词是
+    **过程导向**，会把模型推向工序名（用户实测「刚把最后一层罩光放到窗边」）。
+    改成对象导向后，桥接意图由「酒窖」与「画笔／画里的具体东西」承担。
+    过程导向的回归闸见 `test_role_guidance_object_focus.py`。
+    """
+
     guidance = build_stage_policy("Sophia", "dating")["conversationLead"]["roleGuidance"]
 
-    assert "葡萄品种" in guidance
-    assert "发酵过程" in guidance
-    assert "绘画过程" in guidance
+    assert "葡萄" in guidance
+    assert "酒窖" in guidance  # 酿造方向
+    assert "画笔" in guidance  # 创作方向
+    assert "画里的具体东西" in guidance
     assert "因为是玩家才愿意分享" in guidance
 
 
