@@ -128,6 +128,29 @@ def topic_repetition(replies: list[str]) -> dict[str, float]:
     }
 
 
+def segment_stability(replies: list[str], size: int) -> dict[str, dict[str, float]]:
+    """把一批切成若干段，算每段的指标 —— **段间跨度就是噪声下限**。
+
+    2026-09-23 02:3x 加，起因是一次翻车：§19 用"同一档跑两遍取差"当噪声下限，
+    据此得出"削 prompt 让感官/比喻更泛滥"；扩到 48 轮后发现**方向完全翻转** ——
+    因为两次跑都在相近时段，那个差只反映短期抖动，**严重低估了真实波动**。
+
+    正确做法是把**同一批**切成段（默认每 16 轮一段），看同档位内部能差多少。
+    §21 就是这么翻案的：baseline 的感官描写三段 0.41/0.08/0.89，段内跨度 0.81，
+    而当时据以下结论的档间差只有 0.40。
+    """
+
+    if size <= 0 or len(replies) < size * 2:
+        return {}
+    segments = [replies[i:i + size] for i in range(0, len(replies) - size + 1, size)]
+    out: dict[str, dict[str, float]] = {}
+    for index, segment in enumerate(segments, start=1):
+        table = measure(segment)
+        table.update({f"__{k}": v for k, v in topic_repetition(segment).items()})
+        out[f"第{index}段"] = table
+    return out
+
+
 def originals_of(npc: str) -> list[str]:
     """角色原话基线。语料里没有就抛出来，不静默补 0。"""
 
@@ -168,6 +191,13 @@ def main() -> None:
                         help="标签=summary.json，可重复。标签只是显示名（消融对比时写档位名）")
     parser.add_argument("--limit", type=int, default=4, help="自动扫描时取几个角色")
     parser.add_argument("--dump", action="store_true", help="顺带导出逐轮回复")
+    parser.add_argument(
+        "--split",
+        type=int,
+        default=0,
+        help="按 N 轮切段并给段内跨度（噪声下限）。§21 的翻案工具，"
+             "建议 16；给 0（默认）不输出这一段",
+    )
     parser.add_argument(
         "--baseline-npc",
         default="",
@@ -250,14 +280,45 @@ def main() -> None:
                         for *_, repeat in rows)
         print(f"{key:<16}{cells}")
 
+    # 段内跨度：把每批切成段，看同一档位内部能差多少。这是噪声下限，
+    # 档间差异不超过它就不该写成结论（§21 的翻案就是这么来的）。
+    if args.split:
+        print()
+        print(f"=== 段内跨度（每 {args.split} 轮一段）—— 这才是噪声下限 ===")
+        print("  §21 的教训：「跑两遍取差」只反映短期抖动；段间跨度还包含批次内漂移。")
+        print()
+        for who, path in items:
+            replies = replies_of(path)
+            segments = segment_stability(replies, args.split)
+            if not segments:
+                print(f"  {who}：轮数不足 {args.split * 2}，跳过")
+                continue
+            print(f"  {who}（{len(replies)} 轮，{len(segments)} 段）")
+            for metric in KEY_METRICS:
+                vals = [table.get(metric) for table in segments.values()]
+                if any(v is None for v in vals):
+                    continue
+                spread = max(vals) - min(vals)
+                shown = "".join(f"{v:>8.2f}" for v in vals)
+                print(f"    {metric:<14}{shown}   段内跨度 {spread:>6.2f}")
+            sims = [table.get("__最高相似") for table in segments.values()]
+            if all(v is not None for v in sims):
+                print(f"    {'最高相似':<14}" + "".join(f"{v:>8.3f}" for v in sims)
+                      + f"   段内跨度 {max(sims) - min(sims):>6.3f}")
+            print()
+
     print()
     print("判读方式（§18 的口径）：")
     print("  · 某指标**只有一个人**明显偏离、别人接近原话 ⇒ 这是他独有的，改他的卡能修；")
     print("  · 某指标**所有人**都朝同一方向偏 ⇒ 这是公共层（prompt / 模型），改单个角色无效。")
     print()
     print("⚠️ 语气指标量的是「怎么说话」，量不到「说的是不是同一件事」。")
-    print("   §20 的教训：温度 0.3 让句长降 17%，却让她连着六轮说「瓶塞又松了」——")
-    print("   那一项在语气指标上完全看不出来，只有读原文或看下面这组才暴露。")
+    print("   §20/§21 的教训：温度 0.3 让她连着六轮说「瓶塞又松了」——")
+    print("   那一项在语气指标上完全看不出来，只有读原文或看上面这组才暴露。")
+    print()
+    print("⚠️ 单批数字不要直接当结论。档间差异必须先跨过噪声下限：")
+    print("   跑两遍取差只反映短期抖动（§19 因此写错过两条，§21 扩到 48 轮后方向翻转）；")
+    print("   更可靠的是把同一批切成段看段内跨度 —— 用 --split 16 输出。")
 
 
 if __name__ == "__main__":
