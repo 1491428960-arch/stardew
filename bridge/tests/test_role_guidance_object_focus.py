@@ -144,10 +144,12 @@ def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
     # 显式点名两个**非酿造非绘画**的方向：这是「总是谈画」的解药。
     # 2026-09-21 六轮（批次 4b）：这两条素材本身已从抽象元类目
     # （「小镇日常」「安全感与新开始」）改写成可落座的具体物，断言跟着换词。
-    assert "镇上今天谁在广场上吵" in guidance
-    # 2026-09-23：这条素材改写成落"过去的回忆"面（原字面「她刚搬来镇上时住的那间
-    # 旧房子」判"镇上或邻里"）—— 内容不变，去掉"镇上"字样后成为全库唯一一条回忆面素材。
-    assert "记得刚搬来那阵子住的那间旧房子" in guidance
+    # 2026-09-25：这三条换成按数据源验的新素材（跨簇：镇上 / 创作）。
+    assert "斯嘉丽和镇上这些朋友" in guidance
+    # 2026-09-25：回忆面那条已让位 —— `roleGuidance` 只剩 82 字给素材（240 减去
+    # 固定文案 158），7 条短素材刚好 236 字；再塞一条会溢出被截断。新池子改为覆盖
+    # 工作 / 镇上 / 天气 / 爱好 / 状态五面（见 docs 报告 §57）。
+    assert "海上吹来的咸味海风" in guidance
 
 
 def test_no_role_guidance_asks_the_model_to_narrate_a_process() -> None:
@@ -304,7 +306,7 @@ def test_sophia_persona_stops_claiming_she_paints() -> None:
     ]
     assert "角色扮演" in policy_texts["stage_policy._ROLE_OVERRIDES['Sophia']"]
     # `preferredTopics` 第 2 条必须仍在「工作或手艺」面上（面归属不得漂移）。
-    assert "给下一个角色扮演挑的布料" in sophia["voiceStyle"]["preferredTopics"]
+    assert "给角色扮演挑的布料" in sophia["voiceStyle"]["preferredTopics"]
 
 
 def test_sophia_rendered_prompt_has_no_painting_words() -> None:

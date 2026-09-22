@@ -775,7 +775,9 @@ def test_sophia_persona_exposes_stage_energy_and_excited_particles() -> None:
         "voiceStyle"
     ]
 
-    assert voice["speechParticleHints"][:3] == ["嘿", "哇", "哦哦哦"]
+    # 2026-09-25：去掉「哇」——它是 prompt 侧硬塞给她的，原文里她不说「哇」；
+    # 换成她真正常用的三个（结巴与省略号另由 openers/signatureMoves 承载）。
+    assert voice["speechParticleHints"][:3] == ["嗯", "哦", "呀"]
     assert voice["energyProfile"]["married"]
     assert "兴奋" in voice["energyProfile"]["married"]
     assert any("先反应" in item for item in voice["emotionTexture"])

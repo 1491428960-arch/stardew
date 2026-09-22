@@ -233,7 +233,7 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     # 只列显式指代词挡不住它。
     "顺序可以换，来源不能省：开场那一拍按角色自己的说话习惯来"
     "（角色卡里 signatureMoves、sentencePattern 怎么写就怎么开口），"
-    "但这一拍只算一声反应或短招呼（十个字以内，如‘哇’‘等等’‘你来啦’），"
+    "但这一拍只算一声反应或短招呼（十个字以内，按角色卡里 signatureMoves 写的那些口头反应来），"
     "不含新对象、不含指代——‘它／这个／那个’这类还没交代过的指代，"
     "以及‘还没干透’这种省掉主语的描述，都不能拿来起句；"
     "同一条消息里必须有来源句，位置在开场那一拍之后。"
@@ -303,7 +303,7 @@ _REACTION_OPENING_MARKERS = (
 # `voiceActions`（见 `_build_voice_execution_card` 的 `openingMove` 字段）；
 # 契约末尾只保留「那张卡本轮没发」时的兜底。
 _TOPIC_REACTION_OPENING_PERMISSION = (
-    "这个角色的招牌动作就是在句首选脱口而出的第一反应：先用一声短反应（哇、等等、你看）起句，"
+    "这个角色的招牌动作就是在句首选脱口而出的第一反应：先用一声短反应起句（用角色卡 signatureMoves 里写的那些），"
     "紧接着在同一条消息里补上来源句和口子；两拍用句号或感叹号断开，"
     "第一反应是一声感叹或招呼，不是对某样东西的描述——"
     "‘它还没干’‘那个还没好’这类指代句，和‘还没干透’这种省掉主语的描述，"
@@ -356,7 +356,7 @@ _MAX_KNOWLEDGE_FACTS = 2
 # 专有名词天生与多数玩家输入不相关，按位置切片永远轮不到它。
 # 所以这里给专有名词一条**不参与排序**的通道，而不是继续加大切片长度。
 _MAX_ALWAYS_ON_FACTS = 4
-_MAX_VOICE_CARD_TOPICS = 3
+_MAX_VOICE_CARD_TOPICS = 6
 # 通用对白证据文本的截断长度；**语气锚点不用它**——锚点必须传
 # `VOICE_ANCHOR_MAX_TEXT`（见 `_dialogue_evidence_text` 的 `limit` 参数）。
 _DIALOGUE_EVIDENCE_TEXT_LIMIT = 100
@@ -2777,7 +2777,7 @@ def _compact_energy_profile(value: object) -> dict[str, str]:
 # 没有一条被新增可见。回归由
 # `test_topic_slot_rotation.py::test_preferred_topics_fit_the_prompt_limit` 钉住
 # （逐角色断言条数 ≤ 本常量，超了就是"写了也白写"）。
-_PREFERRED_TOPICS_LIMIT = 6
+_PREFERRED_TOPICS_LIMIT = 12
 
 
 def _preferred_topics_for_prompt(value: object) -> list[str]:
@@ -2823,6 +2823,7 @@ def _compact_voice_style(
         ("preferredTopics", _PREFERRED_TOPICS_LIMIT, 80),
         ("avoid", 2, 60),
         ("emotionRange", 4, 45),
+        ("openers", 4, 60),
     ):
         raw_value = value.get(key)
         if key == "tone":

@@ -220,12 +220,10 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     # 2026-09-24：创作方向那条由「画布上还没画完的那一块」换成
     # 「给下一个角色扮演挑的布料」（SVE 里她做的是角色扮演／缝纫，不是绘画；
     # 面归属仍是「工作或手艺」，「布料」本来就在该面词表里）。
-    assert "给下一个角色扮演挑的布料" in guidance  # 创作方向
-    assert "镇上今天谁在广场上吵" in guidance  # 跨簇：镇上方向
-    # 2026-09-23：这条由「她刚搬来镇上时住的那间旧房子」（镇上或邻里）改写为
-    # 「记得刚搬来那阵子住的那间旧房子」（**过去的回忆**）—— 原话内容不变，只是
-    # 不再带"镇上"字样，于是它成为全库**唯一**一条覆盖"过去的回忆"的素材。
-    assert "记得刚搬来那阵子住的那间旧房子" in guidance  # 跨簇：回忆方向
+    assert "给角色扮演挑的布料" in guidance  # 创作方向
+    assert "斯嘉丽和镇上这些朋友" in guidance  # 跨簇：镇上方向
+    # 2026-09-25：回忆面那条让位（素材额度只有 82 字，见 §57），改为天气方向。
+    assert "海上吹来的咸味海风" in guidance  # 跨簇：天气方向
     assert "同一类最多连续两次" not in guidance  # 四轮：两层表述已换成动作式
     # 2026-09-24：被压的两个簇里「绘画」换成「角色扮演」（SVE 查证见
     # `test_role_guidance_object_focus.py::test_sophia_persona_stops_claiming_she_paints`）。

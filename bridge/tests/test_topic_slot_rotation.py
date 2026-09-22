@@ -71,9 +71,15 @@ MIXED_REPLIES = [
 # SVE 从没把她设定成画画的（她家「很多布料和油漆」是手工材料，她自称的是
 # 「艺术瓶颈」），她的创作面在原话里是**角色扮演 + 缝纫**。面归属不变（都落
 # 「工作或手艺」，「布料」本就在该面词表里），所以 `expected_facets` 一个字没动。
-SOPHIA_TOPICS = ["酒窖里这一批新酿", "给下一个角色扮演挑的布料",
-                 "镇上今天谁在广场上吵", "记得刚搬来那阵子住的那间旧房子",
-                 "加了桦树糖浆的爆米花食谱", "窝在毯子里看电视"]
+SOPHIA_TOPICS = [
+    "葡萄架和这一季的葡萄",
+    "她最爱的精灵石和矿石",
+    "给角色扮演挑的布料",
+    "斯嘉丽和镇上这些朋友",
+    "海上吹来的咸味海风",
+    "窝在毯子里看电视的晚上",
+    "一个人待着时的孤独",
+]
 
 # **只覆盖两个面**的素材形状 —— `_pick(allow_used=False)` 选空后退到"用过但未被禁"
 # 那一级（降级分支）的回归用例。用 2026-09-23 之前的索菲亚素材，因为那正是缺口
@@ -239,13 +245,13 @@ def test_compact_card_keeps_the_slot() -> None:
         "bannedFacet": "工作或手艺",
         "instruction": "最近2轮都在谈「工作或手艺」这一面；本轮不要再出现这一面。",
         "suggestedFacet": "镇上或邻里",
-        "suggestedTopic": "镇上今天谁在广场上吵",
+        "suggestedTopic": "斯嘉丽和镇上这些朋友",
     }}
 
     compact = _compact_stage_policy(policy, include_response_order=False)
 
     assert compact["topicSlot"]["bannedFacet"] == "工作或手艺"
-    assert compact["topicSlot"]["suggestedTopic"] == "镇上今天谁在广场上吵"
+    assert compact["topicSlot"]["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
 
 
 def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
@@ -260,7 +266,7 @@ def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
     slot = _card(messages, "stage_execution_card")["topicSlot"]
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
+    assert slot["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
     blob = json.dumps(messages, ensure_ascii=False)
     assert "这一面本轮先搁着" in blob
 
@@ -299,7 +305,7 @@ def test_slot_reaches_the_provider_through_the_http_route(
     blob = json.dumps(captured[0], ensure_ascii=False)
     assert "topicSlot" in blob
     assert "工作或手艺" in blob
-    assert "镇上今天谁在广场上吵" in blob
+    assert "斯嘉丽和镇上这些朋友" in blob
 
 
 # --- 4. 硬禁用确实改变了送给模型的东西（对照证明） ---------------------------
@@ -381,9 +387,15 @@ def test_rewritten_topics_are_concrete_objects_not_meta_categories(npc_id: str) 
 @pytest.mark.parametrize(
     ("npc_id", "expected"),
     [
-        ("Sophia", ["酒窖里这一批新酿", "给下一个角色扮演挑的布料",
-                    "镇上今天谁在广场上吵", "记得刚搬来那阵子住的那间旧房子",
-                    "加了桦树糖浆的爆米花食谱", "窝在毯子里看电视"]),
+        ("Sophia", [
+            "葡萄架和这一季的葡萄",
+            "她最爱的精灵石和矿石",
+            "给角色扮演挑的布料",
+            "斯嘉丽和镇上这些朋友",
+            "海上吹来的咸味海风",
+            "窝在毯子里看电视的晚上",
+            "一个人待着时的孤独",
+        ]),
         ("Elliott", ["卡住的那一段稿子", "海风里退潮后的那片沙滩",
                      "手边正在读的那本书", "你上次提到的那个地方",
                      "不想老了以后做个孤独的隐士"]),
@@ -404,7 +416,8 @@ def test_试点两人的素材已改写(npc_id: str, expected: list[str]) -> Non
 @pytest.mark.parametrize(
     ("npc_id", "expected_facets"),
     [
-        ("Sophia", {"工作或手艺", "镇上或邻里", "过去的回忆", "吃喝", "爱好或消遣"}),
+        ("Sophia", {"工作或手艺", "镇上或邻里", "天气季节",
+                    "爱好或消遣", "自己的状态或烦恼"}),
         ("Elliott", {"工作或手艺", "天气季节", "爱好或消遣", "玩家自己", "自己的状态或烦恼"}),
     ],
 )
@@ -597,7 +610,7 @@ def test_sophia_no_longer_needs_the_fallback_branch() -> None:
 
 
 def test_narrow_topic_pool_drops_the_banned_facet() -> None:
-    """禁工作面之后，她**剩下 4 条**（镇上 1 + 回忆 1 + 吃喝 1 + 爱好 1）。
+    """禁工作面之后，她**剩下 4 条**（镇上 1 + 天气 1 + 爱好 1 + 状态 1）。
 
     改前是 2 条 —— 这个数字就是"换面时还有多少地方可去"的度量。回归哨兵在下一条。
     """
@@ -605,10 +618,10 @@ def test_narrow_topic_pool_drops_the_banned_facet() -> None:
     narrowed = narrow_topic_pool(SOPHIA_TOPICS, "工作或手艺")
 
     assert narrowed == [
-        "镇上今天谁在广场上吵",
-        "记得刚搬来那阵子住的那间旧房子",
-        "加了桦树糖浆的爆米花食谱",
-        "窝在毯子里看电视",
+        "斯嘉丽和镇上这些朋友",
+        "海上吹来的咸味海风",
+        "窝在毯子里看电视的晚上",
+        "一个人待着时的孤独",
     ]
 
 
@@ -623,7 +636,7 @@ def test_narrow_topic_pool_returns_empty_when_the_whole_pool_is_banned() -> None
     **不能**退回原始列表：那等于把被禁面又写回 prompt。
     """
 
-    assert narrow_topic_pool(["酒窖里这一批新酿"], "工作或手艺") == []
+    assert narrow_topic_pool(["蓝月亮招牌酒今年这一批的味道"], "工作或手艺") == []
 
 
 # --- 8. 端到端：同一张卡里，禁令与落点池必须自洽 -------------------------------
@@ -648,9 +661,9 @@ def test_banned_facet_disappears_from_the_guidance_of_the_same_card() -> None:
     guidance = card["conversationLead"]["roleGuidance"]
 
     assert card["topicSlot"]["bannedFacet"] == "工作或手艺"
-    assert "酒窖里这一批新酿" not in guidance
+    assert "蓝月亮招牌酒今年这一批的味道" not in guidance
     assert "画布上还没画完的那一块" not in guidance
-    assert "镇上今天谁在广场上吵" in guidance
+    assert "斯嘉丽和镇上这些朋友" in guidance
 
 
 def test_guidance_keeps_the_whole_pool_when_no_slot_fires() -> None:
@@ -788,7 +801,7 @@ def test_preferred_topics_fit_the_prompt_limit() -> None:
 
     from stardew_ai_bridge.prompts import _PREFERRED_TOPICS_LIMIT
 
-    assert _PREFERRED_TOPICS_LIMIT == 6
+    assert _PREFERRED_TOPICS_LIMIT == 12
 
     offenders = {}
     for path in sorted((ROOT / "data" / "personas").glob("*.json")):
@@ -1339,12 +1352,12 @@ def test_secondary_facet_penetration_added_by_restoring(npc_id: str) -> None:
 KEPT_REWRITES_WHOSE_ORIGINAL_WOULD_DRIFT: dict[tuple[str, str, str], tuple[str, str]] = {
     # (角色, 保留的改写, 原话): (原因, 原话的面)
     ("Shane", "忙起来那股压力", "工作压力"): ("drift", "工作或手艺"),
-    ("Sophia", "窝在毯子里看电视", "下雨了！在这样的日子里，我只想窝在毯子里看电视。"): (
+    ("Sophia", "窝在毯子里看电视的晚上", "下雨了！在这样的日子里，我只想窝在毯子里看电视。"): (
         "drift", "天气季节",
     ),
-    ("Sophia", "记得刚搬来那阵子住的那间旧房子", "她刚搬来镇上时住的那间旧房子"): (
-        "drift", "镇上或邻里",
-    ),
+    # 2026-09-25：「刚搬来镇上那阵子，和现在比变化有多大」已从 preferredTopics 移除
+    # （8 条额度内让位给「自己的状态或烦恼」面），这条 drift 裁决随之失效 —— 原话
+    # 「她刚搬来镇上时住的那间旧房子」现在与它同面（都落「镇上或邻里」），不再漂。
     ("Sandy", "如果你遇见我的朋友艾米丽，记得帮我打个招呼",
      "啊你好！如果你在镇上遇见我的朋友艾米丽，记得帮我打个招呼？"): ("drift", "镇上或邻里"),
     ("Clint", "我爸爸以前也是干这一行的", "我当这个铁匠都是因为我爸爸非要让我当啊"): (

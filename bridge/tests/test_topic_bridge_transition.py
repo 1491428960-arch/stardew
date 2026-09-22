@@ -39,12 +39,13 @@ SOPHIA_MODS = ["vanilla", "SVE", "FlashShifter.StardewValleyExpandedCP"]
 # 2026-09-24：第 2 条由「画布上还没画完的那一块」换成「给下一个角色扮演挑的布料」
 # （SVE 里她的创作面是角色扮演／缝纫，不是绘画；面归属不变，仍在「工作或手艺」）。
 SOPHIA_TOPICS = [
-    "酒窖里这一批新酿",
-    "给下一个角色扮演挑的布料",
-    "镇上今天谁在广场上吵",
-    "记得刚搬来那阵子住的那间旧房子",
-    "加了桦树糖浆的爆米花食谱",
-    "窝在毯子里看电视",
+    "葡萄架和这一季的葡萄",
+    "她最爱的精灵石和矿石",
+    "给角色扮演挑的布料",
+    "斯嘉丽和镇上这些朋友",
+    "海上吹来的咸味海风",
+    "窝在毯子里看电视的晚上",
+    "一个人待着时的孤独",
 ]
 
 # **只覆盖两个面**的素材形状（2026-09-23 之前的索菲亚素材）：缺口角色的样子。
@@ -229,7 +230,7 @@ def test_rendered_instruction_example() -> None:
         "这一面本轮先搁着——像这样换：「……说起来，」，"
         "先把上一句收住，再用一个转折词拐到别的面，不要以同一面另起一件事。"
         "改从「镇上或邻里」这一面挑一件具体的、能落到对白里的小事来说"
-        "（例如「镇上今天谁在广场上吵」这个方向），只说一件，不要罗列。"
+        "（例如「斯嘉丽和镇上这些朋友」这个方向），只说一件，不要罗列。"
     )
     assert slot["playerAnchor"] == (
         "硬约束：玩家本轮点名的对象必须先接住、先应下来；"
@@ -377,7 +378,7 @@ def test_slot_still_bans_the_repeated_facet() -> None:
 
     assert slot["bannedFacet"] == "工作或手艺"
     assert slot["suggestedFacet"] == "镇上或邻里"
-    assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
+    assert slot["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
 
 
 def test_slot_stays_silent_without_any_signal() -> None:
@@ -836,7 +837,7 @@ def test_three_act_scenario_she_rotates_he_pulls_back() -> None:
         _payload("Sophia", third_history, SOPHIA_MODS, message=pull_back)
     )
     assert "topicSlot" not in card
-    assert "酒窖里这一批新酿" in card["conversationLead"]["roleGuidance"]
+    assert "葡萄架和这一季的葡萄" in card["conversationLead"]["roleGuidance"]
 
 
 def test_suggestion_says_another_thing_when_the_facet_was_just_used() -> None:

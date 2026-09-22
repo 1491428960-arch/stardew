@@ -8711,9 +8711,10 @@ def test_natural_light_turn_keeps_distinct_role_texture_for_ras_and_sophia() -> 
     # 指纹只说「具体细节」，不再指定对象。
     assert "手里正在做的事冒出一个具体细节" in sophia["voiceFingerprint"]
     assert any("先直接回应玩家" in item for item in ras["responseRules"])
-    assert any("先轻声回应眼前的话题" in item for item in sophia["responseRules"])
+    assert any("先轻声回应眼前的事情" in item for item in sophia["responseRules"])
     assert any("魔法当作事实" in item for item in ras["avoid"])
-    assert any("紧张时允许" in item for item in sophia["responseRules"])
+    # 2026-09-25：结巴由「不许」改为她的常态特征（原文有「等、等一下」「我、我不知道」）。
+    assert any("紧张或为难时允许" in item for item in sophia["responseRules"])
     assert ras["responseRules"] != sophia["responseRules"]
     assert ras["avoid"] != sophia["avoid"]
 
