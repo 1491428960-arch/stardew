@@ -338,11 +338,22 @@ def test_topic_request_after_a_few_turns_bans_the_facet_he_just_saw() -> None:
 
 
 def test_topic_request_when_her_last_line_has_no_facet_still_bans_something() -> None:
-    """有历史、但**她最近一轮判不出面**（S3 R2 是纯指代）⇒ 仍要给出禁令。
+    """有历史、但**她最近一轮判不出面**（S3 R2）⇒ 仍要给出禁令，且理由句这次**有据**。
 
-    这一级已经拿不到"她最近一面"，退到"她惯常的落点"。措辞**不许**声称"你最近谈的
-    是" —— 那一轮根本没有面，说得出这句话就是编的（也正是本项目记过的"理由句与
-    真实触发不符"）。
+    原口径（2026-09-22 之前）：这一级拿不到"她最近一面"，只能退到"她惯常的落点"，
+    措辞**不许**声称"你最近谈的是" —— 那一轮判不出面，说得出这句话就是编的
+    （正是本项目记过的"理由句与真实触发不符"）。
+
+    **2026-09-22 深夜口径变更（待用户拍板，见 `docs/report-facet-rotation-2026-09-22.md` §1.3）**：
+    判不出面的轮次现在**继承上一轮的面**参与 `facetRepeat` 计数。R2 折算后与 R1 同面
+    ⇒ 禁令从 `latest` 升回 `repeat` 级，措辞变成"最近2轮里有2轮在谈…"。
+
+    ⚠ **这次变更不是绕开断言，而是原断言的依据被实测推翻了**：R2 原文是
+    「嗯，这一批**装瓶**比我想的顺，剩下几瓶**标签**还是旧的，我打算下午慢慢换掉」——
+    它**不是**原注释写的"纯指代"（"装瓶 / 标签 / 瓶"都是具体物，只是词表一个都没收），
+    所以"最近 2 轮都在谈工作或手艺"是**事实**。注意同一条缺口在
+    `report-facet-rotation-2026-09-22.md` §2.3 里已经点名（标签 / 装瓶该进词表）。
+    若用户否决折算，本测试恢复原断言。
     """
 
     history = [
@@ -361,11 +372,12 @@ def test_topic_request_when_her_last_line_has_no_facet_still_bans_something() ->
         "stage_execution_card",
     )["topicSlot"]
 
-    assert slot["trigger"] == "playerAsksNewTopic"
+    assert slot["trigger"] == "facetRepeat+playerAsksNewTopic"
     assert slot["bannedFacet"] == _facet_of_topic(SOPHIA_TOPICS[0])
     assert slot["suggestedFacet"] != slot["bannedFacet"]
-    assert "你惯常的落点" in slot["instruction"]
-    assert "你最近谈的还是" not in slot["instruction"]
+    # 理由句与来源一致：折算后她最近两轮**确实**同面，所以这次可以这么说
+    assert "最近2轮里有2轮在谈「工作或手艺」" in slot["instruction"]
+    assert "你惯常的落点" not in slot["instruction"]
 
 
 def test_a_polite_excuse_is_no_longer_read_as_a_short_reply() -> None:
@@ -529,11 +541,16 @@ def test_tavern_still_belongs_to_food_and_drink(text: str, expected: str) -> Non
 def test_real_replies_are_almost_never_facetless_after_coreference() -> None:
     """**记录事实**：真机 16 轮里判不出面的轮次数。
 
-    * 只看她的话：2 轮（S1 R3「刚封好的那批已经进桶了」、S3 R2「嗯，这一批装瓶…」）
-    * 加上轮次共指：1 轮（S3 R2 —— 那一轮**双方**都是空转/指代，`""` 与「嗯」都
-      没有实词，任何词表都救不了）
+    | | 补词前 | 2026-09-22 第 8 批补词后 |
+    |---|---|---|
+    | 只看她的话 | 2 轮 | **1 轮**（只剩 S1 R3「刚封好的那批已经进桶了」） |
+    | 加上轮次共指 | 1 轮（S3 R2） | **0 轮** |
 
-    剩下这一轮不影响机制：它的槽位由 `playerShortReply` 触发，不依赖 `facetRepeat`。
+    补的是「装瓶 / 封瓶 / 标签 / 封蜡」这批**酿酒作业词**：S3 R2 原文
+    「嗯，这一批**装瓶**比我想的顺，剩下几**瓶标签**还是旧的」原来判不出面、只能靠共指救，
+    而那一轮**双方**都是空转/指代（`""` 与「嗯」）—— 共指也拿不到东西，所以它一直无面。
+
+    剩下 S1 R3 那一轮不影响机制：它的槽位由 `playerShortReply` 触发，不依赖 `facetRepeat`。
     这条是覆盖率哨兵 —— 数字变了就说明判据或实录发生了变化，需要重新评估。
     """
 
@@ -544,8 +561,8 @@ def test_real_replies_are_almost_never_facetless_after_coreference() -> None:
     joint = _facet_per_turn(replies, players)
 
     assert len(replies) == 16
-    assert sum(1 for facets in npc_only if not facets) == 2
-    assert sum(1 for facets in joint if not facets) == 1
+    assert sum(1 for facets in npc_only if not facets) == 1
+    assert sum(1 for facets in joint if not facets) == 0
 
 
 # --- 4. 硬约束：玩家点名的对象要接住 ------------------------------------------

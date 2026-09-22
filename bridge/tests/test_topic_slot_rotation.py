@@ -1409,3 +1409,58 @@ def test_kept_rewrites_are_kept_for_a_reason(
     else:
         assert kind == "same-fragile"
         assert original_facet == kept_facet
+
+
+# --- 16. 无面折算：判不出面的轮次不许在计数里消失（2026-09-22） -----------------
+#
+# 起因：云端实测里她连说三轮酿酒（工作 → **词表判不出** → 工作），槽位一次都没触发。
+# `facetRepeat` 数的是"最近 3 轮里同一面出现 ≥2 次"，而**判不出面的轮次在计数里
+# 等于不存在** —— 这种形状窗口内只算 1 次。
+#
+# 依据（不是猜的）：两批云端实测共 5 轮「无面」，逐条判 **5/5 都是「她说了具体物、
+# 但词表没收录」**（酒 / 标签 / 葡萄 / 发酵 / 桶 / 塞 / 封蜡），**没有一条**是
+# "她什么实质都没说"。丢弃它们等于把她的持续话题当成没发生。
+#
+# 离线形状矩阵（`.tmp/topic-probe/facet_shape_matrix.py`，用真实批次回复作文本）：
+#   「工作 / 无面」交替     → 折算前 i=3、5、7 间歇触发（漏掉一半）；折算后 i=2 起稳触发
+#   「工作 / 无面 / 吃喝 / 无面」 → 折算前 **8 轮一次都不触发**；折算后 i=2 触发
+#   「工作 / 吃喝 / 镇上」轮转   → 折算前后都**不该**触发（她本来就在换面）
+
+# 判不出任何生活面的真形态（量词指代句，代码注释里点名过；由下面的断言自证有效性）
+NO_FACET_REPLIES = [
+    "那批还得再等等。",
+    "刚封好的那批已经进桶了。",
+]
+
+
+def test_unjudged_turns_are_not_dropped_from_the_repeat_count() -> None:
+    """「工作 → 判不出面」要和「工作 → 工作」一样触发 —— 这是本次修的漏判形状。"""
+
+    for reply in NO_FACET_REPLIES:
+        assert _facet_hits(reply) == set(), f"这句现在判得出面了，样本失效：{reply}"
+
+    slot = rotation_topic_slot(
+        SOPHIA_TOPICS,
+        recent_replies=[BREW_REPLIES[0], NO_FACET_REPLIES[0]],
+    )
+
+    assert slot["bannedFacet"] == "工作或手艺"
+
+
+def test_the_inherited_facet_is_the_previous_turn_not_a_default() -> None:
+    """继承的是**上一轮的面**：她刚从工作换到镇上，判不出面的那轮该算镇上。"""
+
+    slot = rotation_topic_slot(
+        SOPHIA_TOPICS,
+        recent_replies=[TOWN_REPLIES[0], NO_FACET_REPLIES[0]],
+    )
+
+    assert slot["bannedFacet"] == "镇上或邻里"
+
+
+def test_an_unjudged_first_turn_invents_no_facet() -> None:
+    """边界：第一轮就判不出面时不许凭空造面（没有"上一轮"可继承）。"""
+
+    assert rotation_topic_slot(
+        SOPHIA_TOPICS, recent_replies=[NO_FACET_REPLIES[0]]
+    ) == {}
