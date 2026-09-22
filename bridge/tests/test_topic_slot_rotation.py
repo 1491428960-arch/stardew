@@ -941,18 +941,20 @@ def test_alex_cross_facet_topic_penetration_is_recorded() -> None:
     而文本里仍写着"投球"（被禁面的词）。这与"槽位禁某面、guidance 仍列该面"那种
     **同面冲突**不是一回事：`narrow_topic_pool` 一直按**主面**收窄，那条规则没变。
 
-    影响面是**可数的，但远不止 Alex 一条**（第 7 批实测：全库 25 条跨面条目，
-    本轮还原原话新增了其中 3 条，见下面的
-    `test_secondary_facet_penetration_added_by_restoring`）。真要连次要面一起摘，
-    得让 `narrow_topic_pool` / `_pick` 改用 `_facet_hits`（命中即摘）——那是另一轮
-    机制改动，会改变全部角色的收窄口径，不在这里顺手做。
+    影响面是**可数的**（第 7 批实测：全库 25 条跨面条目，本轮还原原话新增了其中 3 条，
+    见下面的 `test_secondary_facet_penetration_added_by_restoring`）。
+
+    **2026-09-23 已结案**：这里原先写着"得改用 `_facet_hits`（命中即摘）——那是另一轮"。
+    那一轮**已经做了**（代价实测为零：396 个角色 × 面组合里摘空增量为 0，报告 §9.3），
+    所以下面第三条断言现在是**反向**的。
     """
 
     topic = "海滩、投球和镇上的朋友"
 
     assert _facet_of_topic(topic) == "镇上或邻里"
     assert _facet_hits(topic) == {"爱好或消遣", "镇上或邻里", "家人朋友"}
-    assert topic in narrow_topic_pool(_prompt_topics("Alex"), "爱好或消遣")
+    # 2026-09-23 起为「命中即摘」：禁次要面时它**也会**被摘掉（这正是本次的目的）
+    assert topic not in narrow_topic_pool(_prompt_topics("Alex"), "爱好或消遣")
 
 
 # --- 11. 2026-09-22 第 4 批：素材横向推广的两条不变式（**遍历全部角色**） ------
@@ -1307,15 +1309,19 @@ SECONDARY_FACET_PENETRATION_ADDED_BY_RESTORING: dict[str, tuple[str, str, str]] 
 
 @pytest.mark.parametrize("npc_id", sorted(SECONDARY_FACET_PENETRATION_ADDED_BY_RESTORING))
 def test_secondary_facet_penetration_added_by_restoring(npc_id: str) -> None:
-    """三条还原后的素材**多带了一个次要面** —— 记录事实，不是判 bug。"""
+    """三条还原后的素材**多带了一个次要面**。
+
+    2026-09-23 起 `narrow_topic_pool` 改为「命中即摘」，所以禁**次要**面时它们也会
+    被摘掉 —— 那是本次的目的（原先的"主面穿透"正是漏掉 Harvey 那类素材的成因）。
+    """
 
     topic, main, secondary = SECONDARY_FACET_PENETRATION_ADDED_BY_RESTORING[npc_id]
 
     assert _facet_of_topic(topic) == main
     assert _facet_hits(topic) == {main, secondary}
-    # 主面收窄的规则没变：禁**次要**面时它仍留在池子里
-    assert topic in narrow_topic_pool(_prompt_topics(npc_id), secondary)
-    # 而禁**主**面时它会（正确地）被摘掉
+    # 禁**次要**面时也会被摘掉（命中即摘，2026-09-23）
+    assert topic not in narrow_topic_pool(_prompt_topics(npc_id), secondary)
+    # 禁**主**面时同样
     assert topic not in narrow_topic_pool(_prompt_topics(npc_id), main)
 
 
@@ -1429,7 +1435,11 @@ def test_kept_rewrites_are_kept_for_a_reason(
 # 判不出任何生活面的真形态（量词指代句，代码注释里点名过；由下面的断言自证有效性）
 NO_FACET_REPLIES = [
     "那批还得再等等。",
-    "刚封好的那批已经进桶了。",
+    # 2026-09-23：原第二句是「刚封好的那批已经进桶了。」—— 补 `封口|封上|封好` 之后
+    # 它**判得出面了**（工作面），样本因此失效。去掉"封好的"三字后仍是真实形态的
+    # 量词指代句（且「桶」按既定口径**不在**词表里）。这不是"为了过测试改数据"：
+    # 那句真实回复现在**本来就该**判成工作面，这里只是换一个仍无面的样本。
+    "那批已经进桶了。",
 ]
 
 
@@ -1488,6 +1498,10 @@ def test_an_unjudged_first_turn_invents_no_facet() -> None:
 # ⚠ **判面序列本身也是断言**，因为词表一改它就会变 —— 比如报告 §8 那批缝纫词
 # （`亚麻|棉布|帆布|呢绒` 等）一旦落地，第 4 轮就会从"无面"变成"工作或手艺"。
 # 那时这条用例会红，那是**提醒你同步报告**，不是噪音 —— 别直接把期望值改掉了事。
+#
+# **2026-09-23：预判应验了**，而且比预判多一处 —— 第 3 轮也多了工作面（不只是第 4 轮）。
+# 期望值已按实测更新，报告 §7 与 §15 同步；折算机理本身改由下面的**构造样本**用例钉住
+# （8 轮实录的前 3 轮已经够触发了，折算不再是第 5 轮触发的唯一原因）。
 
 REAL_8_TURNS = [
     "嘿，刚把今天最后一张便签贴到酒瓶上，手还有点粘。这批新酿闻着比上一批甜一点，我不敢太早下结论。你晚上都在忙什么呀？",
@@ -1503,8 +1517,14 @@ REAL_8_TURNS = [
 REAL_8_FACETS: tuple[tuple[str, ...], ...] = (
     ("工作或手艺",),
     ("过去的回忆",),
-    ("天气季节",),
-    (),
+    # 2026-09-23 补「亚麻|棉布|帆布|呢绒|裁缝|裁剪」之前这里是 ("天气季节",) —— 第 3 轮
+    # 那句"艾米丽给过我一整块亚麻布…先裁个样子出来"当时只有"风会软下来"命中天气面。
+    # 补词后它**自带工作面**，于是这一轮变成两面。
+    ("天气季节", "工作或手艺"),
+    # 同理：第 4 轮的"那块亚麻布，等这批酒弄完，我先裁一小块试试手"从"判不出面"变成
+    # **工作面** —— 这正是下面注释里预判过的事（它猜的是第 4 轮由 `亚麻` 触发，
+    # 实际第 3、4 轮都受影响）。
+    ("工作或手艺",),
     ("工作或手艺",),
     ("镇上或邻里",),
     ("工作或手艺",),
@@ -1528,14 +1548,33 @@ def test_the_measured_eight_turns_still_resolve_to_these_facets() -> None:
         )
 
 
-def test_the_fifth_turn_fires_only_because_of_the_fold() -> None:
-    """第 5 轮的触发**全部**来自折算：少给那个无面轮，它就不该触发。"""
+def test_the_fold_still_carries_a_facetless_turn_into_the_count() -> None:
+    """折算本身仍在工作：一串「工作 / 无面 / 无面」里，无面轮照样计数。
 
-    # 前 3 轮是 工作 / 回忆 / 天气 —— 窗口里没有任何一面达到 2 次
-    assert rotation_topic_slot(SOPHIA_TOPICS, recent_replies=REAL_8_TURNS[:3]) == {}
+    本条原先叫 `test_the_fifth_turn_fires_only_because_of_the_fold`，用的是 8 轮实录的
+    前 3 轮。**2026-09-23 补词之后那个前提失效了**：第 3 轮现在自带「工作或手艺」
+    （亚麻布 / 裁），前 3 轮就已经 2 次同面、槽位提前一轮触发 —— 那是**改善**，
+    但本条要钉的是**折算机理本身**，所以换成一组不含任何实词的构造样本。
+    实录那边的变化由下面那条记录。
+    """
 
-    # 加上第 4 轮（判不出面）：折算让它继承第 3 轮的「天气季节」⇒ 窗口内 2 次
-    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=REAL_8_TURNS[:4])
+    replies = [BREW_REPLIES[0], "那批还得再等等。", "那批已经进桶了。"]
+
+    # 后两句都判不出面，全靠折算继承第 1 轮的工作面 ⇒ 窗口内 3 次
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=replies)
 
     assert slot["trigger"] == "facetRepeat"
-    assert slot["bannedFacet"] == "天气季节"
+    assert slot["bannedFacet"] == "工作或手艺"
+
+
+def test_the_eight_turns_now_fire_one_turn_earlier() -> None:
+    """补词之后，真机 8 轮**第 3 轮就够触发**了（原先要等到第 5 轮靠折算才触发）。
+
+    这是词表落地的**收益**：第 3 轮从"只有天气面"变成"天气 + 工作"，窗口里的工作面
+    因此达到 2 次；原先这条链路要靠第 4 轮的无面折算才补得上。
+    """
+
+    slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=REAL_8_TURNS[:3])
+
+    assert slot["trigger"] == "facetRepeat"
+    assert slot["bannedFacet"] == "工作或手艺"

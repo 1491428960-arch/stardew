@@ -492,7 +492,10 @@ def test_pronoun_reply_inherits_the_facet_of_the_same_turn() -> None:
     「那批新酿」完全不同的面 —— 正确的机理是把指代还原到那句有实词的话上。
     """
 
-    reply = "刚封好的那批已经进桶了，颜色比上一年的深一点。"
+    # 2026-09-23：原样本是「刚封好的那批已经进桶了，颜色比上一年的深一点。」—— 补
+    # `封口|封上|封好` 之后它**自带实词**了（这本身是改善：她不必再靠共指），于是换成
+    # 下面这句仍然纯指代的样本，用来继续钉住"轮次共指"这个机理。
+    reply = "那批已经进桶了，颜色比上一年的深一点。"
     player = "新酿呢？"
 
     assert _facet_hits(reply) == set(), "前提变了：这句话现在自带实词了"
@@ -539,11 +542,12 @@ def test_tavern_still_belongs_to_food_and_drink(text: str, expected: str) -> Non
 
 
 def test_real_replies_are_almost_never_facetless_after_coreference() -> None:
-    """**记录事实**：真机 16 轮里判不出面的轮次数。
+    r"""**记录事实**：真机 16 轮里判不出面的轮次数。
 
     | | 补词前 | 2026-09-22 第 8 批补词后 |
     |---|---|---|
-    | 只看她的话 | 2 轮 | **1 轮**（只剩 S1 R3「刚封好的那批已经进桶了」） |
+    | 只看她的话 | 2 轮 | **0 轮**（2026-09-23 补「封口\|封上\|封好」后，S1 R3
+      「刚封好的那批已经进桶了」也**直接**判得出面了，不再依赖共指） |
     | 加上轮次共指 | 1 轮（S3 R2） | **0 轮** |
 
     补的是「装瓶 / 封瓶 / 标签 / 封蜡」这批**酿酒作业词**：S3 R2 原文
@@ -561,7 +565,9 @@ def test_real_replies_are_almost_never_facetless_after_coreference() -> None:
     joint = _facet_per_turn(replies, players)
 
     assert len(replies) == 16
-    assert sum(1 for facets in npc_only if not facets) == 1
+    # 2026-09-23：原先这里是 == 1（S1 R3 只看她的话判不出面）。补「封口|封上|封好」
+    # 之后那句直接自带工作面，两个口径**都是 0** —— 覆盖率提高了，不是回归。
+    assert sum(1 for facets in npc_only if not facets) == 0
     assert sum(1 for facets in joint if not facets) == 0
 
 
