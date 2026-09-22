@@ -2958,3 +2958,82 @@ v1 是 9.5、v2 是 9.0、无护栏是 10.0 —— **几乎没动**，
 
 **今晚不是找到了改法，而是发现：我用来找改法的那把尺子，精度一直低于我要测的东西。
 在我意识到这一点之前，我推翻了自己八次 —— 而每一次推翻，都是这把尺子在提醒我。**
+---
+
+## 40. 🚨 重大更正：**我今晚整晚跑在评测路径上，游戏里不是这样**（04:31）
+
+### 40.1 怎么发现的
+
+§39 结束后我想把"删那张卡"落成可执行方案，去查 `sophia_liveliness_final` 的来源，
+在 `docs/report-topic-intent-2026-09-22.md` 里读到一段**我两天前自己写下的警告**：
+
+> ⚠ **探针口径提醒**：用 `scripts/run_character_quality_eval.py` 的 `_build_context` 做探针会注入
+> `naturalMode=True`，看到的是**评测路径**（多出 `sophia_liveliness_final` 等 4 张评测专属卡）。
+> **要复现线上，必须走 `stardew_ai_bridge.app._build_context`**（= `/api/context/preview` 的入口）。
+
+**而今晚从 §22 到 §39，我用的一直是 runner 的那个入口。**
+
+更刺眼的是：仓库里**早就有一个专门的自证探针** `.tmp/topic-probe/probe_gamereal.py`，
+它在第 54~63 行把这条教训写得清清楚楚 —— **我今晚一次都没跑它。**
+
+### 40.2 用真实入口实测（线上 = `app._build_context`，请求体不带 `qualityContext`）
+
+| intent | **游戏端·卡数** | **游戏端·字符** | 评测路径·字符（今晚用的）|
+|---|---|---|---|
+| `chat` | 16 | **9,638** | 11,743 |
+| `item` | 16 | **9,454** | 12,934 |
+| `topic` | **17** | **10,855** | **23,318** |
+
+**游戏端 `topic` 的完整卡片清单（dating / 8 心，17 张）：**
+
+```
+safety_rules | persona_core | story_state | mod_overlay | scene | daily_routine |
+conversation_history | post_history_voice_guard | stage_execution_card | affection_initiative |
+voice_execution_card | topic_response_contract | affection_priority_final |
+final_role_voice_contract | player_echo_guard | turn_plan | topic_trigger
+```
+
+### 40.3 更正内容：我今晚的核心结论**在游戏里全部不成立**
+
+| 我今晚写的 | 游戏端真实 |
+|---|---|
+| `topic` 23,318 字符，比 `chat` 多 **99%** | `topic` **10,855**，比 `chat` 9,638 多 **12.6%** |
+| `topic` **独占 5 张卡（15,762 字符）** | 游戏端**一张都不独占**：多出的只有 `topic_response_contract` 与 `topic_trigger`，少了 `player_input` |
+| `topic` **整套缺掉** `chat`/`item` 共有的长度护栏 | **护栏一张不少**：`post_history_voice_guard` / `voice_execution_card` / `final_role_voice_contract` / `player_echo_guard` 全在 |
+| `sophia_liveliness_final`（5,213 字符）是「等等」的主控，删它 5.0→2.0 | **游戏端根本不加载这张卡** ⇒ **删它对游戏零影响** |
+| Sophia 的 prompt 是别的 NPC 的两倍 | 那是**评测路径**的对比；游戏端需重测（未做） |
+
+**⇒ 从 §22 到 §39 的 18 节、约 20 个批次、8 小时，全部运行在一条游戏里不存在的路径上。**
+
+### 40.4 但有两个东西**不受影响**
+
+1. **§39 方法论的最终形态依然成立，而且方法本身就是抓出这个错误的工具**：
+   「跑 8 批同一配置量尺子」这套做法没有错；
+   **错的是我在量之前没先确认"要量的对象在线上到底长什么样"。**
+   ⇒ **这正是第 5 条方法论（先确认代码路径）的一个更狠的版本：
+   它不只适用于"诊断问题之前"，也适用于"设计实验之前"。**
+
+2. **四个 intent / 三条路径的结构差异本身是真的** —— 只是**我比较错了对象**：
+   我比的是"评测端 topic vs 评测端 chat"，而用户在游戏里体验到的是
+   "游戏端 topic vs 游戏端 chat"。**前者差 99%，后者差 12.6%。**
+
+### 40.5 方法论第 10 条
+
+> **在动手测量之前，先用与线上一致的入口，把被测对象本身的形状打印出来。
+> 如果探针入口与线上入口不是同一个函数，那么测出来的一切都只是"那个函数的行为"。**
+
+**今晚九次自我纠正，前八次都在纠"结论"，这一次纠的是"对象"。**
+**而这一次，只要我在 §22 开始时花两分钟跑一遍 `probe_gamereal.py`，后面八小时都不会发生。**
+
+### 40.6 现在还剩什么
+
+**（必须在游戏端入口上重做，否则不知道）** —— §15~§39 的全部测量结论。
+**（仍然确定的事实）**
+- 游戏端三个 intent 的 prompt **规模相当**（9,454 / 9,638 / 10,855），
+  `topic` 只多出 `topic_response_contract` 与 `topic_trigger`、少一个 `player_input`；
+- 评测路径（`naturalMode=True`）会额外注入 4 张卡（含 `sophia_liveliness_final`），
+  **规模翻倍到 23,318** —— 这解释了为什么"评测里看着很胖、游戏里不一定"。
+
+**（下一步的第一件事）**
+**用 `app._build_context` 重跑 §26 那套基线测量**，拿到游戏端真实的
+字数 / 等等 / 破折号 / 不说我是说，**先看游戏端到底有没有这个问题**。
