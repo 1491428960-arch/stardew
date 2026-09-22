@@ -254,7 +254,13 @@ def main() -> None:
     width = 21
     header = f"{'指标':<16}" + "".join(f"{who:>{width}}" for who, *_ in rows)
     print(header)
-    print(f"{'':<16}" + "".join(f"{f'{turns} 轮/{chars} 字':>{width}}" for _, turns, chars, *_ in rows))
+    # 每轮字数单独列一行：§22 发现它比"平均每句字数"更能解释"啰嗦" ——
+    # chat 每轮 50.5 字 / topic 75.8 字（各 48 轮），差 33%，而这个差
+    # 在"每句字数"上是看不出来的（那个指标段内跨度比档间差还大）。
+    print(f"{'规模':<16}" + "".join(
+        f"{f'{turns} 轮 / {chars} 字':>{width}}" for _, turns, chars, *_ in rows))
+    print(f"{'每轮字数':<16}" + "".join(
+        f"{chars / turns:>{width}.1f}" for _, turns, chars, *_ in rows))
     print("-" * len(header))
     for metric in KEY_METRICS:
         cells = ""
