@@ -14,7 +14,7 @@
 | 受控目录 `Mods-AI-FastTest` | `StardewAI.NPC` / `GenericModConfigMenu` / `[CP] Romanceable Rasmodia` / `ContentPatcher` / `CrossModCompatibilityTokens` —— **不含 SVE** ❌ |
 | SVE 本体 | `Mods\Stardrop Installed Mods\Stardew Valley Expanded\` 下三件套 |
 | 游戏进程 | 未运行 |
-| Bridge `:5678` | pid **160952**，含本轮全部改动 ✅ |
+| Bridge `:5678` | pid **127092**，含本轮全部改动 ✅ |
 
 **SVE 的依赖（关键，决定了要不要搬一堆前置）**：
 
@@ -96,8 +96,8 @@ SMAPI 会用 `--mods-path` 指向受控目录，**不加载正式 Mods 集合**�
 
 | 实例 | pid | 代码 |
 |---|---|---|
-| `:5678`（游戏端） | 160952 | **含本轮全部改动** ✅ |
-| `:5680`（预览） | 146928 | 已重载，同样含改动 ✅ |
+| `:5678`（游戏端） | 127092 | **含本轮全部改动** ✅ |
+| `:5680`（预览） | 136388 | 已重载，同样含改动 ✅ |
 
 两者都是**独立进程**，不随 DSH 会话结束而消失。
 
