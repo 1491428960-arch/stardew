@@ -130,16 +130,22 @@ def discover(limit: int) -> list[tuple[str, Path]]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch", action="append", default=[],
-                        help="角色=summary.json，可重复")
+                        help="标签=summary.json，可重复。标签只是显示名（消融对比时写档位名）")
     parser.add_argument("--limit", type=int, default=4, help="自动扫描时取几个角色")
     parser.add_argument("--dump", action="store_true", help="顺带导出逐轮回复")
+    parser.add_argument(
+        "--baseline-npc",
+        default="",
+        help="统一用谁的原话当基线。消融对比时标签是档位名（baseline/dedupe…），"
+             "查不到语料，必须在这里指明角色",
+    )
     args = parser.parse_args()
 
     if args.batch:
         items = []
         for spec in args.batch:
             if "=" not in spec:
-                raise SystemExit(f"--batch 要写成 角色=路径：{spec}")
+                raise SystemExit(f"--batch 要写成 标签=路径：{spec}")
             who, raw = spec.split("=", 1)
             items.append((who, Path(raw)))
     else:
@@ -154,7 +160,15 @@ def main() -> None:
         if not replies:
             print(f"  {who}：{path} 里没有回复，跳过")
             continue
-        table = {"original": measure(originals_of(who)), "generated": measure(replies)}
+        # 标签本身若是语料里存在的角色名，就用它；否则用 --baseline-npc 指定的角色。
+        # 这样既支持"多角色对比"，也支持"同角色多档位消融对比"。
+        known = {name for name, _ in corpus()}
+        npc = who if who in known else args.baseline_npc
+        if not npc:
+            raise SystemExit(
+                f"标签 {who} 不是语料里的角色名，请用 --baseline-npc 指明原话基线"
+            )
+        table = {"original": measure(originals_of(npc)), "generated": measure(replies)}
         rows.append((who, len(replies), sum(len(r) for r in replies), table))
         if args.dump:
             out = PROBE_DIR / f"compare-{who}.json"
