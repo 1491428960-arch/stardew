@@ -1559,3 +1559,95 @@ _INTERACTION_INTENTS = {"chat", "topic", "item"}
 - **`chat` 路径下她的句长仍然 21.84**（原话 8.54 的 2.6 倍）
   ⇒ 说明护栏**能治"话题乱跳"，治不了"句子长"** ——
   句子长这件事，在四条独立实验（§19/§20/§21/§22）里始终没被任何 prompt 改动撼动过。
+---
+
+## 23. 三条路径全景：**`topic` 是一座孤岛**（02:43）
+
+### 23.1 把 `item` 也补上
+
+§22.7 记下"`item` 路径整晚没碰过"。补测后三条路径的规模：
+
+| 路径 | 消息数 | 字符数 | 相对 `chat` |
+|---|---|---|---|
+| `chat`（玩家搭话） | 22 | **11,743** | — |
+| `item`（送礼物） | 24 | **12,934** | +10% |
+| **`topic`（她主动开口）** | 20 | **23,318** | **+99%** |
+
+**⇒ `topic` 的 prompt 是另外两条的近两倍。**
+
+### 23.2 逐卡对照（同一 case：Sophia / friend）
+
+| 卡片 | 字符 | topic | chat | item |
+|---|---|---|---|---|
+| `sophia_liveliness_final` | 5,213 | ✅ | — | — |
+| `natural_role_texture` | 4,630 | ✅ | — | — |
+| `natural_topic_role_override` | 3,446 | ✅ | — | — |
+| `topic_response_contract` | 1,334 | ✅ | — | — |
+| `natural_dialogue_contract` | 1,139 | ✅ | — | — |
+| `behavior_examples` | ~620 | ✅ | — | ✅ |
+| `voice_card` | 1,422~1,997 | ✅ | ✅ | ✅ |
+| `stage_execution_card` | 584~1,410 | ✅ | ✅ | ✅ |
+| `post_history_voice_guard` | 523 | — | ✅ | ✅ |
+| `voice_execution_card` | 616 | — | ✅ | ✅ |
+| `final_role_voice_contract` | 614 | — | ✅ | ✅ |
+| `current_topic_anchor` | 570 | — | — | ✅ |
+| `speech_evidence` | 538 | — | ✅ | ✅ |
+| `style_evidence` | 343 | — | ✅ | ✅ |
+| `continuation_contract` | 252 | — | ✅ | ✅ |
+| `player_echo_guard` | 151 | — | ✅ | ✅ |
+| `original_style_examples` | 117 | — | ✅ | ✅ |
+| `persona_core` / `story_state` / `safety_rules` … | — | ✅ | ✅ | ✅ |
+
+### 23.3 结论：**只有 `topic` 是异类**
+
+**`chat` 与 `item` 的卡片集合几乎完全相同** —— 两条路径共用
+`post_history_voice_guard` / `voice_execution_card` / `final_role_voice_contract` /
+`continuation_contract` / `player_echo_guard` 这一整套**长度与连贯性护栏**。
+
+**而 `topic` 是一个孤岛**：
+- **独占 5 张卡**（`sophia_liveliness_final` + `natural_role_texture` +
+  `natural_topic_role_override` + `topic_response_contract` + `natural_dialogue_contract`
+  = **15,762 字符**）；
+- **同时缺掉**那整套护栏。
+
+### 23.4 这一节把 §16~§18 的疑问也一并解释了
+
+§17 量出「Sophia 的'怎么说话'指令占 prompt 的 68%，而另外 8 个角色只有 26%~35%；
+『活泼/破折号/2到3个/独立短句』在它们那里出现次数是 0」，当时把它记成"她的卡是离群点"。
+
+**现在原因清楚了**：**那 5 张卡只在 `topic` 路径里生效。**
+§16~§18 全部测量都跑在 `topic` 上，量到的"68%"其实不是"Sophia 这个角色特殊"，
+而是「**`topic` 这条路径特殊**」。另外两条路径（含最常见的 `chat`）
+根本看不到 `sophia_liveliness_final` 那张 5,213 字符的卡。
+
+**⇒ 一个之前被误读为"角色问题"的现象，其实是"路径问题"。**
+
+### 23.5 顺带记一个可疑点（未结论）
+
+`topic_trigger` 这张卡在 `topic` 路径里是 **0 字符**（空）。
+在无触发、无玩家输入的"找话题"场景下这可能是**有意为之**（没有 trigger 就不注入），
+但它是不是本该有内容，**我没有查证，不作为结论**。
+留作下次的入口：`prompts.py` 里 `topic_trigger` 的注入条件。
+
+### 23.6 现在的完整账
+
+| 已排除的嫌疑 | 依据 | 硬度 |
+|---|---|---|
+| 判据 / 换面 | §0~§7 | 测试级 |
+| **句长（prompt 侧任何改动）** | §19+§20+§21+§22 **四次一致** | **最硬** |
+| "鼓励感官"那条 | §19.3 ③ + §21.4 | 中 |
+| 她专属卡里指令太多 | §19 + §21 | 中 |
+| prompt 里的重复 | §19.3 ② + §21.3 | 中 |
+| 采样温度 | §20 + §21.4（19 组重复、逐段递增） | 很硬（反方向） |
+
+| 新的认识 | 依据 | 硬度 |
+|---|---|---|
+| **`topic` 与 `chat`/`item` 是两套 prompt** | §22.2 + §23.2 逐卡对照 | **结构事实** |
+| **`chat`/`item` 有完整长度护栏，`topic` 没有** | §22.3 + §23.2 | **结构事实** |
+| **把护栏加到 `topic` 上能显著改善话题稳定性** | §22.4/§22.5①（跨度 0.248→0.032） | **显著** |
+| 说话量会降、降多少不确定 | §22.5②（跨度 17.4 > 档间差 16.2） | **不显著** |
+
+**⇒ 唯一还站着、且未被任何 prompt 改动撼动的现象：句子长度是原话的 2.6~3.3 倍。**
+它现在有四条独立实验（§19/§20/§21/§22）一致支持"不是 prompt 侧措辞问题"，
+而 §23 又证明了**连"有完整长度护栏的 chat 路径"也一样长**（21.84 字/句 vs 原话 8.54）
+—— 护栏能治话题乱跳，治不了句子长。
