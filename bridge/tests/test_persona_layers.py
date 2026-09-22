@@ -66,11 +66,18 @@ NORMAL_VANILLA_BATCH_SIX = (
 )
 
 
+# 用户口径：只保留**游戏里有好感度／社交面板**的角色 ⇒ `Birdie` 被删
+# （游戏侧 `SocialTab=HiddenAlways`，且**不在**存档 friendshipData 名单里）。
+#
+# `Gunther` 一度也按 `SocialTab=HiddenAlways` 删过，后按**同一条判据**恢复：
+# `data/friendship-roster.json`（真实存档 `Wofs_412086775` 的 `player.friendshipData`
+# 导出）里 `GuntherSilvian` 在列 —— 而那正是留用 `Marlon`（`MarlonFay`）与
+# `Morris`（`MorrisTod`）的同一份名单；`docs/active-work.md` 记明
+# `GuntherSilvian` → `Gunther` 是同一角色。删的只是角色条目，索引语料没动。
 SPECIAL_VANILLA_BATCH = (
     ("Leo", "he", "him", "his", "岛屿", "鹦鹉"),
     ("Gunther", "he", "him", "his", "博物馆", "文物"),
     ("Marlon", "he", "him", "his", "冒险者公会", "矿洞"),
-    ("Birdie", "she", "her", "her", "岛屿生活", "海滩"),
 )
 
 
@@ -117,7 +124,6 @@ def test_female_bachelors_eligibility_is_limited_to_male_romanceable_roles() -> 
         "Leo",
         "Gunther",
         "Marlon",
-        "Birdie",
     }
 
     checker = getattr(personas_module, "is_female_bachelor_eligible")
@@ -623,7 +629,8 @@ def test_special_vanilla_batch_has_distinct_voice_cards() -> None:
         for npc_id, *_ in SPECIAL_VANILLA_BATCH
     ]
 
-    assert len({persona["voiceStyle"]["tone"] for persona in personas}) == 4
+    # 4 → 3：删掉 Birdie 后这一批剩 Leo / Gunther / Marlon。
+    assert len({persona["voiceStyle"]["tone"] for persona in personas}) == 3
 
 
 @pytest.mark.parametrize(

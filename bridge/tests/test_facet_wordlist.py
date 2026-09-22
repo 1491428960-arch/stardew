@@ -393,16 +393,23 @@ def test_sixth_batch_words_never_steal_the_main_facet(
 
 
 # 第 5 批为了规避词表而改写掉的原话：词表补上之后，它们判得对了吗。
+#
+# ⚠ 下面两条 `removed-Birdie` 的**输入是她本人的原话**，测的是"词表能不能判出这个面"，
+# **与角色是否还存在于 persona 无关**。Birdie 已按用户口径删除（游戏侧
+# `SocialTab=HiddenAlways`、没有社交面板），但删掉这两条就等于**丢掉「气候」
+# 「丈夫」两个词的回归保护**（第 6 批扩词表的收益在这两句上唯一可验）——
+# 所以用例保留，只把角色名换成中性标注，免得后人以为该角色还在库里。
 REVIVED_BY_RESTORING_THE_ORIGINAL_LINES = {
     # Emily：原话里"姐妹"不在词表，改写成了「海莉是我妹妹」。
     # 还要注意主面：原话含"你说过"（→"玩家自己"），是**更靠后**的面，
     # 所以「姐妹」一进来主面就从"玩家自己"换成"家人朋友" —— 这条判得更准。
     # 第 7 批已把原话还进素材（此前那句改写「海莉是我妹妹」已从数据里删除）。
     ("Emily", "我和海莉是姐妹，这事我跟你说过吗？"): "家人朋友",
-    # Birdie：原话里的"气候"不在词表，改写成了「这里的天气一年到头都暖和」
-    ("Birdie", "孩子，这里的气候全年温暖宜人……很适合我这把老骨头……"): "天气季节",
-    # Birdie 的家人面：任务 130「海盗的妻子」，此前整面判不出来
-    ("Birdie", "我丈夫是那艘沉船的船长。"): "家人朋友",
+    # 已删角色原话（原 Birdie）："气候"不在词表，第 5 批曾改写成
+    # 「这里的天气一年到头都暖和」；第 6 批补词后原话才判得出天气面。
+    ("removed-Birdie", "孩子，这里的气候全年温暖宜人……很适合我这把老骨头……"): "天气季节",
+    # 同上：家人面，出处在任务 130「海盗的妻子」，此前整面判不出来。
+    ("removed-Birdie", "我丈夫是那艘沉船的船长。"): "家人朋友",
     # Pam：原话判不出爱好面，第 5 批没有采用；第 7 批把它写进了素材
     ("Pam", "要是自己有个什么爱好就好了。"): "爱好或消遣",
 }
@@ -415,11 +422,14 @@ REVIVED_BY_RESTORING_THE_ORIGINAL_LINES = {
 def test_original_lines_revived_by_the_sixth_batch(npc_id: str, sentence: str, expected: str) -> None:
     """这四条就是第 6 批扩词表的**全部收益**，逐句钉住。
 
-    参数里的 `npc_id` 只为可读性（说明这句话是谁说的），断言本身在句子层面。
+    参数里的 `npc_id` 只为可读性（说明这句话是谁说的），断言本身在句子层面 ——
+    所以 `removed-Birdie` 那两条在该角色删除后**照旧有效**：它们验的是词表，
+    不是 persona 里还有没有这个人。
     第 6 批写这条时只有 Emily 与 Birdie 的原话真的进了素材；**第 7 批把 Pam 那条
     也补进了 `data/personas/vanilla.json`**（见 `test_topic_slot_rotation.py` 的
     `RESTORED_TO_THE_ORIGINAL_LINE` 与 `test_pam_finally_has_a_hobby_facet`），
-    到这里四条全部落地。
+    到这里四条全部落地。Birdie 的两条此后随角色删除失去了"素材侧"的那一半，
+    但**词表侧的这一半仍然要守**——「气候」「丈夫」两个词一旦被删就该在这里变红。
     """
 
     assert _facet_of_topic(sentence) == expected, f"{npc_id} 的这条原话没落到 {expected}"

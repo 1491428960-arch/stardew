@@ -205,8 +205,15 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     "允许从角色自己的近况、记忆、兴趣或眼前观察主动开启新话题，不要求玩家先铺垫；"
     "但第一次提到一个新对象、事件、人物或记忆时，必须在同一条消息给出最小背景："
     "它是什么、刚发生了什么，或为什么此刻想到它；"
-    "无论话题从哪来，都必须有一句来源句，用‘我刚把…’‘我最近在…’‘刚才看到…’说清它是从哪来的，"
-    "不能把它当成双方已经知道的东西。"
+    # 2026-09-22：用户实测「六句话里面四句关于画」+「说话文艺腔太重」。云端复跑
+    # 12 轮「找话题」（真实游戏端形态）后，句子塌缩的形状是**每轮都以同一个起手式
+    # 交代来源**：12 轮里 10 轮是「我刚把…」。原句把来源句固定成三个模板引号
+    # （‘我刚把…’‘我最近在…’‘刚才看到…’），模型就把第一个当成了默认开头。
+    # 要求本身（必须说清来源）保持不变，去掉的只是**句式模板**。
+    "无论话题从哪来，都必须有一句来源句，说清它是从哪来的"
+    "（比如刚做了什么、最近在弄什么、刚才看到了什么），"
+    "不能把它当成双方已经知道的东西；"
+    "说清来源的起手式每轮自然变化，不要反复用同一个开头。"
     # 2026-09-21：来源句此前读起来像「开场第一句必须是来源句」，于是角色的招牌
     # 句首动作（先脱口说第一反应／先叫人／先给判断）在找话题时被整条压掉——
     # 索菲亚这类角色的 signatureMoves 第一条就是「先脱口说第一反应（哇、等等、
@@ -249,9 +256,19 @@ _TOPIC_OPENING_GROUNDING_INSTRUCTION = (
     # 等于给所有命中「先脱口说第一反应」的角色（索菲亚、Abigail、Elliott…）都示范了画画，
     # 与偏窄的角色落点池同向叠加。改成一件任何角色都可能做的日常小事（收床单），
     # 示范的仍然只是**步骤**，不指向任何角色的爱好、职业或关系。
+    # 2026-09-22：用户实测「说话文艺腔太重，不贴角色」。上面那条 ✓ 例原先写的是
+    # 「上面还带着太阳的温度」——**示范了一种抒情化的观察写法**（给物件加温度、
+    # 光线、气味这类审美修饰），而这条契约是发给全部角色的，模型照结构抄。
+    # 修掉之前的云端实测 12 轮「找话题」里反复出现「手上这瓶新酿的还在冒凉气呢」
+    # 「手指上还留着一点蜡的味道」「我刚拿灯照了半天，看着特别顺眼」——
+    # 事都说清了，但都被包了一层审美滤镜，与索菲亚原文那种直白的短句连冲不是一回事。
+    # 处理方式与「来源句去模板」一致：只拿掉**示范出来的抒情修饰**，
+    # 再加一条只压"修饰"、不压角色本来怎么说自己的事的通用禁令。
     "✓ 招牌动作是‘先脱口说第一反应’的角色，反应拍和来源句要在同一条消息里一起出现："
-    "‘哇——我刚把晒好的床单收进来，上面还带着太阳的温度。你要不要帮我叠一半？’"
+    "‘哇——我刚把晒好的床单收进来，还热乎着。你要不要帮我叠一半？’"
     "三条示例只示范反应拍、来源句和口子这三个步骤，句式和对象随角色与场景变化，里面的事实不要当作当前剧情。"
+    "示例只示范步骤，不要模仿其中的比喻、温度、光线、气味或‘好看’‘顺眼’这类审美评价；"
+    "把一件小事用日常说法讲清楚就够，不要为了好听换一个更漂亮的说法。"
 )
 # 角色卡里「先脱口说第一反应」这一类句首动作的识别词。命中时这个角色要**额外**
 # 拿到一句开场许可，说清这个反应可以放在来源句前面，否则 `voice_execution_card`
@@ -620,6 +637,21 @@ def _build_turn_plan(
                 "如果是新话题，先把最小背景说清，再具体落到 topicSeed 的一个对象；"
                 "一句就停，只有内容自然需要时才补第二句，不要求问题、邀约或把话题交给玩家。"
             )
+    elif topic_request and not natural_mode:
+        # 2026-09-22（用户实测「找话题」）：「游戏端」的找话题原先落到
+        # `_TURN_PLAN_COMPACT_INSTRUCTIONS["answer_plus_lead"]` =「先回答，再给一个
+        # 具体、轻量的继续入口」。而 topic 请求**没有本轮玩家输入**——
+        # `app._build_context` 与 `BridgeClient` 都会把 message 清空。
+        # 「先回答」在字面上要求她回应一句不存在的话，与 `topic_response_contract`
+        # 的「可以主动开启新话题」正面对撞；模型只能二选一，实测表现为
+        # 复读上一轮或说一句不需要落点的话。
+        # 这里把目标由「回答」改成「起头」，`answer_plus_lead` 那半句
+        # 「留一个口子」的语义保留在文案里。
+        instruction = (
+            "本轮由 NPC 主动开场：从自己的近况、手里正在做的事或眼前看到的东西"
+            "起一个具体话头，说清它是什么（最小背景）；不需要玩家先说话，"
+            "也不要等待、复述或回应并不存在的玩家句子；说完留一个能接的口子就停。"
+        )
     objective = plan.get("objective")
     if isinstance(objective, str) and objective:
         instruction += f"本轮补充目标：{objective}"
@@ -3330,7 +3362,11 @@ def _compact_story_state(value: object) -> dict[str, Any]:
     return result
 
 
-def _natural_stage_execution_payload(value: object) -> dict[str, Any]:
+def _natural_stage_execution_payload(
+    value: object,
+    *,
+    topic_request: bool = False,
+) -> dict[str, Any]:
     """压掉自然轻回合不应执行的阶段主动性默认值。"""
 
     compact = _compact_stage_policy(value, include_response_order=False)
@@ -3344,8 +3380,18 @@ def _natural_stage_execution_payload(value: object) -> dict[str, Any]:
         "conversationLead",
     ):
         compact.pop(key, None)
+    # 2026-09-22：`responseShape` 原先硬编码「先直接回答当前输入」，而 `topic`
+    # 意图（游戏端「找话题」）**没有本轮玩家输入**——`app._build_context` 与
+    # `ContextBuilder` 都会把 message 清空。于是"找话题"这条路径上，
+    # 阶段卡给的唯一行为目标变成"回应一句不存在的话"，与 `turn_plan` 的
+    # 「自然开场」和 `topic_response_contract` 的「可以主动开启新话题」直接对撞：
+    # 模型收到三个互相排斥的目标，只能退回到最保守的读法（要么复述上一轮，
+    # 要么吐一句不需要落点的话）。这条分叉只改**起头还是回应**，不改阶段边界。
     compact["responseShape"] = (
-        "先直接回答当前输入；只有自然相关时才补一个眼前细节，"
+        "由 NPC 主动起一个话头：说清手上正在做或刚发生的一件具体小事；"
+        "本轮没有玩家输入可以回应，不需要等玩家先说话"
+        if topic_request
+        else "先直接回答当前输入；只有自然相关时才补一个眼前细节，"
         "没有可补内容就停下"
     )
     return compact
@@ -3355,9 +3401,22 @@ def _stage_execution_instruction(
     value: object,
     *,
     natural_light_turn: bool = False,
+    topic_request: bool = False,
 ) -> str:
     stage = _text(value.get("stage"), limit=40).casefold() if isinstance(value, Mapping) else ""
-    if natural_light_turn:
+    if natural_light_turn and topic_request:
+        # 2026-09-22：「找话题」路径原先复用轻承接文案（"先回答当前输入……
+        # 没有可补内容就停下"），而这条路径**没有当前输入**。改成"起头"版，
+        # 保住 topic 意图（她主动开口）的同时，仍然只改行为目标、
+        # 不动关系阶段边界与称呼。
+        stage_instruction = (
+            "本轮由 NPC 主动起一个话头：从自己手上正在做、刚发生或眼前的一件具体小事"
+            "开口，说清它是什么。本轮没有玩家输入，不要等待、复述或回应并不存在的"
+            "玩家句子；也不需要为了把话交出去而追问、二选一或安排。"
+            "关系阶段只用于边界和称呼，不要求主动亲密、额外问题、邀约、"
+            "未来安排或完整情绪收束。"
+        )
+    elif natural_light_turn:
         stage_instruction = (
             "本轮以自然轻承接为唯一行为目标：先回答当前输入；只有自然相关时才补一个眼前事实、"
             "动作或短感受，没有可补内容就停下。关系阶段只用于边界和称呼，"
@@ -3391,6 +3450,12 @@ def _stage_execution_instruction(
             stage,
             "严格执行当前阶段的五项策略，不使用更亲密阶段的开放程度。",
         )
+    # 2026-09-22（用户实测「找话题」）：stranger 与其余阶段共用的这段文案写着
+    # 「初识阶段不得反问、邀约或**主动换题**；回复最多 1 句…问题回答完就停下」。
+    # 「主动换题」与「找话题」这个系统意图正面冲突，而「问题回答完就停下」
+    # 预设了一个不存在的问题。只改这两点；阶段边界（简短、不反问、不邀约）原样保留。
+    if topic_request and not natural_light_turn and stage == "stranger":
+        stage_instruction = "初识阶段只起一句眼前的小事，不反问也不邀约；说清就停。"
     event_gate = value.get("eventGate") if isinstance(value, Mapping) else None
     if isinstance(event_gate, Mapping):
         event_gate_instruction = _text(event_gate.get("instruction"), limit=320)
@@ -3406,6 +3471,17 @@ def _stage_execution_instruction(
         else ""
     )
     if natural_light_turn:
+        if topic_request:
+            return (
+                "这是本轮的关系阶段边界提示，只影响称呼和边界；"
+                f"{stage_instruction}"
+                "不要凭空补写玩家说过的话、做过的事或他的近况；"
+                "只按 responseShape 和 boundaryMode 决定能说多少。"
+                "玩家明确表示先不问、先休息、有空再聊或先走时，"
+                "不得主动抛出新问题、新对象或新话题；只用角色语气简短收口。"
+                "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
+                + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
+            )
         return (
             "这是本轮的关系阶段边界提示，只影响称呼和边界；"
             f"{stage_instruction}"
@@ -3415,6 +3491,28 @@ def _stage_execution_instruction(
             "玩家明确表示先不问、先休息、有空再聊或先走时，"
             "不得主动抛出新问题、新对象或新话题；只用角色语气简短收口。"
             "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
+            + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
+        )
+    if topic_request:
+        # 2026-09-22：非自然（游戏端）路径的「找话题」原本复用通用阶段卡文案——
+        # 「直接接住玩家的意思，不要先复述、改写或总结玩家原话」「表达预算：
+        # **直接回答后**最多追加一个角色化动作」。topic 路径没有玩家输入，
+        # 这两句都在要求她处理一句不存在的话。改成「起头」版：
+        # 保住阶段边界与表达预算，去掉「回答」这个前提。
+        return (
+            "这是本轮必须执行的关系阶段行为卡。它是可执行约束，"
+            "优先于泛化的热情、礼貌或延长对话倾向；"
+            "原版语气示例不得覆盖当前阶段策略；"
+            f"{stage_instruction}"
+            "本轮由系统请求 NPC 主动起一个话头：没有玩家输入可以接住，"
+            "不要等待、复述或回应并不存在的玩家句子；"
+            "只按 responseShape、selfDisclosure 和 boundaryMode 暴露内容，"
+            "initiative 与 followUp 只作为本轮能动性的上限，不是必须完成的动作。"
+            "玩家明确表示先不问、先休息、有空再聊或先走时，"
+            "不得主动抛出新问题、新对象或新话题；只用角色语气简短收口。"
+            "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
+            "表达预算：起头之后最多追加一个角色化动作（具体细节、态度、选择或小安排）；"
+            "不要强行同时解释、表达情绪、追问和安排。"
             + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
         )
     return (
@@ -6865,7 +6963,10 @@ class PromptBuilder:
                 in {"answer_only", "answer_plus_detail", "answer_plus_lead", "boundary_close"}
             )
             stage_execution_payload = (
-                _natural_stage_execution_payload(stage_policy)
+                _natural_stage_execution_payload(
+                    stage_policy,
+                    topic_request=topic_request,
+                )
                 if natural_light_stage
                 else _compact_stage_policy(
                     stage_policy,
@@ -6874,6 +6975,49 @@ class PromptBuilder:
                 if compact
                 else stage_policy
             )
+            if (
+                topic_request
+                and not natural_light_stage
+                and isinstance(stage_execution_payload, Mapping)
+            ):
+                # 2026-09-22（用户实测「找话题」）：`initiative` 与 `responseShape`
+                # 这两个字段都是**为「玩家说了话」写的**——stranger 的 initiative 是
+                # 「不主动开启新话题，不为延长对话而反问」，responseShape 是
+                # 「…先直接回应当前话题…」。而 topic 请求是系统请 NPC 开口，
+                # 根本没有当前输入：不覆盖它们，「找话题」这条路径上唯二明确写着
+                # "现在该做什么"的字段就都在否定这次请求本身。
+                # 只覆盖这两个字段；阶段边界（boundaryMode / selfDisclosure /
+                # eventGate）与阶段称呼原样保留——「不熟的 NPC 不该套近乎」这层
+                # 语义仍然由 boundaryMode 承担。
+                #
+                # **只在非自然路径生效**：`natural_light_stage` 那条已经由
+                # `_natural_stage_execution_payload` 给出起头版 responseShape，
+                # 而且它**刻意 pop 掉了 initiative**（轻回合不该执行阶段主动性）。
+                # 这里再塞回去会把这个设计撤销掉。
+                override = dict(stage_execution_payload)
+                override["initiative"] = (
+                    "本轮由系统请求 NPC 主动起一个话头，起头本身不算越界；"
+                    "但没有玩家输入可以回应，不要等待、复述或追问不存在的话；"
+                    "只起一个话题，不额外追问、邀约或安排。"
+                )
+                override["responseShape"] = (
+                    "由 NPC 主动起一个话头：说清手上正在做或刚发生的一件具体小事；"
+                    "本轮没有玩家输入可以回应，不需要等玩家先说话"
+                )
+                # **第五处同型矛盾**（2026-09-22 云端复跑时才看到，因为槽位只在
+                # 有历史时才产出）：槽位触发时 `topicSlot.playerAnchor` 写的是
+                # 「硬约束：**玩家本轮点名**的对象必须先接住、先应下来」——
+                # topic 路径同样没有"玩家本轮的话"，这条约束在字面上要求她
+                # 接住一个不存在的东西。槽位自己的 `instruction` 已经说了
+                # 「先接住那里面的具体东西」（指的是**上一轮她说过的话**，
+                # 那个在 topic 下有历史、成立），所以这里只摘掉 `playerAnchor`，
+                # 槽位的其余字段（bannedFacet / suggestedTopic / instruction）不动。
+                slot = override.get("topicSlot")
+                if isinstance(slot, Mapping):
+                    slot = dict(slot)
+                    slot.pop("playerAnchor", None)
+                    override["topicSlot"] = slot
+                stage_execution_payload = override
             messages.append(
                 {
                     "role": "system",
@@ -6883,6 +7027,7 @@ class PromptBuilder:
                         "instruction": _stage_execution_instruction(
                             stage_policy,
                             natural_light_turn=natural_light_stage,
+                            topic_request=topic_request,
                         ),
                     }),
                 }

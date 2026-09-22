@@ -8007,8 +8007,14 @@ def test_natural_topic_without_explicit_plan_downgrades_stage_execution_card() -
 
     assert "affectionInitiative" not in stage_card
     assert "conversationLead" not in stage_card
+    # 2026-09-22：`intent=topic` **没有本轮玩家输入**（`app._build_context` 与
+    # `BridgeClient` 都会把 message 清空）。轻承接那句
+    # 「先直接回答当前输入…没有可补内容就停下」在这条路径上说不出可执行的目标，
+    # 与 turn_plan 的「自然开场」互相排斥。改成「起头」版；
+    # 主动亲密与交棒契约仍然不得出现（本测试的初衷不变）。
     assert stage_card["responseShape"] == (
-        "先直接回答当前输入；只有自然相关时才补一个眼前细节，没有可补内容就停下"
+        "由 NPC 主动起一个话头：说清手上正在做或刚发生的一件具体小事；"
+        "本轮没有玩家输入可以回应，不需要等玩家先说话"
     )
     assert "不要求主动亲密" in stage_card["instruction"]
 

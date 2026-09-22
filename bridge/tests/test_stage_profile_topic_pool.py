@@ -20,6 +20,12 @@
 
 本文件钉住压缩器的行为（两个键都要保留），并用真实人设 + 真实派生索引验证
 索菲亚 close / parent 两档的话题池确实出现在 `persona_core` 里。
+
+**2026-09-22 追加**：这批数据虽然终于进了 prompt，内容却整批是**抽象元类目**
+（「创作计划」「作品与礼物」「对未来的想象」）—— 用生活面判据一条都落不到面，
+硬槽位永远指定不了它们，模型只能自己往里填内容；而她的人设里那条「创作」轴
+填进去就是画画。用户实测「六句话里面四句关于画」由此而来。索菲亚的 7 档已
+全部换成有原话依据的具体物，并由下面的覆盖面回归钉住。
 """
 
 from __future__ import annotations
@@ -149,28 +155,71 @@ def test_sophia_topic_pool_reaches_persona_core() -> None:
     parent_profile = _stage_profile_of("Sophia", "parent")
 
     assert close_profile["stage"] == "close"
-    assert close_profile["topicPool"] == ["未来计划", "恐惧与期待", "共同经历"]
+    # 2026-09-22：话题池从「抽象元类目」换成**具体物**——原先的
+    # 「未来计划／恐惧与期待／共同经历」用生活面判据一条都落不到面
+    # （`_facet_of_topic` 全返回 None），硬槽位永远指定不了它们；
+    # 模型只能自己往里填内容，而她的人设里有「创作」这条轴，填进去就是画画。
+    assert close_profile["topicPool"] == [
+        "一个人待着时那种说不清的孤独",
+        "记得刚搬来那阵子一起忙的那些天",
+        "酿造蓝月亮招牌酒用的那味原料",
+    ]
     assert parent_profile["stage"] == "parent"
     assert parent_profile["topicPool"] == [
-        "孩子与家庭",
-        "安全的日常",
-        "如何保留个人空间",
+        "睡前留给自己的一点电视时间",
+        "带孩子们去镇上公园玩",
+        "发出滑稽声音逗孩子笑的小把戏",
     ]
-    # 这两条正是「总是谈画」的对症解药：与绘画、酿造都无关。
-    assert "恐惧与期待" in close_profile["topicPool"]
-    assert "如何保留个人空间" in parent_profile["topicPool"]
+    # 这两条正是「总是谈画」的对症解药：与绘画都无关。
+    assert "一个人待着时那种说不清的孤独" in close_profile["topicPool"]
+    assert "睡前留给自己的一点电视时间" in parent_profile["topicPool"]
     # 边界没有被话题池顶掉（两个键同时存在）。
     assert close_profile["boundaries"]
 
 
+_STAGES = (
+    "stranger",
+    "acquaintance",
+    "friend",
+    "close",
+    "dating",
+    "married",
+    "parent",
+)
+
+
+@pytest.mark.skipif(not INDEX.exists(), reason="派生索引未生成")
+def test_every_sophia_topic_pool_entry_lands_on_a_life_facet() -> None:
+    """每个阶段的话题池条目都要能被硬槽位指定。
+
+    2026-09-22 用户实测「六句话里面四句关于画」。根因之一是
+    `stageProfiles.<stage>.topicPool` 全用抽象元类目（「创作计划」「作品与礼物」）：
+    它们用 `_LIFE_FACET_PATTERNS` 判据**一条都落不到生活面**，
+    于是轮换槽位（按面禁）永远指不到它们，模型只能自由发挥填充内容。
+    这条回归钉住「每条都能落面 + 每阶段至少覆盖两个不同面」。
+    """
+
+    from stardew_ai_bridge.stage_policy import _facet_of_topic
+
+    for stage in _STAGES:
+        profile = _stage_profile_of("Sophia", stage)
+        pool = profile["topicPool"]
+        assert pool, stage
+        facets = {_facet_of_topic(item) for item in pool}
+        assert None not in facets, (stage, pool)
+        assert len(facets) >= 2, (stage, pool, facets)
+
+
 @pytest.mark.skipif(not INDEX.exists(), reason="派生索引未生成")
 def test_other_roles_topic_pools_are_restored_too() -> None:
-    """横向抽查三个角色，确认恢复的不是索菲亚一个人的特例。"""
+    """横向抽查两个角色，确认恢复的不是索菲亚一个人的特例。
+
+    原先抽查三个，第三个是 Birdie 的 `parent` 档。**该角色已按用户口径删除**
+    （游戏侧 `SocialTab=HiddenAlways`、没有社交面板），那一行随角色条目移除。
+    """
 
     wizard = _stage_profile_of("Wizard", "close")
     leah = _stage_profile_of("Leah", "close")
-    birdie = _stage_profile_of("Birdie", "parent")
 
     assert wizard["topicPool"] == ["长期目标", "过去的选择", "共同承担的风险"]
     assert leah["topicPool"] == ["共同看作品", "自然与材料", "彼此如何提供支持"]
-    assert birdie["topicPool"] == ["岛上的花草", "能吃的果子和鱼", "怎么慢慢走"]

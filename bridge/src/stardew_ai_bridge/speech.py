@@ -334,6 +334,51 @@ def select_stage_voice_anchors(
 
     if not candidates:
         return []
+
+    # 2026-09-22（用户拍板走 B）：**候选不足**时从更早阶段 / 无阶段标注的日常样本补足。
+    #
+    # 上面那条四级回退是**整级**的（`if not candidates`）：只要当前阶段有**一条**原文，
+    # 就再也不看别的来源。实测后果：Sophia 的 `friend` 档索引里**总共只有 2 条**
+    # 阶段原文，而且两条都落在布料/面料（`Thu6`「那是什么面料的？」、
+    # `Tue6`「艾米丽…高级布料」）——整个语气窗口被同一个生活面占满；
+    # `stranger` 档 4 条里 3 条是戒备句（「你需要点什么吗」「你想要干什么」），
+    # 第 4 条才是「画了眼线」。
+    #
+    # 补足来源与闸门（②③ 都是实测踩出来的）：
+    #   ① `at_most_present` = 允许**更早阶段**的原文（friend 可借 acquaintance）。
+    #      ⚠ 这里**刻意不开 `unconditioned_samples`**（第一版开了，实测出问题）：
+    #      无阶段标注的样本没有阶段信息，能漏进**任意**阶段 —— 抽查发现
+    #      Linus 的 `married` 档被补进「陌生人？……你好。不要在意我。这里就只有
+    #      我一个人住。」，那是明确的初识语气，放在婚后明显违和。
+    #      只借"有阶段标注且不晚于当前阶段"的原文，语义一致性才有保障。
+    #      （Sophia 的 `friend` 借 acquaintance 的 8 条，已经足够解决"两条都是布料"。）
+    #   ② ⚠ **只接受 `_anchor_category != "other"` 的样本**。样本里混着
+    #      **事件对白**（sourceKey 形如 `3691380/f Scarlett 125/t 600 1800/w sunny/…`），
+    #      那是她在事件里**对别人**说的话（"加油，斯嘉丽！""今天早上斯嘉丽开着她
+    #      爸爸的车来到这里"）——没加这道闸时 stranger 的 4 条锚点被挤掉 3 条，
+    #      **比修之前更差**。
+    #   ③ 优先补当前窗口里**还没有出现过的类别**（`_anchor_category` 的分桶本来就是
+    #      为"避免窗口被同一类对白占满"而存在的）。
+    # 条数上限仍由调用方的 `max_count`（当前 8）决定。
+    if len(candidates) < capped_count:
+        existing = {anchor["sampleId"] for _, anchor in candidates}
+        seen_categories = {_anchor_category(anchor) for _, anchor in candidates}
+        supplement: list[tuple[tuple[int, int, int, int], dict[str, Any]]] = []
+        for key, anchor in collect_candidates(stage_policy="at_most_present"):
+            if anchor["sampleId"] in existing:
+                continue
+            if _anchor_category(anchor) == "other":
+                continue
+            existing.add(anchor["sampleId"])
+            supplement.append((key, anchor))
+        supplement.sort(
+            key=lambda item: (
+                0 if _anchor_category(item[1]) not in seen_categories else 1,
+                item[0],
+            )
+        )
+        candidates.extend(supplement)
+
     ranked = [anchor for _, anchor in sorted(candidates, key=lambda item: item[0])]
     high = [item for item in ranked if item["voiceEnergy"] == "high"]
     low_or_medium = [item for item in ranked if item["voiceEnergy"] != "high"]

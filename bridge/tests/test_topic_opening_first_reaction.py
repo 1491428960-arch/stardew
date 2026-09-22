@@ -205,8 +205,13 @@ def test_topic_contract_keeps_the_source_sentence_requirement() -> None:
     contract = _contract(_topic_messages(HARVEY_MOVES))
 
     assert "无论话题从哪来，都必须有一句来源句" in contract
-    assert "‘我刚把…’" in contract
     assert "不要为了先交代来源而省掉这一拍" in contract
+    # 2026-09-22：来源句的**句式模板**从契约里删掉了。原先并列写着
+    # 「‘我刚把…’‘我最近在…’‘刚才看到…’」，云端实测 12 轮「找话题」里
+    # 10 轮以「我刚把…」起句——模型把第一个模板当成了默认开头。
+    # 要求本身（必须说清来源）不变，被删掉的只是模板；改用「起手式每轮自然变化」。
+    assert "‘我刚把…’" not in contract
+    assert "起手式每轮自然变化" in contract
 
 
 # --- 角色条件许可：只给「以一声反应起句」的角色 -------------------------------
@@ -292,8 +297,11 @@ def test_contract_demonstrates_a_reaction_beat_plus_source_sentence() -> None:
     contract = _contract(_topic_messages(SOPHIA_MOVES))
 
     assert "反应拍和来源句要在同一条消息里一起出现" in contract
+    # 2026-09-22：示例原先写的是「上面还带着太阳的温度」——它给一件小事加了一层
+    # 抒情修饰（温度），而本契约发给全部角色、模型照结构抄。云端实测 12 轮
+    # 「找话题」里反复出现「还在冒凉气呢」「还留着一点蜡的味道」正是这一型。
     assert (
-        "哇——我刚把晒好的床单收进来，上面还带着太阳的温度。你要不要帮我叠一半？"
+        "哇——我刚把晒好的床单收进来，还热乎着。你要不要帮我叠一半？"
         in contract
     )
     assert "新画" not in contract
@@ -310,7 +318,10 @@ def test_the_new_example_keeps_the_banned_opening_shape_out() -> None:
     assert "还没干透" in contract
     example = contract.split("✓ 招牌动作是", 1)[1].split("三条示例", 1)[0]
     assert "还没干透" not in example
-    assert "还带着太阳的温度" in example
+    # 2026-09-22：正例不再带任何抒情修饰，并显式禁止模仿示例里的比喻与审美评价
+    # （用户实测「说话文艺腔太重」）。
+    assert "还带着太阳的温度" not in contract
+    assert "不要模仿其中的比喻" in contract
 
 
 # --- 识别函数本身 ------------------------------------------------------------

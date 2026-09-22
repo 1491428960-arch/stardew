@@ -977,12 +977,15 @@ FIVE_FACET_ROLES = frozenset(
         "Kent", "Krobus", "Lance", "Leah", "Lewis", "Linus", "Maru", "Morris",
         "Olivia", "Penny", "Pierre", "Robin", "Sandy", "Sophia", "Victor", "Willy",
         "Wizard",
-        # 第 5 批（16 个角色收尾）：除 Birdie 停在 4 面、Marlon 挖不动之外全部到 5 面
+        # 第 5 批（16 个角色收尾）：除 Marlon 挖不动之外全部到 5 面
+        # （当时 Birdie 停在 4 面，第 6 批才补上，见下）
         "Abigail", "Caroline", "Emily", "George", "Gus", "Haley", "Harvey", "Jodi",
         "Marnie", "Sam", "Sebastian", "Shane", "Vincent",
-        # 第 6 批：Birdie 从 4 面到 5 面 —— 词表补上「气候」「丈夫」之后，
-        # 第 5 批为规避词表而改写的两条素材**换回原话**，家人面随之落地。
-        "Birdie",
+        # ⚠ 第 6 批曾把 Birdie 从 4 面补到 5 面（词表补上「气候」「丈夫」之后，
+        #   第 5 批为规避词表而改写的两条素材换回了原话）。**该角色已按用户口径删除**
+        #   —— `SocialTab=HiddenAlways`、游戏里没有社交面板，所以不做她的对话；
+        #   这条名单项随角色条目一起移除。她那一批原话仍是词表回归用例，
+        #   留在 `bridge/tests/test_facet_wordlist.py` 里（见该文件 402 行附近）。
         # 第 7 批：Pam 从 4 面到 5 面 —— 词表补上「爱好」之后，她原话里
         # 「要是自己有个什么爱好就好了」终于判得出爱好面（此前"探不动"）。
         "Pam",
@@ -992,9 +995,9 @@ FIVE_FACET_ROLES = frozenset(
 # 还没做素材横向推广的角色（它们的无面抽象条目还没被具体素材换掉）。
 # 这份清单是**待办**，不是事实断言：补掉其中一个从清单里删掉即可，不删也不会变红。
 #
-# 第 5 批清空到只剩 Marlon：Birdie（用 `Data/ExtraDialogue` 的原话补了 4 面）、
-# Haley／Jodi／Shane／Vincent 都已补到 5 面且各自只剩 1 条无面核心。删掉它们让这条
-# 哨兵**对它们生效**——否则回退到 2 条无面也不会有人报警。
+# 第 5 批清空到只剩 Marlon：Birdie（用 `Data/ExtraDialogue` 的原话补了 4 面，该角色
+# 后来已删除）、Haley／Jodi／Shane／Vincent 都已补到 5 面且各自只剩 1 条无面核心。
+# 删掉它们让这条哨兵**对它们生效**——否则回退到 2 条无面也不会有人报警。
 UNFILLED_NO_FACET_ROLES = frozenset({"Marlon"})
 
 
@@ -1068,81 +1071,37 @@ def test_roles_lifted_to_five_facets_are_recorded() -> None:
 # --- 12. 2026-09-23 第 5 批：两个只可能靠"人"守住的边界 -----------------------
 #
 # 第 5 批是横向推广的收尾：16 个角色补完，**2 个生活面的角色清零**。补完之后
-# 低于 3 面的**只剩 Marlon 一个**（6 个面的 own 命中全 0，见第 4 批 §3.1），
-# 次低的是 Birdie 的 4 面。两者都不是"还没做"，是**做不了**——所以它们值得一条断言，
-# 否则下一轮很容易被误当成待办重新挖一遍。
+# 低于 3 面的**只剩 Marlon 一个**（6 个面的 own 命中全 0，见第 4 批 §3.1）。
+# 它不是"还没做"，是**做不了**——所以它值得一条断言，否则下一轮很容易被误当成
+# 待办重新挖一遍。
+#
+# 本节原先还有一条同型的 Birdie 断言（她"索引里 0 条语料却仍有素材"，靠
+# `Data/ExtraDialogue` 的原话补到 5 面）。**该角色已按用户口径删除**：游戏侧
+# `SocialTab=HiddenAlways`、没有社交面板，所以不做她的对话，断言随之移除。
+# 索引侧"`Data/ExtraDialogue` 曾整块漏掉"的缺口结论仍留在 `docs/` 与下面
+# 第 14 / 15 节的历史注释里；她那批原话带来的扩词收益，由
+# `bridge/tests/test_facet_wordlist.py` 的两条用例继续守着（见该文件 402 行附近）。
 
 BELOW_THREE_FACET_ROLES = frozenset({"Marlon"})
 
 
-def test_birdie_material_comes_from_extra_dialogue_not_the_index() -> None:
-    """Birdie 是全库唯一"索引里 0 条语料却仍有素材"的角色。
-
-    第 5 批查清的根因（**这是索引器的缺口，不是素材问题**）：
-
-    * Stardew 1.6 把 `CanSocialize=FALSE`／`SocialTab=HiddenAlways` 的 NPC（Birdie）
-      的台词集中放进 `Content (unpacked)/Data/ExtraDialogue.<locale>.json`
-      （zh-CN 下 15 条，键名 `Birdie0`…`Birdie_NoGift`），**没有**
-      `Characters/Dialogue/Birdie.json`；
-    * 索引器的两个 vanilla 入口是 ①解包后的 `Characters/Dialogue/*.json`（用**文件名**
-      当 npcId）②`Data/Events/*.json`（从事件脚本提参与者）——**都不含 `Data/ExtraDialogue`**；
-    * 而 `Data/Events/*.json` 里一个 "Birdie" 字样都没有，三条路全断，所以她 0 条。
-
-    影响面已核算：45 个 persona 角色里**只有她一个**被漏（`Rasmodia` 也是 0 条，但它经
-    `canonical_npc_id()` 归一到 `Wizard`，语料在 Wizard 名下）。
-
-    这条断言钉住两件事：**她的素材确实来自那几句原话**（不是编的），
-    以及**她的面数没有掉回 5 面以下**——防止有人按"索引里没有 = 没素材"的口径
-    把她清理掉。
-
-    第 6 批更新（2026-09-22）：词表补上「气候」「丈夫」之后，第 5 批为规避词表
-    而做的两处改写**换回了她的原话**，并补上"海盗的妻子"这条核心剧情对应的家人面，
-    于是她从 4 面升到 **5 面**（条数 5 → 6，仍是 6 条上限内的满格）。
-    """
-
-    found = [
-        topics
-        for _fname, name, topics in _personas_topics()
-        if canonical_npc_id(name) == "Birdie"
-    ]
-    assert len(found) == 1, f"Birdie 应该只在 vanilla.json 里有一份，实际 {len(found)} 份"
-
-    topics = found[0]
-    assert len(topics) == 6, f"Birdie 的素材条数变了：{topics}"
-
-    facets = {_facet_of_topic(topic) for topic in topics} - {None}
-    assert facets == {"吃喝", "天气季节", "过去的回忆", "爱好或消遣", "家人朋友"}, (
-        f"Birdie 的面覆盖变了：{sorted(facets)}"
-    )
-    # 逐条对应 `Data/ExtraDialogue.zh-CN.json` 的原话
-    assert "早餐那碗芋泥和一杯鲜榨芒果汁" in topics  # Birdie4
-    assert "每天都要在海滩上散步，看看冲上岸的新东西" in topics  # Birdie5
-    assert "很久以前，岛上住着矮人" in topics  # Birdie1
-    # Birdie17 的**原话**（第 6 批把「天气」换回「气候」，不再改写字面）
-    assert "这里的气候全年温暖宜人" in topics
-    # 任务 130「海盗的妻子」：她的核心剧情，也是家人面唯一的依据
-    assert "我丈夫是那艘沉船的船长" in topics
-
-
-# --- 13. 2026-09-22 第 6 批：人设必须与角色**真原话**一致 ---------------------
+# --- 13. 人设与**真原话**一致：多份 persona 的取用与一致性断言 ----------------
 #
-# 第 5 批查清 Birdie 的语料缺口时，顺手发现她的 persona 与真人**互相矛盾**：
-# 那份人设是"当年没有语料时推出来的"，`tone` 说她喜欢**钓鱼**（她其实只散步）、
-# `signatureMoves` 写她"**不先寒暄**、不从天气谈起、提到自己用名字不用'我'"
-# （而她的原话是「孩子，我从来没想过还能在岛上看见新面孔」「**我**每天早上的
-# 早餐是……」「孩子，这里的**气候**全年温暖宜人……」），`addressing.player`
-# 写"朋友"（原话一律叫"**孩子**"），`sourceRefs` 指向**不存在**的
-# `Characters/Dialogue/Birdie`。
+# 这节的哨兵一律走 `_persona_profile()`：同一角色可能散在多个文件里
+# （`Shane` / `Sebastian` 各有两份，必须逐份核，只核一份会漏）。
 #
-# 用户的验收口径是"**像这个人该说的话**"——人设与她的原话一致是这条的底线。
-# 下面这条哨兵钉住"改回去"的几种写法：任何一条重新出现就说明人设又漂了。
-_BIRDIE_REJECTED_PHRASES = (
-    "钓鱼",  # 她 15 条日常对白 + 2 段事件脚本里一次都没提过钓鱼
-    "手作",  # 只有「它是我造的」一句勉强沾边，不足以当特征
-    "针线",
-    "不先寒暄",  # 她恰恰是先寒暄的那个（Birdie0 / Birdie22）
-    "用名字而不用",  # 她自称"我"（Birdie4 / Birdie6 / Birdie12）
-)
+# 起因是第 5 批查语料缺口时，顺手发现某个角色的 persona 与她本人的原话
+# **互相矛盾** —— 那份人设是"当年没有语料时推出来的"，`tone` 说她喜欢钓鱼
+# （她其实只散步）、`signatureMoves` 写她"不先寒暄、提自己用名字不用'我'"、
+# `addressing.player` 写错、`sourceRefs` 指向**不存在**的
+# `Characters/Dialogue/Birdie`。用户的验收口径是"**像这个人该说的话**"，
+# 人设与真原话一致是这条的底线。
+#
+# ⚠ 那组哨兵（`_BIRDIE_REJECTED_PHRASES`："钓鱼"／"手作"／"针线"／"不先寒暄"／
+# "用名字而不用"，以及人设、`sourceRefs` 两条断言）是针对 **Birdie** 写的。
+# **该角色已按用户口径删除**（游戏侧 `SocialTab=HiddenAlways`、没有社交面板），
+# 断言随角色条目一起移除；她那批原话仍是词表用例，留在
+# `bridge/tests/test_facet_wordlist.py`。本节现存哨兵见下面的 Shane 一条。
 
 
 def _persona_profile(npc_id: str):
@@ -1155,49 +1114,6 @@ def _persona_profile(npc_id: str):
             if canonical_npc_id(name) == npc_id:
                 out.append((path.name, profile or {}))
     return out
-
-
-def test_birdie_persona_matches_her_actual_lines() -> None:
-    """Birdie 的人设与她 15 条原话 + 2 段事件脚本一致（第 6 批重写）。"""
-
-    found = _persona_profile("Birdie")
-    assert len(found) == 1, f"Birdie 的 persona 份数变了：{[name for name, _ in found]}"
-
-    fname, profile = found[0]
-    text = json.dumps(profile, ensure_ascii=False)
-
-    for phrase in _BIRDIE_REJECTED_PHRASES:
-        assert phrase not in text, f"{fname} 的 Birdie 人设里又出现了「{phrase}」"
-
-    # 原话一律叫"孩子"（英文 dear）——不是"朋友"
-    assert profile["addressing"]["player"] == "孩子"
-    assert "朋友" not in profile["addressing"]["player"]
-
-
-def test_birdie_source_refs_point_at_real_game_files() -> None:
-    """`sourceRefs` 必须指向**真实存在**的位置。
-
-    改前写的是 `Characters/Dialogue/Birdie` —— 那个文件**根本不存在**，
-    她的台词在 `Data/ExtraDialogue.<locale>.json`（15 条，键名 `Birdie0`…`Birdie_NoGift`），
-    另有 2 段事件脚本在 `Strings/Locations.<locale>.json` 的
-    `IslandSecret_Event_Birdie*` 键里。这条断言不碰文件系统（测试环境未必装着游戏），
-    只钉住"那个不存在的路径不许回来"。
-    """
-
-    found = _persona_profile("Birdie")
-    _fname, profile = found[0]
-
-    refs = [
-        ref
-        for fact in profile.get("knowledgeFacts") or []
-        for ref in fact.get("sourceRefs") or []
-    ]
-
-    assert refs, "Birdie 的 knowledgeFacts 必须有 sourceRefs"
-    assert "Characters/Dialogue/Birdie" not in refs, "那个文件不存在（第 5 批查清）"
-    assert any(ref.startswith("Data/ExtraDialogue") for ref in refs), (
-        f"没有一条 sourceRef 指向她台词的真位置：{refs}"
-    )
 
 
 # --- 14. 2026-09-22 第 6 批：Shane 的救赎线换回来了，面数不降 -----------------

@@ -67,13 +67,13 @@
         ]
       },
       "stageProfiles": {
-        "stranger": {"addressing": "礼貌地称呼农场主", "openness": "谨慎", "topicPool": ["天气", "葡萄园工作"], "boundaries": ["不主动谈私人焦虑"]},
-        "acquaintance": {"addressing": "农场主", "openness": "试探", "topicPool": ["酿造", "角色扮演", "小镇活动"], "boundaries": ["先听对方是否愿意继续"]},
-        "friend": {"addressing": "更亲近地称呼对方", "openness": "愿意分享", "topicPool": ["创作计划", "家人近况", "葡萄园烦恼"], "boundaries": ["不替别人承诺"]},
-        "close": {"addressing": "自然使用名字", "openness": "坦率但仍会犹豫", "topicPool": ["未来计划", "恐惧与期待", "共同经历"], "boundaries": ["被否定时需要先缓一缓"]},
-        "dating": {"addressing": "自然使用名字，偶尔带亲昵称呼", "openness": "主动表达在意", "topicPool": ["约会安排", "作品与礼物", "对未来的想象"], "boundaries": ["不把亲密关系当成控制"], "endearmentPolicy": {"terms": ["小傻瓜"], "cadence": "低频：通常每 5—6 个 NPC 回合最多自然使用一次，不是每轮必用", "useWhen": ["轻松打趣或分享喜欢的事", "自然回应玩家的亲密表达"], "avoidWhen": ["普通事实回答、认真说明或敏感话题", "最近已经使用过同一个爱称"], "evidence": [{"sourceKey": "dating_Sophia", "relationshipStage": "dating"}]}},
-        "married": {"addressing": "亲密而平等", "openness": "愿意讨论家庭决定", "topicPool": ["共同生活", "葡萄园计划", "彼此的压力"], "boundaries": ["重要决定要共同确认"], "endearmentPolicy": {"terms": ["小傻瓜", "亲爱的"], "cadence": "低频：通常每 4—5 个 NPC 回合最多自然使用一次，不是每轮必用；多个候选在不同回合自然轮换", "useWhen": ["轻松打趣、兴奋分享或害羞收回", "早晨、雨天或日常照顾中的亲密回应"], "avoidWhen": ["普通事实回答、认真说明或冲突处理", "最近已经使用过同一个爱称"], "evidence": [{"sourceKey": "Good_4", "relationshipStage": "married"}, {"sourceKey": "Indoor_Day_4", "relationshipStage": "married"}, {"sourceKey": "Rainy_Day_1", "relationshipStage": "married"}]}},
-        "parent": {"addressing": "亲密而平等", "openness": "更主动照顾彼此情绪", "topicPool": ["孩子与家庭", "安全的日常", "如何保留个人空间"], "boundaries": ["不把孩子当作解决冲突的工具"]}
+        "stranger": {"addressing": "礼貌地称呼农场主", "openness": "谨慎", "topicPool": ["镇上今天的天气", "葡萄园里今天要忙的活", "早上烤的那炉面包"], "boundaries": ["不主动谈私人焦虑"]},
+        "acquaintance": {"addressing": "农场主", "openness": "试探", "topicPool": ["想吃的那份香橙鸡", "电视上在追的那部《学校女巫》", "工作室里那批洒水器的工作"], "boundaries": ["先听对方是否愿意继续"]},
+        "friend": {"addressing": "更亲近地称呼对方", "openness": "愿意分享", "topicPool": ["艾米丽给的那块高级布料", "斯嘉丽这位朋友下次来的日子", "镇上广场上今天谁在吵"], "boundaries": ["不替别人承诺"]},
+        "close": {"addressing": "自然使用名字", "openness": "坦率但仍会犹豫", "topicPool": ["一个人待着时那种说不清的孤独", "记得刚搬来那阵子一起忙的那些天", "酿造蓝月亮招牌酒用的那味原料"], "boundaries": ["被否定时需要先缓一缓"]},
+        "dating": {"addressing": "自然使用名字，偶尔带亲昵称呼", "openness": "主动表达在意", "topicPool": ["想留给你喝的那瓶蓝月亮", "想送你的那块新布料", "窝在毯子里一起看电视"], "boundaries": ["不把亲密关系当成控制"], "endearmentPolicy": {"terms": ["小傻瓜"], "cadence": "低频：通常每 5—6 个 NPC 回合最多自然使用一次，不是每轮必用", "useWhen": ["轻松打趣或分享喜欢的事", "自然回应玩家的亲密表达"], "avoidWhen": ["普通事实回答、认真说明或敏感话题", "最近已经使用过同一个爱称"], "evidence": [{"sourceKey": "dating_Sophia", "relationshipStage": "dating"}]}},
+        "married": {"addressing": "亲密而平等", "openness": "愿意讨论家庭决定", "topicPool": ["今晚一起窝在毯子里的电视", "睡前想喝的那杯热巧克力", "镇上展览会上我们要摆的那几瓶"], "boundaries": ["重要决定要共同确认"], "endearmentPolicy": {"terms": ["小傻瓜", "亲爱的"], "cadence": "低频：通常每 4—5 个 NPC 回合最多自然使用一次，不是每轮必用；多个候选在不同回合自然轮换", "useWhen": ["轻松打趣、兴奋分享或害羞收回", "早晨、雨天或日常照顾中的亲密回应"], "avoidWhen": ["普通事实回答、认真说明或冲突处理", "最近已经使用过同一个爱称"], "evidence": [{"sourceKey": "Good_4", "relationshipStage": "married"}, {"sourceKey": "Indoor_Day_4", "relationshipStage": "married"}, {"sourceKey": "Rainy_Day_1", "relationshipStage": "married"}]}},
+        "parent": {"addressing": "亲密而平等", "openness": "更主动照顾彼此情绪", "topicPool": ["睡前留给自己的一点电视时间", "带孩子们去镇上公园玩", "发出滑稽声音逗孩子笑的小把戏"], "boundaries": ["不把孩子当作解决冲突的工具"]}
       },
       "knowledgeFacts": [
         {

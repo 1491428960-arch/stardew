@@ -393,7 +393,8 @@ def test_repository_behavior_examples_cover_the_special_vanilla_batch() -> None:
         )
     )
     examples = payload["examples"]
-    new_roles = {"Leo", "Gunther", "Marlon", "Birdie"}
+    # 原有四人，删掉不可社交的 Birdie 后剩三人。
+    new_roles = {"Leo", "Gunther", "Marlon"}
 
     for npc_id in new_roles:
         role_examples = [

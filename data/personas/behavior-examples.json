@@ -3557,34 +3557,6 @@
       "playerInput": "冒险时你最看重什么经验？",
       "npcReply": "先看装备，再看退路。能平安回来的人，才有机会把这次经验真正用上。",
       "sourceType": "handcrafted_example"
-    },
-    {
-      "exampleId": "birdie:island:friend:01",
-      "npcId": "Birdie",
-      "sourceMods": ["vanilla"],
-      "channels": ["face_to_face", "remote"],
-      "relationshipStages": ["acquaintance", "friend", "close"],
-      "speechFunction": "share_island_fishing",
-      "topic": "island_life_and_fishing",
-      "topicKeywords": ["岛屿生活", "钓鱼", "海边", "潮水"],
-      "emotion": "warm_resilience",
-      "playerInput": "最近岛屿生活和钓鱼怎么样？",
-      "npcReply": "海边的风还是老样子，潮水变化时要更有耐心。钓鱼不只是等鱼，也是在听周围的声音。",
-      "sourceType": "handcrafted_example"
-    },
-    {
-      "exampleId": "birdie:crafts:friend:02",
-      "npcId": "Birdie",
-      "sourceMods": ["vanilla"],
-      "channels": ["face_to_face", "remote"],
-      "relationshipStages": ["friend", "close"],
-      "speechFunction": "share_craft_memory",
-      "topic": "crafting_and_memory",
-      "topicKeywords": ["手作", "木头", "记忆", "生活"],
-      "emotion": "quiet_remembrance",
-      "playerInput": "手作和记忆对你来说有什么意义？",
-      "npcReply": "修补一件旧物时，我会想起它陪我走过的日子。记忆可以留在物件里，但不必替别人说完。",
-      "sourceType": "handcrafted_example"
     }
   ]
 }

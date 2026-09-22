@@ -1955,7 +1955,6 @@ def test_normal_vanilla_roles_are_retrievable_by_topic(
         ("Leo", "最近岛上的生活和鹦鹉怎么样？"),
         ("Gunther", "最近博物馆和文物研究怎么样？"),
         ("Marlon", "最近冒险者公会和矿洞安全吗？"),
-        ("Birdie", "最近岛屿生活和手作怎么样？"),
     ],
 )
 def test_special_vanilla_roles_are_retrievable_by_topic(

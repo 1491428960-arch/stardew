@@ -222,17 +222,117 @@ def test_select_stage_voice_anchors_falls_back_to_unconditioned_samples() -> Non
     assert [item["sampleId"] for item in anchors] == ["s1"]
 
 
-def test_select_stage_voice_anchors_borrows_earlier_stages_only_as_a_fallback() -> None:
-    # 「借用更早阶段」只在前两级都空时才发生：这里有精确阶段样本，
-    # 早期阶段样本不该进入窗口（P1 第 25 条统一后仍保持这条口径）。
+def test_select_stage_voice_anchors_borrows_earlier_stages_only_when_the_window_is_short() -> None:
+    """2026-09-22（用户拍板走 B）：**整级回退**改成**候选不足时补足**。
+
+    口径变化：以前是"有精确阶段样本就绝不看更早阶段"（哪怕窗口里只有 1 条），
+    现在是"窗口没填满就借更早阶段的原文"。
+    关键区别在**数量**——够满就不借，不足才借。
+
+    起因：Sophia 的 `friend` 档索引里**总共只有 2 条**阶段原文，
+    且两条都落在布料/面料，整个语气窗口被同一面占满。
+    """
+
     exact = _sample(sampleId="exact", conditions={"relationshipStage": "dating"})
     earlier = _sample(sampleId="earlier", conditions={"relationshipStage": "friend"})
 
-    anchors = select_stage_voice_anchors(
-        [earlier, exact], "Sophia", "dating", max_count=8
-    )
+    # 窗口够满（max_count=1）→ 更早阶段不进入窗口
+    assert [
+        item["sampleId"]
+        for item in select_stage_voice_anchors(
+            [earlier, exact], "Sophia", "dating", max_count=1
+        )
+    ] == ["exact"]
+
+    # 窗口不满（max_count=8）→ 更早阶段补进来（精确阶段仍排在前面）
+    assert [
+        item["sampleId"]
+        for item in select_stage_voice_anchors(
+            [earlier, exact], "Sophia", "dating", max_count=8
+        )
+    ] == ["exact", "earlier"]
+
+
+def test_top_up_never_borrows_later_stages() -> None:
+    """补足只借**更早**阶段：恋爱档不得拿婚后原文。"""
+
+    exact = _sample(sampleId="exact", conditions={"relationshipStage": "friend"})
+    later = _sample(sampleId="later", conditions={"relationshipStage": "married"})
+
+    anchors = select_stage_voice_anchors([exact, later], "Sophia", "friend", max_count=8)
 
     assert [item["sampleId"] for item in anchors] == ["exact"]
+
+
+def test_top_up_excludes_event_dialogue_keys() -> None:
+    """补足只接受日常对白键（`_anchor_category != "other"`）。
+
+    实测踩到：没有这道闸时补进来的是**事件对白**——sourceKey 形如
+    `3691380/f Scarlett 125/t 600 1800/w sunny/…`，那是角色在事件里**对别人**
+    说的话（"加油，斯嘉丽！"），把 stranger 档原有的 4 条锚点挤掉 3 条，
+    **比不补更差**。
+    """
+
+    exact = _sample(sampleId="exact", conditions={"relationshipStage": "friend"})
+    event = _sample(
+        sampleId="event",
+        sourceKey="3691380/f Scarlett 125/t 600 1800/w sunny/z spring/z summer",
+        conditions={"relationshipStage": "acquaintance"},
+    )
+
+    anchors = select_stage_voice_anchors([exact, event], "Sophia", "friend", max_count=8)
+
+    assert [item["sampleId"] for item in anchors] == ["exact"]
+
+
+def test_top_up_respects_max_count() -> None:
+    """上限由调用方的 `max_count` 决定，补足不会越过它。"""
+
+    exact = _sample(sampleId="exact", conditions={"relationshipStage": "friend"})
+    earlier = [
+        _sample(
+            sampleId=f"earlier{index}",
+            sourceKey=f"Tue{index}",
+            text=f"以前那些日常闲聊第{index}句",
+            conditions={"relationshipStage": "acquaintance"},
+        )
+        for index in range(1, 6)
+    ]
+
+    anchors = select_stage_voice_anchors(
+        [exact, *earlier], "Sophia", "friend", max_count=3
+    )
+
+    assert len(anchors) == 3
+    assert anchors[0]["sampleId"] == "exact"
+
+
+def test_top_up_leaves_a_full_window_untouched() -> None:
+    """窗口本来就满时，补足逻辑一步都不许动它（回归保护）。"""
+
+    full = [
+        _sample(
+            sampleId=f"exact{index}",
+            sourceKey=f"Mon{index}",
+            text=f"恋爱阶段的日常第{index}句",
+            conditions={"relationshipStage": "dating"},
+        )
+        for index in range(1, 9)
+    ]
+    earlier = [
+        _sample(
+            sampleId="earlier",
+            sourceKey="Tue1",
+            text="朋友阶段的日常一句话",
+            conditions={"relationshipStage": "friend"},
+        )
+    ]
+
+    anchors = select_stage_voice_anchors(
+        [*full, *earlier], "Sophia", "dating", max_count=8
+    )
+
+    assert [item["sampleId"] for item in anchors] == [f"exact{i}" for i in range(1, 9)]
 
 
 def test_select_stage_voice_anchors_borrows_earlier_stage_when_nothing_exact_exists() -> None:
