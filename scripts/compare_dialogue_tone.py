@@ -93,6 +93,41 @@ def replies_of(path: Path) -> list[str]:
     return [str(row.get("reply") or "") for row in data.get("rows", []) if row.get("reply")]
 
 
+def _bigrams(text: str) -> set[str]:
+    """只留汉字再取二元组 —— 标点和语气词不该拉高相似度。"""
+
+    clean = "".join(ch for ch in text if "\u4e00" <= ch <= "\u9fff")
+    return {clean[i:i + 2] for i in range(len(clean) - 1)}
+
+
+def topic_repetition(replies: list[str]) -> dict[str, float]:
+    """轮间话题重复度。
+
+    2026-09-23 02:3x 加：温度实验里发现**语气指标完全捕捉不到"她连着六轮说瓶塞松了"**，
+    而这恰恰是低温最致命的退化。指标只量"怎么说话"，量不到"说的是不是同一件事"，
+    所以补这一组 —— 它当场把 0.3 / 0.7 / default 分得干干净净
+    （≥0.30 的轮对：12 / 7 / 0）。
+    """
+
+    if len(replies) < 2:
+        return {"平均相似": 0.0, "最高相似": 0.0, "重复轮对": 0}
+    grams = [_bigrams(reply) for reply in replies]
+    sims = []
+    near = 0
+    for i in range(len(grams)):
+        for j in range(i + 1, len(grams)):
+            union = grams[i] | grams[j]
+            score = len(grams[i] & grams[j]) / len(union) if union else 0.0
+            sims.append(score)
+            if score >= 0.30:
+                near += 1
+    return {
+        "平均相似": sum(sims) / len(sims),
+        "最高相似": max(sims),
+        "重复轮对": near,
+    }
+
+
 def originals_of(npc: str) -> list[str]:
     """角色原话基线。语料里没有就抛出来，不静默补 0。"""
 
@@ -169,7 +204,8 @@ def main() -> None:
                 f"标签 {who} 不是语料里的角色名，请用 --baseline-npc 指明原话基线"
             )
         table = {"original": measure(originals_of(npc)), "generated": measure(replies)}
-        rows.append((who, len(replies), sum(len(r) for r in replies), table))
+        rows.append((who, len(replies), sum(len(r) for r in replies), table,
+                     topic_repetition(replies)))
         if args.dump:
             out = PROBE_DIR / f"compare-{who}.json"
             out.write_text(
@@ -186,13 +222,13 @@ def main() -> None:
     print("=== 各角色的语气指标（她的原话 → 模型生成的她）===")
     print()
     width = 21
-    header = f"{'指标':<16}" + "".join(f"{who:>{width}}" for who, _, _, _ in rows)
+    header = f"{'指标':<16}" + "".join(f"{who:>{width}}" for who, *_ in rows)
     print(header)
-    print(f"{'':<16}" + "".join(f"{f'{turns} 轮/{chars} 字':>{width}}" for _, turns, chars, _ in rows))
+    print(f"{'':<16}" + "".join(f"{f'{turns} 轮/{chars} 字':>{width}}" for _, turns, chars, *_ in rows))
     print("-" * len(header))
     for metric in KEY_METRICS:
         cells = ""
-        for _, _, _, table in rows:
+        for *_, table, _repeat in rows:
             left = table["original"].get(metric)
             right = table["generated"].get(metric)
             if left is None or right is None:
@@ -205,9 +241,23 @@ def main() -> None:
         print(f"{metric:<16}{cells}")
 
     print()
+    print("=== 轮间话题重复（指标量不到的那一半）===")
+    print("  相邻两轮的汉字二元组 Jaccard；≥0.30 记为一对「在说同一件事」")
+    print()
+    print(f"{'':<16}" + "".join(f"{who:>{width}}" for who, *_ in rows))
+    for key in ("平均相似", "最高相似", "重复轮对"):
+        cells = "".join(f"{f'{repeat[key]:.3f}' if key != '重复轮对' else f'{int(repeat[key])} 组':>{width}}"
+                        for *_, repeat in rows)
+        print(f"{key:<16}{cells}")
+
+    print()
     print("判读方式（§18 的口径）：")
     print("  · 某指标**只有一个人**明显偏离、别人接近原话 ⇒ 这是他独有的，改他的卡能修；")
     print("  · 某指标**所有人**都朝同一方向偏 ⇒ 这是公共层（prompt / 模型），改单个角色无效。")
+    print()
+    print("⚠️ 语气指标量的是「怎么说话」，量不到「说的是不是同一件事」。")
+    print("   §20 的教训：温度 0.3 让句长降 17%，却让她连着六轮说「瓶塞又松了」——")
+    print("   那一项在语气指标上完全看不出来，只有读原文或看下面这组才暴露。")
 
 
 if __name__ == "__main__":
