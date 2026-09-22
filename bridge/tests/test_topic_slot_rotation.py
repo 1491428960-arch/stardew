@@ -74,7 +74,7 @@ MIXED_REPLIES = [
 SOPHIA_TOPICS = [
     "葡萄架和这一季的葡萄",
     "她最爱的精灵石和矿石",
-    "给角色扮演挑的布料",
+    "格斯做菜时那股香味",
     "斯嘉丽和镇上这些朋友",
     "海上吹来的咸味海风",
     "窝在毯子里看电视的晚上",
@@ -148,7 +148,7 @@ def test_slot_bans_the_repeated_facet_and_names_another_one() -> None:
     assert "这一面本轮先搁着" in slot["instruction"]
     assert "不要以同一面另起一件事" in slot["instruction"]
     assert "像这样换" in slot["instruction"]  # 范例式，不再是反例清单
-    assert slot["suggestedFacet"] == "镇上或邻里"
+    assert slot["suggestedFacet"] == "吃喝"
     assert slot["suggestedTopic"] in SOPHIA_TOPICS
     assert slot["suggestedFacet"] != slot["bannedFacet"]
     assert "只说一件" in slot["instruction"]  # 不许罗列
@@ -266,7 +266,7 @@ def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
     slot = _card(messages, "stage_execution_card")["topicSlot"]
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert slot["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
+    assert slot["suggestedTopic"] == "格斯做菜时那股香味"
     blob = json.dumps(messages, ensure_ascii=False)
     assert "这一面本轮先搁着" in blob
 
@@ -390,7 +390,7 @@ def test_rewritten_topics_are_concrete_objects_not_meta_categories(npc_id: str) 
         ("Sophia", [
             "葡萄架和这一季的葡萄",
             "她最爱的精灵石和矿石",
-            "给角色扮演挑的布料",
+            "格斯做菜时那股香味",
             "斯嘉丽和镇上这些朋友",
             "海上吹来的咸味海风",
             "窝在毯子里看电视的晚上",
@@ -417,7 +417,7 @@ def test_试点两人的素材已改写(npc_id: str, expected: list[str]) -> Non
     ("npc_id", "expected_facets"),
     [
         ("Sophia", {"工作或手艺", "镇上或邻里", "天气季节",
-                    "爱好或消遣", "自己的状态或烦恼"}),
+                    "爱好或消遣", "自己的状态或烦恼", "吃喝"}),
         ("Elliott", {"工作或手艺", "天气季节", "爱好或消遣", "玩家自己", "自己的状态或烦恼"}),
     ],
 )
@@ -595,7 +595,7 @@ def test_sophia_no_longer_needs_the_fallback_branch() -> None:
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
-    assert slot["suggestedFacet"] == "镇上或邻里"  # 第一轮：镇上没被用过
+    assert slot["suggestedFacet"] == "吃喝"  # 第一轮：镇上没被用过
     assert _facet_of_topic(slot["suggestedTopic"]) != slot["bannedFacet"]
 
     # 交替场景（used = {工作或手艺, 镇上或邻里}）里也不会退到泛化分支
@@ -610,14 +610,16 @@ def test_sophia_no_longer_needs_the_fallback_branch() -> None:
 
 
 def test_narrow_topic_pool_drops_the_banned_facet() -> None:
-    """禁工作面之后，她**剩下 4 条**（镇上 1 + 天气 1 + 爱好 1 + 状态 1）。
+    """禁工作面之后，她**剩下 5 条**（吃喝 1 + 镇上 1 + 天气 1 + 爱好 1 + 状态 1）。
 
-    改前是 2 条 —— 这个数字就是"换面时还有多少地方可去"的度量。回归哨兵在下一条。
+    2026-09-25：原为 4 条；`preferredTopics` 第 3 条由「给角色扮演挑的布料」（工作面）
+    换成「格斯做菜时那股香味」（吃喝面）后 +1。这个数字就是"换面时还有多少地方可去"的度量。
     """
 
     narrowed = narrow_topic_pool(SOPHIA_TOPICS, "工作或手艺")
 
     assert narrowed == [
+        "格斯做菜时那股香味",
         "斯嘉丽和镇上这些朋友",
         "海上吹来的咸味海风",
         "窝在毯子里看电视的晚上",
@@ -782,7 +784,7 @@ def test_narrow_material_roles_are_recorded() -> None:
     那一行就是这么更新的）。
     """
 
-    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 4
+    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 5
     assert narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺") == _prompt_topics("Alex")
     assert _facet_of_topic("职业选手目标，以及后来发现的微不足道的小事") is None
 

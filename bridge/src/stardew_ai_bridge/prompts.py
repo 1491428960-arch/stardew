@@ -2893,8 +2893,13 @@ def _compact_stage_profile(value: object) -> dict[str, Any]:
     # `stageProfiles.<stage>.topicPool`（44 角色 × 7 阶段 × 3 条 = 924 条），
     # 这批数据从未进入 prompt。修复后当前阶段（`profile_stage`）的 3 条随
     # `persona_core` 一起发出，`limit=3` 的语义正好是「只发当前阶段那 3 条」。
+    # 2026-09-25：`topicPool` 的 limit 由 3 提到 8 —— 实测（30 次独立会话）
+    # 证明「每阶段 3 条」时首次开口 **30/30 落在同一面**（工作面），
+    # 因为那 3 条里 2 条是工作。字面 Jaccard 说「全全新」(0.000)，玩家体感却是「又是这套」。
+    # ⚠️ `limit` 只影响**数据超过 3 条**的角色：默认 topicPool 仍只有 3 条，不受影响。
     for key in ("topicPool", "boundaries"):
-        items = _compact_text_list(value.get(key), limit=3, item_limit=80)
+        limit = 8 if key == "topicPool" else 3
+        items = _compact_text_list(value.get(key), limit=limit, item_limit=80)
         if items:
             result[key] = items
     stage = _text(value.get("stage"), limit=32).casefold()

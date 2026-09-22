@@ -41,7 +41,7 @@ SOPHIA_MODS = ["vanilla", "SVE", "FlashShifter.StardewValleyExpandedCP"]
 SOPHIA_TOPICS = [
     "葡萄架和这一季的葡萄",
     "她最爱的精灵石和矿石",
-    "给角色扮演挑的布料",
+    "格斯做菜时那股香味",
     "斯嘉丽和镇上这些朋友",
     "海上吹来的咸味海风",
     "窝在毯子里看电视的晚上",
@@ -229,8 +229,8 @@ def test_rendered_instruction_example() -> None:
         "本轮先接住那里面的具体东西，再从它拉一根线过去、换到别的面，不要凭空跳过去。"
         "这一面本轮先搁着——像这样换：「……说起来，」，"
         "先把上一句收住，再用一个转折词拐到别的面，不要以同一面另起一件事。"
-        "改从「镇上或邻里」这一面挑一件具体的、能落到对白里的小事来说"
-        "（例如「斯嘉丽和镇上这些朋友」这个方向），只说一件，不要罗列。"
+        "改从「吃喝」这一面挑一件具体的、能落到对白里的小事来说"
+        "（例如「格斯做菜时那股香味」这个方向），只说一件，不要罗列。"
     )
     assert slot["playerAnchor"] == (
         "硬约束：玩家本轮点名的对象必须先接住、先应下来；"
@@ -377,8 +377,8 @@ def test_slot_still_bans_the_repeated_facet() -> None:
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert slot["suggestedFacet"] == "镇上或邻里"
-    assert slot["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
+    assert slot["suggestedFacet"] == "吃喝"
+    assert slot["suggestedTopic"] == "格斯做菜时那股香味"
 
 
 def test_slot_stays_silent_without_any_signal() -> None:
@@ -872,7 +872,7 @@ def test_suggestion_keeps_the_plain_wording_for_a_fresh_facet() -> None:
         player_replies=["哦"],
     )
 
-    assert slot["suggestedFacet"] == "镇上或邻里"
+    assert slot["suggestedFacet"] == "吃喝"
     assert "另一件" not in slot["instruction"]
 
 

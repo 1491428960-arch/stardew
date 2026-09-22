@@ -71,12 +71,20 @@ def test_topic_pool_and_boundaries_both_survive_compaction() -> None:
     assert compact["topicPool"] != compact["boundaries"]
 
 
-def test_the_topic_pool_is_capped_at_three_items() -> None:
+def test_the_topic_pool_is_capped_at_eight_items() -> None:
+    """2026-09-25：上限由 3 提到 8。
+
+    原设计（limit=3）被**实测推翻**：30 次独立会话的首次开口 **30/30 落在同一面**
+    （工作或手艺），因为每阶段那 3 条里 2 条是工作 —— 而字面 Jaccard 只有 0.000，
+    指标说「全全新」、玩家体感是「又是这套」（报告 §58）。
+    提到 8 条后每阶段面分布到 6~7 种，最大面 2/8。
+    ⚠️ 只影响**数据超过 3 条**的角色；默认 `topicPool` 仍 3 条，行为不变。
+    """
     compact = _compact_stage_profile(
         {"stage": "friend", "topicPool": ["a", "b", "c", "d", "e"]}
     )
 
-    assert compact["topicPool"] == ["a", "b", "c"]
+    assert compact["topicPool"] == ["a", "b", "c", "d", "e"]
 
 
 def test_an_absent_topic_pool_does_not_create_the_key() -> None:
@@ -162,13 +170,23 @@ def test_sophia_topic_pool_reaches_persona_core() -> None:
     assert close_profile["topicPool"] == [
         "一个人待着时那种说不清的孤独",
         "记得刚搬来那阵子一起忙的那些天",
-        "酿造蓝月亮招牌酒用的那味原料",
+        "那些让她难过的时候",
+        "晚上睡不着时想的事",
+        "最近心里总有点担心",
+        "今年第一场雪",
+        "格斯做菜时那股香味",
+        "电视上在追的那部《学校女巫》",
     ]
     assert parent_profile["stage"] == "parent"
     assert parent_profile["topicPool"] == [
         "睡前留给自己的一点电视时间",
-        "带孩子们去镇上公园玩",
-        "发出滑稽声音逗孩子笑的小把戏",
+        "孩子们吵着要听的那个故事",
+        "镇上公园里带孩子玩的时候",
+        "煮的那杯热巧克力",
+        "今年第一场雪",
+        "忙起来有点累的那些天",
+        "葡萄架和这一季的葡萄",
+        "记得把头发染成粉色那天",
     ]
     # 这两条正是「总是谈画」的对症解药：与绘画都无关。
     assert "一个人待着时那种说不清的孤独" in close_profile["topicPool"]

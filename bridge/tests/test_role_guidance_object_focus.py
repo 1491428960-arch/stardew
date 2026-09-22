@@ -306,7 +306,7 @@ def test_sophia_persona_stops_claiming_she_paints() -> None:
     ]
     assert "角色扮演" in policy_texts["stage_policy._ROLE_OVERRIDES['Sophia']"]
     # `preferredTopics` 第 2 条必须仍在「工作或手艺」面上（面归属不得漂移）。
-    assert "给角色扮演挑的布料" in sophia["voiceStyle"]["preferredTopics"]
+    assert "格斯做菜时那股香味" in sophia["voiceStyle"]["preferredTopics"]
 
 
 def test_sophia_rendered_prompt_has_no_painting_words() -> None:
