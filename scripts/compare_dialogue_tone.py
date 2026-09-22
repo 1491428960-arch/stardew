@@ -128,6 +128,43 @@ def topic_repetition(replies: list[str]) -> dict[str, float]:
     }
 
 
+def mannwhitney(series_a: list[float], series_b: list[float]) -> tuple[float, float]:
+    """Mann-Whitney U 精确双尾 p（小样本直接枚举组合）。
+
+    2026-09-23 02:4x 加：§21 立的「段内跨度（极差）」判据在 §24 露出短板 ——
+    它**看不见分布整体偏移**。实例：topic 无护栏 6 段是 70.3/70.5/70.6/75.3/77.5/81.6，
+    +护栏 6 段是 51.4/51.8/56.8/58.0/69.1/72.3，**两组几乎完全分离**，
+    但各自极差都很大，按极差判据就"不显著"；换成秩检验 p=0.0076，**显著**。
+
+    ⚠️ 把段当独立样本是**近似**（同批的段共享 prompt 与上下文），n 小时 p 偏乐观；
+    结论强度应读作"方向与量级站得住"，而非严格 p<0.01。
+    """
+
+    from itertools import combinations
+
+    n1, n2 = len(series_a), len(series_b)
+    if n1 == 0 or n2 == 0:
+        return float("nan"), float("nan")
+
+    def u_of(x: list[float], y: list[float]) -> float:
+        return (sum(1 for i in x for j in y if i > j)
+                + 0.5 * sum(1 for i in x for j in y if i == j))
+
+    observed = u_of(series_a, series_b)
+    pool = series_a + series_b
+    extreme = 0
+    total = 0
+    for combo in combinations(range(len(pool)), n1):
+        chosen = set(combo)
+        group_a = [pool[i] for i in chosen]
+        group_b = [pool[i] for i in range(len(pool)) if i not in chosen]
+        candidate = u_of(group_a, group_b)
+        total += 1
+        if candidate <= min(observed, n1 * n2 - observed) + 1e-9:
+            extreme += 1
+    return observed, (extreme / total if total else float("nan"))
+
+
 def segment_stability(replies: list[str], size: int) -> dict[str, dict[str, float]]:
     """把一批切成若干段，算每段的指标 —— **段间跨度就是噪声下限**。
 
@@ -197,6 +234,12 @@ def main() -> None:
         default=0,
         help="按 N 轮切段并给段内跨度（噪声下限）。§21 的翻案工具，"
              "建议 16；给 0（默认）不输出这一段",
+    )
+    parser.add_argument(
+        "--compare",
+        default="",
+        help="对两个标签做 Mann-Whitney U 精确检验，格式 A,B（§24 的工具；"
+             "极差判据看不见分布整体偏移，秩检验才看得见）",
     )
     parser.add_argument(
         "--baseline-npc",
@@ -312,6 +355,37 @@ def main() -> None:
                 print(f"    {'最高相似':<14}" + "".join(f"{v:>8.3f}" for v in sims)
                       + f"   段内跨度 {max(sims) - min(sims):>6.3f}")
             print()
+
+    if args.compare and args.split:
+        wanted = [w.strip() for w in args.compare.split(",") if w.strip()]
+        series: dict[str, list[float]] = {}
+        for who, path in items:
+            if who not in wanted:
+                continue
+            replies = replies_of(path)
+            segments = segment_stability(replies, args.split)
+            if not segments:
+                continue
+            # 同名可以给多个 --batch（同一档跑了两批）—— 累加段，别覆盖。
+            # §24 的 p=0.0076 就是两批合并的 n=6；只留一批会退化成 n=3、p=0.20。
+            series.setdefault(who, []).extend(
+                sum(len(s) for s in replies[i:i + args.split]) / args.split
+                for i in range(0, len(replies) - args.split + 1, args.split))
+        print()
+        print(f"=== Mann-Whitney U 精确检验（每轮字数，每 {args.split} 轮一段当样本）===")
+        print("  §24 的教训：「段内跨度/极差」看不见分布整体偏移，秩检验才看得见。")
+        print("  ⚠️ 把段当独立样本是近似（同批的段共享 prompt 与上下文），n 小时 p 偏乐观。")
+        print()
+        if len(wanted) == 2 and all(w in series for w in wanted):
+            a, b = series[wanted[0]], series[wanted[1]]
+            u, p = mannwhitney(a, b)
+            print(f"  {wanted[0]}（n={len(a)}，均值 {sum(a)/len(a):.1f}）")
+            print(f"  {wanted[1]}（n={len(b)}，均值 {sum(b)/len(b):.1f}）")
+            print(f"    U = {u:.1f}　精确双尾 p = {p:.4f}　"
+                  + ("**显著**" if p < 0.05 else "不显著"))
+        else:
+            print(f"  需要两个都能切出段的标签，实际拿到：{sorted(series)}")
+        print()
 
     print()
     print("判读方式（§18 的口径）：")
