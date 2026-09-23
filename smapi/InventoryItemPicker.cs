@@ -22,6 +22,7 @@ public sealed class InventoryItemPicker : IClickableMenu
     private readonly Rectangle cancelButton;
     private readonly InventoryMenu inventoryMenu;
     private Item? selectedItem;
+    private string? hint;
 
     public InventoryItemPicker(
         StardewNpc npc,
@@ -89,9 +90,20 @@ public sealed class InventoryItemPicker : IClickableMenu
                 return;
             }
 
-            if (shareButton.Contains(x, y) && CanShare(selectedItem))
+            if (shareButton.Contains(x, y))
             {
-                SelectAction(ItemInteractionAction.Share);
+                if (CanShare(selectedItem))
+                {
+                    SelectAction(ItemInteractionAction.Share);
+                }
+                else
+                {
+                    // 灰按钮点下去原本什么都不发生，玩家只能猜自己哪里做错了。
+                    hint = ItemInteractionRules.ShareUnavailableReason(
+                        ItemInteractionRules.Classify(selectedItem),
+                        selectedItem.DisplayName);
+                }
+
                 return;
             }
 
@@ -106,6 +118,7 @@ public sealed class InventoryItemPicker : IClickableMenu
         if (item is not null && item.Stack > 0)
         {
             selectedItem = item;
+            hint = null;
         }
     }
 
@@ -144,6 +157,16 @@ public sealed class InventoryItemPicker : IClickableMenu
                 $"已选择：{selectedItem.DisplayName}",
                 new Vector2(panel.X + 48, panel.Bottom - 132),
                 Color.DarkSlateGray);
+        }
+
+        if (hint is not null)
+        {
+            // 提示行文字色与私聊面板同源（MenuSkinRules.InkSoft）。
+            b.DrawString(
+                Game1.smallFont,
+                hint,
+                new Vector2(panel.X + 48, panel.Bottom - 110),
+                MenuSkinRules.InkSoft);
         }
 
         MenuButtonDrawing.DrawButton(b, displayButton, "展示", selectedItem is not null);

@@ -162,20 +162,47 @@ def _default_provider_messages(request: DialogueTestRequest) -> list[dict[str, s
     return messages
 
 
-_SINGLE_TURN_MAX_TOKENS = 160
+#: 单轮输出预算。中文 240 token 约 160 字，够她把「物品 + 反应 + 动作」一口气
+#: 写完；原先的 160 是**为 DeepSeek 系定的**（reasoning 会先吃掉一大截预算），
+#: 而现行云端是不带推理的 Kimi-K2.5 —— 那个额度在物品场景偏紧：
+#: 2026-09-23 实机一个晚上撞线两次（finish_reason=length）。
+_SINGLE_TURN_MAX_TOKENS = 240
 _MULTI_TURN_MAX_TOKENS = 900
 
 
 def _max_tokens_for(request: DialogueTestRequest) -> int:
     """群聊自然接话流一次要写多条对白，沿用单条上限会被截断成一条。
 
-    单 NPC 对话保持 160：它已在游戏内验证过延迟与稳定性；多人自然接话流
-    按回合数给足预算，否则模型写到一半就被截断，JSON 也不完整。
+    单 NPC 对话按 `_SINGLE_TURN_MAX_TOKENS` 给；多人自然接话流按回合数给足
+    预算，否则模型写到一半就被截断，JSON 也不完整。
     """
 
     if request.group_strategy == "multi_turn":
         return _MULTI_TURN_MAX_TOKENS
     return _SINGLE_TURN_MAX_TOKENS
+
+
+#: 句末标点：整体以此收尾才算「话说完了」。逗号和顿号**不算** ——
+#: 那正是半句话的样子。
+_SENTENCE_TERMINATORS = "。！？…～!?.~"
+#: 收尾的成对符号：她说「……我想画下来。」时，最后一个字符是 `」`。
+_TRAILING_WRAPPERS = "\"'”’」』）)]】"
+
+
+def _ends_like_a_whole_sentence(text: str) -> bool:
+    """截断之后，判断到手的部分是不是一句完整的话。
+
+    只看最后一个字符（先剥掉收尾的引号／括号）：句末标点算完整，
+    逗号、顿号或者半截词都算没说完。
+
+    `finish_reason=length` 只说明她说得比预算长，不说明这一轮不能用 ——
+    2026-09-23 实机里它被升级成了「暂时联系不上她」。
+    """
+
+    stripped = text.strip()
+    while stripped and stripped[-1] in _TRAILING_WRAPPERS:
+        stripped = stripped[:-1].rstrip()
+    return bool(stripped) and stripped[-1] in _SENTENCE_TERMINATORS
 
 
 #: 空 content 的替代文本。只用于**出网请求的最后一步**，不进入 prompt 构造。
@@ -489,6 +516,7 @@ class OpenAICompatibleProvider:
                     reply_parts: list[str] = []
                     usage: ProviderUsage | None = None
                     open_loop_value: object = None
+                    truncated = False
                     is_event_stream = "text/event-stream" in response.headers.get(
                         "content-type", ""
                     ).lower()
@@ -520,10 +548,10 @@ class OpenAICompatibleProvider:
                             if isinstance(choice, Mapping):
                                 finish_reason = choice.get("finish_reason")
                                 if finish_reason == "length":
-                                    raise ProviderError(
-                                        f"{self.name} returned truncated stream "
-                                        "(finish_reason=length)"
-                                    )
+                                    # 先别急着丢掉整轮：到手的部分可能已经是一句
+                                    # 完整的话。真正的判定放在拼完之后。
+                                    truncated = True
+                                    break
                                 delta = choice.get("delta")
                                 if isinstance(delta, Mapping):
                                     content = delta.get("content")
@@ -542,6 +570,11 @@ class OpenAICompatibleProvider:
                         if "openLoop" in chunk:
                             open_loop_value = chunk.get("openLoop")
                     reply = "".join(reply_parts)
+                    if truncated and not _ends_like_a_whole_sentence(reply):
+                        raise ProviderError(
+                            f"{self.name} returned truncated stream "
+                            "(finish_reason=length)"
+                        )
         except ProviderError:
             raise
         except (httpx.HTTPError, asyncio.TimeoutError) as exc:

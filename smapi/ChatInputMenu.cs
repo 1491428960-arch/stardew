@@ -557,13 +557,9 @@ public class ChatInputMenu : IClickableMenu
         ItemConversationSelection selection,
         int? friendshipAwarded = null)
     {
-        var message = selection.Action switch
-        {
-            ItemInteractionAction.Display => $"我想给你看看这个：{selection.Snapshot.DisplayName}。",
-            ItemInteractionAction.Share => $"我们一起分享这个：{selection.Snapshot.DisplayName}。",
-            ItemInteractionAction.Gift => $"我把{selection.Snapshot.DisplayName}送给你。",
-            _ => $"我拿出了{selection.Snapshot.DisplayName}。",
-        };
+        var message = ItemInteractionRules.DescribeItemAction(
+            selection.Action,
+            selection.Snapshot.DisplayName);
         await SendAsync(
             message,
             ConversationIntent.Item,

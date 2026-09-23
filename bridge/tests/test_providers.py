@@ -529,7 +529,11 @@ def test_openai_compatible_provider_uses_async_http_without_exposing_api_key() -
     assert b"secret-key" not in received["body"]
     request_payload = json.loads(received["body"])
     assert request_payload["stream"] is True
-    assert request_payload["max_tokens"] == 160
+    # 单轮预算必须容得下她写完「物品 + 反应 + 动作」一整句。
+    # 160 是为 DeepSeek 系定的（reasoning 会吃掉预算），而现行云端是不带推理的
+    # Kimi-K2.5：中文 160 token 只有约 100 字，物品场景实测一个晚上撞线两次
+    # （2026-09-23，finish_reason=length ⇒ 整轮变成「暂时联系不上她」）。
+    assert request_payload["max_tokens"] == 240
 
 
 def test_multi_turn_group_requests_get_a_larger_output_budget() -> None:
@@ -544,7 +548,7 @@ def test_multi_turn_group_requests_get_a_larger_output_budget() -> None:
         groupTurnCount=3,
     )
 
-    assert providers_module._max_tokens_for(single) == 160
+    assert providers_module._max_tokens_for(single) == 240
     # multi_turn 一次要写 3～4 条对白：只断言 `> 160` 时改成 161 也能通过，
     # 而那样第二条就会被截断——这正是 09-19 之前回合数长期只有 1～3 的根因。
     assert providers_module._max_tokens_for(group) >= 900
@@ -615,6 +619,62 @@ def test_openai_compatible_provider_rejects_truncated_stream() -> None:
 
     with pytest.raises(ProviderError, match="finish_reason=length"):
         provider.generate(REQUEST)
+
+
+def test_truncated_stream_keeps_a_whole_sentence_instead_of_dropping_the_turn() -> None:
+    """截断只说明她说得比预算长，不代表这一轮没救。
+
+    2026-09-23 实机：物品场景里她要把「物品 + 反应 + 动作」一口气写完，
+    输出正好撞上预算 ⇒ finish_reason=length ⇒ 整轮被丢成「暂时联系不上她」。
+    可已经到手的往往是一句完整的话。半句仍然要拒（见上一条测试），
+    完整句子没有理由跟着陪葬 —— 那等于把「话说长了一点」升级成「联系不上」。
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"choices":[{"delta":{"content":"这个分你一点，我很喜欢。"}}]}\n\n'
+                'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'
+                "data: [DONE]\n\n"
+            ).encode("utf-8"),
+        )
+
+    provider = OpenAICompatibleProvider(
+        ProviderSettings(
+            name="cloud",
+            url="https://relay.invalid/v1/chat/completions",
+            model="moonshotai/Kimi-K2.5",
+            timeout=2.0,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert provider.generate(REQUEST).reply == "这个分你一点，我很喜欢。"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("这个分你一点，我很喜欢。", True),
+        ("我想画下来！」", True),  # 收尾的成对符号要剥掉再看
+        ("这个分你一点，", False),  # 逗号收尾就是半句
+        ("……原来真的会发光", False),
+        ("", False),
+        ("   ", False),
+    ],
+)
+def test_whole_sentence_detection_only_accepts_sentence_endings(
+    text: str,
+    expected: bool,
+) -> None:
+    """只有句末标点收尾才算「话说完了」—— 逗号、顿号、半截词都不算。"""
+
+    from stardew_ai_bridge.providers import _ends_like_a_whole_sentence
+
+    assert _ends_like_a_whole_sentence(text) is expected
 
 
 def test_openai_compatible_provider_rejects_embedded_sse_error_without_leaking_body() -> None:
@@ -852,7 +912,7 @@ def test_ollama_native_provider_disables_thinking_and_streaming() -> None:
         "messages": messages,
         "stream": False,
         "think": False,
-        "options": {"num_predict": 160},
+        "options": {"num_predict": 240},
     }
 
 

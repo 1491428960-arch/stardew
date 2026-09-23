@@ -93,6 +93,33 @@ public static class ItemInteractionRules
             ConsumesItem: action == ItemInteractionAction.Share && CanShare(item.Kind));
     }
 
+    /// <summary>
+    /// 玩家那一句话是游戏端**唯一**能让 NPC 分辨展示／分享／赠送的信号。
+    ///
+    /// 线上（compact）路径不下发 itemContext 指令卡（Bridge 侧 `prompts.py` 的
+    /// `not runtime_compact` 分支是它唯一的发送点），`itemKind`／`consumesItem`／
+    /// `friendshipAwarded` 都不会进 prompt —— 她只能读这句话。
+    ///
+    /// 所以措辞必须自己把动作说清楚。2026-09-23 实机：原措辞
+    /// 「我们一起分享这个：绿宝石。」语义歧义，索菲亚的回应直接反问
+    /// 「绿宝石……我们？」。分享的语义是「分你一点」（见 <see cref="CanGift"/> 的摘要），
+    /// 不是「一起分享」。
+    /// </summary>
+    public static string DescribeItemAction(
+        ItemInteractionAction action,
+        string displayName)
+    {
+        ArgumentNullException.ThrowIfNull(displayName);
+
+        return action switch
+        {
+            ItemInteractionAction.Display => $"我想给你看看这个：{displayName}。",
+            ItemInteractionAction.Share => $"这个分你一点：{displayName}。",
+            ItemInteractionAction.Gift => $"我把{displayName}送给你。",
+            _ => $"我拿出了{displayName}。",
+        };
+    }
+
     public static ItemInteractionKind Classify(string? category)
     {
         var normalized = category?.Trim() ?? string.Empty;
@@ -145,6 +172,27 @@ public static class ItemInteractionRules
         return kind is ItemInteractionKind.Food or
             ItemInteractionKind.Mineral or
             ItemInteractionKind.Artifact;
+    }
+
+    /// <summary>
+    /// 分享按钮变灰时点它**不会有任何反应**（<c>InventoryItemPicker.receiveLeftClick</c>
+    /// 里那个分支直接落掉），玩家只能猜自己哪里做错了。
+    /// 2026-09-23 实机反馈正是「这个东西是灰的点了没反应」—— 灰按钮至少要说出理由。
+    ///
+    /// 可分享时返回 null。
+    /// </summary>
+    public static string? ShareUnavailableReason(
+        ItemInteractionKind kind,
+        string displayName)
+    {
+        ArgumentNullException.ThrowIfNull(displayName);
+
+        if (CanShare(kind))
+        {
+            return null;
+        }
+
+        return $"只有食物、矿石和文物能分，「{displayName}」只能展示。";
     }
 
     public static ItemSpecialInteraction ResolveSpecialInteraction(
