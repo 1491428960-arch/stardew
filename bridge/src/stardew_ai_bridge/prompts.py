@@ -2757,6 +2757,37 @@ def _compact_energy_profile(value: object) -> dict[str, str]:
     return result
 
 
+# 2026-09-23 压缩（B 档第二项）：
+# `persona_core` 是**原样搬运** `identity["voiceStyle"]` 的（见 `persona_fields`
+# 那段），而 `energyProfile` 在角色数据里按七个关系阶段各写一句。一轮对话只可能
+# 处于**一个**阶段，另外六句永远读不到，却要和真正生效的那条一起占预算 ——
+# 这是唯一一条把完整画像塞进上下文的路径；其余四处调用（L4039 / L4293 / L4884）
+# 都只取 `energy_profile.get(relationship_stage)`。
+#
+# `_compact_energy_profile` 自己的 docstring 也写着「阶段选择在自然角色纹理卡中
+# 完成，避免把整份画像重复塞进模型上下文」，只是它拿不到阶段，做不到。
+#
+# 这里在 persona_core 这一步按当前阶段裁剪：只留当前阶段那一条。**不丢信息** ——
+# 被裁掉的阶段描述在本轮本来就不该被执行，阶段行为由 stage_policy 承担。
+def _trim_energy_profile_to_stage(
+    voice_style: object,
+    stage: str,
+) -> object:
+    """把 voiceStyle.energyProfile 裁到只剩当前阶段；拿不到阶段就原样返回。"""
+
+    if not isinstance(voice_style, Mapping) or not stage:
+        return voice_style
+    energy_profile = voice_style.get("energyProfile")
+    if not isinstance(energy_profile, Mapping) or len(energy_profile) <= 1:
+        return voice_style
+    current = energy_profile.get(stage)
+    if not isinstance(current, str) or not current.strip():
+        return voice_style
+    trimmed = dict(voice_style)
+    trimmed["energyProfile"] = {stage: current}
+    return trimmed
+
+
 # 落点池与 `persona_core` 的 `preferredTopics` **必须同源**（2026-09-21）：
 # 这个上限同时决定「prompt 里能看到哪几类」与「roleGuidance 要求落哪几类」。
 # 两处读同一个常量，就不会再出现「要求落 A，而 A 恰恰是被截断的那一类」。
@@ -6007,6 +6038,15 @@ class PromptBuilder:
         )
         if not compact and not natural_mode:
             persona_fields = (*persona_fields, "stagePolicy")
+        # 2026-09-23：voiceStyle 是原样搬运的（其余七个字段也是），这里只把
+        # energyProfile 裁到当前阶段。见 `_trim_energy_profile_to_stage`。
+        _persona_stage_profile = identity.get("stageProfile")
+        persona_stage = _text(
+            _persona_stage_profile.get("stage")
+            if isinstance(_persona_stage_profile, Mapping)
+            else "",
+            limit=32,
+        ).casefold()
         messages = [
             {
                 "role": "system",
@@ -6022,7 +6062,14 @@ class PromptBuilder:
                         "只从当前角色的规则中选择自然表达，不要把它改写成统一的书面腔。"
                     ),
                     "npcIdentity": {
-                        key: identity[key]
+                        key: (
+                            _trim_energy_profile_to_stage(
+                                identity[key],
+                                persona_stage,
+                            )
+                            if key == "voiceStyle"
+                            else identity[key]
+                        )
                         for key in persona_fields
                         if key in identity
                     }
