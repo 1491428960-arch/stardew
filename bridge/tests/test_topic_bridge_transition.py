@@ -45,7 +45,7 @@ SOPHIA_TOPICS = [
     "窝在毯子里看电视的晚上",
     "格斯做菜时那股香味",
     "一个人待着时的孤独",
-    "葡萄架和这一季的葡萄",
+    "镇上谁家又有了什么新鲜事",
 ]
 
 # **只覆盖两个面**的素材形状（2026-09-23 之前的索菲亚素材）：缺口角色的样子。
@@ -837,7 +837,7 @@ def test_three_act_scenario_she_rotates_he_pulls_back() -> None:
         _payload("Sophia", third_history, SOPHIA_MODS, message=pull_back)
     )
     assert "topicSlot" not in card
-    assert "葡萄架和这一季的葡萄" in card["conversationLead"]["roleGuidance"]
+    assert "镇上谁家又有了什么新鲜事" in card["conversationLead"]["roleGuidance"]
 
 
 def test_suggestion_says_another_thing_when_the_facet_was_just_used() -> None:
