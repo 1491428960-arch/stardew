@@ -99,9 +99,10 @@ public sealed class InventoryItemPicker : IClickableMenu
                 else
                 {
                     // 灰按钮点下去原本什么都不发生，玩家只能猜自己哪里做错了。
+                    var snapshot = ItemSnapshot.FromItem(selectedItem);
                     hint = ItemInteractionRules.ShareUnavailableReason(
-                        ItemInteractionRules.Classify(selectedItem),
-                        selectedItem.DisplayName);
+                        snapshot.Kind,
+                        snapshot.DisplayName);
                 }
 
                 return;
