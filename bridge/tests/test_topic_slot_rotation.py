@@ -608,7 +608,11 @@ def test_suggestion_falls_back_to_a_used_but_unbanned_facet() -> None:
     assert slot["suggestedTopic"] in NARROW_ROLE_TOPICS
     # 确实用了一条"最近出现过"的面的素材，也就是降级分支真的生效了
     assert _facet_of_topic(slot["suggestedTopic"]) == "镇上或邻里"
-    assert slot["suggestedTopic"] == "镇上今天谁在广场上吵"
+    # 2026-09-25：`_pick` 的遍历起点改成按内容哈希偏移后，这里从"镇上今天谁在
+    # 广场上吵"换成**同一个面**里的"她刚搬来镇上住的那间旧房子"。
+    # 语义没变（降级到"用过但未被禁"的面），变的只是面**内部**挑哪一条 ——
+    # 这正是偏移要拿到的东西。所以真正的不变量是上面那两行。
+    assert slot["suggestedTopic"] == "她刚搬来镇上时住的那间旧房子"
 
 
 def test_sophia_no_longer_needs_the_fallback_branch() -> None:
@@ -975,13 +979,19 @@ def test_sports_talk_now_reads_as_hobbies_repeat() -> None:
     """行为面的变化：同两轮回复，改前判"工作或手艺"、改后判"爱好或消遣"。
 
     `banned` 是**按素材占比**在重复面里挑的（`rotation_topic_slot` 的 tie-break），
-    所以这里禁的会是爱好面，建议退到那条主面为"镇上或邻里"的素材上。
+    所以这里禁的会是爱好面，建议退到他的素材里**另一个面**上。
+
+    2026-09-25：`_pick` 的遍历起点改成按内容哈希偏移后，建议从"镇上或邻里"变成
+    "天气季节"。两者都是"另一个面"，所以这里断言的不变量是**"不与禁令同面、
+    且素材是他自己的"**，不是具体哪一个面。
     """
 
     slot = rotation_topic_slot(_prompt_topics("Alex"), recent_replies=ALEX_PUSHUPS_REPLIES)
 
     assert slot["bannedFacet"] == "爱好或消遣"
-    assert slot["suggestedFacet"] == "镇上或邻里"
+    assert slot["suggestedTopic"] in _prompt_topics("Alex")
+    assert slot["suggestedFacet"] != slot["bannedFacet"]
+    assert slot["suggestedFacet"] == "天气季节"
 
 
 def test_alex_cross_facet_topic_penetration_is_recorded() -> None:

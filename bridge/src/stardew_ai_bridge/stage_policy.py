@@ -1095,8 +1095,34 @@ def rotation_topic_slot(
     # 判据与阈值理由见 `_TOPIC_ECHO_BIGRAM_RATIO` 上方注释。
     spoken = {topic for topic in topics if _topic_already_spoken(topic, replies)}
 
-    def _pick(allow_used: bool, *, skip_spoken: bool = True) -> tuple[str, str]:
-        for topic in topics:
+    # 候选的**遍历起点**不总在池子头部（2026-09-25）。
+    #
+    # 只用"排除说过的（`spoken`）＋ 排除用过的面（`used`）"是不够的：这两个窗口
+    # **都来自 history**，而真机的 history 被封顶在 6 条 ＝ 3 轮
+    # （`BridgeClient.MaxHistoryItems`）⇒ 第 4 轮起早期素材就被挤出窗口、
+    # 重新变成"没谈过"。此时从头部遍历会让**池子前 N 条被反复选中，后面的永远轮不到**，
+    # 而 N 只由窗口大小决定，**与池子多大无关** —— 所以"补素材"单独解决不了"聊不长"。
+    #
+    # 离线模拟（24 轮、12 条池、假设她逐字复述被建议的素材，即对机制最有利）：
+    #   · 从头部遍历：只覆盖 **4/12** 条，四条各出现 6 次，呈严格 4 周期；
+    #   · 起点按内容哈希偏移：覆盖 **9/12** 条，最高频次降到 4。
+    #
+    # 这与 `_transition_example` 记的是**同一个形状**（那里写的是"只用排除法时，
+    # 池子恒以第一个候选开头"），所以同样用 `zlib.crc32` —— 内置 `hash()` 受
+    # PYTHONHASHSEED 影响、跨进程不稳（本项目在群聊记忆 id 上踩过）。
+    #
+    # `rotated=False` 专供"她惯常的落点"那一级：那一级的定义就是**不加任何筛选时
+    # `_pick` 会返回的那一条**，必须与轮次无关，否则禁令的来源会逐轮漂移。
+    scan = topics
+    if topics:
+        material = "\x1f".join(replies[-4:]) if replies else ""
+        offset = zlib.crc32(material.encode("utf-8")) % len(topics)
+        scan = topics[offset:] + topics[:offset]
+
+    def _pick(
+        allow_used: bool, *, skip_spoken: bool = True, rotated: bool = True
+    ) -> tuple[str, str]:
+        for topic in (scan if rotated else topics):
             facet = _facet_of_topic(topic)
             if not facet or facet == banned:
                 continue
@@ -1152,7 +1178,10 @@ def rotation_topic_slot(
             # 工作面 —— 而她最近聊的正是工作面，与"换个话题"正好相反。
             # `skip_spoken=False`：这一级要的正是"**不加任何筛选**时 `_pick` 会返回的
             # 那一条"，方案 4 的"说过没有"筛选同样不能参与（见 `_TOPIC_ECHO_BIGRAM_RATIO`）。
-            _, default_facet = _pick(allow_used=True, skip_spoken=False)
+            # `rotated=False`（2026-09-25）：遍历起点同样不能参与 —— 上面 `scan` 那个
+            # 偏移是给"本轮建议去哪条"用的，它逐轮变化；而这一级声明的是**她惯常的
+            # 落点**，逐轮漂移的"惯常"不成立，且会让 `default` 这一级的禁令来源不稳定。
+            _, default_facet = _pick(allow_used=True, skip_spoken=False, rotated=False)
             if default_facet:
                 banned = default_facet
                 banned_source = "default"
