@@ -75,9 +75,11 @@ def test_compaction_drops_entries_without_a_target() -> None:
 
 
 def test_compaction_is_capped() -> None:
-    entries = [{"npc": f"NPC{index}", "term": "朋友"} for index in range(10)]
+    """上限 8 条。索菲亚按原句挖出来就有 7 条，6 会静静砍掉一条。"""
 
-    assert len(_compact_npc_relations(entries)) == 6
+    entries = [{"npc": f"NPC{index}", "term": "朋友"} for index in range(12)]
+
+    assert len(_compact_npc_relations(entries)) == 8
 
 
 def test_compaction_of_nothing_is_empty() -> None:
@@ -185,3 +187,45 @@ def test_a_character_without_relations_does_not_get_the_field() -> None:
     )
 
     assert "npcRelations" not in rendered
+
+
+# --- 覆盖面：SVE 角色的关系不能只剩索菲亚 -------------------------------------
+
+RELATIONS = ROOT / "data" / "npc-relations.json"
+
+
+@pytest.mark.skipif(not RELATIONS.exists(), reason="关系表未生成")
+def test_every_sve_persona_has_relations() -> None:
+    """SVE 的 8 个 persona 角色都必须有关系数据。
+
+    这条防的是一次真实的退化：SVE 把 `FriendsAndFamily` 全留空了，SVE 角色的
+    关系**只能靠 `npc-relations-extras.json` 策展**。于是「只做了索菲亚」在
+    数据层完全看不出来 —— 表照样生成、测试照样过、prompt 照样注入，另外七个
+    角色却一个字都没有。目标写的是「覆盖所有主要角色」，就在这里钉住。
+    """
+
+    relations = json.loads(RELATIONS.read_text(encoding="utf-8"))["relations"]
+
+    for npc in ("Wizard", "Sophia", "Victor", "Olivia", "Andy", "Lance", "Claire", "Morris"):
+        assert relations.get(npc), f"{npc} 没有关系数据"
+
+
+@pytest.mark.skipif(not INDEX.exists(), reason="派生索引未生成")
+def test_olivia_and_victor_know_each_other_both_ways() -> None:
+    """母子关系两个方向都要到 prompt —— 单向的数据会让一方把另一方当陌生人。
+
+    证据本身是双向的：`Olivia.CharacterDialogue.001`「你见过我**儿子**维克多了
+    吗？」与 `Victor.divorcedOlivia`「我**妈妈**对离婚的事情还无法完全接受」。
+    """
+
+    from_mother = json.dumps(
+        _game_path_messages("Olivia", "维克多最近怎么样？"),
+        ensure_ascii=False,
+    )
+    assert "儿子" in from_mother
+
+    from_son = json.dumps(
+        _game_path_messages("Victor", "你妈妈还好吗？"),
+        ensure_ascii=False,
+    )
+    assert "妈妈" in from_son

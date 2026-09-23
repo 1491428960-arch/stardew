@@ -7,7 +7,7 @@
     "modRoots": [
       "D:\\sbeam\\steamapps\\common\\Stardew Valley\\Mods\\Stardrop Installed Mods\\Stardew Valley Expanded\\[CP] Stardew Valley Expanded"
     ],
-    "extras": "E:\\workspace\\projects\\stardew-ai-npc\\.worktrees\\story-memory\\data\\personas\\npc-relations-extras.json"
+    "extras": "E:\\workspace\\projects\\stardew-ai-npc\\.worktrees\\story-memory\\data\\npc-relations-extras.json"
   },
   "relations": {
     "Abigail": [
@@ -30,6 +30,14 @@
         "term": "爷爷"
       }
     ],
+    "Andy": [
+      {
+        "npc": "Pierre",
+        "term": "朋友",
+        "note": "皮埃尔在万灵节分享他的南瓜香料苹果酒，通常只跟他「亲密」的朋友分享——托了一年的福，我终于也算尝到了。",
+        "evidence": "Andy.CharacterDialogue.072"
+      }
+    ],
     "Caroline": [
       {
         "npc": "Abigail",
@@ -38,6 +46,20 @@
       {
         "npc": "Pierre",
         "term": "丈夫"
+      }
+    ],
+    "Claire": [
+      {
+        "npc": "Martin",
+        "term": "同事",
+        "note": "我很感激我的同事马丁，他在工作上帮了我很多忙。不过我有时发现他一直盯着我……",
+        "evidence": "Claire.funReturn.Fall_7 / Martin.8hearts.16 / Martin.8hearts.21"
+      },
+      {
+        "npc": "Pam",
+        "term": "同事",
+        "note": "潘姆今天在工作中惹了些麻烦，具体我晚上睡前再说。",
+        "evidence": "Claire.funReturn.Fall_4"
       }
     ],
     "Clint": [
@@ -138,10 +160,32 @@
         "term": "最小的男孩"
       }
     ],
+    "Lance": [
+      {
+        "npc": "Marlon",
+        "term": "公会同僚",
+        "note": "马龙的公会今天有些缺人手，我会在黄昏时回来帮忙。",
+        "evidence": "Lance.funLeave.Spring_2"
+      },
+      {
+        "npc": "Wizard",
+        "term": "一起探险过",
+        "note": "我认识那个卖图腾的法师，我们一起进行过几次探险。",
+        "evidence": "Lance.Nightmarket.001"
+      }
+    ],
     "Lewis": [
       {
         "npc": "Marnie",
         "term": "熟人"
+      }
+    ],
+    "Marlon": [
+      {
+        "npc": "Gil",
+        "term": "老战友",
+        "note": "吉尔和我认识很长时间了，我们一起经历了很多事情。在这个行业里，好兄弟千金不换，你们可以放心把背后交给对方。",
+        "evidence": "Marlon.CharacterDialogue.073"
       }
     ],
     "Marnie": [
@@ -158,6 +202,26 @@
         "term": "外甥"
       }
     ],
+    "Martin": [
+      {
+        "npc": "Claire",
+        "term": "最好的朋友和同事",
+        "note": "克莱尔是我最好的朋友，也是我的同事。她真的很酷……我对她不只是朋友那种感觉，可这话我从没对任何人说过。",
+        "evidence": "Martin.marriedClaire / Martin.CharacterDialogue.016 / Martin.8hearts.16"
+      },
+      {
+        "npc": "Morris",
+        "term": "同事兼上司",
+        "note": "莫里斯也不太容易敞开心扉。",
+        "evidence": "Martin.8hearts.14"
+      },
+      {
+        "npc": "Shane",
+        "term": "同事",
+        "note": "谢恩可不太容易敞开心扉。",
+        "evidence": "Martin.8hearts.14"
+      }
+    ],
     "Maru": [
       {
         "npc": "Demetrius",
@@ -170,6 +234,72 @@
       {
         "npc": "Sebastian",
         "term": "同母异父的哥哥"
+      }
+    ],
+    "Morgan": [
+      {
+        "npc": "Jas",
+        "term": "好朋友",
+        "note": "贾斯喜欢在大樱桃树旁跳绳，她总是那么快乐，是个好朋友。",
+        "evidence": "Morgan.CharacterDialogue.040"
+      },
+      {
+        "npc": "Krobus",
+        "term": "认识",
+        "note": "认识科罗布斯之后，我意识到怪物、矮人和人类都可以成为朋友。",
+        "evidence": "Morgan.CharacterDialogue.067"
+      },
+      {
+        "npc": "Wizard",
+        "term": "师父",
+        "note": "我是马格努斯‧拉斯莫迪斯的学徒——是魔法部的命令，不是我自己愿意来的。他们对每一个被发现「天赋」的小孩都这样。",
+        "evidence": "Morgan.CharacterDialogue.001 / Morgan.6hearts.10"
+      }
+    ],
+    "Morris": [
+      {
+        "npc": "Andy",
+        "term": "接近朋友的人",
+        "note": "除了安迪之外，这个镇上没人接近我心目中的「朋友」二字。",
+        "evidence": "Morris.2hearts.14"
+      },
+      {
+        "npc": "Shane",
+        "term": "最信任的员工",
+        "note": "谢恩是我最信任的员工之一，我希望他还愿意来上班。",
+        "evidence": "Morris.marriedShane"
+      }
+    ],
+    "Olivia": [
+      {
+        "npc": "Caroline",
+        "term": "最好的朋友",
+        "note": "卡洛琳和乔迪是我最好的朋友，我们一起经历了那么多。我们三个都是母亲，在许多事情上看法一致、互相依靠。",
+        "evidence": "Olivia.CharacterDialogue.125 / Olivia.CharacterDialogue.124"
+      },
+      {
+        "npc": "Jodi",
+        "term": "最好的朋友",
+        "note": "乔迪和卡洛琳是我最好的朋友。日程再紧，周一和周四我也一定挤出来陪她们。",
+        "evidence": "Olivia.CharacterDialogue.125 / Olivia.CharacterDialogue.050"
+      },
+      {
+        "npc": "Lewis",
+        "term": "朋友",
+        "note": "刘易斯是个好朋友。",
+        "evidence": "Olivia.4hearts.19"
+      },
+      {
+        "npc": "Pam",
+        "term": "合不来",
+        "note": "我尽量离潘姆远一点，她就是不喜欢我。",
+        "evidence": "Olivia.CharacterDialogue.050"
+      },
+      {
+        "npc": "Victor",
+        "term": "儿子",
+        "note": "维克多是我的儿子，他每个周五都和他的朋友出去玩。他从不乱发脾气，比现在这个小的好带多了。",
+        "evidence": "Olivia.CharacterDialogue.001 / Olivia.CharacterDialogue.062 / Olivia.MarriageDialogue.007"
       }
     ],
     "Pam": [
@@ -236,6 +366,26 @@
         "term": "熟人"
       }
     ],
+    "Scarlett": [
+      {
+        "npc": "Andy",
+        "term": "季节性雇主",
+        "note": "春天安迪雇我帮他干活，他跟人介绍时说的我是「索菲娅的朋友」。",
+        "evidence": "Scarlett.Farmhand.Andy"
+      },
+      {
+        "npc": "Sophia",
+        "term": "最好的朋友兼老板",
+        "note": "索菲娅是我最好的朋友，也是我的老板——秋天葡萄园忙不过来时我来帮她。跟自己的老板是朋友，有时候确实挺难的。",
+        "evidence": "Scarlett.MarriageDialogue.086 / Scarlett.funReturn.Fall.3 / Scarlett.funLeave.Fall.2 / Sophia.CharacterDialogue.172"
+      },
+      {
+        "npc": "Susan",
+        "term": "季节性雇主",
+        "note": "夏天苏珊雇我帮她干活。她住在格兰普顿，所以我们有共同点。",
+        "evidence": "Scarlett.Farmhand.Susan"
+      }
+    ],
     "Sebastian": [
       {
         "npc": "Maru",
@@ -258,34 +408,60 @@
     ],
     "Sophia": [
       {
+        "npc": "Emily",
+        "term": "好朋友",
+        "note": "艾米丽真的是很好的朋友，我最近跟她在一起的时间更多了，该去拜访她。",
+        "evidence": "Sophia.CharacterDialogue.072 / Sophia.CharacterDialogue.105"
+      },
+      {
         "npc": "Gus",
         "term": "家人的朋友",
         "note": "格斯从我很小的时候起就是我家人的朋友，他喜欢来看望我。去酒馆我从来不用点单，他知道我要格兰普顿香橙鸡，还总说这顿算他的。",
-        "evidence": "SVE i18n zh.json: Sophia.CharacterDialogue.107 / Sophia.4hearts.HowAreYou.07 / Sophia.8hearts.14"
+        "evidence": "Sophia.CharacterDialogue.107 / Sophia.4hearts.HowAreYou.07 / Sophia.8hearts.14"
+      },
+      {
+        "npc": "Haley",
+        "term": "好朋友",
+        "note": "海莉和艾米丽都是很好的朋友，我该去拜访她们了。",
+        "evidence": "Sophia.CharacterDialogue.072 / Sophia.CharacterDialogue.105"
       },
       {
         "npc": "Lewis",
         "term": "镇长",
         "note": "刘易斯镇长和格斯一起见证了我最难的那件事。",
-        "evidence": "SVE i18n zh.json: Sophia.7hearts1.11"
+        "evidence": "Sophia.7hearts1.11"
       },
       {
         "npc": "Scarlett",
-        "term": "朋友",
-        "note": "斯嘉丽这位朋友下次来的时候，会给我带格兰普顿香橙鸡。",
-        "evidence": "SVE i18n zh.json: Sophia.CharacterDialogue.088"
+        "term": "最好的朋友",
+        "note": "斯嘉丽是我最好的朋友，秋天葡萄园忙不过来时是她来帮我——当然我有付她工资。",
+        "evidence": "Sophia.CharacterDialogue.172 / Sophia.CharacterDialogue.076 / Sophia.2hearts.10"
       },
       {
         "npc": "Susan",
         "term": "教我手艺的朋友",
         "note": "苏珊会教我手工艺。",
-        "evidence": "SVE i18n zh.json: Sophia.CharacterDialogue.047"
+        "evidence": "Sophia.CharacterDialogue.047"
       },
       {
         "npc": "Victor",
         "term": "好朋友",
         "note": "维克多对我来说一直是位好朋友，我们以前常一起看电视。最近不像以前那样经常见面了，我有点在意这件事。",
-        "evidence": "SVE i18n zh.json: Sophia.marriedVictor / Sophia.CharacterDialogue.044,046,121"
+        "evidence": "Sophia.marriedVictor / Sophia.CharacterDialogue.044,046,121 / Victor.CharacterDialogue.120"
+      }
+    ],
+    "Victor": [
+      {
+        "npc": "Olivia",
+        "term": "妈妈",
+        "note": "妈妈一直唠叨着让我去找个工作，随便什么都行。她对离婚的事还没法完全接受，我想我们暂时少联系会比较明智。",
+        "evidence": "Victor.CharacterDialogue.040 / Victor.divorcedOlivia / Victor.CharacterDialogue.094"
+      },
+      {
+        "npc": "Sophia",
+        "term": "好朋友",
+        "note": "索菲娅是我的好朋友。我明天要去她的葡萄园探望她，每次去都会顺便买一瓶铱星葡萄酒——那是我妈妈的最爱。",
+        "evidence": "Victor.CharacterDialogue.120 / Victor.CharacterDialogue.086 / Sophia.marriedVictor"
       }
     ],
     "Vincent": [
@@ -298,6 +474,20 @@
       {
         "npc": "Elliott",
         "term": "熟人"
+      }
+    ],
+    "Wizard": [
+      {
+        "npc": "Lance",
+        "term": "认识",
+        "note": "兰斯是一位优秀且才华横溢的法师。",
+        "evidence": "Magnus.marriedLance"
+      },
+      {
+        "npc": "Morgan",
+        "term": "学徒",
+        "note": "摩根是魔法部指派给我的学徒。我以前从未有过学生，这感觉像是我人生中的新篇章。她的家人要求每季来拜访一次，我拒绝了。",
+        "evidence": "Morgan.CharacterDialogue.001 / Morgan.Apprentice.Married.02 / Morgan.Apprentice.05"
       }
     ]
   }

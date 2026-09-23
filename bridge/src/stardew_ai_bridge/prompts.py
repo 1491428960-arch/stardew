@@ -4789,7 +4789,7 @@ def _compact_daily_routine(value: object) -> list[str]:
     return entries
 
 
-def _compact_npc_relations(value: object, *, limit: int = 6) -> list[dict[str, str]]:
+def _compact_npc_relations(value: object, *, limit: int = 8) -> list[dict[str, str]]:
     """压缩 NPC↔NPC 关系条目。
 
     每条只留 `npc` / `term` / 可选的 `note`。`note` 是**这个角色自己的关系
@@ -4798,6 +4798,10 @@ def _compact_npc_relations(value: object, *, limit: int = 6) -> list[dict[str, s
     陌生人，而事件对白里 Gus 说的是 "Anything for a close family friend!"。
 
     没有 `npc` 的条目一律丢掉，发出去只会让模型困惑。
+
+    `limit` 由 6 提到 8（2026-09-24）：索菲亚按原句挖出来就有 7 条（格斯、
+    斯卡莱特、艾米丽、海莉、维克多、苏珊、刘易斯），6 会静静砍掉最后一条 ——
+    正是这个项目反复栽的「数据有、没发出去」。
     """
 
     if not isinstance(value, list):
