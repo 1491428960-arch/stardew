@@ -29,6 +29,7 @@ from .stage_policy import (
     build_stage_policy,
     narrow_topic_pool,
     rotation_topic_slot,
+    topic_depth_slot,
 )
 from .story_state import build_story_state
 from .today_schedule import build_daily_context_card
@@ -1826,6 +1827,28 @@ class ContextBuilder:
             stage_policy_for_slot = dict(identity["stagePolicy"])
             stage_policy_for_slot["topicSlot"] = topic_slot
             identity["stagePolicy"] = _sanitize_value(stage_policy_for_slot)
+
+        # 话题深度槽位（2026-09-24）：与上面的横向槽位**并列**，同一份
+        # `turn_replies` / `player_replies_for_slot`，同样在 `build_stage_policy`
+        # 之后合并。横向管"换个面"，这一个管"就着同一件事往下走"。
+        #
+        # 它也吃 `cross_window_replies`（＝请求体的 `recentReplies`，≤24 条）：
+        # 真机 history 封顶 6 条＝约 3 轮，隔了三四轮的重复在窗口里看不见 ——
+        # 实测 `prod2-topic` 第 15 轮重复第 12 轮时槽位全程没触发。
+        # 这与上面横向槽位用 `spoken_replies` 是**同一个理由**（见 ㉗）。
+        #
+        # ⚠ 它也必须过 `_compact_stage_policy` 的白名单，否则就是 `topicSlot`
+        # 2026-09-21 栽过的那一次：产出方有值、线上（`compactPrompt=True`，
+        # 也就是游戏实际走的那条）是 `null`，整包 prompt 一个字节都到不了模型。
+        depth_slot = topic_depth_slot(
+            turn_replies,
+            player_replies=player_replies_for_slot,
+            spoken_replies=cross_window_replies,
+        )
+        if depth_slot:
+            stage_policy_for_depth = dict(identity["stagePolicy"])
+            stage_policy_for_depth["topicDepthSlot"] = depth_slot
+            identity["stagePolicy"] = _sanitize_value(stage_policy_for_depth)
         current_mood = _first_value(values, "currentMood", "current_mood")
         if current_mood is None:
             current_mood = _first_value(state, "currentMood", "current_mood")
@@ -3371,6 +3394,21 @@ def _compact_stage_policy(
             slot["suggestedTopic"] = suggested_topic
         if slot:
             result["topicSlot"] = slot
+    # 话题深度槽位（2026-09-24）：与横向槽位并列，同样必须**显式过白名单** ——
+    # 本函数是白名单重建，没在这里列出的顶层字段会静默消失（上面 `topicSlot`
+    # 的注释记着同一次教训）。两个键都带上：`depthTrigger` 是线上唯一能看出
+    # 这次是"她在重复自己"还是"玩家在催她说"的字段，两者的措辞与代价不同。
+    depth_slot = value.get("topicDepthSlot")
+    if isinstance(depth_slot, Mapping):
+        depth: dict[str, Any] = {}
+        depth_trigger = _text(depth_slot.get("depthTrigger"), limit=40)
+        if depth_trigger:
+            depth["depthTrigger"] = depth_trigger
+        depth_instruction = _text(depth_slot.get("instruction"), limit=300)
+        if depth_instruction:
+            depth["instruction"] = depth_instruction
+        if depth:
+            result["topicDepthSlot"] = depth
     return result
 
 
@@ -7374,6 +7412,21 @@ class PromptBuilder:
                     slot = dict(slot)
                     slot.pop("playerAnchor", None)
                     override["topicSlot"] = slot
+                # **第六处同型矛盾**（2026-09-24，实机复测才看到）：上面刚写的
+                # `responseShape` 是「说清手上正在做或刚发生的**一件具体小事**」——
+                # 它在要求她**端出一件新的**，而深度槽位说的是「那件事你们刚才说过了，
+                # 别再原样说一遍」。**两层并排就是一紧一松、取最松**（本文件 1802 行
+                # 与 `stage_policy` 各记过一次同型教训），实测里她照旧逐字重复。
+                #
+                # 所以深度槽位触发时这一句**必须让位**：把"另起一件新的"改成
+                # "接着说刚才那件"。这与摘要卡那边 `topicSlot` 收窄落点池是同一个做法 ——
+                # 不新增限制，而是把冲突的那一层换掉。
+                override_depth = override.get("topicDepthSlot")
+                if isinstance(override_depth, Mapping) and override_depth.get("instruction"):
+                    override["responseShape"] = (
+                        "接着说刚才那件，不要另起一件新的："
+                        "把它的细节、它让你想起的事、你当时的感觉说出来"
+                    )
                 stage_execution_payload = override
             affection_quality_context = dict(safe_context["qualityContext"])
             if natural_mode:
@@ -7407,6 +7460,28 @@ class PromptBuilder:
                     for key, val in stage_execution_payload.items()
                     if key != "affectionInitiative"
                 }
+            # 话题深度槽位单独发一张卡（2026-09-24）。
+            #
+            # **为什么不能只放在 `stage_execution_card` 里**：实测复测（`prod-topic`
+            # 那批第 28~30 轮）证明槽位**确实触发了**（`topicDepthSlot` 在卡里、
+            # 与上一条的 2-gram 覆盖率是 1.000），但她照旧逐字重复三遍 ——
+            # 埋在一个大 JSON 的某个键里，权重压不过同卡里那些更"具体"的字段。
+            # 这与 ㉗ 记的是同一个形状：「那一段每轮都在触发 `facetRepeat`
+            # ⇒ **槽位指令已被无视**」。探针里用**独立卡**做同一个实验时，
+            # 相邻重复从 6/29 直接掉到 0/29 —— 差别就在卡的独立性。
+            #
+            # 摘下与独立 append 的条件逐字一致（同 `affectionInitiative` 的做法）：
+            # 只有独立卡本轮真会出现时才摘，避免同一段连发两次。
+            depth_card: dict[str, Any] = {}
+            if isinstance(stage_execution_payload, Mapping):
+                raw_depth = stage_execution_payload.get("topicDepthSlot")
+                if isinstance(raw_depth, Mapping) and raw_depth.get("instruction"):
+                    depth_card = dict(raw_depth)
+                    stage_execution_payload = {
+                        key: val
+                        for key, val in stage_execution_payload.items()
+                        if key != "topicDepthSlot"
+                    }
             messages.append(
                 {
                     "role": "system",
@@ -7427,6 +7502,17 @@ class PromptBuilder:
                         "role": "system",
                         "name": "affection_initiative",
                         "content": _json(affection_card),
+                    }
+                )
+            # 深度槽位单独成卡，**不设自然轮次的门** —— 它本来就是为游戏路径
+            # （`compact=True` + `_runtime_compact`）准备的，而且只在触发时存在，
+            # 多数轮次这里是空的（零成本）。
+            if depth_card:
+                messages.append(
+                    {
+                        "role": "system",
+                        "name": "topic_depth_card",
+                        "content": _json(depth_card),
                     }
                 )
             interaction = safe_context.get("interaction")

@@ -161,7 +161,21 @@ Bridge 的 `/api/dialogue/test` 与 `scripts/gamereal_probe.py` 走的就是**�
 
 ## C. 已判定不做（避免重复讨论）
 
-- **引入 ruff / flake8 / mypy**：项目从未配置静态检查，靠 `compileall` + pytest；引入是团队决策，不擅自加。
+- **引入 ruff / flake8 / mypy**：**2026-09-24 做了只读侦察（装 ruff 0.16.8，跑一次、不写配置、不碰代码），结论：不引入。**
+  默认规则在 `bridge/src` 报 **128 个问题**：I001 未排序 import 35、UP031 printf 风格 19、
+  ISC004 隐式字符串拼接 15、UP037 引号注解 11、**F821 undefined-name 8**、SIM102 7、
+  **F401 未用 import 7**、SIM103 4、TRY004 4、PIE810 3、F841 3……
+  **真正可能出事的只有 F 类 18 个**（F821×8 / F401×7 / F841×3），其余 110 个是风格。
+  - **F821 已逐个看过**：全是**注解里引用了没 import 的名字** ——
+    `group_conversation.py` 缺 `Iterable`（4 处）、`speech.py` 缺 `Literal`（连带
+    `Literal["exact", "at_most_present"]` 里的两个字符串也被当成名字，共 3 处）、
+    `providers.py` 缺 `NpcGameState`。因为 `from __future__ import annotations`
+    会延迟求值，**运行时不会炸**（3982 个测试也证明没炸）—— 真问题，但低危。
+  - **F401 里 `behavior_quality.py` 那 5 个 `dialogue_boundaries.*` 有转导出嫌疑**
+    （`guard.py` 又从 `behavior_quality` 转导 `conversation_lead_anchors`），
+    删之前得逐个确认是不是刻意为之。
+  ⇒ **这是一件独立的事，不该混进功能提交。** 真要收，单独开一轮「F 类 18 个」，
+  并且**不要**把 ruff 挂进流水线 —— 110 个风格问题会造成与功能无关的大 diff。
 - **给 `speech.py` 逐行补覆盖**：未覆盖的是分散分支，成本远高于收益。
 - **整理 `active-work.md` 的条目顺序**：历史累积文件，重排会破坏记录且与并行会话冲突。
 - **五个菜单的 `DrawButton` 重复实现**：实测 5 处（4 处完全相同 + `ChatInputMenu` 多一个彩色 `tint`）。

@@ -1002,6 +1002,241 @@ def _topic_already_spoken(
     return hits / len(grams) >= _TOPIC_ECHO_BIGRAM_RATIO
 
 
+# =============================================================================
+# 话题深度槽位（2026-09-24）
+# =============================================================================
+#
+# 用户口径是**两件事**：「话题不断有新东西」**和**「同一个话题能聊出不同的感觉」。
+# 后者是**纵向**的 —— 同一个话题的不同切面（事实 → 感官 → 回忆 → 情绪 → 矛盾）。
+# 在它之前，仓库里只记了前一件，`rotation_topic_slot` 也只做横向（同一个生活面
+# 重复 → 禁掉它、换到别的面），**纵向一条机制都没有**。
+#
+# 实测（走 `app._build_context`，游戏同一条路）：
+#
+#   · `intent=topic`（她自说自话）30 轮：**6/29 轮与上一轮相似度 ≥0.5**，
+#     第 6 轮 vs 第 5 轮 = **1.00（一字不差）**，「毯子+橡树掉叶+第一场雪」
+#     被端出来 6 次（第 2、3、7、8、10、11 轮）。
+#   · `intent=chat` 8 轮：无逐字重复，但**每轮端出 2~3 件新事**，
+#     一个话题碰一下就跳；第 6 轮起出现元对话（「我刚才说得太多了吗？」）
+#     与讨好式罗列（「香橙鸡和萤石都得再排排队了」）。
+#
+# 为什么现有判重拦不住第一件：`_topic_already_spoken` 筛的是**「该建议哪条素材」**
+# （见 `rotation_topic_slot` 里的 `spoken` 集合）——它保证建议永远指向一条没说过的话题。
+# **可模型根本不看建议，它看 history**，而 history 里全是她自己上一轮说过的话，
+# 于是模型顺着自己的回声续写。`intent=topic` 的请求**不写玩家项**，history 6 条
+# 全是她自己 ⇒ 回声比 `chat` 路径强得多，这正好解释了为什么逐字重复只在 topic 路径出现。
+#
+# 加一张卡后的实测：`topic` 路径相邻重复 **6/29 → 0/29**（10 批内最高 0.08），
+# `chat` 路径第 6 轮出现「**刚才我说的是毯子的事，但其实……我真正想说的是，
+# 能和你一起待着就很好**」、第 8 轮「一个人待着、说不清是舒服还是闷的感觉」。
+# 完整设计与实验数据见 `docs/design-topic-depth-2026-09-24.md`。
+
+#: 两个触发名。**互斥且有序**：先看"她是不是在重复自己"（那比"没聊深"更刺眼）。
+_DEPTH_TRIGGER_SELF_REPEAT = "selfRepeat"
+_DEPTH_TRIGGER_PLAYER_CONTINUATION = "playerContinuation"
+
+#: 判"她自己重复了自己"时往回看几条回复。跨窗口那一份按这个倍数放宽 ——
+#: 4 倍 = 24 条，与 `recentReplies` 的上限一致。
+_DEPTH_LOOKBACK = 6
+
+#: 判"两段回复是同一件事"的覆盖率门槛。
+#:
+#: ⚠ **刻意不复用 `_TOPIC_ECHO_BIGRAM_RATIO`（0.5）**：那个数是给
+#: "**素材** vs 回复"定的（素材是短的描述性短语，模型不会逐字复述，所以门槛要低）。
+#: 这里是"**回复 vs 回复**"，两边体裁相同、用词高度重叠，0.5 会大量假阳 ——
+#: 实测 `prod3-chat` 里她每轮内容其实都不同（香橙鸡 / 动漫展 / 炖菜 / 酒窖 /
+#: 月光石 / 林中晶体），却因为惯用「我刚才把…」开场而**每轮都判成重复**。
+#: 实测真正逐字重复的那几对（Jaccard 口径）是 **0.81~1.00**，换成更敏感的覆盖率
+#: 只会更高，所以 0.7 有充足余量、又不会把"句式像"当成"内容重复"。
+_DEPTH_REPEAT_RATIO = 0.7
+
+#: 玩家在催她继续、但**没给新话题**。
+#:
+#: ⚠ 刻意**不复用** `_is_short_filler_reply`：那个要求"整句由空转词拼成"
+#: （`_PLAYER_FILLER_FULL_PATTERN`），而「然后呢」「还有呢」带实义虚词、判不出来
+#: —— 实测三组里 `playerShortReply` **一次都没触发**（槽位输出全是 `trig=—`）。
+#: 这里要的是"玩家在催她继续说"，是另一件事，所以另立一个判据；
+#: 也**不去动** `_is_short_filler_reply` 的语义（它管的是"玩家没接住"）。
+#:
+#: 允许尾部标点与空白（「嗯……」「然后呢？」都算），但**整句必须只有这些** ——
+#: 「嗯，你说得对」带实义判断，不算，玩家自己就有话说，不该把她按在旧话题上。
+_PLAYER_CONTINUATION_PATTERN = re.compile(
+    r"^(?:"
+    r"然后呢|后来呢|还有呢|接着说|继续说|说下去|多说点|继续|"
+    r"嗯+|哦+|啊+|呃+|唔+|欸+|"
+    r"真的|真的吗|是吗|是这样啊|这样啊|原来如此|好吧"
+    r")[。！？…，,、\s]*$"
+)
+
+_DEPTH_INSTRUCTION_PLAYER_CONTINUATION = (
+    "本轮只谈一件事，就是你们刚才在说的那件。"
+    "不要再端出新的东西，也不要用「对了」「而且」「话说回来」另起话头。"
+    "把它说完：它具体是什么样子、它让你想到什么、你当时是什么感觉。"
+    "说不到三句就停。"
+)
+
+#: 指认"你到底重说了哪一条"时，引用它开头的多少个字。
+_DEPTH_QUOTE_CHARS = 18
+
+
+def _quotable(text: str, limit: int = _DEPTH_QUOTE_CHARS) -> str:
+    """截一段话的开头用于**指认**，保留原文标点（只压掉换行与多余空白）。
+
+    与 `_reply_digest` 不同：那个要剥掉标点做 2-gram，这个是要**给人看**的
+    ——「你刚才说的是这条」必须一眼认得出，去过标点反而难读。
+    """
+
+    flat = " ".join(str(text or "").split())
+    if len(flat) <= limit:
+        return flat
+    return flat[:limit] + "……"
+
+
+def _self_repeat_instruction(quote: str) -> str:
+    """把"别再原样说一遍"落成**具体**指认。
+
+    **为什么要引用原文**（2026-09-24 实测）：抽象禁令无效。
+    `prod3-topic` / `prod4-topic` 两批共 54 轮里，`selfRepeat` **几乎每轮都触发**、
+    独立卡也每轮都发到了，可逐字重复依然密集（[7]=[6]、[9]=[6]、[11]=[8]、
+    [14]=[12]、[22]≈[21]、[23]=[22]、[24]=[21]）。
+    原因不是指令被无视，而是**它没有"没提过的"可挑** ——
+    `topic` 路径下模型看不到任何玩家输入，可见历史只有 6 条、全是她自己，
+    抽象地说"别重复"等于让它在一片回声里自己找出口。
+    指认到具体哪一条，才是它能执行的动作。
+    """
+
+    where = f"——就是「{quote}」那段" if quote else ""
+    return (
+        f"你刚才说的那件事{where}，前面已经讲过了。"
+        "别再原样说一遍，也别换个说法把同一件重讲一遍。"
+        "换一件具体的小事：手边正在做的、刚看到的、或者最近真遇到过的。"
+    )
+
+
+def _bigram_coverage(left: str, right: str) -> float:
+    """两段话的 2-gram 覆盖率：**分母取较短的那一方**。
+
+    与 `_topic_already_spoken` 同源口径（那里分母是素材的 gram 数，因为素材短）。
+    这里两边都是回复、长度可比，仍取较短者为分母 —— 这样"**重说前半句再继续**"
+    也能被抓到（那种情况下长的包含短的，Jaccard 会被长的那段冲稀到 0.5 以下，
+    覆盖率则是 1.0）。实测的重复对在 Jaccard 口径下是 0.81~1.00，
+    换成更敏感的这个口径只会更高，0.5 的余量足够。
+
+    只算汉字与字母数字（复用 `_reply_digest`），标点与语气词不参与。
+    """
+
+    a, b = _reply_digest(left), _reply_digest(right)
+    if len(a) < 2 or len(b) < 2:
+        return 0.0
+    short, long = (a, b) if len(a) <= len(b) else (b, a)
+    grams = [short[index : index + 2] for index in range(len(short) - 1)]
+    if not grams:
+        return 0.0
+    hits = sum(1 for gram in grams if gram in long)
+    return hits / len(grams)
+
+
+def _is_player_continuation(text: str) -> bool:
+    """玩家在催她继续说，而不是自己带了新话题。"""
+
+    return bool(_PLAYER_CONTINUATION_PATTERN.match(text.strip()))
+
+
+def topic_depth_slot(
+    recent_replies: object = (),
+    *,
+    player_replies: object = (),
+    spoken_replies: object = (),
+) -> dict[str, str]:
+    """本轮该不该让她"就着同一件事往下走"。返回空字典表示不需要。
+
+    产出形如 ``{"depthTrigger": ..., "instruction": ...}``，与
+    `rotation_topic_slot` 的 ``{"trigger": ..., "instruction": ...}`` 并列，
+    由调用方渲染成**独立卡** `topic_depth_card` —— **不新增第二套可比对象**
+    （本项目记过三次的教训），但**也不能并进 `stage_execution_card`**：
+    实测那样会被无视，见下面 `spoken_replies` 的说明与设计文档 §五之二。
+
+    两个触发：
+
+    * ``selfRepeat``：她最近一条回复与更早的某条 2-gram 覆盖率
+      ≥ `_TOPIC_ECHO_BIGRAM_RATIO`。措辞**给两条出路**而不是只禁止
+      —— 实验与实测都显示她的"重复"与"跳"**同源**：都是急着给东西。
+      只堵不疏会让她卡住，这也符合项目铁律（反机械感靠减约束、给示例，不靠加规则）。
+    * ``playerContinuation``：玩家本轮只给了"继续说"的信号、自己没带新话题。
+
+    ``spoken_replies`` 是**跨窗口**的那一份（请求体的 `recentReplies`，≤24 条）。
+    为什么必须要它：真机 history 被 `BridgeClient.MaxHistoryItems` 封顶在 6 条，
+    也就是**约 3 轮**，隔了三四轮的重复在窗口里根本看不见 ——
+    实测 `prod2-topic` 第 15 轮重复了第 12 轮，而那时第 12 轮早已滑出窗口，
+    槽位全程没触发。这与 ㉗ 给 `rotation_topic_slot` 加这一份是**同一个理由**。
+
+    ⚠ 本槽位有**固有的一轮延迟**：它在"本轮生成之前"算，所以只能发现
+    "上一轮重复了更早的"，抓不到"本轮即将重复"。这是时序决定的，不是缺陷；
+    实测里一轮之后能拦住。
+
+    **玩家在划边界时不触发** —— 那是 `boundaryMode` 的地盘；
+    **玩家自己点名换话题时也不触发** —— 方向盘在玩家手里。
+    """
+
+    replies = [
+        _player_reply_text(item)
+        for item in (recent_replies or ())
+        if _player_reply_text(item)
+    ]
+    players = [
+        _player_reply_text(item)
+        for item in (player_replies or ())
+        if _player_reply_text(item)
+    ]
+
+    # 玩家划边界 or 明确点名换话题 —— 本轮一律不压她。
+    if players:
+        latest_player = players[-1]
+        if _is_player_refusal(latest_player) or _is_player_topic_request(latest_player):
+            return {}
+
+    if not replies:
+        return {}
+
+    # 触发 B **先判**：玩家在催她继续说（自己没带新话题）时，他要的是"接着讲"，
+    # 不是"换一件"。
+    #
+    # ⚠ **顺序在 2026-09-24 的实测里反过来过一次，结果很明显**：那时 A 在前，
+    # 于是玩家每轮只说「嗯」「然后呢」的整段对话里，她收到的一直是 A 的文案
+    # ——「要么换一件确实没提过的，要么就着它往下走一层」。**她选了更容易的那条**，
+    # 每轮端出一件新事（香橙鸡→动漫展→炖菜→酒窖→月光石→林中晶体），
+    # 正是用户抱怨的"聊不出不同的感觉"。两个触发同时成立时，**玩家的意图优先**。
+    if players and _is_player_continuation(players[-1]):
+        return {
+            "depthTrigger": _DEPTH_TRIGGER_PLAYER_CONTINUATION,
+            "instruction": _DEPTH_INSTRUCTION_PLAYER_CONTINUATION,
+        }
+
+    # 触发 A：她最近这条与更早的某条高度重合。
+    #
+    # "最近这条"只能来自 `recent_replies`（它是本轮之前最近的几条）；
+    # 而"更早的"要把跨窗口那一段也算进来 —— 见 docstring 里 `prod2-topic` 那次。
+    # 两者接起来时**跨窗口在前**，保持时间顺序（它是更早的原文）。
+    earlier = [
+        _player_reply_text(item)
+        for item in (spoken_replies or ())
+        if _player_reply_text(item)
+    ] + replies[:-1]
+    latest = replies[-1]
+    repeat_of, best_score = "", 0.0
+    for candidate in earlier[-_DEPTH_LOOKBACK * 4 :]:
+        score = _bigram_coverage(latest, candidate)
+        if score > best_score:
+            repeat_of, best_score = candidate, score
+    if best_score >= _DEPTH_REPEAT_RATIO:
+        return {
+            "depthTrigger": _DEPTH_TRIGGER_SELF_REPEAT,
+            "instruction": _self_repeat_instruction(_quotable(repeat_of)),
+        }
+
+    return {}
+
+
 def rotation_topic_slot(
     preferred_topics: object = None,
     *,
