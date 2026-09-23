@@ -220,17 +220,29 @@ def test_prompt_carries_the_newlywed_differential_for_a_spouse() -> None:
     assert gate["familiarity"] == "unfamiliar"
 
     prompt = PromptBuilder().build(context, "今天过得怎么样？", compact=False)
-    stage_card = next(
-        json.loads(message["content"])
+    cards = {
+        message["name"]: json.loads(message["content"])
         for message in prompt
-        if message.get("name") == "stage_execution_card"
-    )
+        if message.get("name") in ("stage_execution_card", "affection_initiative")
+    }
+    stage_card = cards["stage_execution_card"]
+    affection_card = cards["affection_initiative"]
 
     assert stage_card["stage"] == "married"
     assert "磨合" in stage_card["eventGate"]["instruction"]
     assert "不得使用" not in stage_card["eventGate"]["instruction"]
-    assert stage_card["affectionInitiative"]["initiativeMode"] == "proactive"
-    assert "explicit" in stage_card["affectionInitiative"]["allowedIntensities"]
+    # 2026-09-23（B 档压缩 · 跨卡去重）：主动性配置原先同时出现在
+    # `stage_execution_card` 与独立的 `affection_initiative` 卡里，两处是同一份
+    # JSON，等于连发两次（dating 阶段实测 653 字符纯重复）。现在只由独立卡承载，
+    # 而独立卡那份更完整（多 cooldownActive / recentStrongCount /
+    # recentStrongFamilies 三个运行时字段）。
+    #
+    # 断言的信息没有变，只是换了承载卡。这里**特意从独立卡取值**：若哪天
+    # `_build_affection_initiative_card` 不再产出（或本轮条件不满足导致它被摘掉），
+    # 这两行会以 KeyError 直接失败——防止去重把信息真的删没了。
+    affection = affection_card["affectionInitiative"]
+    assert affection["initiativeMode"] == "proactive"
+    assert "explicit" in affection["allowedIntensities"]
 
 
 def _guard_prompt(event_gate: dict) -> list[dict[str, str]]:

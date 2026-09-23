@@ -3471,11 +3471,6 @@ def _stage_execution_instruction(
         stage_instruction += (
             "如果 boundaryMode 表示不想聊，直接说不想聊并结束，不补问题或安慰。"
         )
-    voice_fingerprint = (
-        _text(value.get("voiceFingerprint"), limit=240)
-        if isinstance(value, Mapping)
-        else ""
-    )
     if natural_light_turn:
         if topic_request:
             return (
@@ -3486,7 +3481,6 @@ def _stage_execution_instruction(
                 "玩家明确表示先不问、先休息、有空再聊或先走时，"
                 "不得主动抛出新问题、新对象或新话题；只用角色语气简短收口。"
                 "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
-                + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
             )
         return (
             "这是本轮的关系阶段边界提示，只影响称呼和边界；"
@@ -3497,7 +3491,6 @@ def _stage_execution_instruction(
             "玩家明确表示先不问、先休息、有空再聊或先走时，"
             "不得主动抛出新问题、新对象或新话题；只用角色语气简短收口。"
             "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
-            + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
         )
     if topic_request:
         # 2026-09-22：非自然（游戏端）路径的「找话题」原本复用通用阶段卡文案——
@@ -3519,7 +3512,6 @@ def _stage_execution_instruction(
             "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
             "表达预算：起头之后最多追加一个角色化动作（具体细节、态度、选择或小安排）；"
             "不要强行同时解释、表达情绪、追问和安排。"
-            + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
         )
     return (
         "这是本轮必须执行的关系阶段行为卡。它是可执行约束，"
@@ -3534,7 +3526,6 @@ def _stage_execution_instruction(
         "只输出对白文字，禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
         "表达预算：直接回答后最多追加一个角色化动作（具体细节、态度、追问、选择或小安排）；"
         "不要强行同时解释、表达情绪、追问和安排。"
-        + (f"角色表达指纹：{voice_fingerprint}" if voice_fingerprint else "")
     )
 
 
@@ -4456,6 +4447,16 @@ def _compact_relationship_gate(value: object) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     result: dict[str, Any] = {}
+    # 2026-09-23 压缩（A 档 · 同值去重）：
+    # 这五个 stage 字段是**同一条推导链的不同环节**——relationshipStage 来自好感、
+    # heartStage 来自心数、eventUnlockedStage 来自事件解锁，最终归到 effectiveStage
+    # 与 effectiveIntimacyStage 两个结论。对模型而言只有**结论**有意义：该用什么
+    # 阶段的语气说话；输入环节的中间量它无法也不该用来做判断。
+    #
+    # 实测 stranger 阶段五个值全是 "stranger"，逐个输出等于把同一句话说五遍，
+    # 占 221 字符。这里**只在值不完全相同时**全部输出（保留诊断价值），
+    # 全同则只留两个结论字段。语义等价，不丢信息。
+    stage_values: dict[str, str] = {}
     for key in (
         "relationshipStage",
         "heartStage",
@@ -4468,7 +4469,13 @@ def _compact_relationship_gate(value: object) -> dict[str, Any]:
             continue
         text = _text(raw_value, limit=40)
         if text:
-            result[key] = text
+            stage_values[key] = text
+    if len(set(stage_values.values())) <= 1:
+        for key in ("effectiveStage", "effectiveIntimacyStage"):
+            if key in stage_values:
+                result[key] = stage_values[key]
+    else:
+        result.update(stage_values)
     for key in (
         "eventGateConfigured",
         "eventGateApplied",
@@ -7028,6 +7035,38 @@ class PromptBuilder:
                     slot.pop("playerAnchor", None)
                     override["topicSlot"] = slot
                 stage_execution_payload = override
+            affection_quality_context = dict(safe_context["qualityContext"])
+            if natural_mode:
+                affection_quality_context["turnPlan"] = turn_plan
+            affection_card = _build_affection_initiative_card(
+                stage_policy,
+                quality_context=affection_quality_context,
+                interaction=safe_context.get("interaction", {}),
+                player_input=player_input,
+                history=history,
+                compact=compact,
+            )
+            # 2026-09-23 压缩（B 档 · 跨卡去重）：
+            # 下面会单独发一张 `affection_initiative` 卡，它装的是**同一份**
+            # `_compact_affection_initiative` 结果，而且多三个运行时字段
+            # （cooldownActive / recentStrongCount / recentStrongFamilies），
+            # 是更完整的那一份。`stage_execution_card` 里再放一遍，等于把同一段
+            # 650+ 字符的 JSON 连发两次（dating 阶段实测 653 字符纯重复）。
+            #
+            # **只在独立卡本轮确实会出现时才摘**：判定条件与下面 append 时逐字一致，
+            # 否则（自然话题轮、被动轮、或卡为空）原样保留 —— 不丢信息。
+            if (
+                affection_card
+                and not natural_topic
+                and not natural_passive_turn
+                and isinstance(stage_execution_payload, Mapping)
+                and "affectionInitiative" in stage_execution_payload
+            ):
+                stage_execution_payload = {
+                    key: val
+                    for key, val in stage_execution_payload.items()
+                    if key != "affectionInitiative"
+                }
             messages.append(
                 {
                     "role": "system",
@@ -7041,17 +7080,6 @@ class PromptBuilder:
                         ),
                     }),
                 }
-            )
-            affection_quality_context = dict(safe_context["qualityContext"])
-            if natural_mode:
-                affection_quality_context["turnPlan"] = turn_plan
-            affection_card = _build_affection_initiative_card(
-                stage_policy,
-                quality_context=affection_quality_context,
-                interaction=safe_context.get("interaction", {}),
-                player_input=player_input,
-                history=history,
-                compact=compact,
             )
             if affection_card and not natural_topic and not natural_passive_turn:
                 messages.append(

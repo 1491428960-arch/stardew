@@ -22,3 +22,6 @@ data/generated/
 .tmp/
 # agent 运行时记忆（会频繁变化，属运行状态）
 .dsh/
+
+# 压缩 prompt 期间的一次性备份（保留在磁盘，不进版本库）
+*.bak-*
