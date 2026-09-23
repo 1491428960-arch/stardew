@@ -23,6 +23,7 @@ from .speech import (
     voice_anchor_text_fits,
 )
 from .stage_policy import (
+    _facet_hits,
     apply_relationship_event_gate,
     build_stage_policy,
     narrow_topic_pool,
@@ -341,8 +342,14 @@ def has_reaction_opening_move(identity: object) -> bool:
     return any(marker in first for marker in _REACTION_OPENING_MARKERS)
 _HISTORY_LIMIT = 12
 _PROMPT_HISTORY_LIMIT = 12
-_MAX_SPEECH_EVIDENCE = 4
-_MAX_STYLE_SAMPLES = 3
+# 轮转**池**大小，不是每轮条数 —— 每轮仍只从池里取 1 条（见 `_rotate_evidence_by_turn`）。
+# 池子越大，相邻轮次撞回同一条就越晚：4 ⇒ 第 5 轮必然重复，6 ⇒ 撑到第 7 轮。
+# 上限由 accessor 自己卡死（`profile_index.speech_evidence` cap 6、
+# `style_samples` cap 8）—— 再往上填也拿不到，2026-09-23 实测确认。
+# 池大小**不影响 prompt 体积**（每轮仍只注入 1 条），所以放宽是免费的；
+# 代价只是每轮那 1 条从「前 4 名」变成「前 6 名」里轮，单条质量略降。
+_MAX_SPEECH_EVIDENCE = 6
+_MAX_STYLE_SAMPLES = 6
 _MAX_BEHAVIOR_EXAMPLES = 2
 _MAX_ORIGINAL_STYLE_EXAMPLES = 4
 _MAX_KNOWLEDGE_FACTS = 2
@@ -1133,6 +1140,63 @@ def _shares_concrete_input_phrase(evidence_text: str, player_input: str) -> bool
             phrase = "".join(input_chars[start : start + length])
             if phrase in evidence_folded:
                 return True
+
+def _banned_facet_from_context(context: Mapping[str, Any]) -> str:
+    """读本轮话题槽位禁掉的生活面；没有槽位（多数轮次）时返回空串。
+
+    路径：`context["npcIdentity"]["stagePolicy"]["topicSlot"]["bannedFacet"]`。
+    逐层 `isinstance` 是为了不假设调用方一定带 identity（单测与预览路径会省略），
+    任何一层缺失都退化成"没有禁令"，与槽位机制自身"不需要换面时返回空 dict"一致。
+    """
+
+    identity = context.get("npcIdentity")
+    if not isinstance(identity, Mapping):
+        return ""
+    stage_policy = identity.get("stagePolicy")
+    if not isinstance(stage_policy, Mapping):
+        return ""
+    slot = stage_policy.get("topicSlot")
+    if not isinstance(slot, Mapping):
+        return ""
+    facet = slot.get("bannedFacet")
+    return facet.strip() if isinstance(facet, str) else ""
+
+
+def _evict_banned_facet(
+    candidates: list[dict[str, str]],
+    banned_facet: str,
+) -> list[dict[str, str]]:
+    """把命中「本轮被禁生活面」的素材挪到候选末尾，挤出轮转池。
+
+    为什么需要（2026-09-23）：`rotation_topic_slot` 早就用
+    `_LIFE_FACET_PATTERNS` 收窄了**话题落点**（调用 `narrow_topic_pool`），
+    但**素材选择完全不看它**。于是"最近两轮都在谈葡萄园、这轮该换一面"的
+    那一轮，槽位说得很清楚，素材卡却照样递上一条葡萄园的对白 ——
+    模型顺着素材又聊回去，槽位等于白设。这是槽位与素材之间缺的那一环。
+
+    只做**降位**不做**过滤**：被禁面素材排到末尾，池子够长时轮不到它们，
+    替代不足时照样补位。宁可某一轮违反禁令，也不能让池子空掉或只剩一条 ——
+    素材缺口是常态（`stage_policy` 那边记过：索菲亚的候选只覆盖两个面，
+    对话到第三轮就穷尽），硬过滤会让轮转直接退化。
+
+    一条素材同时命中被禁面与别的面时**按被禁处理**（从严）：模型是顺着
+    字面聊回去的，"葡萄园忙完回家泡了杯茶"里的葡萄园照样能把它拉回工作面。
+
+    `banned_facet` 为空时原样返回 —— 多数轮次没有禁令，这条路径零成本。
+    """
+
+    if not banned_facet or not candidates:
+        return list(candidates)
+    kept: list[dict[str, str]] = []
+    banned: list[dict[str, str]] = []
+    for item in candidates:
+        text = item.get("text")
+        facets = _facet_hits(text) if isinstance(text, str) else set()
+        (banned if banned_facet in facets else kept).append(item)
+    if not banned:
+        return list(candidates)
+    return kept + banned
+
 
 def _rotate_evidence_by_turn(
     candidates: list[dict[str, str]],
@@ -5645,8 +5709,15 @@ class PromptBuilder:
             # 轮转不改变候选与排序，只让相邻轮次不再取同一条。
             # 见 `docs/report-topic-material-rotation-2026-09-23.md`。
             turn_index = len(context.get("history") or ())
+            # 槽位说「这轮换一面」时素材也得跟着换 —— 否则模型顺着素材又聊回去。
+            # 只对 speech_evidence 生效：`style_samples` 是**语气**样本，按面筛会把
+            # 角色说话方式的覆盖面一起削掉，与"说话方式要贴原文"的诉求相反。
             speech_evidence = _rotate_evidence_by_turn(
-                speech_evidence, turn_index, _MAX_SPEECH_EVIDENCE
+                _evict_banned_facet(
+                    speech_evidence, _banned_facet_from_context(context)
+                ),
+                turn_index,
+                _MAX_SPEECH_EVIDENCE,
             )
             style_samples = _rotate_evidence_by_turn(
                 style_samples, turn_index, _MAX_STYLE_SAMPLES
