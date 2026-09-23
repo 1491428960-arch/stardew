@@ -38,14 +38,22 @@ SOPHIA_MODS = ["vanilla", "SVE", "FlashShifter.StardewValleyExpandedCP"]
 # `test_topic_slot_rotation.py::SOPHIA_TOPICS` 及 `data/personas/sve.json` 逐字一致）。
 # 2026-09-24：第 2 条由「画布上还没画完的那一块」换成「给下一个角色扮演挑的布料」
 # （SVE 里她的创作面是角色扮演／缝纫，不是绘画；面归属不变，仍在「工作或手艺」）。
+# 2026-09-25：补到 **12 条 / 9 面全覆盖**，写法同时压短（`roleGuidance` 的 240 字
+# 截断线卡着，不压短装不下 12 条）。与 `test_topic_slot_rotation.py::SOPHIA_TOPICS`
+# 及 `data/personas/sve.json` 逐字一致。
 SOPHIA_TOPICS = [
-    "她最爱的精灵石和矿石",
-    "斯嘉丽和镇上这些朋友",
-    "海上吹来的咸味海风",
-    "窝在毯子里看电视的晚上",
-    "格斯做菜时那股香味",
-    "一个人待着时的孤独",
-    "镇上谁家又有了什么新鲜事",
+    "精灵石和矿石",
+    "斯嘉丽和朋友们",
+    "海边的咸风",
+    "毯子和电视",
+    "格斯做的菜",
+    "独处时的孤独",
+    "镇上的新鲜事",
+    "蓝月亮的年份",
+    "手工房的布料",
+    "你今天要忙什么",
+    "记得把头发染成粉色那天",
+    "动漫展",
 ]
 
 # **只覆盖两个面**的素材形状（2026-09-23 之前的索菲亚素材）：缺口角色的样子。
@@ -229,8 +237,8 @@ def test_rendered_instruction_example() -> None:
         "本轮先接住那里面的具体东西，再从它拉一根线过去、换到别的面，不要凭空跳过去。"
         "这一面本轮先搁着——像这样换：「……说起来，」，"
         "先把上一句收住，再用一个转折词拐到别的面，不要以同一面另起一件事。"
-        "改从「镇上或邻里」这一面挑一件具体的、能落到对白里的小事来说"
-        "（例如「斯嘉丽和镇上这些朋友」这个方向），只说一件，不要罗列。"
+        "改从「家人朋友」这一面挑一件具体的、能落到对白里的小事来说"
+        "（例如「斯嘉丽和朋友们」这个方向），只说一件，不要罗列。"
     )
     assert slot["playerAnchor"] == (
         "硬约束：玩家本轮点名的对象必须先接住、先应下来；"
@@ -377,8 +385,11 @@ def test_slot_still_bans_the_repeated_facet() -> None:
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert slot["suggestedFacet"] == "镇上或邻里"
-    assert slot["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
+    # 2026-09-25：素材补到 12 条后，这一轮点名池中第一条未被禁的「斯嘉丽和朋友们」
+    # （家人朋友面）—— 池首「精灵石和矿石」正是工作面、被禁令挡下。
+    # 不变量是"禁了工作面、去了另一个面"。
+    assert slot["suggestedFacet"] == "家人朋友"
+    assert slot["suggestedTopic"] == "斯嘉丽和朋友们"
 
 
 def test_slot_stays_silent_without_any_signal() -> None:
@@ -837,7 +848,7 @@ def test_three_act_scenario_she_rotates_he_pulls_back() -> None:
         _payload("Sophia", third_history, SOPHIA_MODS, message=pull_back)
     )
     assert "topicSlot" not in card
-    assert "镇上谁家又有了什么新鲜事" in card["conversationLead"]["roleGuidance"]
+    assert "镇上的新鲜事" in card["conversationLead"]["roleGuidance"]
 
 
 def test_suggestion_says_another_thing_when_the_facet_was_just_used() -> None:
@@ -872,7 +883,7 @@ def test_suggestion_keeps_the_plain_wording_for_a_fresh_facet() -> None:
         player_replies=["哦"],
     )
 
-    assert slot["suggestedFacet"] == "镇上或邻里"
+    assert slot["suggestedFacet"] == "家人朋友"
     assert "另一件" not in slot["instruction"]
 
 

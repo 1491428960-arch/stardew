@@ -220,10 +220,12 @@ def test_sophia_conversation_lead_guidance_bridges_cellar_and_creative_topics() 
     # 2026-09-24：创作方向那条由「画布上还没画完的那一块」换成
     # 「给下一个角色扮演挑的布料」（SVE 里她做的是角色扮演／缝纫，不是绘画；
     # 面归属仍是「工作或手艺」，「布料」本来就在该面词表里）。
-    assert "格斯做菜时那股香味" in guidance  # 创作方向
-    assert "斯嘉丽和镇上这些朋友" in guidance  # 跨簇：镇上方向
-    # 2026-09-25：回忆面那条让位（素材额度只有 82 字，见 §57），改为天气方向。
-    assert "海上吹来的咸味海风" in guidance  # 跨簇：天气方向
+    # 2026-09-25：素材压短重排（7 条 → 12 条 / 9 面），下面三条按新池换词。
+    # ⚠ 「格斯做的菜」是**吃喝**方向，不是创作方向（旧注释写错了；
+    #   实测 `_facet_of_topic` = 吃喝，"菜"命中吃喝词表）。
+    assert "格斯做的菜" in guidance  # 吃喝方向
+    assert "镇上的新鲜事" in guidance  # 跨簇：镇上方向
+    assert "海边的咸风" in guidance  # 跨簇：天气方向
     assert "同一类最多连续两次" not in guidance  # 四轮：两层表述已换成动作式
     # 2026-09-24：被压的两个簇里「绘画」换成「角色扮演」（SVE 查证见
     # `test_role_guidance_object_focus.py::test_sophia_persona_stops_claiming_she_paints`）。

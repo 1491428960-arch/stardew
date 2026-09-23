@@ -297,7 +297,7 @@ def test_topic_request_on_a_blank_history_does_not_land_back_on_her_trade() -> N
     guidance = card["conversationLead"]["roleGuidance"]
     assert "酒窖里这一批新酿" not in guidance
     assert "画布上还没画完的那一块" not in guidance
-    assert "斯嘉丽和镇上这些朋友" in guidance  # 2026-09-25：素材换成新池子
+    assert "斯嘉丽和朋友们" in guidance  # 2026-09-25：素材换成新池子
 
 
 def test_topic_request_after_a_few_turns_bans_the_facet_he_just_saw() -> None:

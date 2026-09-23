@@ -71,14 +71,31 @@ MIXED_REPLIES = [
 # SVE 从没把她设定成画画的（她家「很多布料和油漆」是手工材料，她自称的是
 # 「艺术瓶颈」），她的创作面在原话里是**角色扮演 + 缝纫**。面归属不变（都落
 # 「工作或手艺」，「布料」本就在该面词表里），所以 `expected_facets` 一个字没动。
+# 2026-09-25：从 7 条补到 **12 条 / 9 面全覆盖**（`_PREFERRED_TOPICS_LIMIT`）。
+# 两条约束同时满足，缺一不可：
+#   * **写法压短**（10 字/条 → 约 6 字/条）。`roleGuidance` 走
+#     `_compact_conversation_lead` 的 **240 字截断线**，越过就**静默失效**；
+#     12 条若沿用旧写法是 268 字（超 28），压短后 230 字才装得下。
+#     —— 这是"写了也白写"的闸门，`test_preferred_topics_fit_the_prompt_limit`
+#     只钉条数，钉不住这个，所以口径记在这里。
+#   * **不与被禁面撞词**。固定文案里本来就有「角色扮演」（"谈过酿造或角色扮演"），
+#     素材再用「角色扮演」会让 `test_any_banned_facet_still_leaves_a_readable_guidance`
+#     的"被禁面素材不得残留"断言失效 —— 而且语义自相矛盾（既说谈过、又当落点）。
+#     故该条改用「动漫展」（同属爱好面，原话"终于等到动漫展了"）。
+# 新增的 4 条补上了原先缺的三个面（玩家自己 / 过去的回忆 / 家人朋友）。
 SOPHIA_TOPICS = [
-    "她最爱的精灵石和矿石",
-    "斯嘉丽和镇上这些朋友",
-    "海上吹来的咸味海风",
-    "窝在毯子里看电视的晚上",
-    "格斯做菜时那股香味",
-    "一个人待着时的孤独",
-    "镇上谁家又有了什么新鲜事",
+    "精灵石和矿石",
+    "斯嘉丽和朋友们",
+    "海边的咸风",
+    "毯子和电视",
+    "格斯做的菜",
+    "独处时的孤独",
+    "镇上的新鲜事",
+    "蓝月亮的年份",
+    "手工房的布料",
+    "你今天要忙什么",
+    "记得把头发染成粉色那天",
+    "动漫展",
 ]
 
 # **只覆盖两个面**的素材形状 —— `_pick(allow_used=False)` 选空后退到"用过但未被禁"
@@ -148,7 +165,7 @@ def test_slot_bans_the_repeated_facet_and_names_another_one() -> None:
     assert "这一面本轮先搁着" in slot["instruction"]
     assert "不要以同一面另起一件事" in slot["instruction"]
     assert "像这样换" in slot["instruction"]  # 范例式，不再是反例清单
-    assert slot["suggestedFacet"] == "镇上或邻里"
+    assert slot["suggestedFacet"] == "家人朋友"
     assert slot["suggestedTopic"] in SOPHIA_TOPICS
     assert slot["suggestedFacet"] != slot["bannedFacet"]
     assert "只说一件" in slot["instruction"]  # 不许罗列
@@ -245,13 +262,13 @@ def test_compact_card_keeps_the_slot() -> None:
         "bannedFacet": "工作或手艺",
         "instruction": "最近2轮都在谈「工作或手艺」这一面；本轮不要再出现这一面。",
         "suggestedFacet": "镇上或邻里",
-        "suggestedTopic": "斯嘉丽和镇上这些朋友",
+        "suggestedTopic": "镇上的新鲜事",
     }}
 
     compact = _compact_stage_policy(policy, include_response_order=False)
 
     assert compact["topicSlot"]["bannedFacet"] == "工作或手艺"
-    assert compact["topicSlot"]["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
+    assert compact["topicSlot"]["suggestedTopic"] == "镇上的新鲜事"
 
 
 def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
@@ -266,7 +283,7 @@ def test_slot_reaches_the_live_compact_card_and_the_provider() -> None:
     slot = _card(messages, "stage_execution_card")["topicSlot"]
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert slot["suggestedTopic"] == "斯嘉丽和镇上这些朋友"
+    assert slot["suggestedTopic"] == "斯嘉丽和朋友们"
     blob = json.dumps(messages, ensure_ascii=False)
     assert "这一面本轮先搁着" in blob
 
@@ -305,7 +322,7 @@ def test_slot_reaches_the_provider_through_the_http_route(
     blob = json.dumps(captured[0], ensure_ascii=False)
     assert "topicSlot" in blob
     assert "工作或手艺" in blob
-    assert "斯嘉丽和镇上这些朋友" in blob
+    assert "斯嘉丽和朋友们" in blob
 
 
 # --- 4. 硬禁用确实改变了送给模型的东西（对照证明） ---------------------------
@@ -388,13 +405,18 @@ def test_rewritten_topics_are_concrete_objects_not_meta_categories(npc_id: str) 
     ("npc_id", "expected"),
     [
         ("Sophia", [
-            "她最爱的精灵石和矿石",
-            "斯嘉丽和镇上这些朋友",
-            "海上吹来的咸味海风",
-            "窝在毯子里看电视的晚上",
-            "格斯做菜时那股香味",
-            "一个人待着时的孤独",
-            "镇上谁家又有了什么新鲜事",
+            "精灵石和矿石",
+            "斯嘉丽和朋友们",
+            "海边的咸风",
+            "毯子和电视",
+            "格斯做的菜",
+            "独处时的孤独",
+            "镇上的新鲜事",
+            "蓝月亮的年份",
+            "手工房的布料",
+            "你今天要忙什么",
+            "记得把头发染成粉色那天",
+            "动漫展",
         ]),
         ("Elliott", ["卡住的那一段稿子", "海风里退潮后的那片沙滩",
                      "手边正在读的那本书", "你上次提到的那个地方",
@@ -407,7 +429,8 @@ def test_试点两人的素材已改写(npc_id: str, expected: list[str]) -> Non
     2026-09-23：目标从"能落座的具体物"提到"**补到 5 个生活面**"——
     索菲亚 2 面 → 5 面（加吃喝、爱好，并把"旧房子"那条由"镇上"改写为"过去的回忆"，
     那是全库唯一一条覆盖"过去的回忆"的素材），埃琳娜 4 面 → 5 面（加"自己的状态"）。
-    两人都停在 6/5 条，不超过素材层的"每角色 4~6 条"。
+    2026-09-25：索菲亚再提到 **12 条 / 9 面全覆盖**（见 `SOPHIA_TOPICS` 上方说明）；
+    埃琳娜维持原样等效果，所以两人不再"停在 6/5 条"。
     """
 
     assert _preferred_topics(npc_id) == expected
@@ -416,8 +439,9 @@ def test_试点两人的素材已改写(npc_id: str, expected: list[str]) -> Non
 @pytest.mark.parametrize(
     ("npc_id", "expected_facets"),
     [
-        ("Sophia", {"工作或手艺", "镇上或邻里", "天气季节",
-                    "爱好或消遣", "自己的状态或烦恼", "吃喝"}),
+        ("Sophia", {"工作或手艺", "镇上或邻里", "天气季节", "爱好或消遣",
+                    "自己的状态或烦恼", "吃喝", "家人朋友", "玩家自己",
+                    "过去的回忆"}),
         ("Elliott", {"工作或手艺", "天气季节", "爱好或消遣", "玩家自己", "自己的状态或烦恼"}),
     ],
 )
@@ -427,6 +451,9 @@ def test_试点两人的素材覆盖到五个生活面(npc_id: str, expected_fac
     面数不够的后果不是"素材少"，而是**换面一换就撞回原地**：索菲亚原先只有
     工作 / 镇上两面，槽位一旦禁掉工作面，`_pick` 只剩镇上可挑，第三轮就穷尽 ——
     机制只能靠规则硬压（用户体感"只聊画"的直接来源）。
+
+    2026-09-25 索菲亚到 **9/9 面**：`_LIFE_FACET_PATTERNS` 里每一个面的判定词表
+    都有一条能命中它 —— 也就是**禁掉任何一面，都还有别的面可去**。
     """
 
     got = {_facet_of_topic(topic) for topic in _preferred_topics(npc_id)}
@@ -587,15 +614,19 @@ def test_suggestion_falls_back_to_a_used_but_unbanned_facet() -> None:
 def test_sophia_no_longer_needs_the_fallback_branch() -> None:
     """补素材的**直接效果**：同一场景下她不再退到"用过但未被禁"的面。
 
-    两轮落在工作面之后（`used` = {工作或手艺}），5 面素材里有的是**没被用过、
-    也不与禁令同面**的候选 —— 槽位因此给出一个真正的新方向（"过去的回忆"），
-    而不是"换个说法说镇上"。这正是"素材补上去，规则减下来"要拿到的形状：
-    换面不再靠降级兜底，而是有地方可去。
+    两轮落在工作面之后（`used` = {工作或手艺}），素材里有的是**没被用过、
+    也不与禁令同面**的候选 —— 槽位因此给出一个真正的新方向，而不是"换个说法说镇上"。
+    这正是"素材补上去，规则减下来"要拿到的形状：换面不再靠降级兜底，而是有地方可去。
+
+    2026-09-25：补到 12 条 / 9 面后，这一轮点名的是池中第一条**未被禁**的「斯嘉丽和朋友们」
+    （家人朋友面）—— 池首「精灵石和矿石」正是工作面、被禁令挡下，所以跳过它去了下一条。
+    两个面都满足"未被用过 + 不与禁令同面"，所以 `suggestedFacet` 这个具体值只是数据快照，
+    **不变量是下面那两行**。
     """
 
     slot = rotation_topic_slot(SOPHIA_TOPICS, recent_replies=BREW_REPLIES)
 
-    assert slot["suggestedFacet"] == "镇上或邻里"  # 第一轮：镇上没被用过
+    assert slot["suggestedFacet"] == "家人朋友"
     assert _facet_of_topic(slot["suggestedTopic"]) != slot["bannedFacet"]
 
     # 交替场景（used = {工作或手艺, 镇上或邻里}）里也不会退到泛化分支
@@ -610,23 +641,24 @@ def test_sophia_no_longer_needs_the_fallback_branch() -> None:
 
 
 def test_narrow_topic_pool_drops_the_banned_facet() -> None:
-    """禁工作面之后，她**剩下 6 条**（镇上 2 + 天气 1 + 爱好 1 + 吃喝 1 + 状态 1）。
+    """禁工作面之后，她**剩下 9 条**（12 条里去掉 3 条工作面）。
 
-    2026-09-25：原为 4 条，当日三轮改动累计 +2：先由「给角色扮演挑的布料」（工作）
-    换成「格斯做菜时那股香味」（吃喝）；把池首改成「她最爱的精灵石和矿石」；
-    最后把池尾的「葡萄架和这一季的葡萄」换成「镇上谁家又有了什么新鲜事」——
-    **这一条把"换面时还有多少地方可去"从 5 提到 6**，也正是本轮的目标。
+    2026-09-25：原为 6 条。当日把 `preferredTopics` 由 7 条补到 12 条 / 9 面全覆盖，
+    禁工作面后剩下的落点从 6 条升到 9 条 —— 这个数就是"换面时还有多少地方可去"。
     """
 
     narrowed = narrow_topic_pool(SOPHIA_TOPICS, "工作或手艺")
 
     assert narrowed == [
-        "斯嘉丽和镇上这些朋友",
-        "海上吹来的咸味海风",
-        "窝在毯子里看电视的晚上",
-        "格斯做菜时那股香味",
-        "一个人待着时的孤独",
-        "镇上谁家又有了什么新鲜事",
+        "斯嘉丽和朋友们",
+        "海边的咸风",
+        "毯子和电视",
+        "格斯做的菜",
+        "独处时的孤独",
+        "镇上的新鲜事",
+        "你今天要忙什么",
+        "记得把头发染成粉色那天",
+        "动漫展",
     ]
 
 
@@ -668,7 +700,7 @@ def test_banned_facet_disappears_from_the_guidance_of_the_same_card() -> None:
     assert card["topicSlot"]["bannedFacet"] == "工作或手艺"
     assert "蓝月亮招牌酒今年这一批的味道" not in guidance
     assert "画布上还没画完的那一块" not in guidance
-    assert "斯嘉丽和镇上这些朋友" in guidance
+    assert "斯嘉丽和朋友们" in guidance
 
 
 def test_guidance_keeps_the_whole_pool_when_no_slot_fires() -> None:
@@ -788,7 +820,7 @@ def test_narrow_material_roles_are_recorded() -> None:
     那一行就是这么更新的）。
     """
 
-    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 6
+    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 9
     assert narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺") == _prompt_topics("Alex")
     assert _facet_of_topic("职业选手目标，以及后来发现的微不足道的小事") is None
 
@@ -1358,7 +1390,7 @@ def test_secondary_facet_penetration_added_by_restoring(npc_id: str) -> None:
 KEPT_REWRITES_WHOSE_ORIGINAL_WOULD_DRIFT: dict[tuple[str, str, str], tuple[str, str]] = {
     # (角色, 保留的改写, 原话): (原因, 原话的面)
     ("Shane", "忙起来那股压力", "工作压力"): ("drift", "工作或手艺"),
-    ("Sophia", "窝在毯子里看电视的晚上", "下雨了！在这样的日子里，我只想窝在毯子里看电视。"): (
+    ("Sophia", "毯子和电视", "下雨了！在这样的日子里，我只想窝在毯子里看电视。"): (
         "drift", "天气季节",
     ),
     # 2026-09-25：「刚搬来镇上那阵子，和现在比变化有多大」已从 preferredTopics 移除

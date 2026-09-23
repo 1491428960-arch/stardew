@@ -48,6 +48,7 @@ import pytest
 from stardew_ai_bridge.stage_policy import (
     _CONVERSATION_LEAD_ROLE_GUIDANCE,
     _ROLE_OVERRIDES,
+    _facet_of_topic,
     build_stage_policy,
 )
 
@@ -144,12 +145,11 @@ def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
     # 显式点名两个**非酿造非绘画**的方向：这是「总是谈画」的解药。
     # 2026-09-21 六轮（批次 4b）：这两条素材本身已从抽象元类目
     # （「小镇日常」「安全感与新开始」）改写成可落座的具体物，断言跟着换词。
-    # 2026-09-25：这三条换成按数据源验的新素材（跨簇：镇上 / 创作）。
-    assert "斯嘉丽和镇上这些朋友" in guidance
-    # 2026-09-25：回忆面那条已让位 —— `roleGuidance` 只剩 82 字给素材（240 减去
-    # 固定文案 158），7 条短素材刚好 236 字；再塞一条会溢出被截断。新池子改为覆盖
-    # 工作 / 镇上 / 天气 / 爱好 / 状态五面（见 docs 报告 §57）。
-    assert "海上吹来的咸味海风" in guidance
+    # 2026-09-25：素材由 7 条补到 12 条 / 9 面全覆盖，写法同时压短（10 字/条 → 约 6 字/条），
+    # 渲染 230/240 —— `roleGuidance` 的 240 字截断线仍然卡着，**不压短就装不下 12 条**
+    # （不压短是 268 字，超 28 字会被静默截断）。断言跟着换到新词。
+    assert "镇上的新鲜事" in guidance
+    assert "海边的咸风" in guidance
 
 
 def test_no_role_guidance_asks_the_model_to_narrate_a_process() -> None:
@@ -305,8 +305,14 @@ def test_sophia_persona_stops_claiming_she_paints() -> None:
         "stage_policy._CONVERSATION_LEAD_ROLE_GUIDANCE['Sophia']"
     ]
     assert "角色扮演" in policy_texts["stage_policy._ROLE_OVERRIDES['Sophia']"]
-    # `preferredTopics` 第 2 条必须仍在「工作或手艺」面上（面归属不得漂移）。
-    assert "格斯做菜时那股香味" in sophia["voiceStyle"]["preferredTopics"]
+    # 原话支撑的具体物仍要在池里 —— 删掉"画"之后不能只留一片空洞。
+    # ⚠ 本条原先的注释写「第 2 条必须仍在「工作或手艺」面上」，那是**错的**：
+    #   实测 `_facet_of_topic("格斯做菜时那股香味")` = 「吃喝」（"菜"命中吃喝词表），
+    #   从来不是工作面。断言真正在验的是"有原话支撑的吃喝向具体物还在"。
+    #   2026-09-25 素材压短后该条为「格斯做的菜」，面归属不变（吃喝）。
+    #   工作面本身也没丢：`手工房的布料` / `蓝月亮的年份` 两条都落在该面。
+    assert "格斯做的菜" in sophia["voiceStyle"]["preferredTopics"]
+    assert _facet_of_topic("手工房的布料") == "工作或手艺"
 
 
 def test_sophia_rendered_prompt_has_no_painting_words() -> None:
