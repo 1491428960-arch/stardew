@@ -4567,7 +4567,11 @@ def _compact_identity(
         }
         if compact_mapping:
             result[key] = compact_mapping
-    core_traits = _compact_text_list(value.get("coreTraits"), limit=4, item_limit=60)
+    # 2026-09-25：limit 由 4 提到 6。**这是第 7 个静默闸门** —— 数据 9 条、
+    # 只发 4 条，第 5~9 条（结巴／精灵石／打扮／不跳舞／朋友）**从未进过 prompt**，
+    # 其中包括前一晚刚加进去的两条。**排查时读的是 `ctx`（数据源）而不是渲染后的卡**，
+    # 所以「9 条全部到达」的结论是错的 —— 与 §57.4 记录的同型教训。
+    core_traits = _compact_text_list(value.get("coreTraits"), limit=6, item_limit=60)
     if core_traits:
         result["coreTraits"] = core_traits
     for key, builder in (
