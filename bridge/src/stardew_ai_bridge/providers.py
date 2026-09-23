@@ -178,6 +178,37 @@ def _max_tokens_for(request: DialogueTestRequest) -> int:
     return _SINGLE_TURN_MAX_TOKENS
 
 
+#: 空 content 的替代文本。只用于**出网请求的最后一步**，不进入 prompt 构造。
+_EMPTY_MESSAGE_PLACEHOLDER = "（无）"
+
+
+def _fill_empty_message_content(
+    messages: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """把 content 为空的消息填上占位符，**不能删掉那一条**。
+
+    `persona_core` / `topic_trigger` 这类卡片在"玩家还没开口"的回合本来就是空的，
+    而 DeepSeek 官方端点容忍空 content，所以这个缺陷长期没暴露。
+
+    2026-09-23 切到 Command Code 后上游会直接拒绝，实测两种错法都是 400：
+
+    * 原样发空 content → `user message must have content`（param 指向那一条）；
+    * **删掉那一条** → `A conversation must start with a user message`
+      （`topic_trigger` 恰好是唯一的 user 消息，删了就只剩 system）。
+
+    所以只能填不能删。占位符取「（无）」而非空串或空格：空串是同一个错误，
+    而空格过不了 `strip()` 类的上游校验。
+    """
+
+    out: list[dict[str, str]] = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            message = {**message, "content": _EMPTY_MESSAGE_PLACEHOLDER}
+        out.append(message)
+    return out
+
+
 @runtime_checkable
 class Provider(Protocol):
     @property
@@ -428,7 +459,9 @@ class OpenAICompatibleProvider:
         headers: dict[str, str] = self._headers()
         payload = {
             "model": self.settings.model,
-            "messages": (
+            # 出网前填掉空 content：Command Code 上游会 400 拒收，而删掉那一条
+            # 又会被判"会话必须以 user 消息开头"。见 _fill_empty_message_content。
+            "messages": _fill_empty_message_content(
                 messages if messages is not None else _default_provider_messages(request)
             ),
             # 中转站对非流式收尾不稳定；流式响应能先返回 token，并在 Bridge
