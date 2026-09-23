@@ -334,3 +334,27 @@ git 侧有 `LF will be replaced by CRLF` 警告，说明仓库存储与工作区
 
 **教训：文件换行符必须实测，不能沿用记忆。**
 
+### 9.5 服务端确认与一处接口边界（实测）
+
+bridge 已重启（旧 PID 169988 停掉，新进程监听 `127.0.0.1:5678`），
+`prompts.py` 当前 SHA = `4A9EEB6CED34E42F`，进程启动时间晚于文件改动时间。
+
+`POST /api/context/preview` 实测返回的是 **`build()` 之前**的原始证据快照：
+
+- `speechEvidence` 是**访问器结果**（实测 **6 条**，**尚未切片、也尚未轮转**）
+- `promptSummary` 只给卡片**清单**（21 张，含 `role`/`name`），**不含卡片内容**
+
+⇒ **该端点看不到轮转效果** —— 轮转发生在 `PromptBuilder.build()` 内部。
+卡片内容的验证只能走 `app._build_context`（`turn-probe.py`，同一入口、零额度）
+或真实对话（需调模型）。
+
+21 张卡清单（实测，`compactPrompt = True`）：`safety_rules` `persona_core` `story_state`
+`mod_overlay` `scene` `daily_routine` `voice_card` `speech_evidence` `knowledge_facts`
+`style_evidence` `original_style_examples` `behavior_examples` `conversation_history`
+`post_history_voice_guard` `stage_execution_card` `voice_execution_card`
+`topic_response_contract` `final_role_voice_contract` `player_echo_guard` `turn_plan` `topic_trigger`
+
+**探针教训（第四条）：`/api/context/preview` 不是 prompt 的镜像。**
+它给的是 `build()` 的**输入**，不是 `build()` 的**输出**。要验证卡片内容，
+必须走 `app._build_context`。
+
