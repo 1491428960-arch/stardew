@@ -42,6 +42,7 @@ _IDENTITY_FIELDS = (
     "pronouns",
     "coreTraits",
     "addressing",
+    "npcRelations",
     "voiceStyle",
     "stageProfile",
     "stagePolicy",
@@ -4788,6 +4789,44 @@ def _compact_daily_routine(value: object) -> list[str]:
     return entries
 
 
+def _compact_npc_relations(value: object, *, limit: int = 6) -> list[dict[str, str]]:
+    """压缩 NPC↔NPC 关系条目。
+
+    每条只留 `npc` / `term` / 可选的 `note`。`note` 是**这个角色自己的关系
+    知识**（第一人称）：2026-09-24 的实机问题正是它缺失 —— 索菲亚身上关于
+    格斯只有「格斯做菜时那股香味」，于是她把格斯编成了「有点怕打扰到他」的
+    陌生人，而事件对白里 Gus 说的是 "Anything for a close family friend!"。
+
+    没有 `npc` 的条目一律丢掉，发出去只会让模型困惑。
+    """
+
+    if not isinstance(value, list):
+        return []
+
+    compact: list[dict[str, str]] = []
+    for entry in value:
+        if not isinstance(entry, Mapping):
+            continue
+
+        npc = _text(entry.get("npc"), limit=60)
+        if not npc:
+            continue
+
+        item: dict[str, str] = {"npc": npc}
+        term = _text(entry.get("term"), limit=40)
+        if term:
+            item["term"] = term
+        note = _text(entry.get("note"), limit=120)
+        if note:
+            item["note"] = note
+
+        compact.append(item)
+        if len(compact) >= limit:
+            break
+
+    return compact
+
+
 def _compact_identity(
     value: object,
     *,
@@ -4821,6 +4860,11 @@ def _compact_identity(
     core_traits = _compact_text_list(value.get("coreTraits"), limit=6, item_limit=60)
     if core_traits:
         result["coreTraits"] = core_traits
+    # 2026-09-24：NPC↔NPC 关系。她认识的人和她与这些人的关系，属于角色资料，
+    # 与 coreTraits 同级 —— 缺失的代价是模型在缺口处自己编（见函数 docstring）。
+    npc_relations = _compact_npc_relations(value.get("npcRelations"))
+    if npc_relations:
+        result["npcRelations"] = npc_relations
     for key, builder in (
         ("voiceStyle", _compact_voice_style),
         ("stageProfile", _compact_stage_profile),
@@ -6271,6 +6315,11 @@ class PromptBuilder:
             "displayName",
             "aliases",
             "coreTraits",
+            # 2026-09-24：关系放在**基础列表**里，不放下面那个条件分支 ——
+            # 游戏走的是 `compact=True` + `_runtime_compact` 那条路，
+            # 只在非 compact 时发等于没做（`stagePolicy` 就是这么划的，
+            # 但它是"更细的说话要求"，关系不是）。
+            "npcRelations",
             "voiceStyle",
             "stageProfile",
             "relationshipGate",

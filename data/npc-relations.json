@@ -1,0 +1,304 @@
+{
+  "version": 1,
+  "sources": {
+    "characters": "D:\\sbeam\\steamapps\\common\\Stardew Valley\\Content (unpacked)\\Data\\Characters.json",
+    "strings": "D:\\sbeam\\steamapps\\common\\Stardew Valley\\Content (unpacked)\\Strings\\Characters.zh-CN.json",
+    "locale": "zh-CN",
+    "modRoots": [
+      "D:\\sbeam\\steamapps\\common\\Stardew Valley\\Mods\\Stardrop Installed Mods\\Stardew Valley Expanded\\[CP] Stardew Valley Expanded"
+    ],
+    "extras": "E:\\workspace\\projects\\stardew-ai-npc\\.worktrees\\story-memory\\data\\personas\\npc-relations-extras.json"
+  },
+  "relations": {
+    "Abigail": [
+      {
+        "npc": "Caroline",
+        "term": "妈妈"
+      },
+      {
+        "npc": "Pierre",
+        "term": "爸爸"
+      }
+    ],
+    "Alex": [
+      {
+        "npc": "Evelyn",
+        "term": "奶奶"
+      },
+      {
+        "npc": "George",
+        "term": "爷爷"
+      }
+    ],
+    "Caroline": [
+      {
+        "npc": "Abigail",
+        "term": "女儿"
+      },
+      {
+        "npc": "Pierre",
+        "term": "丈夫"
+      }
+    ],
+    "Clint": [
+      {
+        "npc": "Emily",
+        "term": "熟人"
+      }
+    ],
+    "Demetrius": [
+      {
+        "npc": "Maru",
+        "term": "女儿"
+      },
+      {
+        "npc": "Robin",
+        "term": "妻子"
+      }
+    ],
+    "Elliott": [
+      {
+        "npc": "Willy",
+        "term": "熟人"
+      }
+    ],
+    "Emily": [
+      {
+        "npc": "Haley",
+        "term": "姐姐"
+      }
+    ],
+    "Evelyn": [
+      {
+        "npc": "Alex",
+        "term": "孙子"
+      },
+      {
+        "npc": "George",
+        "term": "丈夫"
+      }
+    ],
+    "George": [
+      {
+        "npc": "Alex",
+        "term": "孙子"
+      },
+      {
+        "npc": "Evelyn",
+        "term": "妻子"
+      }
+    ],
+    "Gus": [
+      {
+        "npc": "Emily",
+        "term": "熟人"
+      },
+      {
+        "npc": "Pam",
+        "term": "熟人"
+      }
+    ],
+    "Haley": [
+      {
+        "npc": "Emily",
+        "term": "姐姐"
+      }
+    ],
+    "Jas": [
+      {
+        "npc": "Vincent",
+        "term": "熟人"
+      }
+    ],
+    "Jodi": [
+      {
+        "npc": "Kent",
+        "term": "丈夫"
+      },
+      {
+        "npc": "Sam",
+        "term": "长子"
+      },
+      {
+        "npc": "Vincent",
+        "term": "老幺"
+      }
+    ],
+    "Kent": [
+      {
+        "npc": "Jodi",
+        "term": "妻子"
+      },
+      {
+        "npc": "Sam",
+        "term": "长子"
+      },
+      {
+        "npc": "Vincent",
+        "term": "最小的男孩"
+      }
+    ],
+    "Lewis": [
+      {
+        "npc": "Marnie",
+        "term": "熟人"
+      }
+    ],
+    "Marnie": [
+      {
+        "npc": "Jas",
+        "term": "侄女"
+      },
+      {
+        "npc": "Lewis",
+        "term": "熟人"
+      },
+      {
+        "npc": "Shane",
+        "term": "外甥"
+      }
+    ],
+    "Maru": [
+      {
+        "npc": "Demetrius",
+        "term": "爸爸"
+      },
+      {
+        "npc": "Robin",
+        "term": "妈妈"
+      },
+      {
+        "npc": "Sebastian",
+        "term": "同母异父的哥哥"
+      }
+    ],
+    "Pam": [
+      {
+        "npc": "Gus",
+        "term": "熟人"
+      },
+      {
+        "npc": "Penny",
+        "term": "小女婴"
+      }
+    ],
+    "Penny": [
+      {
+        "npc": "Pam",
+        "term": "母亲"
+      }
+    ],
+    "Pierre": [
+      {
+        "npc": "Abigail",
+        "term": "女儿"
+      },
+      {
+        "npc": "Caroline",
+        "term": "妻子"
+      }
+    ],
+    "Robin": [
+      {
+        "npc": "Demetrius",
+        "term": "丈夫"
+      },
+      {
+        "npc": "Maru",
+        "term": "女儿"
+      },
+      {
+        "npc": "Sebastian",
+        "term": "儿子"
+      }
+    ],
+    "Sam": [
+      {
+        "npc": "Jodi",
+        "term": "妈妈"
+      },
+      {
+        "npc": "Kent",
+        "term": "爸爸"
+      },
+      {
+        "npc": "Sebastian",
+        "term": "熟人"
+      },
+      {
+        "npc": "Vincent",
+        "term": "小弟弟"
+      }
+    ],
+    "Sandy": [
+      {
+        "npc": "Emily",
+        "term": "熟人"
+      }
+    ],
+    "Sebastian": [
+      {
+        "npc": "Maru",
+        "term": "同母异父的妹妹"
+      },
+      {
+        "npc": "Robin",
+        "term": "妈妈"
+      },
+      {
+        "npc": "Sam",
+        "term": "熟人"
+      }
+    ],
+    "Shane": [
+      {
+        "npc": "Marnie",
+        "term": "阿姨"
+      }
+    ],
+    "Sophia": [
+      {
+        "npc": "Gus",
+        "term": "家人的朋友",
+        "note": "格斯从我很小的时候起就是我家人的朋友，他喜欢来看望我。去酒馆我从来不用点单，他知道我要格兰普顿香橙鸡，还总说这顿算他的。",
+        "evidence": "SVE i18n zh.json: Sophia.CharacterDialogue.107 / Sophia.4hearts.HowAreYou.07 / Sophia.8hearts.14"
+      },
+      {
+        "npc": "Lewis",
+        "term": "镇长",
+        "note": "刘易斯镇长和格斯一起见证了我最难的那件事。",
+        "evidence": "SVE i18n zh.json: Sophia.7hearts1.11"
+      },
+      {
+        "npc": "Scarlett",
+        "term": "朋友",
+        "note": "斯嘉丽这位朋友下次来的时候，会给我带格兰普顿香橙鸡。",
+        "evidence": "SVE i18n zh.json: Sophia.CharacterDialogue.088"
+      },
+      {
+        "npc": "Susan",
+        "term": "教我手艺的朋友",
+        "note": "苏珊会教我手工艺。",
+        "evidence": "SVE i18n zh.json: Sophia.CharacterDialogue.047"
+      },
+      {
+        "npc": "Victor",
+        "term": "好朋友",
+        "note": "维克多对我来说一直是位好朋友，我们以前常一起看电视。最近不像以前那样经常见面了，我有点在意这件事。",
+        "evidence": "SVE i18n zh.json: Sophia.marriedVictor / Sophia.CharacterDialogue.044,046,121"
+      }
+    ],
+    "Vincent": [
+      {
+        "npc": "Jas",
+        "term": "熟人"
+      }
+    ],
+    "Willy": [
+      {
+        "npc": "Elliott",
+        "term": "熟人"
+      }
+    ]
+  }
+}

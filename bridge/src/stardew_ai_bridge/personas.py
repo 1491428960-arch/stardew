@@ -243,12 +243,58 @@ def _mod_markers(payload: Mapping[str, Any], path: Path) -> list[str]:
     return list(dict.fromkeys(markers)) or [path.stem]
 
 
+def _load_npc_relations(path: Path) -> dict[str, list[dict[str, str]]]:
+    """读 NPC↔NPC 关系表（`data/npc-relations.json`）。
+
+    文件不存在、读不动、格式不对一律返回空表 —— 关系是增强信息，缺了不该
+    影响聊天本身。条目只保留 Mapping，值统一转成字符串。
+    """
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+    if not isinstance(payload, Mapping):
+        return {}
+
+    relations = payload.get("relations")
+    if not isinstance(relations, Mapping):
+        return {}
+
+    table: dict[str, list[dict[str, str]]] = {}
+    for npc_id, entries in relations.items():
+        if not isinstance(entries, list):
+            continue
+        cleaned = [
+            {str(key): str(value) for key, value in entry.items()}
+            for entry in entries
+            if isinstance(entry, Mapping)
+        ]
+        if cleaned:
+            table[str(npc_id)] = cleaned
+
+    return table
+
+
 class PersonaStore:
     """从 data/personas 下的 JSON 资料加载 NPC 基础资料和 Mod 覆盖层。"""
 
-    def __init__(self, data_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path | None = None,
+        relations_path: str | Path | None = None,
+    ) -> None:
         self.data_dir = Path(data_dir) if data_dir is not None else (
             Path(__file__).resolve().parents[3] / "data" / "personas"
+        )
+        # NPC↔NPC 关系表跟 persona 资料同父目录，但**不能**放进 `data_dir` 里面：
+        # `_load()` 把该目录下每个 JSON 的顶层当条目表，关系表的顶层键
+        # （`relations`）会凭空变成一个叫 "relations" 的 NPC。
+        self._relations = _load_npc_relations(
+            Path(relations_path)
+            if relations_path is not None
+            else self.data_dir.parent / "npc-relations.json"
         )
         self._personas = self._load()
 
@@ -320,6 +366,11 @@ class PersonaStore:
         )
         merged = _ensure_profile_layers(merge_persona(base, source_mods))
         merged["npcId"] = canonical_id
+        # 关系表在这一层挂，而不是在 `_load()` 里 —— 那样得先过 `merge_persona`，
+        # 一旦它只挑固定字段，关系就会被静默丢掉（本项目栽过多次的「静默闸门」）。
+        relations = self._relations.get(key) or self._relations.get(canonical_id)
+        if relations:
+            merged["npcRelations"] = relations
         return merged
 
     def load(self, npc_id: str, source_mods: Iterable[str] = ()) -> dict[str, Any]:

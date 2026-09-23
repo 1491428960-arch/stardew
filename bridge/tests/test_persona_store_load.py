@@ -68,3 +68,67 @@ def test_load_keeps_vanilla_as_the_base_and_layers_other_files(tmp_path: Path) -
     # 基线仍是 vanilla 的内容，叠加层单独保存（真实取值由 merge_persona 决定）。
     assert loaded["Shane"]["displayName"] == "谢恩"
     assert loaded["Shane"]["modOverlay"]["female-bachelors"]["displayName"] == "珊恩"
+
+
+def test_get_persona_attaches_the_npc_relations(tmp_path: Path) -> None:
+    """NPC↔NPC 关系表放在 `data/` 下，**不在** `data/personas/` 里。
+
+    `_load()` 把 `data_dir` 下每个 JSON 的顶层当条目表，关系表要是混在里面，
+    它的顶层键（`relations`）会变成一个叫 "relations" 的 NPC。
+    """
+
+    _write(
+        tmp_path / "vanilla.json",
+        {"mod": "vanilla", "personas": {"Gus": {"displayName": "格斯"}}},
+    )
+    relations = tmp_path.parent / "npc-relations.json"
+    _write(
+        relations,
+        {
+            "version": 1,
+            "relations": {
+                "Gus": [
+                    {"npc": "Emily", "term": "熟人"},
+                    {"npc": "Pam", "term": "熟人"},
+                ]
+            },
+        },
+    )
+
+    store = PersonaStore(tmp_path, relations_path=relations)
+
+    assert store.get_persona("Gus")["npcRelations"] == [
+        {"npc": "Emily", "term": "熟人"},
+        {"npc": "Pam", "term": "熟人"},
+    ]
+
+
+def test_get_persona_leaves_relations_absent_when_the_character_has_none(
+    tmp_path: Path,
+) -> None:
+    _write(
+        tmp_path / "vanilla.json",
+        {"mod": "vanilla", "personas": {"Gus": {"displayName": "格斯"}}},
+    )
+    relations = tmp_path / "npc-relations.json"
+    _write(
+        relations,
+        {"version": 1, "relations": {"Gus": [{"npc": "Emily", "term": "熟人"}]}},
+    )
+
+    store = PersonaStore(tmp_path, relations_path=relations)
+
+    # 没有关系的角色不能带一个空列表 —— 那会凭空多出一张卡。
+    assert "npcRelations" not in store.get_persona("Linus")
+
+
+def test_persona_store_survives_a_missing_relations_file(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "vanilla.json",
+        {"mod": "vanilla", "personas": {"Gus": {"displayName": "格斯"}}},
+    )
+
+    store = PersonaStore(tmp_path, relations_path=tmp_path / "不存在.json")
+
+    assert store.get_persona("Gus")["displayName"] == "格斯"
+    assert "npcRelations" not in store.get_persona("Gus")
