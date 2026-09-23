@@ -1204,17 +1204,31 @@ def _evict_banned_facet(
 # 那份是 2026-09-24 在真机样本上校准的（爆米花 0.82／新酿 0.71 判为说过，
 # "明显没用素材"的几轮全 0.00），没有理由为同一件事另立一个数。
 _EVIDENCE_ECHO_BIGRAM_RATIO = 0.5
-# 回溯几条 NPC 回复。私聊发送窗口只给 6 条 history（含玩家那句），
-# 所以实际能看到的 NPC 回复最多 3 条；4 是"全都看"的上界，不是刻意留的余量。
-_EVIDENCE_ECHO_WINDOW = 4
 
 
 def _recent_npc_replies(context: Mapping[str, Any]) -> list[str]:
-    """从 `context["history"]` 取 NPC 的回复文本（时间正序）。
+    """她最近说过的话（时间正序）——**优先用跨窗口那一份**。
+
+    跨窗口那一份来自请求体的 `recentReplies`（Mod 端从回看档案取），
+    由 `ContextBuilder.build` 规整后放在 `context["recentReplies"]`；
+    它比发送窗口长得多（真机 history 只有 6 条 ≈ 3 轮，
+    `smapi/BridgeClient.MaxHistoryItems`），所以"这条素材整场谈过没有"
+    只有靠它才问得出来（2026-09-23，见 `docs/report-*` 的同日报告）。
 
     取法与 `_history_affection_pacing` 一致（`role == "assistant"`、
-    `_text(..., limit=180)`），不另立第二份口径。
+    `_text(..., limit=180)`），不另立第二份口径；退化的那一支读
+    `context["history"]`，与加这个键之前**逐字相同**。
     """
+
+    cross_window = context.get("recentReplies")
+    if isinstance(cross_window, (list, tuple)):
+        replies = [
+            content
+            for content in (_text(item, limit=180) for item in cross_window)
+            if content
+        ]
+        if replies:
+            return replies
 
     history = context.get("history")
     if not isinstance(history, (list, tuple)):
@@ -1233,12 +1247,18 @@ def _evidence_already_spoken(
     sample: Mapping[str, Any],
     recent_replies: list[str],
 ) -> bool:
-    """这条素材最近几轮是不是已经被她说出来过。"""
+    """这条素材是不是已经被她说出来过。
+
+    **窗口由调用方决定**（2026-09-23）：这里不再自己截断。此前写死
+    `recent_replies[-4:]`，而 4 是"history 那条退化路径最多能看到几条"的上界 ——
+    一旦调用方换成跨窗口那一份（几十条），这个切片会把长窗口**静默**截回 4 条，
+    跨窗口就白接了。跨窗口的调用方要的正是"整段都算"。
+    """
 
     text = sample.get("text")
     if not isinstance(text, str) or not text.strip():
         return False
-    recent = [r for r in recent_replies[-_EVIDENCE_ECHO_WINDOW:] if r and r.strip()]
+    recent = [r for r in recent_replies if r and r.strip()]
     if not recent:
         return False
     blob = " ".join(recent)
@@ -1685,6 +1705,24 @@ class ContextBuilder:
                 history_item.update(_history_provenance(item))
                 history.append(history_item)
 
+        # 跨窗口的"她最近说过什么"（2026-09-23）。
+        #
+        # 请求体多带的这一份来自 Mod 的回看档案（`ChatHistoryRules.MaxDisplayMessages`
+        # 条），比发送窗口长得多 —— 真机 history 只有 6 条（约 3 轮，
+        # `smapi/BridgeClient.MaxHistoryItems`），"这条素材整场谈过没有"在里面问不出来。
+        # 它**只**用于判定：槽位排除"整场谈过的素材"、素材卡轮转跳过"已经说过的对白"。
+        # **不进模型看得到的消息** —— 那条路径仍只由 `history` 决定
+        # （`_PROMPT_HISTORY_LIMIT` / `-(4 if compact ...)`），所以这一份既不撑大
+        # prompt、也不改对话上下文。
+        #
+        # 上限 40 与 `models.DialogueTestRequest.recent_replies` 的 `max_length` 同源；
+        # 单项 180 与 `_recent_npc_replies` 的限长口径同源（不另立第二份）。
+        cross_window_replies = _compact_text_list(
+            _first_value(values, "recentReplies", "recent_replies"),
+            limit=40,
+            item_limit=180,
+        )
+
         # **本轮**玩家的话（2026-09-22 接线修复）。
         #
         # 游戏端发请求时本轮走 `Message` 字段、`History` 里**没有本轮**：
@@ -1756,6 +1794,8 @@ class ContextBuilder:
             recent_replies=turn_replies,
             player_replies=player_replies_for_slot,
             turn_players=turn_players,
+            # 跨窗口那一份只用来判"这条素材整场谈过没有"（见上面的定义处）。
+            spoken_replies=cross_window_replies,
         )
 
         # 槽位与 `roleGuidance` 的**唯一层级**（2026-09-21 二次）：槽位说"别再谈工作面"，
@@ -1822,6 +1862,10 @@ class ContextBuilder:
             "recentFacts": recent_facts,
             "history": history,
         }
+
+        # 跨窗口那一份（定义在上方 history 之后）挂进 context —— 判定用，不进消息。
+        if cross_window_replies:
+            context["recentReplies"] = cross_window_replies
 
         relationship_world = _first_value(
             values,

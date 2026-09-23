@@ -969,10 +969,30 @@ def _transition_example(anchor: str, replies: object = ()) -> str:
 _TOPIC_ECHO_BIGRAM_RATIO = 0.5
 
 
-def _topic_already_spoken(topic: str, replies: list[str]) -> bool:
-    """这条素材是不是最近两轮已经被她说出来过（方案 4 的去重依据）。"""
+def _topic_already_spoken(
+    topic: str,
+    replies: list[str],
+    *,
+    window: int | None = 2,
+) -> bool:
+    """这条素材是不是**窗口内**已经被她说出来过（方案 4 的去重依据）。
 
-    recent = " ".join(replies[-2:])
+    ``window`` 默认 **2**（＝"最近两轮"）—— 这是 2026-09-24 定阈值时的原口径，
+    一个字不改。传 ``None`` 表示**用整段传入文本**：跨轮次状态要的正是这个。
+    真机 history 被封顶在 6 条（`BridgeClient.MaxHistoryItems`，约 3 轮），
+    "这条素材整场聊过没有"这件事在 history 里问不出来，只能由调用方多带一份
+    更长的原文（请求体的 `recentReplies`），再用 ``window=None`` 问它。
+
+    窗口拉长的安全性有实测支撑（`.tmp/topic-probe/crosswindow-diagnose.py`，
+    三批真机产物）：24 轮窗口下 2-gram ≥ 0.5 的**假阳只有 0~1 条**，
+    而"素材关键词"参照在同段文本上判出 8~9 条 ⇒ 判据偏保守（漏报多、误判几乎没有）。
+    """
+
+    if window is None:
+        selected = list(replies)
+    else:
+        selected = list(replies[-window:]) if window > 0 else []
+    recent = " ".join(selected)
     if not recent:
         return False
     grams = [topic[index : index + 2] for index in range(len(topic) - 1)]
@@ -988,6 +1008,7 @@ def rotation_topic_slot(
     recent_replies: object = (),
     player_replies: object = (),
     turn_players: object = (),
+    spoken_replies: object = (),
 ) -> dict[str, Any]:
     """按最近轮次算一个「本轮换面」的硬槽位；不需要换时返回空 dict。
 
@@ -1013,6 +1034,11 @@ def rotation_topic_slot(
     两条**不产出槽位**的路径（都写在常量区的防误判里）：玩家在划边界
     （``_PLAYER_REFUSAL_MARKERS``，交给 `boundaryMode` 收口）；玩家本轮自己
     把话带回了被禁的那个面 —— 见下面对"撤回"的说明。
+
+    ``spoken_replies``（2026-09-23）是**跨窗口**的那一份原文：与 ``recent_replies``
+    同样的文本、但来自请求体的 `recentReplies`（Mod 端从回看档案取），比发送窗口长。
+    它**只**参与"这条素材谈过没有"的判定，**不**参与 ``facetRepeat`` 的计数 ——
+    后者那 3 轮窗口是「主动权在她，方向盘在你手里」这条用户口径调出来的，一个字不动。
     """
 
     replies = [
@@ -1020,6 +1046,13 @@ def rotation_topic_slot(
         for item in (recent_replies if isinstance(recent_replies, (list, tuple)) else ())
         if isinstance(item, str) and item.strip()
     ][-_FACET_LOOKBACK:]
+    # 跨窗口那一份（2026-09-23）：**不截断**（调用方已按上限给量），
+    # 只在这里去空白。理由见 `spoken_replies` 的说明与 `_topic_already_spoken`。
+    cross_replies = [
+        item.strip()
+        for item in (spoken_replies if isinstance(spoken_replies, (list, tuple)) else ())
+        if isinstance(item, str) and item.strip()
+    ]
     player_texts = [
         text
         for text in (
@@ -1093,7 +1126,21 @@ def rotation_topic_slot(
     used = set().union(*per_reply) if per_reply else set()
     # 方案 4（2026-09-24）：判面之外再加一层"**这条素材本身**最近两轮说过没有"。
     # 判据与阈值理由见 `_TOPIC_ECHO_BIGRAM_RATIO` 上方注释。
-    spoken = {topic for topic in topics if _topic_already_spoken(topic, replies)}
+    #
+    # 2026-09-23（跨轮次状态）：再加一层**跨窗口**的同一判据。上面那层的窗口是
+    # history 给的 3 轮，第 4 轮起早期素材被挤出去、重新变回"没谈过"，于是池子前
+    # 几条被反复建议。跨窗口那一份（`spoken_replies`）比窗口长，判据同源
+    # （`window=None` 用整段），因此"整场谈过没有"这件事第一次问得出来。
+    # 判据本身偏保守（假阳 0~1 条，见 `_topic_already_spoken`），排除不足但不会误杀。
+    spoken = {
+        topic
+        for topic in topics
+        if _topic_already_spoken(topic, replies)
+        or (
+            cross_replies
+            and _topic_already_spoken(topic, cross_replies, window=None)
+        )
+    }
 
     # 候选的**遍历起点**不总在池子头部（2026-09-25）。
     #

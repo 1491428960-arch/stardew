@@ -144,6 +144,9 @@ _DIALOGUE_FIELDS = {
     "sourceMods",
     "recentFacts",
     "history",
+    # 跨窗口的"她最近说过什么"（2026-09-23）：漏进这份白名单就是**静默吞字段**
+    # —— 本项目在同类白名单上记过多次（`_compact_stage_policy`、`_STATE_FIELDS`）。
+    "recentReplies",
     "gameState",
     "intent",
     "compactPrompt",

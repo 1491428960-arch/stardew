@@ -1017,4 +1017,123 @@ public sealed class BridgeClientTests
         Assert.Single(response.MemoryHighlights);
         Assert.Equal("玩家答应下周一起去矿洞", response.MemoryHighlights[0]);
     }
+
+    // --- 跨窗口的"她最近说过什么"（2026-09-23）---------------------------------
+    //
+    // 发送窗口只有 6 条（3 轮），更早谈过的话题被挤出去之后，Bridge 侧的生活面槽位
+    // 就以为"这条素材还没谈过"，于是池子前几条被反复建议。下面三条钉住这一份的
+    // 取数口径：比窗口长、只要她的话、跳过示例、取最近的。
+
+    [Fact]
+    public async Task SendAsync_sends_replies_from_beyond_the_send_window()
+    {
+        var handler = new RecordingHandler(index => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                $"{{\"reply\":\"第{index + 1}轮回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        for (var turn = 1; turn <= 6; turn++)
+        {
+            await client.SendAsync("Sophia", $"第{turn}轮玩家的话");
+        }
+
+        using var request = JsonDocument.Parse(handler.RequestBodies[^1]);
+        var root = request.RootElement;
+        var history = root.GetProperty("history").EnumerateArray().ToArray();
+        var replies = root.GetProperty("recentReplies").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+
+        // 发送窗口：6 条 = 最近 3 轮，第 1 轮已经被挤出去了。
+        Assert.Equal(6, history.Length);
+        Assert.DoesNotContain(
+            history,
+            item => item.GetProperty("content").GetString() == "第1轮玩家的话");
+
+        // 跨窗口那一份：第 1 轮起都在（本轮回复要等收到之后才记，所以到第 5 轮）——
+        // 这正是发送窗口看不见的那一段。
+        Assert.Equal(
+            new[]
+            {
+                "第1轮回复", "第2轮回复", "第3轮回复", "第4轮回复", "第5轮回复",
+            },
+            replies);
+    }
+
+    [Fact]
+    public async Task Cross_window_replies_carry_only_her_own_true_lines()
+    {
+        var handler = new RecordingHandler(index => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                $"{{\"reply\":\"第{index + 1}轮回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        // 示例记录是注入给玩家翻的演示数据，不是她真说过的话 ——
+        // 让它参与判定会凭空把一批素材标成"谈过了"。
+        client.InjectSampleHistory(
+            new Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>
+            {
+                ["Sophia"] = new[]
+                {
+                    new BridgeDialogueHistoryItem
+                    {
+                        Role = "assistant",
+                        Content = "示例回复",
+                        Intent = SampleChatHistory.MarkerIntent,
+                    },
+                },
+            });
+
+        await client.SendAsync("Sophia", "你好");
+        await client.SendAsync("Sophia", "再说一句");
+
+        using var request = JsonDocument.Parse(handler.RequestBodies[^1]);
+        var replies = request.RootElement.GetProperty("recentReplies").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+
+        // 只剩上一轮她真说过的那一句：玩家的话与示例都不在里面。
+        Assert.Equal(new[] { "第1轮回复" }, replies);
+    }
+
+    [Fact]
+    public async Task Cross_window_replies_keep_the_most_recent_items()
+    {
+        var handler = new RecordingHandler(index => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                $"{{\"reply\":\"第{index + 1}轮回复\",\"provider\":\"fake\",\"fallback\":false,\"warnings\":[]}}",
+                Encoding.UTF8,
+                "application/json"),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = new BridgeClient(httpClient, new Uri("http://127.0.0.1:5678"));
+
+        for (var turn = 1; turn <= 30; turn++)
+        {
+            await client.SendAsync("Sophia", $"第{turn}轮玩家的话");
+        }
+
+        using var request = JsonDocument.Parse(handler.RequestBodies[^1]);
+        var replies = request.RootElement.GetProperty("recentReplies").EnumerateArray()
+            .Select(item => item.GetString())
+            .ToArray();
+
+        // 24 = BridgeClient.MaxRecentReplyItems（private，故此处写字面量；
+        // 跨语言的上限护栏在 bridge/tests/test_cross_language_constants.py）。
+        // 最后一次请求时已有 29 条（第 30 轮那一条要等收到回复才记），取最近的 24 条。
+        Assert.Equal(24, replies.Length);
+        Assert.Equal("第6轮回复", replies[0]);
+        Assert.Equal("第29轮回复", replies[^1]);
+    }
 }

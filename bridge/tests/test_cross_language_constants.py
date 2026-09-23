@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from stardew_ai_bridge import app as bridge_app
 from stardew_ai_bridge.config import DEFAULT_FALLBACK_REPLY, BridgeSettings
 from stardew_ai_bridge.fallback import FallbackProvider
@@ -155,4 +157,53 @@ def test_csharp_event_cap_has_a_single_literal() -> None:
     )
     assert not re.search(r"\.Take\(\s*\d+\s*\)", source), (
         "GameStateCollector 里出现了字面量 Take(N) —— 事件上限必须只有一份来源"
+    )
+
+
+# --- #50 跨窗口回复（`recentReplies`）的两侧契约 --------------------------------
+#
+# 2026-09-23：Mod 端多带一份"她最近说过什么"给 Bridge 判"这条素材整场谈过没有"
+# （发送窗口只有 3 轮，更早的素材会被当成从没谈过）。两处都可能坏掉，且都**不报错**：
+#
+#   · **字段名漂移** —— C# 发 `recentReplies`、Python 收 `recent_replies`（或反之），
+#     `extra="forbid"` 会把整个请求 422 掉，玩家看到的是兜底回复；
+#   · **C# 的上限越过 Bridge 的护栏** —— 同样是 422，而且**只在聊得久之后**才发生
+#     （前几轮条数不到上限，一切正常），是最难查的形状。
+
+
+def _bridge_recent_reply_limit() -> int:
+    """Bridge 真正接受的条数上限（按模型的校验**行为**测，不读注解）。"""
+
+    for size in range(1, 500):
+        try:
+            DialogueTestRequest.model_validate(
+                {"npcId": "Sophia", "message": "你好", "recentReplies": ["x"] * size}
+            )
+        except ValidationError:
+            return size - 1
+    raise AssertionError("Bridge 侧的 recentReplies 没有条数上限")
+
+
+def test_the_cross_window_field_name_is_identical_in_both_languages() -> None:
+    assert DialogueTestRequest.model_fields["recent_replies"].alias == "recentReplies"
+    assert '[JsonPropertyName("recentReplies")]' in _csharp_source(), (
+        "C# 侧没有发出 recentReplies：字段名漂移会被 extra='forbid' 拦成 422，"
+        "整轮对话静默退化成兜底回复"
+    )
+
+
+def test_csharp_cross_window_cap_stays_within_the_bridge_limit() -> None:
+    source = _csharp_source()
+    match = re.search(r"MaxRecentReplyItems\s*=\s*(\d+)\s*;", source)
+    assert match, "BridgeClient 里找不到 MaxRecentReplyItems 常量"
+
+    cap = int(match.group(1))
+    limit = _bridge_recent_reply_limit()
+
+    assert cap <= limit, (
+        f"SMAPI 的 MaxRecentReplyItems（{cap}）越过了 Bridge 的 recentReplies 上限"
+        f"（{limit}）：超出的那一轮会 422、退化成兜底回复，而且只在聊得久之后才发生"
+    )
+    assert "replies.Count < MaxRecentReplyItems" in source, (
+        "跨窗口那一份的取数不再走常量：这里写死数字会与 Bridge 的上限各走各的"
     )

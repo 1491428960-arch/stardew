@@ -624,6 +624,21 @@ class DialogueTestRequest(ApiModel):
         max_length=50,
     )
     history: list[dict[str, object]] = Field(default_factory=list, max_length=50)
+    # 跨窗口的"她最近说过什么"（2026-09-23）：Mod 端从**回看档案**取（比发送窗口长），
+    # 只用于判定"这条素材整场谈过没有"与素材卡轮转去重，**不进模型看得到的消息**。
+    #
+    # 窗口：真机 `history` 被 `BridgeClient.MaxHistoryItems = 6` 封顶（约 3 轮），
+    # 早期谈过的素材被挤出去就重新变回"没谈过"，于是池子前几条被反复建议 ——
+    # 这正是用户说的「聊不长」。上限 40 与 `prompts` 侧的 `limit=40` 同源。
+    #
+    # ⚠️ **发布顺序**：`ApiModel` 是 `extra="forbid"` ⇒ 新 DLL + 旧 Bridge = 422
+    # 退化成兜底回复。**必须先发 Bridge、再发 DLL**（反方向安全：旧 DLL 不发这个键
+    # 时是空列表，与加字段之前的行为一致）。
+    recent_replies: list[str] = Field(
+        default_factory=list,
+        alias="recentReplies",
+        max_length=40,
+    )
     game_state: NpcGameState | None = Field(default=None, alias="gameState")
     intent: Literal["chat", "topic", "item"] = "chat"
     # 2026-09-20（语义层审计 #46）：这里默认 False，而 C# 侧

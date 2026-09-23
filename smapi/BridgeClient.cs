@@ -45,6 +45,23 @@ public sealed class BridgeDialogueRequest
     public IReadOnlyList<BridgeDialogueHistoryItem> History { get; init; } =
         Array.Empty<BridgeDialogueHistoryItem>();
 
+    /// <summary>
+    /// **跨窗口**的"她最近说过什么"（2026-09-23）：只装 NPC 本人的回复原文、时间正序，
+    /// 比 <see cref="History"/> 长得多，取自**回看档案**（<c>displayHistoryByNpc</c>）。
+    ///
+    /// 为什么需要：<see cref="History"/> 被 <see cref="BridgeClient.MaxHistoryItems"/> 封顶在
+    /// 6 条（约 3 轮），更早谈过的话题被挤出去之后，Bridge 侧的生活面槽位就以为"这条素材
+    /// 还没谈过"——于是池子前几条被反复建议，玩家听到的是"又来了"。
+    ///
+    /// ⚠️ 它**只**参与判定（槽位排除"整场谈过的素材"、素材卡轮转去重）。Bridge 侧不会把
+    /// 它放进模型看得到的 history —— 那条路径仍只由 <see cref="History"/> 决定，
+    /// 所以这一份不撑大 prompt、也不改对话上下文。
+    /// ⚠️ 发布顺序：Bridge 侧 <c>ApiModel</c> 是 <c>extra="forbid"</c> ⇒ 新 DLL + 旧 Bridge
+    /// 会 422 并退化成兜底回复。**先发 Bridge、再发 DLL**；反方向安全（旧 DLL 不发这个键）。
+    /// </summary>
+    [JsonPropertyName("recentReplies")]
+    public IReadOnlyList<string> RecentReplies { get; init; } = Array.Empty<string>();
+
     [JsonPropertyName("relationshipWorld")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public RelationshipWorldSnapshot? RelationshipWorld { get; init; }
@@ -273,6 +290,22 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     /// </summary>
     private const int MaxGroupHistoryItems = 10;
 
+    /// <summary>
+    /// 跨窗口那一份"她最近说过什么"的条数上限
+    /// （<see cref="BridgeDialogueRequest.RecentReplies"/>，取自回看档案）。
+    ///
+    /// 为什么是 24：私聊一轮通常只有 1 条 NPC 回复（`topic` 路径）或 2 条（`chat` 路径），
+    /// 24 条 ≈ 12～24 轮，与索菲亚的素材池同量级（12 条）—— 判定要的正是"整场覆盖"。
+    /// 再长收益递减：判据是 2-gram 回声，离线实测在 24 轮窗口上假阳只有 0~1 条、
+    /// 漏报明显（偏保守），把窗口再拉长也不会更准。
+    ///
+    /// 有界：单条 ≤ <see cref="MaxHistoryContentLength"/>（240 字），24 条 ≤ 5760 字；
+    /// Bridge 侧 `recentReplies` 的 `max_length=40`，在上限以内。
+    /// **不要**直接放大 <see cref="MaxHistoryItems"/> 来达到同样效果 —— 那是
+    /// "发给模型的对话上下文"那份额度，放大它同时改变 prompt 长度与模型看到的历史。
+    /// </summary>
+    private const int MaxRecentReplyItems = 24;
+
     private const int MaxHistoryContentLength = ChatHistoryRules.MaxContentLength;
     private const int MaxMessageLength = 2000;
     private const int MaxRecentFactLength = 240;
@@ -292,7 +325,9 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     private readonly object memoryLock = new();
     private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> historyByNpc = new();
     // 回看档案：F8 面板「往上翻」看的那一份，比发送窗口长（ChatHistoryRules.MaxDisplayMessages）。
-    // 与 historyByNpc 并存、各裁各的；这份**不参与任何请求**，只被 RecentHistory 读出去。
+    // 与 historyByNpc 并存、各裁各的。**它不进模型看得到的 history**（那份仍只由 historyByNpc
+    // 决定），但**是**跨窗口判定那一份的取数来源（见 RecentRepliesFor / MaxRecentReplyItems）：
+    // 2026-09-23 起它多了一个读取端，不再只是"给玩家翻的"。
     private readonly Dictionary<string, List<BridgeDialogueHistoryItem>> displayHistoryByNpc = new();
     // 群聊场次：一场群聊一条（见 GroupChatSessionRecord），最早的在前。
     // 与 displayHistoryByNpc 同属「给玩家翻的档案」，同样不参与任何请求。
@@ -381,6 +416,8 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                     History = historyByNpc.TryGetValue(npcId, out var history)
                         ? history.ToArray()
                         : Array.Empty<BridgeDialogueHistoryItem>(),
+                    // 跨窗口那一份（2026-09-23）：比上面的发送窗口长，取自回看档案。
+                    RecentReplies = RecentRepliesFor(npcId),
                 };
             }
 
@@ -614,6 +651,49 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 .Select(pair => pair.Value.ToArray())
                 .FirstOrDefault() ?? Array.Empty<BridgeDialogueHistoryItem>();
         }
+    }
+
+    /// <summary>
+    /// 跨窗口那一份"她最近说过什么"（<see cref="BridgeDialogueRequest.RecentReplies"/> 的来源）：
+    /// 从**回看档案**取 NPC 本人的回复原文，时间正序，最多 <see cref="MaxRecentReplyItems"/> 条。
+    ///
+    /// 三条口径：
+    /// 1. **只取 assistant**：Bridge 侧判的是"这句话是不是她说过的"，玩家的话对它没有用，
+    ///    带过去只会占额度；
+    /// 2. **跳过示例记录**（<see cref="SampleChatHistory.IsSample"/>）：那是注入给玩家翻的
+    ///    演示数据，不是她真说过的话 —— 让它参与判定会凭空把一批素材标成"谈过了"；
+    /// 3. **取最近的 N 条**：从尾部往前收，收满再反转回时间正序。发送窗口在 2026-09-22
+    ///    修过一次方向（此前取到的是**最旧**的几条），这里一开始就写对。
+    ///
+    /// 必须在 <c>memoryLock</c> 里调用。
+    /// </summary>
+    private IReadOnlyList<string> RecentRepliesFor(string npcId)
+    {
+        if (string.IsNullOrWhiteSpace(npcId)
+            || !displayHistoryByNpc.TryGetValue(npcId, out var log)
+            || log.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var replies = new List<string>();
+        for (var index = log.Count - 1;
+             index >= 0 && replies.Count < MaxRecentReplyItems;
+             index--)
+        {
+            var item = log[index];
+            if (!string.Equals(item.Role, "assistant", StringComparison.OrdinalIgnoreCase)
+                || SampleChatHistory.IsSample(item)
+                || string.IsNullOrWhiteSpace(item.Content))
+            {
+                continue;
+            }
+
+            replies.Add(item.Content);
+        }
+
+        replies.Reverse();
+        return replies;
     }
 
     /// <summary>
