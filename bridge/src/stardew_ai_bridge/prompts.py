@@ -1133,7 +1133,33 @@ def _shares_concrete_input_phrase(evidence_text: str, player_input: str) -> bool
             phrase = "".join(input_chars[start : start + length])
             if phrase in evidence_folded:
                 return True
-    return False
+
+def _rotate_evidence_by_turn(
+    candidates: list[dict[str, str]],
+    turn_index: int,
+    pool_size: int,
+) -> list[dict[str, str]]:
+    """按对话轮次在候选池里轮转取用，而不是永远取排序第一条。
+
+    为什么需要（2026-09-23 实测）：`speech_evidence` / `style_samples` 的
+    访问器**不接收对话历史**，topic 路径下 `player_input` 又恒为空串，
+    因此候选排序是确定性的。原先调用处无条件 `[:1]` 取排序第一条，
+    导致**每一轮「找话题」递进 prompt 的素材逐字完全相同** —— 模型只能
+    反复讲同一件事（用户实测「连点四次说的是同一个东西」，探针四轮
+    逐字比对确认）。详见 `docs/report-topic-material-rotation-2026-09-23.md`。
+
+    轮转只在**排序后的前 `pool_size` 条**里进行：它们已代表「该阶段最该用」
+    的那一批，轮转不降低素材质量，只让相邻轮次不再重复。候选不足时自然退化
+    （池子只剩 1 条就恒返回该条），拿不到轮次时退回第一条（即原行为）。
+    """
+
+    if not candidates:
+        return []
+    size = max(1, min(int(pool_size), len(candidates)))
+    pool = list(candidates[:size])
+    if len(pool) == 1:
+        return pool
+    return [pool[max(0, int(turn_index)) % len(pool)]]
 
 
 def _filter_plain_dialogue_evidence(
@@ -5613,8 +5639,18 @@ class PromptBuilder:
             context.get("styleSamples", ())
         )
         if compact:
-            speech_evidence = speech_evidence[:1]
-            style_samples = style_samples[:1]
+            # 按对话轮次轮转素材。原先这里是无条件 `[:1]`（取排序第一条），
+            # 而样本选择不接收 history、topic 下 player_input 恒为空 ⇒ 排序确定
+            # ⇒ 每一轮递进 prompt 的素材逐字相同，模型只能反复讲同一件事。
+            # 轮转不改变候选与排序，只让相邻轮次不再取同一条。
+            # 见 `docs/report-topic-material-rotation-2026-09-23.md`。
+            turn_index = len(context.get("history") or ())
+            speech_evidence = _rotate_evidence_by_turn(
+                speech_evidence, turn_index, _MAX_SPEECH_EVIDENCE
+            )
+            style_samples = _rotate_evidence_by_turn(
+                style_samples, turn_index, _MAX_STYLE_SAMPLES
+            )
         raw_quality_context = context.get(
             "qualityContext", context.get("quality_context")
         )
