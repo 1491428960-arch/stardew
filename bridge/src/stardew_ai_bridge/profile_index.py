@@ -1560,6 +1560,58 @@ def _dialogue_selection_key_priority(
         return 4
     return _dialogue_key_priority(record)
 
+# 「内容分档」与索引原序压成同一个整数的步长。
+#
+# 候选元组的最后一位是 sample 本身（dict 不可比较，必须留在末尾），
+# 所以**不能**把新字段追加在它前面 —— 那会让 sample 的下标从 8 变成 9，
+# 牵连本文件 10 处 `item[8]` 取用点。压成一个整数则元组形状与全部下标稳定。
+# 约束：索引总条数必须 < 该步长，否则档位会串。实测本索引 10213 条
+# （索菲亚最大下标 10195），余量充足。
+_EVIDENCE_CONTENT_STRIDE = 1_000_000
+
+# 内容分档的字符长度阈值。
+_EVIDENCE_CONTENT_MIN_CHARS = 8
+_EVIDENCE_CONTENT_RICH_CHARS = 30
+
+
+def _evidence_content_priority(sample: Mapping[str, Any]) -> int:
+    """按文本长度给候选分档：0 = 有实质内容，1 = 普通，2 = 纯应答语。
+
+    为什么需要：`_select_evidence_candidates` 的七个排序键在 topic 路径下
+    经常**全部并列**（没有本轮玩家输入 ⇒ 话题分为 0；同阶段 ⇒ 具体度相同；
+    同为静态语料 ⇒ 证据优先级相同），此时唯一区分度是 `original_index`
+    —— 那是**索引里的物理位置，与内容质量无关**。
+
+    实测后果（2026-09-23）：索菲亚的 `speech_evidence` 永远取到 eventId
+    `5000009` 里的应答语（「嗨，伙计们！」「嘿！」「好耶！」「！！！」），
+    而她真正有内容的句子（祖祖城动漫展、Cosplay、《粉红公主十字军》、
+    父母遗产）躺在 `idx 7134-7541`，永远取不到。
+
+    分档只作为 `original_index` **之前**的次级键：不改变任何既有优先级
+    （阶段、来源、路径、来源配额都照旧），只在原本并列的候选之间让有内容的
+    排前面；档内仍保持索引原序，因此结果稳定可复现。
+    """
+
+    text = sample.get("text")
+    length = len(text.strip()) if isinstance(text, str) else 0
+    if length >= _EVIDENCE_CONTENT_RICH_CHARS:
+        return 0
+    if length >= _EVIDENCE_CONTENT_MIN_CHARS:
+        return 1
+    return 2
+
+
+def _evidence_order_key(sample: Mapping[str, Any], original_index: int) -> int:
+    """把「内容分档」与「索引原序」压成一个可比较整数，保持元组形状不变。
+
+    效果等价于在 `original_index` 前插入一个 `_evidence_content_priority`
+    字段（分档优先、档内按原序），但元组长度与 `item[8]` 下标全部不变。
+    """
+
+    return (
+        _evidence_content_priority(sample) * _EVIDENCE_CONTENT_STRIDE
+        + int(original_index)
+    )
 
 def _select_evidence_candidates(
     candidates: list[tuple[int, int, int, int, int, int, int, int, dict[str, Any]]],
@@ -2078,7 +2130,7 @@ class ProfileIndexStore:
                         _dialogue_selection_key_priority(raw_sample, player_input),
                         _dialogue_path_priority(raw_sample),
                         -_source_priority(raw_sample.get("sourceMod")),
-                        original_index,
+                        _evidence_order_key(raw_sample, original_index),
                         self._canonicalize_selected_npc(
                             self._select_fields(raw_sample, self._STYLE_FIELDS)
                         ),
@@ -2301,7 +2353,7 @@ class ProfileIndexStore:
                         _dialogue_selection_key_priority(raw_sample, player_input),
                         _dialogue_path_priority(raw_sample),
                         -_source_priority(raw_sample.get("sourceMod")),
-                        original_index,
+                        _evidence_order_key(raw_sample, original_index),
                         self._canonicalize_selected_npc(
                             self._select_fields(raw_sample, self._SPEECH_FIELDS)
                         ),

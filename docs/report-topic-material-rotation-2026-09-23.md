@@ -358,3 +358,148 @@ bridge 已重启（旧 PID 169988 停掉，新进程监听 `127.0.0.1:5678`）�
 它给的是 `build()` 的**输入**，不是 `build()` 的**输出**。要验证卡片内容，
 必须走 `app._build_context`。
 
+## 10. 方案 B 已落地：候选排序注入内容分档（2026-09-23）
+
+### 10.0 一句话结论
+
+在七维排序键**全部保持不变**的前提下，于 `original_index` **之前**插入一个「内容档」
+次级键，让并列候选按「有实质内容 → 短应答语」重排、档内仍按原序号稳定。
+全量 973 组合实测：`style_samples` 的「档 0」占比 29.5% → **71.1%**，
+纯应答语 27.0% → **10.4%**；**没有任何一个组合的素材变短**。
+
+### 10.1 改动内容
+
+文件：`bridge/src/stardew_ai_bridge/profile_index.py`
+SHA `CFE9E29BA5ED2958` → `A1AA4F7CBB3FB373`，`git diff --stat` = 54 insertions(+), 2 deletions(-)。
+
+新增三个常量与两个函数：
+
+```python
+_EVIDENCE_CONTENT_STRIDE = 1_000_000
+_EVIDENCE_CONTENT_MIN_CHARS = 8
+_EVIDENCE_CONTENT_RICH_CHARS = 30
+
+def _evidence_content_priority(sample) -> int:   # ≥30 → 0；≥8 → 1；其余 → 2
+def _evidence_order_key(sample, original_index) -> int:
+    return _evidence_content_priority(sample) * _EVIDENCE_CONTENT_STRIDE + int(original_index)
+```
+
+两处候选构造（`style_samples` 与 `speech_evidence`）把原来的 `original_index`
+换成 `_evidence_order_key(raw_sample, original_index)` —— **只此两行**。
+
+**为什么压成一个整数，而不是往元组里加一个字段？**
+
+候选元组是 9 元组，末位是 `sample`（dict，不可比较，必须留在最后）：
+
+```
+(-topic_score, stage_specificity, evidence_priority, magic,
+ key_priority, path_priority, -source_priority, original_index, sample)
+```
+
+若在 `original_index` 前插入新字段，`sample` 下标会从 8 变成 9，
+本文件共有 **10 处 `item[8]` 代码取用点**（另有 1 处在注释里）需要同步改。
+`档位 × 1_000_000 + idx` 把两者压进同一个整数，**元组长度与全部下标零位移**，
+`item[8]` 一处都不用动。约束是索引条数须小于 100 万（当前 10213，富余两个数量级）。
+
+**为什么档位必须紧贴 `original_index`、而不是放到最前？**
+
+放最前会改变阶段/来源/路径/配额等既有优先级的相对关系，
+可能让「陌生人阶段的短句」被「婚后阶段的长句」挤掉。
+紧贴 `original_index` 则**只重排原本并列的候选**，既有优先级一律不变 ——
+这正是它影响面可控的原因。
+
+### 10.2 全量漂移表（139 角色 × 7 阶段 = 973 组合）
+
+口径：`speech_evidence(limit=4)`、`style_samples(limit=3)`，来源 mod 取全库三个源。
+「改动前」由 monkeypatch `_evidence_order_key` 为恒等函数还原
+（候选构造在运行时查模块全局，无需第二份代码）。
+
+| 指标 | speech_evidence | style_samples |
+|---|---|---|
+| 变化率 | 254 / 973 = **26.1%** | 537 / 973 = **55.2%** |
+| 平均素材长度 | 66.0 → 72.2（**+9.4%**） | 33.3 → 52.5（**+57.7%**） |
+| 档 0（≥30 字）占比 | 60.2% → **76.4%** | 29.5% → **71.1%** |
+| 档 1（8–29 字）占比 | 37.6% → 22.6% | 43.5% → 18.6% |
+| 档 2（<8 字）占比 | 2.1% → 1.0% | 27.0% → **10.4%** |
+| 变短的组合 | **0** | — |
+
+另有 26 个组合两个方法都取到空（该角色该阶段在索引里没有可用素材），与本次改动无关。
+
+**「变短 0 个」是这次最关键的安全指标**：内容档只会在并列候选里优先长句，
+不会把任何组合的素材换成更短的。
+
+**一处统计陷阱（首版踩到）**：`cnt_old = cnt_new = Counter()` 这种链式赋值会让两个名字
+指向**同一个**计数器，新旧两列必然完全相同到小数位。看起来像「分布没变」，
+实际是根本没测。可变对象不能链式赋初值。
+
+### 10.3 逐卡实测（`turn-probe.py --dry-run`，索菲亚 · parent）
+
+改动前后四张素材卡的逐字比对：
+
+- `speech_evidence`：由「嘿，你好。很高兴见到你！」（12 字问候）
+  → **爬山邀约（33 字）／旅行邀约（30 字）／孤独询问（28 字）／
+  「交换农场主间的商业秘密…酿造蓝月亮葡萄园的标志性葡萄酒」（44 字）**
+- `style_evidence`：由商店成交语「嗨，伙计们！」
+  → **「……这次收获量巨大，我们有很多葡萄等着在太阳下山前压榨。」**
+  与 **「嘿，你好！今天早上斯嘉丽开着她爸爸的车来到这里。她今天想自驾游到格兰普顿海岸！」**
+- `voice_card`：不变 —— **这是设计意图**，语气锚点应当稳定（见 10.5）
+- `knowledge_facts`：不变 —— 索菲亚在该索引里只有 1 条事实，没有选择余地
+
+### 10.4 一处意外发现：`style_samples` 本来就没有事件门控
+
+`speech_evidence` 的候选循环里有 `_event_dialogue_is_completed(raw_sample, completed_keys)`
+这道闸门（未完成的事件对白不得进入），
+但 **`style_samples` 的候选循环里没有对应闸门**。
+
+⇒ `idx 7134-7541` 那批事件宝藏**一直在 `style_samples` 的候选池里**，
+先前纯粹被排序压在下面碰不到（§3.1 的排序塌缩）。
+排序一旦按内容分档，它们立刻浮现 —— 10.3 里「斯嘉丽自驾游格兰普顿海岸」正是这样出来的。
+
+**这条修正了 §3.3 的表述**：准入层（66% 事件对白被 `completedEventIds` 挡住）
+只对 `speech_evidence` 成立，对 `style_samples` 不成立。
+
+### 10.5 同型缺陷还有两处，本轮有意不动
+
+「排序键最后一维是 `original_index`」这个模式在本项目里不止两处：
+
+| 位置 | 现状 | 本轮处理 |
+|---|---|---|
+| `profile_index._select_evidence_candidates` | 本轮已修，两处候选构造都换用 `_evidence_order_key` | ✅ |
+| `profile_index.behavior_examples` | `(-score, original_index, selected)`；空输入时 `score` 恒为 0 ⇒ 全部并列 ⇒ 退化成物理顺序 | ❌ **未修** |
+| `speech._voice_anchor_candidates` | `(语言档, 来源档, introduction 档, original_index)` —— 同语言档内仍退化成物理顺序 | ❌ **未修** |
+
+不修的理由：
+
+- **`behavior_examples`**：它在 compact prompt 里只取 1 条，收益小；且其内容字段与
+  `text` 不同，需要另写一份内容判定，回归面大于收益。
+- **`_voice_anchor_candidates`**：声线卡的作用是**稳定的语气基准**，
+  逐轮变化的锚点反而削弱角色一致性；上轮 §4.6 也已实测「按面避让」有害。
+  是否该给它加内容档，需要单独一轮评估，不能顺手带上。
+
+两处都已在代码与文档里留作已知项，不在本轮制造「改了但没验证」的中间状态。
+
+### 10.6 诚实标注的局限
+
+1. **轮转池仍然是前 4 条**（`_MAX_SPEECH_EVIDENCE = 4`）。内容分档提升了这 4 条的**质量**，
+   但没有扩大**池子**。10.3 里索菲亚选出的四条有三条是邀约句式（爬山、旅行、孤独询问），
+   话题面确实变宽了，但还没到「丰富」。
+2. **未做端到端真实对话验证**：需要在真实对话里连续跑 5 轮看模型输出，
+   本轮受模型额度限制（HTTP 429）未能跑完。卡片内容层面已用零额度的
+   `turn-probe.py --dry-run` 逐字验证。
+3. **本次未触及池大小与分类配额** —— 若要继续加宽话题，下一步应提高
+   `_MAX_SPEECH_EVIDENCE`，或引入按话题域的配额（§6 方案 C 的方向）。
+
+### 10.7 验证与提交
+
+- 语法：`py_compile` 通过；换行符保持**纯 CRLF**（2699 → 2751 行，裸 LF 为 0）
+- 全量测试：`pytest bridge/tests -q -p no:cacheprovider` = **3906 passed in 162.79s**
+  （与改动前基线一致，零回归）
+
+  ⚠️ 测试命令必须设 `PYTHONPATH` 含 **`bridge/src` 与 `scripts` 两段**，
+  缺任一段都会在 collection 阶段报 `ModuleNotFoundError`（分别 124 个与 1 个 error）。
+  这个环境依赖没有写在任何配置里，靠 shell 环境变量传递 —— 换机器/换 shell 必踩。
+
+- 漂移表原始输出：`.tmp/topic-probe/drift-full.txt`（gitignored）
+- 新增探针：`.tmp/topic-probe/drift-report.py`（全量漂移表，支持 `--limit N` 试跑）
+
+
