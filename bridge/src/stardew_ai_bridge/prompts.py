@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import zlib
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -1198,12 +1199,65 @@ def _evict_banned_facet(
     return kept + banned
 
 
+# 这条素材是不是"最近已经说过了"的判据：2-gram 命中率。
+# 阈值与判据直接沿用 `stage_policy._TOPIC_ECHO_BIGRAM_RATIO`（0.5）——
+# 那份是 2026-09-24 在真机样本上校准的（爆米花 0.82／新酿 0.71 判为说过，
+# "明显没用素材"的几轮全 0.00），没有理由为同一件事另立一个数。
+_EVIDENCE_ECHO_BIGRAM_RATIO = 0.5
+# 回溯几条 NPC 回复。私聊发送窗口只给 6 条 history（含玩家那句），
+# 所以实际能看到的 NPC 回复最多 3 条；4 是"全都看"的上界，不是刻意留的余量。
+_EVIDENCE_ECHO_WINDOW = 4
+
+
+def _recent_npc_replies(context: Mapping[str, Any]) -> list[str]:
+    """从 `context["history"]` 取 NPC 的回复文本（时间正序）。
+
+    取法与 `_history_affection_pacing` 一致（`role == "assistant"`、
+    `_text(..., limit=180)`），不另立第二份口径。
+    """
+
+    history = context.get("history")
+    if not isinstance(history, (list, tuple)):
+        return []
+    replies: list[str] = []
+    for item in history:
+        if not isinstance(item, Mapping) or item.get("role") != "assistant":
+            continue
+        content = _text(item.get("content"), limit=180)
+        if content:
+            replies.append(content)
+    return replies
+
+
+def _evidence_already_spoken(
+    sample: Mapping[str, Any],
+    recent_replies: list[str],
+) -> bool:
+    """这条素材最近几轮是不是已经被她说出来过。"""
+
+    text = sample.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return False
+    recent = [r for r in recent_replies[-_EVIDENCE_ECHO_WINDOW:] if r and r.strip()]
+    if not recent:
+        return False
+    blob = " ".join(recent)
+    grams = [text[index : index + 2] for index in range(len(text) - 1)]
+    if not grams:
+        return False
+    hits = sum(1 for gram in grams if gram in blob)
+    return hits / len(grams) >= _EVIDENCE_ECHO_BIGRAM_RATIO
+
+
 def _rotate_evidence_by_turn(
     candidates: list[dict[str, str]],
     turn_index: int,
     pool_size: int,
+    *,
+    recent_replies: Iterable[str] = (),
+    seed_text: str = "",
 ) -> list[dict[str, str]]:
-    """按对话轮次在候选池里轮转取用，而不是永远取排序第一条。
+    """在候选池里挑一条**最近没说过**的素材，而不是永远取排序第一条。
 
     为什么需要（2026-09-23 实测）：`speech_evidence` / `style_samples` 的
     访问器**不接收对话历史**，topic 路径下 `player_input` 又恒为空串，
@@ -1212,9 +1266,24 @@ def _rotate_evidence_by_turn(
     反复讲同一件事（用户实测「连点四次说的是同一个东西」，探针四轮
     逐字比对确认）。详见 `docs/report-topic-material-rotation-2026-09-23.md`。
 
+    **为什么不能按 `turn_index` 取模（2026-09-23 二次实测）**：调用方原先传
+    `turn_index = len(history)`，而 `history` 有两个性质让它不成立 ——
+    ① 每轮追加**两条**（玩家 + NPC），`len` 每轮 +2，只走得到偶数下标；
+    ② `smapi/BridgeClient.MaxHistoryItems = 6` 把它**封顶在 6**，
+    于是第 4 轮起 `len` 恒为 6，`6 % len(pool)` 恒为同一个值，
+    **池里其余素材永远轮不到**（池 4 时只有 2 个可用槽位）。用户抱怨的
+    「聊不长」正落在这里。探针此前每轮只追加 1 条 history，所以没测出来。
+
+    **两层挑法**（与 `stage_policy._transition_example` 同构，那里的注释
+    记着同一类失败）：先排除"最近已经说过"的，再在剩下的里按
+    **内容稳定哈希**定位。只做排除是不够的 —— 池子会恒以第一个候选开头，
+    模型没照抄素材的那几轮就反复拿到同一条；只做哈希也不行 —— 会把
+    刚说过的那条又发回来。哈希用 `zlib.crc32` 而非内置 `hash()`：
+    后者受 `PYTHONHASHSEED` 影响、跨进程不稳（本项目在群聊记忆 id 上踩过）。
+
     轮转只在**排序后的前 `pool_size` 条**里进行：它们已代表「该阶段最该用」
     的那一批，轮转不降低素材质量，只让相邻轮次不再重复。候选不足时自然退化
-    （池子只剩 1 条就恒返回该条），拿不到轮次时退回第一条（即原行为）。
+    （池子只剩 1 条就恒返回该条）；`recent_replies` 为空时退回到"全部视为新鲜"。
     """
 
     if not candidates:
@@ -1223,7 +1292,13 @@ def _rotate_evidence_by_turn(
     pool = list(candidates[:size])
     if len(pool) == 1:
         return pool
-    return [pool[max(0, int(turn_index)) % len(pool)]]
+    spoken = [item for item in recent_replies if isinstance(item, str)]
+    fresh = [item for item in pool if not _evidence_already_spoken(item, spoken)]
+    basis = fresh or pool
+    if len(basis) == 1:
+        return basis
+    material = seed_text if seed_text else str(max(0, int(turn_index)))
+    return [basis[zlib.crc32(material.encode("utf-8")) % len(basis)]]
 
 
 def _filter_plain_dialogue_evidence(
@@ -5709,6 +5784,14 @@ class PromptBuilder:
             # 轮转不改变候选与排序，只让相邻轮次不再取同一条。
             # 见 `docs/report-topic-material-rotation-2026-09-23.md`。
             turn_index = len(context.get("history") or ())
+            # 用「她最近说过什么」去重，而不是拿 history 长度当轮次下标 ——
+            # 后者每轮 +2、又被 `BridgeClient.MaxHistoryItems`（6）封顶，
+            # 长对话里恒为同一个值，池子其余素材永远轮不到。理由见
+            # `_rotate_evidence_by_turn` 的 docstring。
+            spoken_replies = _recent_npc_replies(context)
+            # 哈希材料取**最近两条回复**：它随对话变化，而 `turn_index`
+            # （= len(history)）被封顶在 6、走到第 4 轮就不动了。
+            rotation_seed = "|".join(spoken_replies[-2:])
             # 槽位说「这轮换一面」时素材也得跟着换 —— 否则模型顺着素材又聊回去。
             # 只对 speech_evidence 生效：`style_samples` 是**语气**样本，按面筛会把
             # 角色说话方式的覆盖面一起削掉，与"说话方式要贴原文"的诉求相反。
@@ -5718,9 +5801,15 @@ class PromptBuilder:
                 ),
                 turn_index,
                 _MAX_SPEECH_EVIDENCE,
+                recent_replies=spoken_replies,
+                seed_text=rotation_seed,
             )
             style_samples = _rotate_evidence_by_turn(
-                style_samples, turn_index, _MAX_STYLE_SAMPLES
+                style_samples,
+                turn_index,
+                _MAX_STYLE_SAMPLES,
+                recent_replies=spoken_replies,
+                seed_text=rotation_seed,
             )
         raw_quality_context = context.get(
             "qualityContext", context.get("quality_context")
