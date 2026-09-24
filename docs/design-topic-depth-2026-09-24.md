@@ -725,20 +725,60 @@ probe 的 `payload()` 只给了 `channel`，而 `scene` 卡本该有六项。
 
 ### 14.4 交付实机版本
 
-`ad88adc` 与 `7a94711` 之后重建 Release DLL 并部署：
+`ad88adc` 与 `7a94711` 之后重建 Release DLL 并部署。
+
+**⚠ 第一次部署放错了地方，没生效 —— 记在这里。**
+
+本轮先只覆盖了 `游戏目录\Mods\StardewAI.NPC\`，并据此宣布「实机版本就绪」。
+**这是错的**：查 Steam 启动配置（`userdata\849762110\config\localconfig.vdf`）
+发现启动选项是
+
+```
+"D:\sbeam\...\StardewModdingAPI.exe" --mods-path
+  C:\Users\Lenovo\AppData\Roaming\Stardrop\Data\SELECT~1 %command%
+```
+
+**带 `--mods-path`，指向 Stardrop（mod 管理器）的 `Selected Mods`**，
+而不是游戏目录下的 `Mods`。`SELECT~1` 是 8.3 短名，实际是 `Selected Mods`。
+
+`Selected Mods` 里几乎所有条目都是 **JUNCTION** 指向 `Mods\`（例如
+`ConsoleCommands` → `Mods\ConsoleCommands`），**唯独 `StardewAI.NPC` 是个实体
+目录，里面躺着 2026-08-23 04:15 的 50 KB 旧 DLL**（构建产物是 816 KB）——
+即项目最初的雏形版本。
+
+⇒ **此前每一次 Steam 启动加载的都是那个 8-23 雏形，本项目此后所有改动
+（池宽、深度槽位、英文清洗、开场构图）从未在实机生效过。**
+这也正是「出一个稳定版本让我整体玩一遍」为什么必要：
+**玩家一直玩到的不是当前代码。**
+
+**正确部署**（2026-09-24 15:30）：
 
 | 项 | 部署前 | 部署后 |
 |---|---|---|
-| 已装 DLL | 09-24 00:11（落后 2 个 C# 提交） | 09-24 12:04（`a36553f`） |
-| Bridge 进程 | 09-23 20:51 启动（落后一整天） | 09-24 12:05 重启（PID 41904） |
+| `Selected Mods\StardewAI.NPC` | 实体目录，08-23 旧 DLL | **JUNCTION → `Mods\StardewAI.NPC`** |
+| DLL 大小 | 50,176 B | 816,640 B |
+| 三处哈希 | 互不相同 | **一致（`7C40BA8EECEA30AC`）** |
+| Stardrop profile `AI-SVE-测试` | 30 条，不含本 mod | **31 条，含 `OpenAI.StardewAI.NPC`** |
 
-旧 DLL 备份在 `.tmp/mod-backup-20260924-120500/`（`.tmp/` 已 gitignore）。
-只覆盖了 `StardewAI.NPC.dll` 与 `deps.json`，**未动 `config.json` /
-`manifest.json`，未碰存档与 persona 数据**。
+选 junction 而非直接复制，理由是**与 Stardrop 自己的惯例同构**
+（`ConsoleCommands` 等条目都是 junction 指向 `Mods\`），
+且以后只需维护 `Mods\StardewAI.NPC` 一处。
+profile 也必须同步 —— 否则下次在 Stardrop 里切 profile 时该条目会被移除。
 
-冒烟：`POST /api/context/preview` 返回 26 张卡（`turn_plan` 在末位、
-`topic_trigger` 收尾）；`POST /api/dialogue/test` 端到端一轮正常，
-回复已带场景意识（「搬到太阳底下」「今天居然冒出新芽」）。
+备份（均在 `.tmp/`，已 gitignore）：
+
+* `mod-backup-20260924-120500/` —— 游戏目录被覆盖前的 DLL
+* `stardrop-selected-backup-20260924-153006/` —— 被替换掉的 8-23 实体目录（含旧 config）
+* `stardrop-profile-backup-20260924-153044-AI-SVE.json` —— 改前的 profile
+
+**未做**：没有启动游戏或 SMAPI 验证（需按实例单独授权），所以
+「SMAPI 成功加载本 mod」仍是**推断**（junction + manifest + profile 三项就位），
+不是实测。另：`Profiles\Default.json`（104 条）**不含**本 mod，
+**切到 Default profile 会加载不到。**
+
+冒烟（Bridge 侧，已实测）：`POST /api/context/preview` 返回 26 张卡
+（`turn_plan` 在末位、`topic_trigger` 收尾）；`POST /api/dialogue/test`
+端到端一轮正常，回复已带场景意识（「搬到太阳底下」「今天居然冒出新芽」）。
 
 ### 14.5 方法论
 
@@ -755,3 +795,15 @@ probe 的 `payload()` 只给了 `channel`，而 `scene` 卡本该有六项。
 **并列 ≠ 等价**：只要其中一个有额外优势，它就会吃掉绝大多数样本。
 要改分布，就得改变**相对难度**（给别的入口补素材、举例、提前），
 而不是加一句「不要老用那个」。
+
+**第 49 条：部署到位 ≠ 加载生效 —— 先确认运行时真正读的是哪个路径。**
+本轮宣布「实机版本就绪」时，DLL 确实覆盖了 `游戏目录\Mods\`，
+但 Steam 启动带 `--mods-path` 指向 Stardrop 的 `Selected Mods`，
+**那里躺着一个 8-23 的 50 KB 旧 DLL**（构建产物 816 KB）。
+⇒ 整轮改动从未在实机生效，且**这一点从文件时间戳上看不出来**
+（`Mods\` 那个确实是新的）。
+判据是**顺着运行时链路走一遍**：Steam 启动项 → `--mods-path` →
+实际目录 → 目录里那份文件。
+这与第 47 条（改动落在哪一层）是同一族错误的两端：
+第 47 条错在**改错了地方**，这条错在**看错了地方**。
+**共同判据：不要相信「我改/我看的那个位置」，去读运行时真正使用的那个值。**
