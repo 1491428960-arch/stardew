@@ -484,6 +484,70 @@ def reply_avoids_speech_particle(reply: object, particles: tuple[str, ...]) -> b
     )
 
 
+# 口头颗粒的完整表（含「好吧」「行吧」这类双字形式）。
+#
+# 2026-09-24：这张表原先私有在 `dialogue_style_quality._SPEECH_PARTICLES`。
+# 现在挪到本模块，因为「颗粒过密」判定要同时被 `guard`（运行时重试）与
+# `dialogue_style_quality`（离线标签）使用，而本模块是不 import 任何 bridge
+# 模块的底层——两边共用同一份，才不会又出现「两处各写一套、结论相反」。
+SPEECH_PARTICLES: tuple[str, ...] = ("好吧", "行吧", "嗯", "哦", "啊", "唔", "呃", "嘿")
+
+_SPEECH_PARTICLE_AT_BOUNDARY = re.compile(
+    r"(?:^|[。！？!?；;，,、\n…])("
+    + "|".join(map(re.escape, SPEECH_PARTICLES))
+    # 后继允许省略号与破折号：「呃……」「嗯——」是最典型的迟疑写法，
+    # 漏掉它们会把最该被数出来的那类语气词放过去。
+    + r")(?:\s|[，。！？!?；;、:：…—]|$)"
+)
+_CJK_CHARACTER = re.compile(r"[\u4e00-\u9fff]")
+
+# 语气词密度上限（每 100 汉字）。
+#
+# 2026-09-24（`docs/report-kimi-filler-diagnosis-2026-09-24.md`）：
+# 原文全库平均 **1.67**、密度最高的角色 **2.20**（Sophia），DeepSeek 输出
+# **1.12**，而 Kimi 输出 **3.99~4.56**。3.0 落在两者之间——不误伤原文水平，
+# 又能抓住 Kimi 那种「几乎每句都带」的模式。
+#
+# ⚠ 判定放在输出侧是实测逼出来的，不是偷懒：两条「证据层」路线都拉不动它。
+#   改 prompt 措辞（600 轮、0/3 角色显著）、修 voiceAnchors 选样偏置
+#   （300 轮、0/3 角色显著）。后者的三组对照更证明**范例密度与输出密度不相关**
+#   ——Sebastian 的 anchors 降 68% 而输出只降 10%，Elliott 的 anchors 降 73%
+#   而输出反升 18%。所以只能在这里直接约束输出。
+SPEECH_PARTICLE_DENSITY_LIMIT = 3.0
+
+# 至少这么多颗粒才算「过密」。
+#
+# 短回复里一个颗粒就能撑起很高的比例，但「嗯，好的。」完全正常。要求多个
+# 才能确认是「几乎每句都带」的模式，否则会把大量正常短句拉去重试。
+SPEECH_PARTICLE_DENSITY_MIN_COUNT = 2
+
+
+def speech_particle_density(reply: object) -> tuple[int, int, float]:
+    """返回 `(颗粒数, 汉字数, 每百汉字密度)`。
+
+    只数句首或标点之后的颗粒（与 `reply_avoids_speech_particle` 同口径），
+    避免把词语内部同字误判成颗粒。
+    """
+
+    if not isinstance(reply, str) or not reply.strip():
+        return (0, 0, 0.0)
+    text = reply.strip()
+    count = len(_SPEECH_PARTICLE_AT_BOUNDARY.findall(text))
+    chinese = len(_CJK_CHARACTER.findall(text))
+    density = count / chinese * 100 if chinese else 0.0
+    return (count, chinese, density)
+
+
+def reply_exceeds_speech_particle_density(reply: object) -> bool:
+    """回复的口头颗粒是否密到不像这个角色的常态。"""
+
+    count, _, density = speech_particle_density(reply)
+    return (
+        count >= SPEECH_PARTICLE_DENSITY_MIN_COUNT
+        and density > SPEECH_PARTICLE_DENSITY_LIMIT
+    )
+
+
 # 句首语气颗粒：只是开口语气，不构成开场结构本身。
 #
 # 2026-09-21（用户实测「开场结构逐字重复」）：`reply_opens_with_marker` 原先用

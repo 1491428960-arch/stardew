@@ -142,8 +142,10 @@ def test_eval_records_safe_style_quality_for_each_generated_turn(
     )
 
     record = json.loads((tmp_path / "results.jsonl").read_text(encoding="utf-8"))
+    # 这条固定回复同时犯两件事：同一个颗粒用了两次，且 10 个字带 2 个（过密）。
     assert record["turns"][0]["styleQuality"]["tags"] == [
-        "repeated_speech_particle"
+        "repeated_speech_particle",
+        "too_many_speech_particles",
     ]
     assert "prompt" not in json.dumps(record, ensure_ascii=False)
 

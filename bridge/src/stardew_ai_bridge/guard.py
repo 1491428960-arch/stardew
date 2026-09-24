@@ -28,6 +28,7 @@ from .dialogue_boundaries import (
     repeats_affection_shape,
     reopens_after_close,
     reply_avoids_speech_particle,
+    reply_exceeds_speech_particle_density,
     reply_opens_with_marker,
     turn_plan_mode_from,
     violates_event_gate,
@@ -60,7 +61,22 @@ VOICE_PARTICLE_RETRY_CONTENT = (
     "上一条回复重复了历史中已经用过的口头颗粒。只重新回答最后一条玩家消息："
     "不要使用 avoidSpeechParticles 中的任何词，不要补固定口头禅；"
     "保留当前角色、当前话题和历史对象，直接输出自然的中文 NPC 对白。"
- )
+)
+
+# 与上面那条的区别：这条说的是**这一轮自己就带得太多**，和历史无关。
+#
+# 2026-09-24（docs/report-kimi-filler-diagnosis-2026-09-24.md）：Kimi 的输出
+# 密度是原文全库的 2.4~2.7 倍，而两条证据层路线都拉不动它（改 prompt 措辞
+# 600 轮 0/3 显著；修 voiceAnchors 选样偏置 300 轮 0/3 显著，且三组对照证明
+# 范例密度与输出密度不相关）。所以这里直接约束输出。
+#
+# 给的是「整条最多留一个」这个可数的上限，而不是「不要用语气词」——
+# 后者会把角色说得像没有口语；而且实测这类否定指令本来就拉不住它。
+VOICE_PARTICLE_DENSITY_RETRY_CONTENT = (
+    "上一条回复里的口头颗粒（嗯、呃、哦、啊等）比这个角色平时说话密得多。"
+    "只重新回答最后一条玩家消息：整条最多留一个颗粒，其余照常自然表达，"
+    "不要为了少用语气词而把话说得生硬；保留当前角色、当前话题和历史对象。"
+)
 
 OPENING_RETRY_CONTENT = (
     "上一条回复重复了历史开场。只重新回答最后一条玩家消息；"
@@ -224,6 +240,7 @@ _NATURAL_RETRY_CONTENT = {
     "continuity": "点出一个历史对象后继续回应；保持简洁自然和角色语气。",
     "topic": "直接回答当前具体对象，保留一个必要对象词；保持角色语气和自然口语。",
     "voice_particle": "换一种自然口头节奏，避开最近用过的口头词；保留当前话题和角色。",
+    "voice_particle_density": "口头颗粒用得太密了，说得利落一点；其余照常。",
 }
 
 # 2026-09-20：删掉两张死表。`_GUARDED_WARMTH_MARKERS` 与它唯一的下游
@@ -1165,6 +1182,10 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
     style_clean = int(
         not _has_repeated_opening(prompt, reply)
         and not _repeats_history_speech_particle(prompt, reply)
+        # 颗粒过密也归这一档——它和上面两条一样是「轻微语气问题」，不该压过
+        # 硬约束。但**必须进来**：否则重试生成的干净回复在评分上与密集回复
+        # 打平，`best` 会保留密集的那条，重试就白做了（2026-09-24 实测踩到）。
+        and not reply_exceeds_speech_particle_density(reply)
     )
     variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     event_gate_clean = int(not _violates_event_gate(prompt, reply))
@@ -1326,6 +1347,13 @@ def retry_for_format_noise(
             issue = "missing_proactive_affection"
             retry_kind = "affection"
             retry_content = AFFECTION_RETRY_CONTENT
+        # 排在「重复颗粒」**之前**：这条说的是这一轮自己就带得太多，
+        # 是更根本的毛病；而重复只是和历史撞了。结构类问题（开场/上下文/
+        # 话题/亲密）仍然优先于它俩。
+        elif issue is None and reply_exceeds_speech_particle_density(current.reply):
+            issue = "too_many_speech_particles"
+            retry_kind = "voice_particle_density"
+            retry_content = VOICE_PARTICLE_DENSITY_RETRY_CONTENT
         elif issue is None and _repeats_history_speech_particle(
             prompt,
             current.reply,

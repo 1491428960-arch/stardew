@@ -16,12 +16,16 @@ from collections.abc import Mapping
 from typing import Any
 
 from .dialogue_boundaries import (
+    SPEECH_PARTICLES,
     reply_avoids_speech_particle,
+    reply_exceeds_speech_particle_density,
     reply_opens_with_marker,
 )
 
 
-_SPEECH_PARTICLES = ("好吧", "行吧", "嗯", "哦", "啊", "唔", "呃", "嘿")
+# 表已挪到 `dialogue_boundaries`（guard 与这里共用一份）。保留本地别名，
+# 因为下面的两个正则就建在它上面，模块内既有写法不必跟着改。
+_SPEECH_PARTICLES = SPEECH_PARTICLES
 _SENTENCE_BOUNDARY = r"[。！？!?；;，,、\n]"
 _OPENING_SPLIT = re.compile(_SENTENCE_BOUNDARY)
 _PARTICLE_AT_OPENING = re.compile(
@@ -131,6 +135,13 @@ def analyze_dialogue_style(
     )
     if reply_avoids_speech_particle(opening, previous_particles):
         tags.add("repeated_speech_particle")
+
+    # 「过密」与「重复」是两个维度：前者说这轮自己就带得太多，后者说和历史
+    # 撞了。一条回复可能只犯其中一个，也可能两个都犯，所以不互相顶掉。
+    # 这个码此前只在 `dialogue_lab_page` 里被翻译成「语气词过密」，没有任何
+    # 代码产出它——是个界面上等着用的死标签（2026-09-24 接通）。
+    if reply_exceeds_speech_particle_density(text):
+        tags.add("too_many_speech_particles")
 
     markers = _repeated_opening_markers(previous_openings)
     if markers and reply_opens_with_marker(opening, markers):

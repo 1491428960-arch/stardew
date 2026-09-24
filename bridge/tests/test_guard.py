@@ -3746,3 +3746,77 @@ def test_turn_plan_retries_the_same_quality_kind_at_most_once() -> None:
     assert len(calls) == 1
     assert calls[0][-1]["name"] == "affection_retry"
     assert retried.warnings.count("response_affection_retry: missing_proactive_affection") == 1
+
+
+def test_dense_speech_particles_trigger_density_retry() -> None:
+    """颗粒过密要触发「过密」重试，而不是「重复颗粒」那条。
+
+    2026-09-24（`docs/report-kimi-filler-diagnosis-2026-09-24.md`）：Kimi 的
+    输出密度是原文全库的 2.4~2.7 倍。改 prompt 措辞（600 轮）与修 voiceAnchors
+    选样偏置（300 轮）两条路都 0/3 角色显著，且后者证明范例密度与输出密度
+    不相关——这里是唯一直接约束输出的位置。
+    """
+
+    prompt = [
+        {
+            "role": "system",
+            "name": "voice_execution_card",
+            "content": '{"avoidSpeechParticles":[]}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="呃……你好。哦，是你啊。嗯，那我知道了。",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    clean = "你好。刚搬来的吧，住久一点就熟了。"
+    calls: list[list[dict[str, str]]] = []
+
+    def generate(messages: list[dict[str, str]]) -> ProviderResult:
+        calls.append(messages)
+        return result.model_copy(update={"reply": clean})
+
+    retried = retry_for_format_noise(result, prompt, generate)
+
+    assert retried.reply == clean
+    assert calls[0][-2]["name"] == "voice_particle_density_retry"
+    assert (
+        retried.warnings.count(
+            "response_voice_particle_density_retry: too_many_speech_particles"
+        )
+        == 1
+    )
+
+
+def test_normal_density_reply_does_not_trigger_density_retry() -> None:
+    """原文全库水平的回复不能被拉去重试——否则每轮都在白花延迟。"""
+
+    prompt = [
+        {
+            "role": "system",
+            "name": "voice_execution_card",
+            "content": '{"avoidSpeechParticles":[]}',
+        },
+        {"role": "user", "name": "topic_trigger", "content": ""},
+    ]
+    result = ProviderResult(
+        reply="今天的葡萄园还算安静。我下午想画一会儿画，你要不要来看看？",
+        provider="cloud",
+        fallback=False,
+        latencyMs=12,
+    )
+    calls: list[list[dict[str, str]]] = []
+
+    retried = retry_for_format_noise(
+        result,
+        prompt,
+        lambda messages: calls.append(messages) or result,
+    )
+
+    assert retried.reply == result.reply
+    assert calls == []
+    assert not any(
+        "too_many_speech_particles" in warning for warning in retried.warnings
+    )
