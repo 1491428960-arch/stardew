@@ -477,3 +477,72 @@ def test_non_sophia_stage_anchors_prefer_current_relationship_voice() -> None:
     )
 
     assert [item["sampleId"] for item in selected] == ["close-shane"]
+
+
+def test_voice_anchor_window_does_not_over_represent_speech_particles() -> None:
+    """锚点窗口的语气词密度不能明显高于该角色原文全库。
+
+    2026-09-24（`docs/report-kimi-filler-diagnosis-2026-09-24.md`）：
+    原窗口的语气词密度是该角色全库的 1.80x（中位）、最高 3.59x。原因在
+    排序键把 `introduction` 排在前面，而介绍句恰好是语气词最密集的一类
+    （「呃……你好。」「噢。你是刚搬进来的，对吧？」）。模型把这个被放大的
+    窗口当模板复现，Kimi 输出又在其上放大到 2.48x。
+
+    **同一份诊断里已实测：改 prompt 措辞拉不住**——每角色 100 轮、共 600 轮、
+    0/3 角色显著变化。所以只能从选样这一侧修。
+    """
+
+    clean_texts = [
+        "今天在农场干活，天气还不错。",
+        "早上喂完鸡，又去修了围栏。",
+        "镇上的集市昨天挺热闹。",
+        "今年春天的雨水比往年多。",
+        "刚把地翻完，打算种点土豆。",
+        "下午去河边坐了一会儿。",
+        "晚上早点睡，明天还得早起。",
+    ]
+    dense_texts = [
+        "呃……啊，哦！你好。嗯，我是这个人。",
+        "哦，唔……你也在这儿啊。唉，算了。",
+        "嘿！嗯……今天天气啊，还不错吧？",
+        "呃，那个……我、我该走了。",
+    ]
+    samples = [
+        {
+            "sampleId": f"day-{key}",
+            "sourceKey": key,
+            "sourceMod": "vanilla",
+            "text": text,
+        }
+        for key, text in zip(
+            ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"), clean_texts
+        )
+    ]
+    samples += [
+        {
+            "sampleId": f"intro-{index}",
+            "sourceKey": "Introduction",
+            "sourceMod": "vanilla",
+            "text": text,
+        }
+        for index, text in enumerate(dense_texts)
+    ]
+
+    anchors = derive_speech_profile("Shane", samples, max_evidence=8)["voiceAnchors"]
+    assert len(anchors) == 8, "窗口应当被填满，否则测不到筛选行为"
+
+    def particles(text: str) -> int:
+        return sum(1 for char in text if char in "嗯呃哦啊唉呀哎诶嘿哈唔嘛呢吧")
+
+    def chinese(text: str) -> int:
+        return sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+
+    window = sum(particles(item["text"]) for item in anchors)
+    window_chars = sum(chinese(item["text"]) for item in anchors)
+    corpus = sum(particles(item["text"]) for item in samples)
+    corpus_chars = sum(chinese(item["text"]) for item in samples)
+
+    assert window / window_chars <= corpus / corpus_chars * 1.25 + 1e-9, (
+        f"锚点窗口语气词密度 {window / window_chars:.3f} 超过全库 "
+        f"{corpus / corpus_chars:.3f} 的 1.25 倍"
+    )

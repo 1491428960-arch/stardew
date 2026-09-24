@@ -47,6 +47,40 @@ VOICE_ANCHOR_MIN_TEXT = 6
 VOICE_ANCHOR_MAX_TEXT = 80
 _VOICE_ANCHOR_MAX_COUNT = 8
 _STAGE_VOICE_ANCHOR_MAX_COUNT = 8
+
+# 锚点窗口的语气词密度上限（相对该角色原文全库的倍数）。
+#
+# 2026-09-24（`docs/report-kimi-filler-diagnosis-2026-09-24.md`）：
+# 修 prompt 措辞之前，窗口的语气词密度是全库的 1.80x（中位）、最高 3.59x。
+# 根因在下面的排序键把 `introduction` 排在前面，而介绍句恰好是语气词最密集
+# 的一类（「呃……你好。」「噢。你是刚搬进来的，对吧？」）。
+#
+# 模型把这个被放大的窗口当模板复现：同一批 prompt 下 Kimi 输出是全库的
+# 2.48x，DeepSeek 反过来压到 0.67x。**改 prompt 措辞实测拉不住**
+# （每角色 100 轮、共 600 轮、0/3 角色显著变化），所以均衡只能做在选样这一侧。
+#
+# 1.25 是留了余量的上限：窗口只有 8 条，要求它精确等于全库密度会让候选
+# 稍有不符就选不满。这里只挡住「明显偏高」，不追求精确配平。
+_VOICE_ANCHOR_PARTICLE_RATIO_CAP = 1.25
+
+# 窗口允许的语气词数下限。
+#
+# 语料很短（或该角色本来就极少用语气词）时，`比例 × 窗口字数` 会小到 1 以下，
+# 于是任何一句带「嗯」的正常对白都被拒——选出来的窗口完全无菌，既不自然，
+# 也让「这个角色本来怎么说话」这个信号整个消失。给一个下限，保证预算
+# 只挡「过量」，不变成「禁用」。
+_VOICE_ANCHOR_MIN_PARTICLES = 1
+
+# 只数**停顿/迟疑类**语气词（「呃……」「嗯，」这种）。
+#
+# 刻意**不含**「吧」「呢」「嘛」这类句末助词：它们在原版对白里本来就大量使用
+# （「你就是新来的农场主吧？」），是正常汉语，不构成结巴感。真正让角色变成
+# 一种结巴的是句首那串停顿词，所以口径必须收在这里，否则一条完全正常的
+# 问句会被算成两个语气词而被预算拒掉。
+#
+# 与 `dialogue_style_quality._SPEECH_PARTICLES` 用途不同：那份判定「够不够格
+# 算一个口语颗粒」（含「好吧」「行吧」这样的词），这里只需要「数密度」。
+_VOICE_ANCHOR_SPEECH_PARTICLES = frozenset("嗯呃哦噢啊唉呀哎诶嘿哈唔")
 _ENERGY_EXCITEMENT_MARKERS: tuple[str, ...] = (
     "嘿",
     "耶",
@@ -434,13 +468,48 @@ def _anchor_category(sample: Mapping[str, Any]) -> str:
     return "other"
 
 
+def _speech_particle_counts(text: str) -> tuple[int, int]:
+    """返回 `(语气词数, 汉字数)`，供锚点窗口做语气词密度均衡。
+
+    只数汉字做分母：标点、空格和拉丁字符不参与，这样跨来源的样本可比。
+    """
+
+    particles = sum(1 for char in text if char in _VOICE_ANCHOR_SPEECH_PARTICLES)
+    chinese = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    return particles, chinese
+
+
 def _voice_anchor_candidates(
     samples: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, str]]:
-    """提取短、可读、来源可追溯的原文语气片段。"""
+    """提取短、可读、来源可追溯的原文语气片段。
+
+    窗口除了来源与结构多样性，还受**语气词密度**约束——理由与阈值见
+    `_VOICE_ANCHOR_PARTICLE_RATIO_CAP`。
+    """
+
+    # 先物化：下面要遍历三次（算密度、排序、回查 sample），
+    # 直接把 `samples` 当可重复序列用会在传生成器时静默出错。
+    sample_list = [item for item in samples if isinstance(item, Mapping)]
+
+    # 基准取该角色原文**全库**的语气词密度（分母是全库汉字数，
+    # 样本量足够大，比按条平均更稳）。
+    corpus_particles = 0
+    corpus_chinese = 0
+    for sample in sample_list:
+        text = sample.get("text")
+        if isinstance(text, str):
+            particles, chinese = _speech_particle_counts(text)
+            corpus_particles += particles
+            corpus_chinese += chinese
+    particle_cap = (
+        corpus_particles / corpus_chinese * _VOICE_ANCHOR_PARTICLE_RATIO_CAP
+        if corpus_chinese
+        else float("inf")
+    )
 
     candidates: list[tuple[tuple[int, int, int, int], dict[str, str]]] = []
-    for original_index, sample in enumerate(samples):
+    for original_index, sample in enumerate(sample_list):
         if not isinstance(sample, Mapping):
             continue
         if not is_stable_voice_evidence_record(sample):
@@ -486,15 +555,30 @@ def _voice_anchor_candidates(
     selected_sources: set[str] = set()
     selected_categories: set[str] = set()
     selected_texts: set[str] = set()
+    selected_particles = 0
+    selected_chinese = 0
 
     def add(anchor: dict[str, str], category: str, *, require_new: bool) -> None:
+        nonlocal selected_particles, selected_chinese
         source = source_family(anchor.get("sourceMod", ""))
         text = anchor["text"].casefold()
         if text in selected_texts or len(selected) >= _VOICE_ANCHOR_MAX_COUNT:
             return
         if require_new and source in selected_sources and category in selected_categories:
             return
+        # 语气词预算：宁可让窗口留空位，也不把它拉成一种结巴。
+        # 这条挡在最后，是为了让来源与结构多样性先决定「选谁」，
+        # 只有当选中的样本开始推高密度时才有候选被跳过。
+        particles, chinese = _speech_particle_counts(anchor["text"])
+        allowed = max(
+            _VOICE_ANCHOR_MIN_PARTICLES,
+            particle_cap * (selected_chinese + chinese),
+        )
+        if chinese and selected_particles + particles > allowed:
+            return
         selected.append(anchor)
+        selected_particles += particles
+        selected_chinese += chinese
         selected_sources.add(source)
         selected_categories.add(category)
         selected_texts.add(text)
@@ -504,7 +588,7 @@ def _voice_anchor_candidates(
         sample = next(
             (
                 item
-                for item in samples
+                for item in sample_list
                 if isinstance(item, Mapping)
                 and item.get("sampleId") == anchor["sampleId"]
             ),
@@ -517,7 +601,7 @@ def _voice_anchor_candidates(
         sample = next(
             (
                 item
-                for item in samples
+                for item in sample_list
                 if isinstance(item, Mapping)
                 and item.get("sampleId") == anchor["sampleId"]
             ),
@@ -528,7 +612,7 @@ def _voice_anchor_candidates(
         sample = next(
             (
                 item
-                for item in samples
+                for item in sample_list
                 if isinstance(item, Mapping)
                 and item.get("sampleId") == anchor["sampleId"]
             ),
