@@ -65,7 +65,11 @@ def test_fake_dialogue_returns_structured_response(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["reply"]
-    assert "Rasmodia" in body["reply"]
+    # fake provider 会用 `npcId` 拼文本，而 `npcId` 是 mod 的英文标识
+    # （`Rasmodia`，游戏内显示名是中文）。出口清洗会把这个英文名当碎片删掉 ——
+    # **这正是期望行为**：玩家看到的台词里不该出现 `Rasmodia`。
+    # 清洗本身的契约见 `test_reply_scrub.py`。
+    assert "Rasmodia" not in body["reply"]
     assert "本地演示" in body["reply"]
     assert "非真实 AI" in body["reply"]
     assert body["provider"] == "fake"

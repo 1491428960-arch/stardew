@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .reply_scrub import scrub_reply
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(
@@ -34,6 +36,23 @@ def _strip_text(value: object) -> object:
             raise ValueError("文本不能为空")
         return stripped
     return value
+
+
+def _scrub_reply_text(value: object) -> object:
+    """台词字段：先去空白，再清掉漏进来的拉丁／假名碎片。
+
+    **只有"角色要说出口的话"才走这里** —— id、provider 名、mod 名这类字段
+    不能清，它们本来就该是英文。
+
+    成因已查实为**模型幻觉**（不是素材传染）：索菲亚的 310 条索引素材零污染，
+    prompt 里也没有可照抄的英文台词。详见 `reply_scrub` 模块 docstring。
+    在 8765 轮历史输出上只改动 0.57%，且没有碎片时**逐字返回**。
+    """
+
+    stripped = _strip_text(value)
+    if isinstance(stripped, str):
+        return scrub_reply(stripped)
+    return stripped
 
 
 def _strip_dialogue_message(value: object) -> object:
@@ -576,7 +595,7 @@ class GroupTurn(ApiModel):
     _strip_speaker_npc_id = field_validator("speaker_npc_id", mode="before")(
         _strip_text
     )
-    _strip_content = field_validator("content", mode="before")(_strip_text)
+    _strip_content = field_validator("content", mode="before")(_scrub_reply_text)
 
 
 class GroupDialogueResponse(ApiModel):
@@ -724,6 +743,9 @@ class ProviderResult(ApiModel):
     usage: ProviderUsage | None = None
     open_loop: OpenLoopSignal | None = Field(default=None, alias="openLoop")
 
+    # ⚠ 这里**不清洗** —— `ProviderResult` 是 provider 的原样输出，
+    # 中间还要过 `_retry_for_format_noise` 与 `response_guard`，
+    # 让它们看到没被动过的文本更安全。清洗放在对外的 `DialogueResponse`。
     _strip_reply = field_validator("reply", mode="before")(_strip_text)
     _strip_provider = field_validator("provider", mode="before")(_strip_text)
 
@@ -737,7 +759,7 @@ class DialogueResponse(ApiModel):
     usage: ProviderUsage | None = None
     open_loop: OpenLoopSignal | None = Field(default=None, alias="openLoop")
 
-    _strip_reply = field_validator("reply", mode="before")(_strip_text)
+    _strip_reply = field_validator("reply", mode="before")(_scrub_reply_text)
     _strip_provider = field_validator("provider", mode="before")(_strip_text)
 
 
