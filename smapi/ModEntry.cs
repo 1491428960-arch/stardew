@@ -587,7 +587,7 @@ public sealed class ModEntry : Mod
             ModManifest,
             () => config.DialogueKey,
             value => config.DialogueKey = value.IsBound ? value : new KeybindList(SButton.F8),
-            () => "Dialogue key",
+            () => "对话按键",
             () => "打开私聊名单选人。名单里只有已经认识的村民（随游戏进度解锁）；"
                 + "同处一地的角色当面聊，其他角色线上聊。",
             "DialogueKey");
@@ -595,14 +595,14 @@ public sealed class ModEntry : Mod
             ModManifest,
             () => config.EnableDialogue,
             value => config.EnableDialogue = value,
-            () => "Enable dialogue",
+            () => "启用对话",
             () => "是否启用 AI NPC 对话。",
             "EnableDialogue");
         api.AddBoolOption(
             ModManifest,
             () => config.InjectTestNpc,
             value => config.InjectTestNpc = value,
-            () => "Inject bedside test NPC",
+            () => "床边测试 NPC",
             () => "在农舍床边放一个名为「XX（测试）」的克隆 NPC，用于床边陪测。"
                 + "默认关闭：它不在角色表里，没有专属配色和气泡装饰，"
                 + "婚后角色都在屋里时直接跟真角色聊即可。",
@@ -611,28 +611,28 @@ public sealed class ModEntry : Mod
             ModManifest,
             () => config.EnableHouseAccess,
             value => config.EnableHouseAccess = value,
-            () => "Enable residential door access",
+            () => "住宅门通行",
             () => "只放宽已确认属于 NPC 住宅的外门；个人测试档默认开启。",
             "EnableHouseAccess");
         api.AddBoolOption(
             ModManifest,
             () => config.AllowMixedBuildingAccess,
             value => config.AllowMixedBuildingAccess = value,
-            () => "Allow mixed building access",
+            () => "混合建筑通行",
             () => "允许住宅与商店共用建筑放行；可能提前进入商店，个人测试档默认开启。",
             "AllowMixedBuildingAccess");
         api.AddTextOption(
             ModManifest,
             () => config.BridgeEndpoint,
             value => config.BridgeEndpoint = value,
-            () => "Bridge endpoint",
+            () => "Bridge 地址",
             () => "仅允许本机回环 HTTP(S) 地址。",
             fieldId: "BridgeEndpoint");
         api.AddNumberOption(
             ModManifest,
             () => config.BridgeTimeoutSeconds,
             value => config.BridgeTimeoutSeconds = value,
-            () => "Bridge timeout (seconds)",
+            () => "Bridge 超时（秒）",
             () => "请求超时秒数，范围为 1 到 120。",
             ModConfig.MinBridgeTimeoutSeconds,
             ModConfig.MaxBridgeTimeoutSeconds,
@@ -642,7 +642,7 @@ public sealed class ModEntry : Mod
             ModManifest,
             () => config.GroupDialogueStrategy,
             value => config.GroupDialogueStrategy = value,
-            () => "Group dialogue strategy",
+            () => "群聊策略",
             () => "multi_turn 为自然接话流（名单里多人可依次发言，默认）；turn_based 只让当前发言人回一句。",
             new[] { ModConfig.MultiTurnGroupStrategy, ModConfig.TurnBasedGroupStrategy },
             value => value == ModConfig.TurnBasedGroupStrategy ? "一人一轮（回退）" : "自然接话流（默认）",
