@@ -34,11 +34,11 @@ _UNRESOLVED_I18N = re.compile(r"\{\{\s*i18n\s*:", re.IGNORECASE)
 # **共用了同一个 6**，于是池子永远只有 6 条可转 —— 实测连续 20 轮只覆盖到
 # 5 条素材，池子里其余素材一次都没被建议过。放宽池子**不增加 prompt 体积**
 # （每轮仍只注入 1 条），所以才把这两个数字拆开。
-_SPEECH_EVIDENCE_CANDIDATES = 18
+_SPEECH_EVIDENCE_CANDIDATES = 24
 # 同上。style 池要**明显**宽于 speech 池：`prompts.py` 拿已经取到的
 # `speech_texts` 去重 style，而两个数组在索引里内容对称（各 10213 条）——
 # speech 池一旦放宽，去重会把 style 的前排整片吃掉，池子不放大就等于清空。
-_STYLE_SAMPLE_CANDIDATES = 24
+_STYLE_SAMPLE_CANDIDATES = 48
 
 
 def _normalise_marker(value: object) -> str:

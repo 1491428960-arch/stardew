@@ -361,10 +361,10 @@ _MAX_STYLE_SAMPLES = 6
 # 「前 6 名」变成「前 12 名」里轮，单条质量略降。
 # 受 `profile_index` 的候选上限约束（`_SPEECH_EVIDENCE_CANDIDATES` /
 # `_STYLE_SAMPLE_CANDIDATES`）—— 那里不放大，这里填多大都拿不到更多。
-_SPEECH_EVIDENCE_POOL = 12
+_SPEECH_EVIDENCE_POOL = 24
 # style 池必须**明显**宽于 speech 池：取出后用 `speech_texts` 去重，
 # 而两个数组在索引里内容对称（各 10213 条），speech 放宽会把 style 前排吃掉。
-_STYLE_SAMPLE_POOL = 24
+_STYLE_SAMPLE_POOL = 48
 _MAX_BEHAVIOR_EXAMPLES = 2
 _MAX_ORIGINAL_STYLE_EXAMPLES = 4
 _MAX_KNOWLEDGE_FACTS = 2
