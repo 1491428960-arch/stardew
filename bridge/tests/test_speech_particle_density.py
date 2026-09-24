@@ -21,6 +21,7 @@ from stardew_ai_bridge.dialogue_boundaries import (
     SPEECH_PARTICLES,
     reply_exceeds_speech_particle_density,
     speech_particle_density,
+    speech_particle_window_density,
 )
 from stardew_ai_bridge.dialogue_style_quality import analyze_dialogue_style
 
@@ -114,3 +115,71 @@ def test_repeated_particle_still_reported_separately() -> None:
         history=[{"role": "assistant", "content": "嗯，我在。"}],
     )
     assert "repeated_speech_particle" in result["tags"]
+
+
+def test_window_density_catches_one_particle_per_reply_pattern() -> None:
+    """Kimi 的真实模式：每条只带一个颗粒，但**每条都带**。
+
+    这是 2026-09-24 实测踩到的坑。最初只看单条、且要求「至少 2 个颗粒」，
+    结果 Kimi 的 300 轮里 **gate 一次都没触发过**——它的模式是「几乎每条都以
+    一个『呃』开头，但很少带两个」，单条永远只有 1 个颗粒，于是全部逃逸，
+    B 方案被误判成「无效」。窗口口径才能看见这个模式。
+    """
+
+    history = [
+        {"role": "assistant", "content": "呃，还活着。"},
+        {"role": "assistant", "content": "呃，还行。刚喂完鸡。"},
+        {"role": "assistant", "content": "哦。还活着。"},
+    ]
+    # 单看这一条：1 个颗粒 ⇒ 单条判据要求至少 2 个，放过。
+    assert not reply_exceeds_speech_particle_density("呃，今天挺累。")
+    # 放进窗口：4 条里 4 个颗粒，密度远高于原文全库。
+    assert reply_exceeds_speech_particle_density("呃，今天挺累。", history)
+
+
+def test_window_density_does_not_flag_normal_conversation() -> None:
+    """窗口里颗粒总量不够时不该触发——否则正常应答也会被拉去重试。"""
+
+    history = [
+        {"role": "assistant", "content": "今天的葡萄园还算安静，我下午想画一会儿画。"},
+        {"role": "assistant", "content": "好啊，那你先忙，晚点我再来找你。"},
+    ]
+    assert not reply_exceeds_speech_particle_density("嗯，好的。", history)
+
+
+def test_window_ignores_non_assistant_history() -> None:
+    """玩家说的话不算——否则玩家自己用语气词会把 NPC 判成过密。"""
+
+    history = [
+        {"role": "user", "content": "呃……那个……嗯……"},
+        {"role": "user", "content": "哦，好吧。"},
+    ]
+    assert not reply_exceeds_speech_particle_density("今天挺忙，晚点再说。", history)
+
+
+def test_window_accepts_plain_string_history() -> None:
+    """窗口必须**同时**接受字符串列表和消息字典。
+
+    2026-09-24 实测踩到的不对称：`guard._prompt_assistant_replies` 从 prompt
+    卡片里提取出的是纯字符串列表，而本函数原先只认 `{"role": ...}` 字典，
+    于是 `previous` 恒为空、**窗口逻辑在运行时从未生效**——症状是「本地判定
+    返回 True，guard 却从不触发重试」。单元测试当时恰好喂了字典格式，全绿。
+    """
+
+    history = ["哦。还活着。", "谢恩。在干活。"]
+    reply = "呃，有什么可说的。在上班，住我阿姨那儿。没了。"
+    # 窗口口径：2 个颗粒 / 27 字 = 7.4%，高于阈值。
+    assert reply_exceeds_speech_particle_density(reply, history)
+    # 同样内容用字典形态表达，结论必须一致——这条就是防上面那个不对称。
+    as_messages = [{"role": "assistant", "content": text} for text in history]
+    assert reply_exceeds_speech_particle_density(reply, as_messages)
+
+
+def test_string_history_window_is_not_fooled_by_empty_entries() -> None:
+    """空串和空白不该被算进窗口，否则分母被稀释、判定失真。"""
+
+    history = ["", "   ", "哦。还活着。"]
+    reply = "呃，有什么可说的。在上班，住我阿姨那儿。没了。"
+    count, chinese, _ = speech_particle_window_density([*history, reply])
+    assert count == 2
+    assert chinese == 4 + 18

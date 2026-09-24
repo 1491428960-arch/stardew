@@ -523,10 +523,13 @@ SPEECH_PARTICLE_DENSITY_MIN_COUNT = 2
 
 
 def speech_particle_density(reply: object) -> tuple[int, int, float]:
-    """返回 `(颗粒数, 汉字数, 每百汉字密度)`。
+    """返回单条回复的 `(颗粒数, 汉字数, 每百汉字密度)`。
 
     只数句首或标点之后的颗粒（与 `reply_avoids_speech_particle` 同口径），
     避免把词语内部同字误判成颗粒。
+
+    ⚠ **单条密度在短回复上极不稳定**：15 个字里一个「呃」就是 6.7%，而 4 个字
+    里一个就是 25%。判定不要直接用它，用 `speech_particle_window_density`。
     """
 
     if not isinstance(reply, str) or not reply.strip():
@@ -538,10 +541,91 @@ def speech_particle_density(reply: object) -> tuple[int, int, float]:
     return (count, chinese, density)
 
 
-def reply_exceeds_speech_particle_density(reply: object) -> bool:
-    """回复的口头颗粒是否密到不像这个角色的常态。"""
+def _reply_texts(replies: object) -> list[str]:
+    if isinstance(replies, str):
+        return [replies]
+    if not isinstance(replies, (list, tuple)):
+        return []
+    return [item for item in replies if isinstance(item, str) and item.strip()]
 
-    count, _, density = speech_particle_density(reply)
+
+def _assistant_reply_texts(history: object) -> list[str]:
+    """取出历史里 assistant 的回复正文，用于把窗口凑够样本量。
+
+    **同时接受两种形态**，这个对称性是必须的：
+
+    - `{"role": "assistant", "content": ...}` 消息字典（`dialogue_style_quality`
+      的 `history` 形参就是这个）；
+    - 纯字符串列表（`guard._prompt_assistant_replies` 从 prompt 卡片里提取后
+      给的就是这个）。
+
+    2026-09-24 实测踩到：一开始只认字典，而 guard 传的是字符串列表，于是
+    `previous` 恒为空、**窗口逻辑在运行时从未生效**，只有单元测试（恰好喂了
+    字典格式）通过。症状是「gate 判定为 True 但 guard 从不触发重试」。
+    """
+
+    if not isinstance(history, (list, tuple)):
+        return []
+    replies: list[str] = []
+    for item in history:
+        if isinstance(item, str):
+            if item.strip():
+                replies.append(item.strip())
+            continue
+        if not isinstance(item, Mapping) or item.get("role") != "assistant":
+            continue
+        content = item.get("content")
+        if isinstance(content, str) and content.strip():
+            replies.append(content.strip())
+    return replies
+
+
+def speech_particle_window_density(replies: object) -> tuple[int, int, float]:
+    """把若干条回复当一个窗口，返回 `(颗粒数, 汉字数, 每百汉字密度)`。
+
+    这是判定该用的口径，理由见 `reply_exceeds_speech_particle_density`。
+    """
+
+    texts = _reply_texts(replies)
+    if not texts:
+        return (0, 0, 0.0)
+    count = sum(speech_particle_density(text)[0] for text in texts)
+    chinese = sum(speech_particle_density(text)[1] for text in texts)
+    density = count / chinese * 100 if chinese else 0.0
+    return (count, chinese, density)
+
+
+def reply_exceeds_speech_particle_density(
+    reply: object,
+    history: object = None,
+) -> bool:
+    """回复的口头颗粒是否密到不像这个角色的常态。
+
+    **口径**：把当前回复和 `history` 里最近的 assistant 回复合成一个窗口再算密度，
+    而不是只看这一条。
+
+    2026-09-24 实测踩到的坑：一开始只看单条、还要求「至少 2 个颗粒」，结果
+    Kimi 的 300 轮里 **gate 一次都没触发过**——它的实际模式是「几乎每条都以一个
+    「呃」开头，但很少带两个」，单条短回复里永远只有 1 个颗粒，于是全部逃逸。
+    而单条密度在 15 个字的回复里是 6.7%、在 4 个字里是 25%，本身也毫无可比性。
+
+    窗口口径同时解决这两点：样本够大所以密度稳定，而「每条都带一个」在窗口上
+    会累积成明显高于原文的密度，正是要抓的那个模式。
+
+    没有 `history` 时退回单条判据，但要求**至少两个**颗粒——单个颗粒不足以
+    断定是模式（「嗯，好的。」完全正常）。
+    """
+
+    previous = _assistant_reply_texts(history)
+    if not previous:
+        count, _, density = speech_particle_density(reply)
+        return (
+            count >= SPEECH_PARTICLE_DENSITY_MIN_COUNT
+            and density > SPEECH_PARTICLE_DENSITY_LIMIT
+        )
+
+    texts = [*previous, reply] if isinstance(reply, str) and reply.strip() else previous
+    count, _, density = speech_particle_window_density(texts)
     return (
         count >= SPEECH_PARTICLE_DENSITY_MIN_COUNT
         and density > SPEECH_PARTICLE_DENSITY_LIMIT

@@ -1185,7 +1185,10 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
         # 颗粒过密也归这一档——它和上面两条一样是「轻微语气问题」，不该压过
         # 硬约束。但**必须进来**：否则重试生成的干净回复在评分上与密集回复
         # 打平，`best` 会保留密集的那条，重试就白做了（2026-09-24 实测踩到）。
-        and not reply_exceeds_speech_particle_density(reply)
+        and not reply_exceeds_speech_particle_density(
+            reply,
+            _prompt_assistant_replies(prompt),
+        )
     )
     variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     event_gate_clean = int(not _violates_event_gate(prompt, reply))
@@ -1350,7 +1353,10 @@ def retry_for_format_noise(
         # 排在「重复颗粒」**之前**：这条说的是这一轮自己就带得太多，
         # 是更根本的毛病；而重复只是和历史撞了。结构类问题（开场/上下文/
         # 话题/亲密）仍然优先于它俩。
-        elif issue is None and reply_exceeds_speech_particle_density(current.reply):
+        elif issue is None and reply_exceeds_speech_particle_density(
+            current.reply,
+            _prompt_assistant_replies(prompt),
+        ):
             issue = "too_many_speech_particles"
             retry_kind = "voice_particle_density"
             retry_content = VOICE_PARTICLE_DENSITY_RETRY_CONTENT
@@ -1619,6 +1625,25 @@ def _repeats_history_speech_particle(
     payload = _prompt_payload(prompt, "voice_execution_card")
     particles = tuple(_string_values(payload.get("avoidSpeechParticles")))
     return reply_avoids_speech_particle(reply, particles)
+
+
+def _prompt_assistant_replies(prompt: list[dict[str, str]]) -> list[str]:
+    """取 prompt 里已有的 assistant 回复，供颗粒密度判定凑窗口样本。
+
+    判定必须看窗口而不是单条——单条短回复的密度毫无可比性（见
+    `dialogue_boundaries.reply_exceeds_speech_particle_density`）。
+    """
+
+    replies: list[str] = []
+    for message in prompt:
+        if message.get("name") != "conversation_history":
+            continue
+        if message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            replies.append(content.strip())
+    return replies
 
 
 def guard_response(reply: object, max_chars: int = 1000) -> GuardResult:

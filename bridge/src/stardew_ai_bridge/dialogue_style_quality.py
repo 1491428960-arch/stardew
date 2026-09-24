@@ -140,7 +140,7 @@ def analyze_dialogue_style(
     # 撞了。一条回复可能只犯其中一个，也可能两个都犯，所以不互相顶掉。
     # 这个码此前只在 `dialogue_lab_page` 里被翻译成「语气词过密」，没有任何
     # 代码产出它——是个界面上等着用的死标签（2026-09-24 接通）。
-    if reply_exceeds_speech_particle_density(text):
+    if reply_exceeds_speech_particle_density(text, history):
         tags.add("too_many_speech_particles")
 
     markers = _repeated_opening_markers(previous_openings)
