@@ -1,0 +1,214 @@
+# Kimi 语气词过量的成因诊断 — 2026-09-24
+
+## 一、结论
+
+Kimi 让所有角色都说「呃……」「嗯……」，超标最多 4.6 倍（见
+`report-style-compare-2026-09-24.md`）。本报告定位成因，**查实是两个独立缺口叠加**：
+
+| # | 缺口 | 性质 | 证据 |
+|---|---|---|---|
+| 1 | **`voiceAnchors` 选样偏置** | 数据层 | 精选样本的语气词密度是全库的 **1.80×**（中位），最高 3.59× |
+| 2 | **没有「总量闸」** | 代码层 | `too_many_speech_particles` 是**死标签**；guard 只防重复、不防过量 |
+
+**叠加后的放大链：**
+
+```
+原文全库 1.67  →  voiceAnchors 3.29 (×1.97)  →  Kimi 输出 4.14 (×2.48)
+                      ↑ 选样偏置                  ↑ 模型再放大
+```
+
+同一批 prompt 喂给 DeepSeek：`1.12`（**8/8 个角色都低于全库**，方向相反）。
+
+**⚠ 所以这不是「Kimi 坏、DeepSeek 好」——是两个模型对同一个偏高范例的响应不同：
+Kimi 顺着放大，DeepSeek 反向压低。范例本身有偏是共同前提。**
+
+## 二、缺口 1：voiceAnchors 选样偏置
+
+（语气词密度 = 每 100 个 CJK 字里「嗯呃哦啊唉呀哎诶嘿哈唔嘛呢吧」的出现次数）
+
+| 角色 | 全库 | voiceAnchors | 倍数 | Kimi 输出 | DeepSeek 输出 |
+|---|---|---|---|---|---|
+| Sebastian | 1.50 | 5.41 | **3.59×** | 6.98 | 1.33 |
+| Wizard | 1.01 | 3.36 | **3.33×** | 0.81 | 0.50 |
+| Elliott | 0.95 | 2.82 | **2.98×** | 4.42 | 0.90 |
+| Alex | 1.81 | 3.57 | 1.98× | 2.69 | 1.20 |
+| Sophia | 2.74 | 4.44 | 1.62× | 3.00 | 1.31 |
+| Sam | 1.80 | 2.91 | 1.61× | 3.59 | 0.86 |
+| Shane | 2.30 | 2.44 | 1.06× | **8.53** | 2.13 |
+| Harvey | 1.28 | 1.34 | 1.05× | 3.07 | 0.74 |
+| **平均** | **1.67** | **3.29** | **1.80×（中位）** | **4.14** | **1.12** |
+
+### `voiceCards` 里存的什么
+
+每个角色 6 条左右 `voiceAnchors`（`data/generated/...next-event-dialogue.json`
+的 `voiceCards`），从该角色几百条样本里**精选**。看实际内容：
+
+| 角色 | voiceAnchor 原文 |
+|---|---|
+| Sophia | 「**呃……**你好。 你需要点什么吗？」（`Mon`） |
+| Sebastian | 「**噢。**你是刚搬进来的，对吧？」（`Introduction`）<br>「**呃……**有什么事吗？」（`Mon`） |
+| Wizard | 「**啊，**没错。我很久前就预见到你的到来了，年轻的你。」（`Introduction`）<br>「**啊……**进来吧。」（`RomRas` 事件行） |
+| Elliott | 「**啊，**我们一直翘首以盼的新农民来啦……大家都在热议你哦！」（`Introduction`） |
+
+**抽取明显偏向了「带语气词的招呼句 / 开场句」。** 这些句子在原文里确实存在，
+但在几百条样本里属于少数，被选成 6 条代表后密度被放大近 2 倍。
+
+### 为什么这不是「模型的问题」而是「范例的问题」
+
+`prompts.py:5059` 已经写明：
+
+> speechParticles 只是低优先级的可选口语颗粒参考，**默认不用**
+
+`prompts.py:5128-5130` 也写着：
+
+> 语气词是可选项，不必使用；先回答内容，再决定是否加口语颗粒。
+> 同一语气词不能连续重复，同一组三轮对话最多自然使用一次；
+> 不要为了展示角色特征而硬塞语气词。
+
+**指令层已经尽力了。** 但 `voiceAnchors` 是**原文证据**——模型把它当权威范例模仿，
+优先级高于软性指令。**给一个偏高的范例，再用文字说「不要多用」，是拉不住的。**
+
+### 一个反例
+
+Wizard 的 anchors 偏置最严重（3.33×，全是「啊，……」「啊……进来吧」），
+但 Kimi 给他的输出只有 0.81（**低于全库 1.01**）。
+
+**说明模型不总是放大**——偏置是必要条件而非充分条件。
+反过来 Shane 的 anchors 几乎无偏（1.06×）却拿到 8.53，说明还有别的因素
+（Shane 的粗鲁人设可能被模型用短句 + 语气词表达）。
+
+**⚠ 所以修正选样能降低平均值，但不能保证每个角色都落到目标区间。**
+
+## 三、缺口 2：没有「总量闸」
+
+### `too_many_speech_particles` 是死标签
+
+`dialogue_lab_page.py:982` 与 `:1022` 定义了这个标签的中文名「**语气词过密**」，
+但**全项目没有任何地方产生它**：
+
+```
+grep too_many_speech_particles → 只命中 dialogue_lab_page.py:982, 1022
+```
+
+`dialogue_style_quality.py:139-143` 实际只返回三个字段：
+
+```python
+return {
+    "tags": sorted(tags),           # 只可能是 repeated_speech_particle / repeated_opening
+    "speechParticleCounts": counts,
+    "opening": opening[:80],
+}
+```
+
+而 `tags` 只有两处 add（`:119`、`:133`），**都判定「重复」，没有一处判定「过量」**。
+
+**⇒ 「语气词过密」这个诊断能力，界面上有名字、代码里没有实现。**
+
+### guard 的重试只防重复
+
+`guard.py:1329-1335`：
+
+```python
+elif issue is None and _repeats_history_speech_particle(prompt, current.reply):
+    issue = "repeated_speech_particle"
+    retry_kind = "voice_particle"
+```
+
+两个问题：
+
+1. **`_repeats_history_speech_particle` 只查「是否用了历史里出现过的语气词」**，
+   不查密度。模型每轮换一个**不同**的语气词就能绕过。
+2. **它是 `elif` 链的最后一环**（`:1313` `repeated_opening` → `:1317`
+   `missing_history_anchor` → `:1321` `missing_required_term` →
+   `:1325` `missing_proactive_affection` → `:1329` 本项）。
+   **前面任何一条命中，语气词就不检查了。**
+
+### 现有的 `avoidSpeechParticles` 机制范围有限
+
+`prompts.py:5080-5083 / 5121-5141 / 5370-5375` 会把「历史里用过的颗粒」
+列进 `avoidSpeechParticles`，`guard.py:61` 也要求模型避开。**但这是「去重」不是「限量」**——
+它能让 NPC 不反复说同一个词，不能让 NPC 少说话气词。
+
+## 四、修法（三个选项，按治本程度排序）
+
+### A. 修选样偏置（治本）
+
+在 `profile_index.py` 生成 `voiceCards` 时，对 `voiceAnchors` 的候选做**语气词密度均衡**：
+按全库密度分桶，每个桶各取若干条，使 anchors 的密度 ≈ 全库密度。
+
+- **优点**：去掉偏置范例，符合项目「反机械感靠减约束、给示例」的既有惯例；
+  一次修好，不增加运行时开销
+- **缺点**：要重建 15 MB 索引；对 Wizard 那种「高偏置但模型没用」的角色是白改
+- **风险**：中（索引重建 + 需回归 139 个角色的 anchors 质量）
+
+### B. 真做「总量闸」（治标但直接）
+
+1. 在 `dialogue_style_quality.py` 真的产生 `too_many_speech_particles`
+   （按密度阈值，而不是「重复」）
+2. 在 `guard.py` 的 `elif` 链**靠前**位置接一条重试
+
+- **优点**：直接命中症状；标签本来就在界面上等着用
+- **缺点**：**重试会加剧已有的延迟抖动问题**（16% 的请求已 >10 s）；
+  且重试不保证生成更少语气词
+- **风险**：中（改变 guard 行为，需回归测试）
+
+### C. 找用户确认后只修最严重的
+
+先把 Kimi 的语气词密度做成**每轮可观测的指标**（复用本报告的算法），
+先用一组 prompt 侧的小改动试水（例如把 `voiceAnchors` 的卡片说明
+从「范例」改成「参考声线的证据，不要逐句模仿节奏」），观察是否够用。
+
+- **优点**：改动最小、可逆、不动索引与 guard
+- **缺点**：可能不够（范例偏置还在）
+- **风险**：低
+
+**⚠ 我的建议：先做 C 验证 prompt 层还有没有余量，再决定要不要动 A。
+B 放最后——它拿已经吃紧的延迟去换一个不确定的收益。**
+
+## 五、⚠ 本报告的样本限制
+
+| 项 | 值 |
+|---|---|
+| Kimi 侧每角色条数 | 10（Sophia 30） |
+| DeepSeek 侧每角色条数 | 53～72 |
+| 阶段 | Kimi 是 **stranger**、DeepSeek 是 dating/married |
+| 路径 | Kimi 走游戏端 `compactPrompt=true`、DeepSeek 走评测路径 |
+
+**方向一致性是本报告最可信的部分**（Kimi 7/8 高于全库、DeepSeek 8/8 低于全库），
+但**具体倍数不宜当精确值**。若要定阈值（修法 B 需要），必须先补样本。
+
+## 六、复现
+
+```powershell
+$w='E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory'
+$env:PYTHONIOENCODING='utf-8'
+# 报告第二节的三组数据：全库 / voiceAnchors / Kimi / DeepSeek 的语气词密度对照
+# 数据源：索引 styleSamples + voiceCards，以及 .tmp/topic-probe/style-compare.json
+```
+
+依赖文件：
+- 索引 `data/generated/vanilla-sve-rasmodia-profile-index-zh-CN.next-event-dialogue.json`
+- Kimi 侧 `.tmp/topic-probe/verbatim-{all,v2,multi}.json`（**gitignored**）
+- DeepSeek 侧 `artifacts/character-quality-eval/` 的 4 个批次
+
+## 七、方法论
+
+1. **「模型有问题」之前先看「喂进去的东西有没有偏」。** 我最初的判断是
+   「Kimi 过度使用语气词」，查下来发现喂给它的范例本身就是全库密度的 1.8 倍。
+   **先查输入，再怪模型。**
+
+2. **界面上有的名字，代码里不一定有实现。** `too_many_speech_particles`
+   的中文名在 `dialogue_lab_page.py` 里躺了两处，检测侧从未产生过它。
+   **「有这个标签」不等于「这个检查在跑」——要 grep 到产生点。**
+
+3. **elif 链的末尾等于没有。** `guard.py` 那条语气词重试排在其他四项之后，
+   实际几乎不会被触发。**排查「为什么某条规则没生效」时，先看它的判定顺序。**
+
+4. **指令层的强度打不过证据层。** prompt 里已经写了两处「语气词是可选、默认不用」，
+   但 `voiceAnchors` 作为原文证据优先级更高。**要改行为，改范例比改措辞有效。**
+
+## 八、相关
+
+- `docs/report-style-compare-2026-09-24.md` —— 发现语气词问题的那份对照
+- `docs/report-verbatim-rate-2026-09-24.md` —— 原文复述率（同为「证据卡影响输出」的实例）
+- `docs/report-v11-baseline-2026-09-24.md` —— 基线读数
