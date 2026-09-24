@@ -27,6 +27,19 @@ from .source_aliases import (
 
 _UNRESOLVED_I18N = re.compile(r"\{\{\s*i18n\s*:", re.IGNORECASE)
 
+# 候选上限 —— **不是**"每轮注入几条"，那个由 `prompts._MAX_SPEECH_EVIDENCE` 管。
+# 这里决定的是"最多能取出多少条候选"，也就是**轮转池的物理宽度**。
+#
+# 2026-09-24：这里原先写死 `min(int(limit), 6)`，与 prompts 里的注入上限
+# **共用了同一个 6**，于是池子永远只有 6 条可转 —— 实测连续 20 轮只覆盖到
+# 5 条素材，池子里其余素材一次都没被建议过。放宽池子**不增加 prompt 体积**
+# （每轮仍只注入 1 条），所以才把这两个数字拆开。
+_SPEECH_EVIDENCE_CANDIDATES = 18
+# 同上。style 池要**明显**宽于 speech 池：`prompts.py` 拿已经取到的
+# `speech_texts` 去重 style，而两个数组在索引里内容对称（各 10213 条）——
+# speech 池一旦放宽，去重会把 style 的前排整片吃掉，池子不放大就等于清空。
+_STYLE_SAMPLE_CANDIDATES = 24
+
 
 def _normalise_marker(value: object) -> str:
     return normalize_source_marker(value)
@@ -2079,7 +2092,7 @@ class ProfileIndexStore:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
         canonical_id = canonical_npc_id(npc_id)
-        capped_limit = max(0, min(int(limit), 8))
+        capped_limit = max(0, min(int(limit), _STYLE_SAMPLE_CANDIDATES))
         if capped_limit == 0:
             return []
         source_mod_list = tuple(source_mods)
@@ -2286,7 +2299,7 @@ class ProfileIndexStore:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
         canonical_id = canonical_npc_id(npc_id)
-        capped_limit = max(0, min(int(limit), 6))
+        capped_limit = max(0, min(int(limit), _SPEECH_EVIDENCE_CANDIDATES))
         if capped_limit == 0:
             return []
         raw_evidence = self._index.get("speechEvidence")

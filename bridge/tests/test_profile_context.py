@@ -26,7 +26,11 @@ def _write_index(path: Path) -> None:
                         "text": f"样本 {index}",
                         "evidenceKind": "dialogue",
                     }
-                    for index in range(10)
+                    # 语料要**够两个池子分**：speech 池 12 条 + style 池 24 条，
+                    # 而两者按文本互斥（同一句不能同时进两张卡）。语料少于
+                    # speech 池宽时 style 会被去重整片吃掉，只能靠保底退回，
+                    # 那样测到的就不是正常路径了。
+                    for index in range(40)
                 ]
                 + [
                     {
@@ -476,9 +480,15 @@ def test_context_builder_adds_only_current_npc_index_evidence(
         recentFacts=[],
     )
 
-    assert len(context["speechEvidence"]) == 6
-    assert len(context["styleSamples"]) == 2
-    assert len(context["speechEvidence"]) + len(context["styleSamples"]) == 8
+    # 这两个数字是**候选池**宽度，不是每轮注入条数 —— 后者仍由
+    # `prompts._MAX_SPEECH_EVIDENCE` / `_MAX_STYLE_SAMPLES`（各 6）在
+    # PromptBuilder 里切片。池子与注入量拆开是 2026-09-24 的改动：
+    # 原先池宽与注入上限共用一个 6，导致轮转 20 轮只覆盖 5 条素材。
+    #   speech 取满 `_SPEECH_EVIDENCE_POOL` = 12 条；
+    #   style 从 `_STYLE_SAMPLE_POOL` = 24 条里去掉与 speech 重复的 12 条，剩 12。
+    assert len(context["speechEvidence"]) == 12
+    assert len(context["styleSamples"]) == 12
+    assert len(context["speechEvidence"]) + len(context["styleSamples"]) == 24
     assert len(context["storyEvents"]) == 1
     assert all(sample["npcId"] == "Sophia" for sample in context["styleSamples"])
     assert "sourcePath" not in json.dumps(context, ensure_ascii=False)
@@ -500,7 +510,8 @@ def test_context_builder_keeps_speech_and_style_evidence_distinct(
             "evidenceKind": "dialogue",
             "conditions": {"relationshipStage": "acquaintance"},
         }
-        for index in range(10)
+        # 同上：语料必须够两个池子互斥地分（见 `_write_index` 的注释）。
+        for index in range(40)
     ]
     index_path.write_text(
         json.dumps(

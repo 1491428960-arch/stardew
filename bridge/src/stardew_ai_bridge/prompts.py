@@ -353,6 +353,18 @@ _PROMPT_HISTORY_LIMIT = 12
 # 代价只是每轮那 1 条从「前 4 名」变成「前 6 名」里轮，单条质量略降。
 _MAX_SPEECH_EVIDENCE = 6
 _MAX_STYLE_SAMPLES = 6
+# 轮转**池**宽（候选条数），与上面那两个"每轮注入条数"**分开**。
+#
+# 2026-09-24：池宽原先与注入上限共用同一个 6，于是池子永远只有 6 条可转 ——
+# 实测连续 20 轮只覆盖到 5 条素材，其余一次都没被建议过。拆开后池子放宽是
+# **免费**的（每轮仍只注入 1 条，prompt 体积不变），代价只是那 1 条从
+# 「前 6 名」变成「前 12 名」里轮，单条质量略降。
+# 受 `profile_index` 的候选上限约束（`_SPEECH_EVIDENCE_CANDIDATES` /
+# `_STYLE_SAMPLE_CANDIDATES`）—— 那里不放大，这里填多大都拿不到更多。
+_SPEECH_EVIDENCE_POOL = 12
+# style 池必须**明显**宽于 speech 池：取出后用 `speech_texts` 去重，
+# 而两个数组在索引里内容对称（各 10213 条），speech 放宽会把 style 前排吃掉。
+_STYLE_SAMPLE_POOL = 24
 _MAX_BEHAVIOR_EXAMPLES = 2
 _MAX_ORIGINAL_STYLE_EXAMPLES = 4
 _MAX_KNOWLEDGE_FACTS = 2
@@ -1943,7 +1955,7 @@ class ContextBuilder:
                 source_mod_list,
                 relationship_stage=profile_stage,
                 player_input=player_input,
-                limit=6,
+                limit=_SPEECH_EVIDENCE_POOL,
                 completed_event_ids=completed_event_ids,
             )
             elliott_original_rhythm = (
@@ -1967,25 +1979,41 @@ class ContextBuilder:
                         if isinstance(item, Mapping)
                         and source_matches(item.get("sourceMod", ""), ("vanilla",))
                     ]
+            # 去重范围是**整个候选池**，不是"每轮注入的那几条"。
+            # 池子里的任何一条都可能被轮转选中（`_rotate_evidence_by_turn`），
+            # 只按前 6 条去重会让其余几条同时出现在两张卡里 ——
+            # 实测 `speech_texts.isdisjoint(style_texts)` 当场变红（6-9 号样本
+            # 既在 speechEvidence 又在 styleSamples 里）。
             speech_texts = {
                 str(item.get("text", "")).strip()
                 for item in speech_evidence
                 if isinstance(item, Mapping) and str(item.get("text", "")).strip()
             }
-            style_samples = [
+            style_candidates = [
                 item
                 for item in self.profile_index.style_samples(
                     str(npc_id),
                     source_mod_list,
+                    limit=_STYLE_SAMPLE_POOL,
                     relationship_stage=profile_stage,
                     player_input=player_input,
                 )
-                if str(item.get("text", "")).strip() not in speech_texts
-                and (
-                    not elliott_original_rhythm
-                    or source_matches(item.get("sourceMod", ""), ("vanilla",))
-                )
+                if not elliott_original_rhythm
+                or source_matches(item.get("sourceMod", ""), ("vanilla",))
             ]
+            style_samples = [
+                item
+                for item in style_candidates
+                if str(item.get("text", "")).strip() not in speech_texts
+            ]
+            if not style_samples:
+                # 语料不足的角色（口语料条数 ≤ speech 池宽）：整池去重会把 style
+                # 整片吃掉，在索引较小或角色对白少的账号上都会发生。
+                # 此时**宁可两张卡偶尔重复一句，也不能让这一路消失** ——
+                # 空列表会让 PromptBuilder 静默跳过 `style_evidence` 卡
+                # （`if safe_context["styleSamples"] ...`），"说话方式要贴原文"
+                # 这条约束就没了，比重复一句严重得多。
+                style_samples = list(style_candidates)
             if elliott_original_rhythm:
                 # 当前阶段检索容易只返回婚后长句；额外取三条短日常原文，
                 # 让“婚后关系”与 Elliott 平时会突然停住的口语节奏同时出现。
@@ -5930,14 +5958,14 @@ class PromptBuilder:
                     speech_evidence, _banned_facet_from_context(context)
                 ),
                 turn_index,
-                _MAX_SPEECH_EVIDENCE,
+                _SPEECH_EVIDENCE_POOL,
                 recent_replies=spoken_replies,
                 seed_text=rotation_seed,
             )
             style_samples = _rotate_evidence_by_turn(
                 style_samples,
                 turn_index,
-                _MAX_STYLE_SAMPLES,
+                _STYLE_SAMPLE_POOL,
                 recent_replies=spoken_replies,
                 seed_text=rotation_seed,
             )
