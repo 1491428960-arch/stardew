@@ -130,6 +130,34 @@ def test_topic_turn_plan_starts_instead_of_answering() -> None:
     assert "口子" in turn_plan["instruction"]
 
 
+def test_topic_opening_names_the_scene_before_her_own_chores() -> None:
+    """开场入口的顺序与具体度：**先眼前，再近况**。
+
+    起因（2026-09-24 实测）：30 次独立会话里 **30%** 用同一个句式开头
+    ——「嗯……我刚把 X 收拾/整理完 → 反问玩家」。原本三种入口是并列的
+    （「自己的近况、手里正在做的事或眼前看到的东西」），模型稳定地选第二个：
+    它是三者里最容易满足「说清它是什么（最小背景）」的一个。
+
+    修的方向是**给另外两种入口竞争力**，不是禁止这一种：把这三种里
+    「眼前看到的」提到最前，并给出具体例子。**没有新增任何禁止性约束**
+    —— 反机械感靠减约束、给示例。
+
+    真实场景字段（`prompts.py:6525-6559` 渲染的 `scene` 卡：季节 / 日期 /
+    天气 / 时段 / 地点 / 场合）本就齐全，线上 `GameStateCollector` 每次都发，
+    所以「眼前」这条入口是有素材可依的。
+    """
+
+    _, turn_plan = _cards("topic")
+    instruction = turn_plan["instruction"]
+
+    # 「眼前」排在「近况／手边」之前。
+    assert instruction.index("眼前") < instruction.index("近况")
+    # 具体例子在场（这是让入口真的有竞争力的部分）。
+    assert "窗" in instruction or "光" in instruction
+    # 没变成一长串禁令：除原有的「不要等待、复述或回应」外不新增「不要……」。
+    assert instruction.count("不要") <= 1
+
+
 @pytest.mark.parametrize("stage", ["stranger", "dating"])
 def test_chat_stage_card_is_untouched(stage: str) -> None:
     """普通私聊路径一个字都不能变——本轮修的是 topic 的分叉。"""
