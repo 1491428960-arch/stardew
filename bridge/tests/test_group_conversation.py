@@ -315,7 +315,12 @@ def test_group_prompt_states_natural_dialogue_contract() -> None:
 
     assert "不要写成散文或统一的书面模板" in rendered
     assert "比喻只在角色本来就会用时才用" in rendered
-    assert "优先参考每个参与者 voice.voiceAnchors 的句式和口语颗粒度" in rendered
+    # 2026-09-24：原断言要求 prompt 提到锚点的「口语颗粒度」，但那把锚点里
+    # 被放大的语气词密度当成了要复现的量（锚点密度是全库的 1.8 倍，见
+    # docs/report-kimi-filler-diagnosis-2026-09-24.md）。现在只要求参考句式，
+    # 并把颗粒说明成零星出现的。
+    assert "参考每个参与者 voice.voiceAnchors 的句式" in rendered
+    assert "零星出现" in rendered
 
 
 def test_build_group_voice_cards_reuses_the_single_npc_pipeline() -> None:

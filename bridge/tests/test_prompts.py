@@ -5301,9 +5301,16 @@ def test_prompt_exposes_positive_original_voice_anchors() -> None:
     )["voiceCard"]
 
     assert voice["voiceAnchors"][0]["text"] == "嘿！这地方看起来还不错。"
-    assert "优先参考 voiceAnchors" in next(
-        message for message in messages if message["name"] == "voice_card"
-    )["content"]
+    card = next(message for message in messages if message["name"] == "voice_card")[
+        "content"
+    ]
+    # 2026-09-24：原断言是「优先参考 voiceAnchors」，它把锚点里的**口语颗粒**
+    # 也当成要复现的量。但锚点样本的语气词密度是全库的 1.8 倍（见
+    # docs/report-kimi-filler-diagnosis-2026-09-24.md），照它复现会让每个角色
+    # 都退化成同一种结巴。现在只要求参考句式与收尾，并说明颗粒是零星出现的。
+    assert "voiceAnchors 是当前 NPC 的正向原文语气锚点" in card
+    assert "参考其句式与收尾方式" in card
+    assert "零星出现" in card
 
 
 def test_prompt_exposes_role_specific_speech_particles_as_optional_material() -> None:
