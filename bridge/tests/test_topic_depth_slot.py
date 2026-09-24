@@ -223,3 +223,60 @@ def test_no_replies_produces_nothing() -> None:
 def test_empty_and_blank_inputs_are_ignored() -> None:
     assert topic_depth_slot(["", "   "], player_replies=["  "]) == {}
     assert topic_depth_slot(None, player_replies=None) == {}
+
+
+# --- 触发 B 的指认引文（2026-09-24 晚）--------------------------------------
+
+
+def test_the_continuation_card_names_what_they_were_talking_about() -> None:
+    """触发 B 也要**指认**「你们刚才在说的那件」到底是哪件。
+
+    与触发 A 同一个理由（设计文档 §五之五）：抽象地说「别再端出新的东西」，
+    而「那件」是什么全靠模型自己猜 —— 它每轮重新猜一次，就端出一件新东西。
+
+    §九 的 3+3 批对照证明了深度卡**有效**（对照组三批零纵深、实验组三批有），
+    但 §十 证明了它**压不死**：禁用横向槽位后她仍在第 3、4 轮换话题
+    （香橙鸡、精灵石、海边石头），两批都一样。触发 A 靠指认引文把重复
+    从 6 处压到 0，触发 B 此前没有这一层。
+    """
+
+    slot = topic_depth_slot(
+        ["酒窖里这会儿还挺安静的，我刚清点完那几桶蓝月亮。"],
+        player_replies=["然后呢"],
+    )
+
+    assert slot["depthTrigger"] == "playerContinuation"
+    # 引用了上一轮回复的开头（保留标点，是给人看的）
+    assert "酒窖里这会儿还挺安静的" in slot["instruction"]
+    assert "只谈一件事" in slot["instruction"]
+
+
+def test_the_continuation_card_quotes_nothing_when_there_is_nothing_to_quote() -> None:
+    """没有可引用的原文时不能留一个空引号 —— 与触发 A 同样的边界。"""
+
+    from stardew_ai_bridge.stage_policy import _player_continuation_instruction
+
+    instruction = _player_continuation_instruction("")
+
+    assert "「」" not in instruction
+    assert "——就是" not in instruction
+    # 引文缺席时其余约束必须还在
+    assert "不要再端出新的东西" in instruction
+
+
+def test_the_continuation_instruction_stays_within_the_whitelist_limit() -> None:
+    """引文灌进指令后仍要远低于 `_compact_stage_policy` 的 300 字截断线。
+
+    超限的后果是**静默截断**（断在句子中间的指令比短一点的差得多），
+    本项目已经在 `_BRIDGE_ANCHOR_LIMIT` 上记过一次同型教训。
+    """
+
+    from stardew_ai_bridge.stage_policy import (
+        _DEPTH_QUOTE_CHARS,
+        _player_continuation_instruction,
+    )
+
+    instruction = _player_continuation_instruction("边" * _DEPTH_QUOTE_CHARS)
+
+    assert len(instruction) < 300
+    assert len(instruction) < 200  # 留足余量，别贴着上限

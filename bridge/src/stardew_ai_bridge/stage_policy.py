@@ -1068,12 +1068,28 @@ _PLAYER_CONTINUATION_PATTERN = re.compile(
     r")[。！？…，,、\s]*$"
 )
 
-_DEPTH_INSTRUCTION_PLAYER_CONTINUATION = (
-    "本轮只谈一件事，就是你们刚才在说的那件。"
-    "不要再端出新的东西，也不要用「对了」「而且」「话说回来」另起话头。"
-    "把它说完：它具体是什么样子、它让你想到什么、你当时是什么感觉。"
-    "说不到三句就停。"
-)
+def _player_continuation_instruction(quote: str) -> str:
+    """把「接着讲」落成**具体**指认 —— 与 `_self_repeat_instruction` 对称。
+
+    **为什么要引用原文**（2026-09-24 晚，设计文档 §十）：触发 A 靠指认引文
+    把逐字重复从 6 处压到 0，而触发 B 此前**只有抽象措辞**
+    （「就是你们刚才在说的那件」）—— 「那件」是什么全靠模型自己猜，
+    它每轮重新猜一次，就端出一件新东西。
+
+    §九 的 3+3 批对照证明深度卡**有效**（对照组三批零纵深、实验组三批有），
+    但 §十 证明它**压不死**：禁用横向槽位后她仍在第 3、4 轮换话题
+    （香橙鸡、精灵石、海边石头），两批都一样 ⇒ 缺的正是这一层指认。
+
+    引文缺席时不留空引号（那比不引用更糟），其余约束照旧。
+    """
+
+    where = f"，就是「{quote}」那段。" if quote else "。"
+    return (
+        f"本轮只谈一件事，就是你们刚才在说的那件{where}"
+        "不要再端出新的东西，也不要用「对了」「而且」「话说回来」另起话头。"
+        "把它说完：它具体是什么样子、它让你想到什么、你当时是什么感觉。"
+        "说不到三句就停。"
+    )
 
 #: 指认"你到底重说了哪一条"时，引用它开头的多少个字。
 _DEPTH_QUOTE_CHARS = 18
@@ -1209,7 +1225,7 @@ def topic_depth_slot(
     if players and _is_player_continuation(players[-1]):
         return {
             "depthTrigger": _DEPTH_TRIGGER_PLAYER_CONTINUATION,
-            "instruction": _DEPTH_INSTRUCTION_PLAYER_CONTINUATION,
+            "instruction": _player_continuation_instruction(_quotable(replies[-1])),
         }
 
     # 触发 A：她最近这条与更早的某条高度重合。
