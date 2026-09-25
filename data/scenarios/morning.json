@@ -16,7 +16,7 @@
   ],
   "scenarios": [
     {
-      "id": "day1-lewis",
+      "id": "day2-lewis",
       "trigger": {
         "kind": "absoluteDay",
         "dayIndex": 2,
