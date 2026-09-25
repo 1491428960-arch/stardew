@@ -190,3 +190,59 @@ class TestRealData:
         assert fragments, "开场白里没有可核对的长片段"
         missing = [part for part in fragments if part not in lewis_text]
         assert not missing, f"这些片段在原话里找不到，疑似自由创作：{missing}"
+
+
+class TestVariantUniqueness:
+    """同一角色的多条预设不得逐字相同。
+
+    2026-09-26 用户口径：「预设对话触发过一次之后就不要再触发了，
+    **可以有小巧思变体，但是不能一模一样**」。
+    """
+
+    def test_rejects_identical_openings_for_the_same_npc(self, tmp_path: Path) -> None:
+        with pytest.raises(MorningScenarioError, match="逐字相同"):
+            _store(
+                tmp_path,
+                [_scenario(id="day2-lewis"), _scenario(id="day5-lewis")],
+            )
+
+    def test_allows_a_real_variant_for_the_same_npc(self, tmp_path: Path) -> None:
+        store = _store(
+            tmp_path,
+            [
+                _scenario(id="day2-lewis"),
+                _scenario(
+                    id="day5-lewis",
+                    opening="上次那场雨把南边的篱笆冲歪了，你看见了吗？",
+                ),
+            ],
+        )
+        assert len(store) == 2
+
+    def test_whitespace_difference_is_still_a_duplicate(self, tmp_path: Path) -> None:
+        """归一必须与运行期认人的口径一致：只差空格的两条，运行期会认成同一条，
+        玩家看到的也确实是同一句话。"""
+        with pytest.raises(MorningScenarioError, match="逐字相同"):
+            _store(
+                tmp_path,
+                [
+                    _scenario(id="a"),
+                    _scenario(id="b", opening="你在那个破屋里过的第一晚怎么样？\n"),
+                ],
+            )
+
+    def test_different_npcs_may_share_a_line(self, tmp_path: Path) -> None:
+        """口径是「同一角色的变体不能重复」；跨角色撞句是内容审查的事，
+        不在这一层拦——那会拦住有意复用的通用问候。"""
+        store = _store(
+            tmp_path,
+            [
+                _scenario(id="a", npcId="Lewis"),
+                _scenario(id="b", npcId="Pierre"),
+            ],
+        )
+        assert len(store) == 2
+
+    def test_real_data_file_passes_the_uniqueness_check(self) -> None:
+        store = MorningScenarioStore.load(REAL_DATA)
+        assert len(store) >= 1

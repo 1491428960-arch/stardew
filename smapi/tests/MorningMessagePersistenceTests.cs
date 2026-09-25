@@ -161,6 +161,91 @@ public sealed class MorningMessagePersistenceTests
         Assert.Equal(new[] { "Lewis", "Abigail" }, loaded.UnreadMorning);
     }
 
+    // ── 「触发过一次就不要再触发」（2026-09-26 用户口径）────────────────────
+
+    [Fact]
+    public void Fired_scenario_survives_a_client_restart()
+    {
+        var first = CreateClient();
+        Assert.True(first.MarkMorningScenarioFired("day2-lewis"));
+        var saved = first.SerializeDisplayHistory("Farm_1");
+        first.Dispose();
+
+        var second = CreateClient();
+        second.LoadDisplayHistory(saved, "Farm_1");
+
+        Assert.True(second.HasFiredMorningScenario("day2-lewis"));
+    }
+
+    [Fact]
+    public void Marking_the_same_scenario_twice_reports_not_first()
+    {
+        var client = CreateClient();
+
+        Assert.True(client.MarkMorningScenarioFired("day2-lewis"));
+        // 第二次返回 false：调用方据此知道「这不是首次」，不必再存档。
+        Assert.False(client.MarkMorningScenarioFired("day2-lewis"));
+        Assert.True(client.HasFiredMorningScenario("day2-lewis"));
+    }
+
+    /// <summary>
+    /// 拿不到 id 的预设一律当作「发过」：宁可漏发一条，
+    /// 也不要因为数据里缺了 id 就每天早上重发同一句话。
+    /// </summary>
+    [Fact]
+    public void A_scenario_without_an_id_counts_as_already_fired()
+    {
+        var client = CreateClient();
+
+        Assert.True(client.HasFiredMorningScenario(null));
+        Assert.True(client.HasFiredMorningScenario("   "));
+        // 但也**记不下**去——空 id 不该往存档里塞一个空条目。
+        Assert.False(client.MarkMorningScenarioFired(null));
+        Assert.DoesNotContain(
+            "firedScenarios",
+            client.SerializeDisplayHistory("Farm_1"),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Without_any_fired_scenario_the_field_is_absent()
+    {
+        var client = CreateClient();
+        client.RememberMorningMessage("Lewis", Opening);
+
+        Assert.DoesNotContain(
+            "firedScenarios",
+            client.SerializeDisplayHistory("Farm_1"),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void With_a_fired_scenario_the_field_is_written()
+    {
+        var client = CreateClient();
+        client.MarkMorningScenarioFired("day2-lewis");
+
+        Assert.Contains(
+            "firedScenarios",
+            client.SerializeDisplayHistory("Farm_1"),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>换存档时已触发名单必须一起清掉，否则新档里这条预设永远不会出现。</summary>
+    [Fact]
+    public void Loading_another_save_drops_the_fired_list()
+    {
+        var client = CreateClient();
+        client.MarkMorningScenarioFired("day2-lewis");
+
+        var otherSave = ChatHistoryArchive.Serialize(
+            new Dictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>(StringComparer.Ordinal),
+            "Farm_2");
+        client.LoadDisplayHistory(otherSave, "Farm_2");
+
+        Assert.False(client.HasFiredMorningScenario("day2-lewis"));
+    }
+
     private sealed class Responder : HttpMessageHandler
     {
         public List<string> RequestBodies { get; } = new();

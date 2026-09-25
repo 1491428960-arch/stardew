@@ -66,6 +66,22 @@ public sealed class ChatHistoryArchiveEnvelope
     [JsonPropertyName("unreadMorning")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? UnreadMorning { get; init; }
+
+    /// <summary>
+    /// 已经触发过的晨间预设 id（2026-09-26）。
+    ///
+    /// 用户口径：「预设对话触发过一次之后就不要再触发了」。
+    /// **当前这条预设按绝对天数触发（只在第 2 天），本来就不会重复**——
+    /// 记这一份是为了两件事：① 将来加变体时（同一角色在第 5 天、第 12 天各发一条
+    /// 不同的），判据必须落到「这条发过没有」而不是「今天第几天」；② 万一触发条件
+    /// 哪天改成相对的（「进档后的第一个早上」），没有这份记录就会每天早上重发同一条。
+    ///
+    /// 与 <see cref="UnreadMorning"/> 同一个生命周期（都属于这份聊天档案），
+    /// 换存档时一起丢弃。
+    /// </summary>
+    [JsonPropertyName("firedScenarios")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? FiredScenarios { get; init; }
 }
 
 /// <summary>
@@ -87,7 +103,8 @@ public sealed class ChatHistoryArchiveLoadResult
         IReadOnlyList<string> warnings,
         IReadOnlyList<GroupChatSessionRecord> sessions,
         int sessionLineCount,
-        IReadOnlyList<string>? unreadMorning = null)
+        IReadOnlyList<string>? unreadMorning = null,
+        IReadOnlyList<string>? firedScenarios = null)
     {
         History = history;
         MessageCount = messageCount;
@@ -95,6 +112,7 @@ public sealed class ChatHistoryArchiveLoadResult
         Sessions = sessions;
         SessionLineCount = sessionLineCount;
         UnreadMorning = unreadMorning ?? Array.Empty<string>();
+        FiredScenarios = firedScenarios ?? Array.Empty<string>();
     }
 
     public IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>> History { get; }
@@ -115,6 +133,13 @@ public sealed class ChatHistoryArchiveLoadResult
     /// 那时本来就没有这个功能，读不到未读是正确结果。
     /// </summary>
     public IReadOnlyList<string> UnreadMorning { get; }
+
+    /// <summary>
+    /// 已经触发过的晨间预设 id。老档案没有这个字段时是空列表——
+    /// 空列表的语义是「这条预设还没发过」，对老档案是安全的：
+    /// 它们本来就没发过。
+    /// </summary>
+    public IReadOnlyList<string> FiredScenarios { get; }
 }
 
 /// <summary>
@@ -169,13 +194,15 @@ public static class ChatHistoryArchive
     /// 一条不留时整个字段不写进 JSON。
     ///
     /// <paramref name="unreadMorning"/> 是「早上发来、还没看」的 NPC id；
-    /// 空集合与 null 都表示没有未读，整个字段不写。
+    /// <paramref name="firedScenarios"/> 是「已经触发过」的预设 id。
+    /// 空集合与 null 都表示没有，对应的字段整个不写。
     /// </summary>
     public static string Serialize(
         IReadOnlyDictionary<string, IReadOnlyList<BridgeDialogueHistoryItem>>? history,
         IReadOnlyList<GroupChatSessionRecord>? sessions,
         string? saveFolder,
-        IReadOnlyList<string>? unreadMorning = null)
+        IReadOnlyList<string>? unreadMorning = null,
+        IReadOnlyList<string>? firedScenarios = null)
     {
         var byNpc = new Dictionary<string, List<BridgeDialogueHistoryItem>>(StringComparer.Ordinal);
         if (history is not null)
@@ -210,36 +237,36 @@ public static class ChatHistoryArchive
                 SaveId = SaveIdFromFolderName(saveFolder),
                 ByNpc = byNpc,
                 GroupSessions = normalizedSessions.Count == 0 ? null : normalizedSessions,
-                UnreadMorning = NormalizeUnreadMorning(unreadMorning),
+                UnreadMorning = NormalizeIdList(unreadMorning),
+                FiredScenarios = NormalizeIdList(firedScenarios),
             },
             JsonOptions);
     }
 
     /// <summary>
-    /// 归一未读名单：去空白、去重（大小写不敏感）、保持传入顺序；空集合返回 null。
+    /// 归一一份 id 名单：去空白、去重（大小写不敏感）、保持传入顺序；空集合返回 null。
     ///
-    /// 返回 null 而不是空列表，是为了让「没有未读」的档案**逐字节**等同于
+    /// 返回 null 而不是空列表，是为了让「这一项没有内容」的档案**逐字节**等同于
     /// 加这个字段之前（<see cref="JsonIgnoreCondition.WhenWritingNull"/> 会整个字段不写）。
     /// </summary>
-    internal static IReadOnlyList<string>? NormalizeUnreadMorning(
-        IReadOnlyList<string>? unreadMorning)
+    internal static IReadOnlyList<string>? NormalizeIdList(IReadOnlyList<string>? values)
     {
-        if (unreadMorning is null || unreadMorning.Count == 0)
+        if (values is null || values.Count == 0)
         {
             return null;
         }
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var kept = new List<string>();
-        foreach (var candidate in unreadMorning)
+        foreach (var candidate in values)
         {
-            var npcId = candidate?.Trim();
-            if (string.IsNullOrWhiteSpace(npcId) || !seen.Add(npcId))
+            var value = candidate?.Trim();
+            if (string.IsNullOrWhiteSpace(value) || !seen.Add(value))
             {
                 continue;
             }
 
-            kept.Add(npcId);
+            kept.Add(value);
         }
 
         return kept.Count == 0 ? null : kept;
@@ -332,7 +359,8 @@ public static class ChatHistoryArchive
             warnings.ToArray(),
             sessions,
             sessions.Sum(session => session.Lines.Count),
-            NormalizeUnreadMorning(envelope.UnreadMorning));
+            NormalizeIdList(envelope.UnreadMorning),
+            NormalizeIdList(envelope.FiredScenarios));
     }
 
     /// <summary>

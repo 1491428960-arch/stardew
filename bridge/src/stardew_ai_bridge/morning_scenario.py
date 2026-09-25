@@ -148,6 +148,7 @@ class MorningScenarioStore:
             if scenario.id in seen:
                 raise MorningScenarioError(f"预设 id 重复：{scenario.id}")
             seen.add(scenario.id)
+        _reject_duplicate_openings(parsed)
         return cls(parsed)
 
     def for_day(self, day_index: int) -> MorningScenario | None:
@@ -160,6 +161,32 @@ class MorningScenarioStore:
     def for_npc(self, npc_id: str) -> tuple[MorningScenario, ...]:
         target = str(npc_id or "").strip().casefold()
         return tuple(s for s in self._scenarios if s.npc_id.casefold() == target)
+
+
+def _reject_duplicate_openings(scenarios: Sequence[MorningScenario]) -> None:
+    """同一个 NPC 的多条预设不得有**一模一样**的开场白（2026-09-26 用户口径）。
+
+    用户原话：「预设对话触发过一次之后就不要再触发了，**可以有小巧思变体，
+    但是不能一模一样**」。⇒ 同一个角色给第二条、第三条是允许的，但必须是
+    真的换了个由头；逐字相同的那句玩家已经见过一次，再来一遍只是噪音。
+
+    为什么在**加载期**报错：这些内容是人工写死的，写重了在游戏里的表现是
+    「她怎么又说了一遍同样的话」——那时离现场已经很远。加载期炸掉，
+    离现场只有一次重启的距离。
+    """
+    by_npc: dict[str, dict[str, str]] = {}
+    for scenario in scenarios:
+        normalized = _normalize_opening(scenario.opening)
+        if not normalized:
+            continue
+        previous = by_npc.setdefault(scenario.npc_id.casefold(), {})
+        if normalized in previous:
+            raise MorningScenarioError(
+                f"预设 {scenario.id!r} 与 {previous[normalized]!r} 是同一个角色"
+                f"（{scenario.npc_id}）逐字相同的开场白："
+                "变体必须换个由头，不能只换个 id"
+            )
+        previous[normalized] = scenario.id
 
 
 def _normalize_opening(text: str) -> str:

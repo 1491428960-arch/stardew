@@ -344,6 +344,14 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     // 随聊天档案一起存取（见 ChatHistoryArchiveEnvelope.UnreadMorning），
     // 于是换存档时它跟着一起丢弃，不会跨存档残留。
     private readonly HashSet<string> unreadMorningByNpc = new(StringComparer.OrdinalIgnoreCase);
+    // 已经触发过的晨间预设 id（2026-09-26）。
+    //
+    // 用户口径：「预设对话触发过一次之后就不要再触发了」。
+    // 当前这条预设按**绝对天数**触发（只在第 2 天），本来就不会重复——记这一份是为了
+    // ① 将来加变体（同一角色在第 5 天、第 12 天各发一条不同的）时，判据落到
+    //    「这条发过没有」而不是「今天第几天」；
+    // ② 万一哪天把触发条件改成相对的（「进档后的第一个早上」），没有它就会每天重发。
+    private readonly HashSet<string> firedMorningScenarios = new(StringComparer.OrdinalIgnoreCase);
 
     public BridgeClient(
         HttpClient? httpClient = null,
@@ -762,7 +770,8 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 snapshot,
                 groupSessions.ToArray(),
                 saveFolder,
-                unreadMorningByNpc.ToArray());
+                unreadMorningByNpc.ToArray(),
+                firedMorningScenarios.ToArray());
         }
     }
 
@@ -795,6 +804,12 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             foreach (var npcId in loaded.UnreadMorning)
             {
                 unreadMorningByNpc.Add(npcId);
+            }
+
+            firedMorningScenarios.Clear();
+            foreach (var scenarioId in loaded.FiredScenarios)
+            {
+                firedMorningScenarios.Add(scenarioId);
             }
 
             displaySequence = HighestSequence(loaded) ?? 0;
@@ -916,6 +931,43 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         lock (memoryLock)
         {
             return unreadMorningByNpc.Contains(id);
+        }
+    }
+
+    /// <summary>
+    /// `DayStarted` 用：这条预设**发过没有**（跨存档会话，随聊天档案存取）。
+    ///
+    /// 这是「触发过一次就不要再触发」的落点。它比「今天第几天」更贴用户的原话：
+    /// 用户要的是**这条内容不要重复**，而不是「某个日子不要重复」。
+    /// </summary>
+    public bool HasFiredMorningScenario(string scenarioId)
+    {
+        var id = scenarioId?.Trim();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            // 拿不到 id 的预设一律当作「发过」：宁可漏发一条，也不要因为
+            // 数据里缺了 id 就每天重发同一句话。
+            return true;
+        }
+
+        lock (memoryLock)
+        {
+            return firedMorningScenarios.Contains(id);
+        }
+    }
+
+    /// <summary>记下「这条预设已经发过了」。返回是否是**首次**记下（重复记返回 false）。</summary>
+    public bool MarkMorningScenarioFired(string scenarioId)
+    {
+        var id = scenarioId?.Trim();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        lock (memoryLock)
+        {
+            return firedMorningScenarios.Add(id);
         }
     }
 

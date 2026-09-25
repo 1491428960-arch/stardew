@@ -349,12 +349,26 @@ public sealed class ModEntry : Mod
                 .ConfigureAwait(false);
             foreach (var plan in plans)
             {
-                if (client.RememberMorningMessage(plan.NpcId, plan.Opening))
+                // 「预设对话触发过一次之后就不要再触发了」（2026-09-26 用户口径）。
+                //
+                // 判据落在**预设 id** 上、不落在天数上：用户要的是**这条内容**不要重复，
+                // 而不是「某个日子」不要重复。将来同一个角色在第 5 天、第 12 天各发一条
+                // 不同的（用户说的「可以有小巧思变体」）时，天数判据会把变体一起拦掉。
+                if (client.HasFiredMorningScenario(plan.ScenarioId))
                 {
-                    Monitor.Log(
-                        $"[StardewAI.Morning] {plan.DisplayName}（{plan.ScenarioId}）早上发来一条消息",
-                        LogLevel.Info);
+                    continue;
                 }
+
+                if (!client.RememberMorningMessage(plan.NpcId, plan.Opening))
+                {
+                    continue;
+                }
+
+                // 记在**写成功之后**：写失败却记成「发过了」，这条预设就再也不会出现了。
+                client.MarkMorningScenarioFired(plan.ScenarioId);
+                Monitor.Log(
+                    $"[StardewAI.Morning] {plan.DisplayName}（{plan.ScenarioId}）早上发来一条消息",
+                    LogLevel.Info);
             }
         }
         catch (Exception exception)
