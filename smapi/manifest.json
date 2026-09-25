@@ -1,6 +1,6 @@
 {
   "Name": "星露谷 AI NPC",
-  "Author": "OpenAI",
+  "Author": "stardew-ai-npc",
   "Version": "0.1.0",
   "Description": "AI 驱动的 NPC 对话：F8 私聊、面对面追问、F9 线上群聊；基于每个角色的语音画像与长期记忆。",
   "UniqueID": "OpenAI.StardewAI.NPC",
