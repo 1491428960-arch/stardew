@@ -20,9 +20,13 @@ from .models import (
     DialogueResponse,
     DialogueTestRequest,
     HealthResponse,
+    MorningMessagePlan,
+    MorningPlanRequest,
+    MorningPlanResponse,
     ProviderResult,
     ProviderUsage,
 )
+from .morning_scenario import MorningScenarioStore, match_scenario_by_history
 from .personas import (
     PersonaStore,
     canonical_npc_id,
@@ -56,6 +60,11 @@ provider_router = ProviderRouter.from_settings(
 )
 persona_store = PersonaStore()
 project_root = Path(__file__).resolve().parents[3]
+# 晨间预设是**可选内容**：文件不存在时是空库而不是错误，
+# 整条链路应退化成「没有人在早上主动开口」，也就是加这个功能之前的行为。
+morning_scenario_store = MorningScenarioStore.load(
+    project_root / "data" / "scenarios" / "morning.json"
+)
 
 
 def resolve_profile_index_path(configured_path: str | None) -> Path:
@@ -412,7 +421,16 @@ def _build_context(
         # topic 是 NPC 主动开口；清掉旧客户端可能传来的内部提示，
         # 防止它进入资料检索、上下文摘要或最终 Prompt。
         context_payload["message"] = ""
-    context = context_builder.build(context_payload)
+    context = context_builder.build(
+        context_payload,
+        # 「这段对话是不是某条晨间预设的后续」在这里判、以**显式参数**传下去，
+        # 不塞进 context_payload：payload 是被 `_sanitize_value` 之类整体处理的，
+        # 混一个内部键进去有泄漏到 prompt 里的风险。
+        morning_scenario=match_scenario_by_history(
+            morning_scenario_store,
+            context_payload.get("history"),
+        ),
+    )
     player_input = payload.get("message", "")
     if is_topic_request:
         player_input = ""
@@ -587,6 +605,36 @@ def _record_dialogue(
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001 —— 记日志绝不影响对话
         return
+
+
+@app.post("/api/morning/plan", response_model=MorningPlanResponse)
+def morning_plan(request: MorningPlanRequest) -> MorningPlanResponse:
+    """游戏端在 `DayStarted` 时来问：今天早上有没有人要主动开口。
+
+    **为什么是「问」而不是把内容编进 DLL**：预设内容会反复调整
+    （措辞、边界、该由谁说），编进 DLL 就意味着每改一个字都要重新编译部署。
+    放在 Bridge 侧的数据文件里，改完重启 Bridge 即可。
+
+    **为什么返回值里带 `opening` 全文而不是只给 id**：游戏端拿到就写进聊天记录，
+    不需要再回一次；而且 `opening` 必须与 `morning.json` 里的**逐字一致**——
+    `prompts.py` 是靠「历史首条 == 某条 opening」来认出「这是晨间对话的后续」的，
+    两端一旦不一致，方向约束就会静默失效（这正是 ㉑ 那类「数据写对但永不生效」）。
+    """
+    scenario = morning_scenario_store.for_day(request.day_index)
+    if scenario is None:
+        # 空数组而不是 404：绝大多数日子本来就没有预设消息，
+        # 「今天没人发」是正常结果，不是错误。
+        return MorningPlanResponse()
+    return MorningPlanResponse(
+        messages=[
+            MorningMessagePlan(
+                npc_id=scenario.npc_id,
+                display_name=scenario.display_name,
+                scenario_id=scenario.id,
+                opening=scenario.opening,
+            )
+        ]
+    )
 
 
 @app.post("/api/dialogue/test", response_model=DialogueResponse)

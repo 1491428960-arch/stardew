@@ -763,6 +763,46 @@ class DialogueResponse(ApiModel):
     _strip_provider = field_validator("provider", mode="before")(_strip_text)
 
 
+class MorningMessagePlan(ApiModel):
+    """一条「今天早上该由谁开口、说什么」。
+
+    `opening` 是**已经写好的一句话**，游戏端拿到后直接写进聊天记录，
+    **不经过模型**：预设内容的价值就在于它是人工定过的，
+    让模型再复述一遍只会引入漂移。
+    """
+
+    npc_id: str = Field(alias="npcId", min_length=1, max_length=100)
+    display_name: str = Field(alias="displayName", min_length=1, max_length=100)
+    scenario_id: str = Field(alias="scenarioId", min_length=1, max_length=120)
+    opening: str = Field(min_length=1, max_length=600)
+
+
+class MorningPlanRequest(ApiModel):
+    """游戏端在 `DayStarted` 时问「今天有没有人要主动开口」。
+
+    ⚠ **本模型刻意只有两个字段**：`ApiModel` 是 `extra="forbid"`，
+    游戏端多送一个字段就是 422。所以**不要**往这里加「顺便带上
+    gameState / 好感度 / 关系阶段」这类看起来很划算的东西——
+    需要那些信息时另开端点，别把两个契约挤进一条请求。
+    """
+
+    day_index: int = Field(alias="dayIndex", ge=0, le=100000)
+    known_npc_ids: list[str] = Field(
+        default_factory=list,
+        alias="knownNpcIds",
+        max_length=80,
+        description=(
+            "玩家已经认识的角色（与 F8 名册同源：存档里有好感度记录的人）。"
+            "**当前只用于轮转时的候选池**；节点预设不看它——"
+            "节点是写死的调度，就算玩家还没见过那人也该照发。"
+        ),
+    )
+
+
+class MorningPlanResponse(ApiModel):
+    messages: list[MorningMessagePlan] = Field(default_factory=list, max_length=4)
+
+
 class HealthResponse(ApiModel):
     status: Literal["ok"] = "ok"
     provider: str = Field(min_length=1, max_length=50)

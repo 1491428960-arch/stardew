@@ -14,6 +14,7 @@ from .behavior_quality import (
 from .dialogue_boundaries import strip_leading_speech_particles
 from .evidence import has_dialogue_control_residue
 from .models import MAX_COMPLETED_EVENT_IDS
+from .morning_scenario import render_direction_card
 from .personas import PersonaStore
 from .profile_index import ProfileIndexStore
 from .relationship_gating import CONVERSATION_LEAD_STAGES, resolve_relationship_gate, relationship_stage_from_state
@@ -1611,6 +1612,13 @@ class ContextBuilder:
         self,
         npc_id: str | Mapping[str, Any],
         source_mods: Iterable[str] = (),
+        # 晨间预设（`morning_scenario.MorningScenario` 或 None）：
+        # `app.py` 判出「这段对话是某条晨间预设的后续」后传进来。
+        #
+        # ⚠ 必须放在 `**values` **之前**：放后面是语法错误，放进 `values` 则会被
+        # 当成游戏状态字段走 `_STATE_FIELDS` 那条路。现有两处调用
+        # （`app.py` 与 `build_group_voice_cards`）都只传 1 个位置参数，加它不会错位。
+        morning_scenario: Any = None,
         **values: Any,
     ) -> dict[str, Any]:
         if isinstance(npc_id, Mapping):
@@ -2194,6 +2202,12 @@ class ContextBuilder:
                 context["storyEvents"] = story_events
             if known_characters:
                 context["knownCharacters"] = _sanitize_value(known_characters)
+        # 晨间预设的方向约束（用户定义的「中档」：开场写死，方向与边界写明，
+        # 中间的话交给模型）。**有意放成独立卡**，不并进
+        # `stage_execution_card` / `conversation_lead`：㉛ 实测槽位埋进别人的大
+        # JSON 里会被无视，提成独立卡才生效——而这恰好是本功能质量的全部来源。
+        if morning_scenario is not None:
+            context["morningDirection"] = render_direction_card(morning_scenario)
         return context
 
 
@@ -6129,6 +6143,12 @@ class PromptBuilder:
                 and _text(item.get("content"), limit=140)
             ],
             "voiceCard": safe_voice_card,
+            # 晨间预设的方向卡。⚠ **必须在这里显式列出来**：`safe_context_data`
+            # 是从零构建的**白名单字典**（不是 `dict(context)`），不列进来的键会被
+            # 静默丢掉——而丢掉之后的表现是「一切照常、只是少了方向约束」，
+            # 不报错、不 warning。这就是 ㉑ 那类「数据写对但永不生效」的模式，
+            # 也正是 `test_morning_injection.py` 断言**最终 messages** 而不是数据结构的原因。
+            "morningDirection": context.get("morningDirection"),
             "styleSamples": style_samples,
             "speechEvidence": speech_evidence,
             "behaviorExamples": [
@@ -7601,6 +7621,22 @@ class PromptBuilder:
                             "content": _json(conversation_lead_card),
                         }
                     )
+        # 晨间预设的方向卡：**独立一张**，紧跟 conversation_lead 之后。
+        # 只在这段对话被认出是某条晨间预设的后续时存在
+        # （判据见 `morning_scenario.match_scenario_by_history`）。
+        #
+        # 位置有意放在 conversation_lead 之后、contract 之前：
+        # 它比 conversation_lead（角色性格化的推进风格）**更具体**，
+        # 越靠后的卡在模型眼里越像「本轮的额外要求」。
+        morning_direction = safe_context.get("morningDirection")
+        if isinstance(morning_direction, Mapping) and morning_direction:
+            messages.append(
+                {
+                    "role": "system",
+                    "name": "morning_direction",
+                    "content": _json(dict(morning_direction)),
+                }
+            )
         if required_terms or history_anchors:
             contract: dict[str, Any] = {
                 "instruction": (

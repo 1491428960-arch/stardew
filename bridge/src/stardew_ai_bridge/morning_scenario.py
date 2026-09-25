@@ -162,6 +162,49 @@ class MorningScenarioStore:
         return tuple(s for s in self._scenarios if s.npc_id.casefold() == target)
 
 
+def _normalize_opening(text: str) -> str:
+    """比对前**去掉所有空白**。
+
+    游戏端把 `opening` 写进聊天记录时可能过一遍清洗（换行、首尾空格），
+    而 `ChatHistoryRules.MaxContentLength = 240` 这类上限也可能截断它。
+    只要截断没发生，去空白后的逐字比对就成立；真截断了也只会退化成
+    「没认出这是晨间对话」（少一层方向约束），不会给出错误的方向。
+    """
+    return "".join(str(text or "").split())
+
+
+def match_scenario_by_history(
+    store: MorningScenarioStore,
+    history: object,
+) -> MorningScenario | None:
+    """历史里出现过某条预设的 `opening` 时，认定这段对话是它的后续。
+
+    **为什么靠 `opening` 认，而不是让游戏端在请求里带 `scenarioId`**：
+    `DialogueTestRequest` 是 `extra="forbid"`，加一个字段就意味着
+    「新 DLL + 旧 Bridge = 422 → 退化成兜底回复」，必须先发 Bridge 再发 DLL。
+    而逐字比对写死的内容**不需要任何协议改动**，顺带还更准：
+    它不关心「今天是第几天」，**玩家隔了三天才回，照样认得这是那段对话的后续**
+    ——按天数判断反而会在跨天时断掉。
+
+    只看**第一条 assistant 消息**：晨间消息永远是这段对话的开头，
+    而后面所有轮次都是它的延续。
+    """
+    if not isinstance(history, (list, tuple)) or not history:
+        return None
+    first_assistant = ""
+    for item in history:
+        if isinstance(item, Mapping) and str(item.get("role") or "") == "assistant":
+            first_assistant = str(item.get("content") or "")
+            break
+    if not first_assistant.strip():
+        return None
+    target = _normalize_opening(first_assistant)
+    for scenario in store.scenarios:
+        if _normalize_opening(scenario.opening) == target:
+            return scenario
+    return None
+
+
 def render_direction_card(scenario: MorningScenario) -> dict[str, Any]:
     """把一条预设渲染成 **独立卡**（见模块 docstring 第 2 条硬约束）。
 

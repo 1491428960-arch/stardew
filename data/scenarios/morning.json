@@ -19,8 +19,8 @@
       "id": "day1-lewis",
       "trigger": {
         "kind": "absoluteDay",
-        "dayIndex": 1,
-        "_comment": "春季第 1 天 = 玩家搬来的第二天早上（原版第 1 天是到达日）"
+        "dayIndex": 2,
+        "_comment": "第 2 天早上 = 玩家真正过完第一晚之后。不能用第 1 天：那天早上还压在开场动画里，玩家根本没过夜，而这句话问的是「第一晚怎么样」。"
       },
       "npcId": "Lewis",
       "displayName": "刘易斯",

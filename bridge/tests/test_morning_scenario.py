@@ -146,11 +146,16 @@ class TestRealData:
         store = MorningScenarioStore.load(REAL_DATA)
         assert len(store) >= 1
 
-    def test_day1_scenario_exists_and_is_lewis(self) -> None:
+    def test_day2_scenario_exists_and_is_lewis(self) -> None:
+        """第 2 天（过完第一晚）而不是第 1 天——第 1 天早上玩家还压在开场动画里。"""
         store = MorningScenarioStore.load(REAL_DATA)
-        scenario = store.for_day(1)
+        scenario = store.for_day(2)
         assert scenario is not None
         assert scenario.npc_id == "Lewis"
+
+    def test_day1_has_no_scenario(self) -> None:
+        store = MorningScenarioStore.load(REAL_DATA)
+        assert store.for_day(1) is None
 
     def test_opening_traces_back_to_corpus(self) -> None:
         """开场白必须能在原版原文里找到——**不许自由创作**。
@@ -159,7 +164,7 @@ class TestRealData:
         预设对话是人工写死的，写错了会永远留在那里，所以这条要机器守。
         """
         store = MorningScenarioStore.load(REAL_DATA)
-        scenario = store.for_day(1)
+        scenario = store.for_day(2)
         assert scenario is not None
         corpus = (
             ROOT
