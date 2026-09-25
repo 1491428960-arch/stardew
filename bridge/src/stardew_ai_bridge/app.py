@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import datetime
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -537,6 +539,56 @@ def _validate_group_dialogue_request(
         raise HTTPException(status_code=422, detail=detail) from exc
 
 
+def _record_dialogue(
+    payload: Mapping[str, object],
+    response: DialogueResponse,
+) -> None:
+    """把一次**真实**对话追加到 `artifacts/dialogue-log/<日期>.jsonl`。
+
+    **为什么要有它**：SMAPI 日志只记目标／频道／延迟／`fallback`，**回复正文不落盘**；
+    存档里的聊天记录只在**保存游戏**时写入。于是「刚才那句她到底说了什么」在两边都查不到
+    —— 2026-09-26 实机验证时就卡在这里。这个文件补的就是这一段。
+
+    **只写不改行为**：任何异常都被吞掉（含目录不可写、磁盘满），
+    对话本身绝不会因为记日志失败而失败。用 `BRIDGE_DIALOGUE_LOG=0` 关掉。
+    """
+    if os.environ.get("BRIDGE_DIALOGUE_LOG", "1") == "0":
+        return
+    try:
+        root = Path(__file__).resolve().parents[3]
+        log_dir = root / "artifacts" / "dialogue-log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            # ⚠ 键名是 **HTTP 层**的名字，不是模型的 Python 字段名：
+            # `npc_id` 的 alias 是 `npcId`、`display_name` 的是 `displayName`，
+            # 而 `message`/`intent`/`channel`/`history` 没有 alias、保持原名。
+            # 这一处我猜错过两次（先按 camelCase 猜 message、又照 model_fields 改成 snake_case），
+            # 判据只有一条：`DialogueTestRequest.model_fields[...].alias`。
+            "npcId": payload.get("npcId"),
+            "displayName": payload.get("displayName"),
+            "playerText": payload.get("message"),
+            "intent": payload.get("intent"),
+            "channel": payload.get("channel"),
+            "reply": response.reply,
+            "provider": response.provider,
+            "fallback": response.fallback,
+            # ⚠ 这里是 **Python 属性名**（snake_case），不是 HTTP 别名：
+            # `latencyMs` 只是 `latency_ms` 的 alias，读属性用 alias 会 AttributeError。
+            # 与上面 payload 那一段正好相反——那边取的是原始 HTTP dict。
+            "latencyMs": response.latency_ms,
+            "warnings": list(response.warnings),
+            # 历史长度是「这一轮到底有没有上下文」的唯一判据：
+            # 探针那次「发了历史却被静默丢弃」就是靠它才发现的。
+            "historyLen": len(payload.get("history") or ()),
+        }
+        path = log_dir / f"{datetime.now():%Y-%m-%d}.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 —— 记日志绝不影响对话
+        return
+
+
 @app.post("/api/dialogue/test", response_model=DialogueResponse)
 def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     request = _validate_dialogue_request(payload)
@@ -596,7 +648,7 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         int((perf_counter() - started_at) * 1000),
     )
 
-    return DialogueResponse(
+    response = DialogueResponse(
         reply=result.reply,
         provider=result.provider,
         fallback=result.fallback,
@@ -605,6 +657,8 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         usage=_merge_provider_usages(item.usage for item in attempts),
         openLoop=result.open_loop if not result.fallback else None,
     )
+    _record_dialogue(payload, response)
+    return response
 
 
 @app.post("/api/dialogue/group", response_model=GroupDialogueResponse)
