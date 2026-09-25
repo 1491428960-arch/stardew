@@ -12,7 +12,8 @@ public sealed record PrivateChatRosterSource(
     string DisplayName,
     bool IsPresent,
     float DistanceInTiles,
-    bool IsInteractionTarget = false);
+    bool IsInteractionTarget = false,
+    bool HasUnreadMorning = false);
 
 /// <summary>
 /// 名单里算好的一行：排序位置、在场状态、以及点下去会走的频道。
@@ -29,7 +30,8 @@ public sealed record PrivateChatRosterEntry(
     bool IsNearby,
     string Channel,
     float DistanceInTiles = float.MaxValue,
-    bool IsInteractionTarget = false)
+    bool IsInteractionTarget = false,
+    bool HasUnreadMorning = false)
 {
     /// <summary>
     /// 列表右侧的状态字。它的作用是让玩家**点之前就知道会发生什么**：
@@ -40,6 +42,12 @@ public sealed record PrivateChatRosterEntry(
         : IsPresent
             ? "同处一地"
             : "线上";
+
+    /// <summary>
+    /// 早上主动发来、玩家还没看的那条消息的标记。
+    /// 空串表示不显示——名单里绝大多数行都是空的，画之前先判空。
+    /// </summary>
+    public string UnreadLabel => HasUnreadMorning ? "新消息" : string.Empty;
 }
 
 /// <summary>
@@ -174,11 +182,20 @@ public static class PrivateChatRosterRules
                 IsNearby(source.IsPresent, source.DistanceInTiles),
                 ResolveChannel(source.IsPresent),
                 source.DistanceInTiles,
-                source.IsInteractionTarget));
+                source.IsInteractionTarget,
+                source.HasUnreadMorning));
         }
 
         return rows
-            .OrderBy(row => row.DisplayName, NameOrderComparer)
+            // 早上主动发来消息、且玩家还没看的人**置顶**。
+            //
+            // 这是「只看名字」那条规则唯一的有意例外，而且它不与 2026-09-21 去掉的
+            // 「身边／同处一地／线上」分档冲突——那次去掉的理由是**位置会变**：
+            // 玩家走两步，同一批人的档位就全变了，每次打开都得重找一遍。
+            // 「今天有没有人给你留了话」不随走动改变，它是一个**稳定的**事实：
+            // 发过就是发过，看到之前一直在最上面，看过了就回到名字序。
+            .OrderByDescending(row => row.HasUnreadMorning)
+            .ThenBy(row => row.DisplayName, NameOrderComparer)
             .ThenBy(row => row.NpcId, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }

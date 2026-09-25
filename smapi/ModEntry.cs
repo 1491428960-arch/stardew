@@ -308,13 +308,60 @@ public sealed class ModEntry : Mod
         }
     }
 
-    private void OnDayStarted(object? sender, DayStartedEventArgs e)
+    private async void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
         faceToFaceCoordinator?.ResetRepeatTarget();
         if (Context.IsWorldReady)
         {
             groupDialogueCoordinator?.OnDayStarted();
             Monitor.Log($"[StardewAI.Invite] {groupDialogueCoordinator?.LastDiagnostics}", LogLevel.Info);
+            await AnnounceMorningMessagesAsync();
+        }
+    }
+
+    /// <summary>
+    /// 早上让预设里的 NPC 主动发来一条消息（2026-09-26）。
+    ///
+    /// **为什么挂在 `DayStarted`**：它是全库唯一的跨天钩子（`DayEnding` 只在睡觉时触发，
+    /// 白天直接退游戏就丢），而玩家醒来那一刻正好就是「早上」。
+    ///
+    /// **为什么整体包在 try/catch 里**：这是个锦上添花的功能，
+    /// Bridge 没启动、超时、数据文件写坏，都不该让 `DayStarted` 抛出去——
+    /// 那会打断玩家一天的开始。失败的表现就是「今天没人发消息」。
+    ///
+    /// ⚠ `await` 之后**不要碰 `Game1`**：`async void` 从这里恢复时不保证还在主线程。
+    /// 所以天数在 await 之前就取好，之后的动作全部落在
+    /// <see cref="BridgeClient"/> 自己的锁里（它是线程安全的）。
+    /// </summary>
+    private async Task AnnounceMorningMessagesAsync()
+    {
+        var client = bridgeClient;
+        if (client is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var dayIndex = Game1.Date.TotalDays;
+            var plans = await client
+                .RequestMorningPlanAsync(dayIndex)
+                .ConfigureAwait(false);
+            foreach (var plan in plans)
+            {
+                if (client.RememberMorningMessage(plan.NpcId, plan.Opening))
+                {
+                    Monitor.Log(
+                        $"[StardewAI.Morning] {plan.DisplayName}（{plan.ScenarioId}）早上发来一条消息",
+                        LogLevel.Info);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log(
+                $"[StardewAI.Morning] 晨间消息失败，已跳过：{exception.Message}",
+                LogLevel.Warn);
         }
     }
 
@@ -954,11 +1001,13 @@ public sealed class ModEntry : Mod
             known.Select(npc => BuildRosterSource(player, npc, interactionTile)));
     }
 
-    private static PrivateChatRosterSource BuildRosterSource(
+    private PrivateChatRosterSource BuildRosterSource(
         Farmer player,
         KnownNpc known,
         Vector2 interactionTile)
     {
+        // 早上发过消息、玩家还没看的人：名单要把他置顶并标记。
+        var hasUnreadMorning = bridgeClient?.HasUnreadMorning(known.NpcId) == true;
         var character = Game1.getCharacterFromName(known.NpcId);
         if (character is null)
         {
@@ -969,7 +1018,8 @@ public sealed class ModEntry : Mod
                 known.DisplayName,
                 IsPresent: false,
                 DistanceInTiles: float.MaxValue,
-                IsInteractionTarget: false);
+                IsInteractionTarget: false,
+                HasUnreadMorning: hasUnreadMorning);
         }
 
         var isPresent = ReferenceEquals(character.currentLocation, Game1.currentLocation);
@@ -985,7 +1035,8 @@ public sealed class ModEntry : Mod
             FaceToFaceStateRules.InteractionTargetsRememberedNpc(
                 character.GetBoundingBox(),
                 interactionTile,
-                Game1.tileSize));
+                Game1.tileSize),
+            HasUnreadMorning: hasUnreadMorning);
     }
 
     /// <summary>
@@ -1022,6 +1073,13 @@ public sealed class ModEntry : Mod
             Monitor.Log($"打开与 {target.Name} 的私聊失败（对话功能可能刚被关掉）。", LogLevel.Warn);
             NotifyPlayer("现在打不开私聊：对话功能可能已关闭");
             return false;
+        }
+
+        // 玩家已经看到她早上的那条消息了：清掉未读，名单下次打开她就回到名字序。
+        // 放在**打开成功之后**——打开失败还留在名单上，未读不该被吃掉。
+        if (bridgeClient?.MarkMorningRead(entry.NpcId) == true)
+        {
+            Monitor.Log($"[StardewAI.Morning] {target.Name} 的晨间消息已读", LogLevel.Trace);
         }
 
         Monitor.Log(

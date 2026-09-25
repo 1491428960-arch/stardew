@@ -319,6 +319,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     private readonly bool ownsHttpClient;
     private readonly Uri dialogueEndpoint;
     private readonly Uri groupDialogueEndpoint;
+    private readonly Uri morningPlanEndpoint;
     private readonly Action<string>? diagnosticLogger;
     // 线上群聊策略由配置决定：默认自然接话流（multi_turn），turn_based 为回退选项。
     private readonly string groupStrategy = ModConfig.MultiTurnGroupStrategy;
@@ -336,6 +337,13 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     // 它是显示层的东西，**不进请求体**（见 BridgeDialogueHistoryItem.Sequence）。
     private int displaySequence;
     private readonly Dictionary<string, NpcGameState> previousStateByNpc = new();
+    // 早上主动发来、玩家还没点开看的人（2026-09-26）。F8 名册据此**置顶并标记**。
+    //
+    // 存「未读」而不是「今天谁发过」：发过但已经看过的人不该继续置顶——
+    // 置顶的价值在于「有件事等你」，看过之后它就没了。
+    // 随聊天档案一起存取（见 ChatHistoryArchiveEnvelope.UnreadMorning），
+    // 于是换存档时它跟着一起丢弃，不会跨存档残留。
+    private readonly HashSet<string> unreadMorningByNpc = new(StringComparer.OrdinalIgnoreCase);
 
     public BridgeClient(
         HttpClient? httpClient = null,
@@ -357,6 +365,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             UriKind.Absolute);
         dialogueEndpoint = new Uri(normalizedBaseEndpoint, "api/dialogue/test");
         groupDialogueEndpoint = new Uri(normalizedBaseEndpoint, "api/dialogue/group");
+        morningPlanEndpoint = new Uri(normalizedBaseEndpoint, "api/morning/plan");
     }
 
     public async Task<BridgeDialogueResponse> SendAsync(
@@ -749,7 +758,11 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 pair => pair.Key,
                 pair => (IReadOnlyList<BridgeDialogueHistoryItem>)pair.Value.ToArray(),
                 StringComparer.Ordinal);
-            return ChatHistoryArchive.Serialize(snapshot, groupSessions.ToArray(), saveFolder);
+            return ChatHistoryArchive.Serialize(
+                snapshot,
+                groupSessions.ToArray(),
+                saveFolder,
+                unreadMorningByNpc.ToArray());
         }
     }
 
@@ -776,10 +789,134 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
 
             groupSessions.Clear();
             groupSessions.AddRange(loaded.Sessions);
+            // 未读名单跟着档案一起替换（不是合并）：换存档时上一个存档的未读必须清掉，
+            // 否则新档里会凭空出现「有人在早上给你留了话」。
+            unreadMorningByNpc.Clear();
+            foreach (var npcId in loaded.UnreadMorning)
+            {
+                unreadMorningByNpc.Add(npcId);
+            }
+
             displaySequence = HighestSequence(loaded) ?? 0;
         }
 
         return loaded;
+    }
+
+    /// <summary>
+    /// 问 Bridge「今天早上有没有人要主动开口」。
+    ///
+    /// **失败一律返回空列表，绝不抛异常**：这是个锦上添花的功能，
+    /// Bridge 没启动、超时、返回坏 JSON，都不该让 <c>DayStarted</c> 抛出去——
+    /// 那会打断玩家一天的开始。失败的表现就是「今天没人发消息」，与没有预设时一致。
+    /// </summary>
+    public async Task<IReadOnlyList<MorningMessagePlan>> RequestMorningPlanAsync(
+        int dayIndex,
+        IReadOnlyList<string>? knownNpcIds = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var request = new MorningPlanRequest
+            {
+                DayIndex = dayIndex,
+                KnownNpcIds = knownNpcIds ?? Array.Empty<string>(),
+            };
+            using var response = await httpClient
+                .PostAsJsonAsync(morningPlanEndpoint, request, cancellationToken)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                diagnosticLogger?.Invoke(
+                    $"[StardewAI.Morning] plan request failed: {(int)response.StatusCode}");
+                return Array.Empty<MorningMessagePlan>();
+            }
+
+            // ⚠ 必须是命名参数：`ReadFromJsonAsync<T>` 的第二个位置参数是
+            // `JsonSerializerOptions?`，直接传 token 会编译失败（CS1503）。
+            var plan = await response.Content
+                .ReadFromJsonAsync<MorningPlanResponse>(cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            return plan?.Messages ?? Array.Empty<MorningMessagePlan>();
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException
+                or TaskCanceledException
+                or JsonException
+                or NotSupportedException)
+        {
+            diagnosticLogger?.Invoke(
+                $"[StardewAI.Morning] plan request threw: {ex.GetType().Name}");
+            return Array.Empty<MorningMessagePlan>();
+        }
+    }
+
+    /// <summary>
+    /// 记一条「早上主动发来」的消息：写进回看档案与发送窗口，并标为未读。
+    ///
+    /// **为什么也要写发送窗口**：这条消息的作用不只是给玩家看——它是这段对话的**开头**。
+    /// 玩家接着回话时，模型必须看得到「自己先说过什么」，否则会答非所问。
+    /// 这正是「用预设对话引导自由聊天」能成立的前提；只写回看档案的话，
+    /// 玩家看到的是一个人的话，而模型看到的是另一个人凭空开口。
+    ///
+    /// `intent` 固定用 <see cref="ConversationIntent.Chat"/>：这个字段**会进请求体**，
+    /// 而 Bridge 侧是 `Literal["chat","topic","item"]` + `extra="forbid"`，
+    /// 自造一个 `"morning"` 会直接 422。
+    /// </summary>
+    public bool RememberMorningMessage(string npcId, string text)
+    {
+        var id = npcId?.Trim();
+        var content = Truncate(text?.Trim() ?? string.Empty, MaxHistoryContentLength);
+        if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(content))
+        {
+            return false;
+        }
+
+        lock (memoryLock)
+        {
+            AppendHistory(id, new BridgeDialogueHistoryItem
+            {
+                Role = "assistant",
+                Content = content,
+                Intent = ConversationIntent.Chat,
+            });
+            unreadMorningByNpc.Add(id);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 玩家看过了（打开了这个人的聊天窗）。返回是否**确实清掉了一条**——
+    /// 调用方据此决定要不要立刻存档，没清掉就不必写盘。
+    /// </summary>
+    public bool MarkMorningRead(string npcId)
+    {
+        var id = npcId?.Trim();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        lock (memoryLock)
+        {
+            return unreadMorningByNpc.Remove(id);
+        }
+    }
+
+    /// <summary>F8 名册用：这个人有未读的晨间消息吗。</summary>
+    public bool HasUnreadMorning(string npcId)
+    {
+        var id = npcId?.Trim();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return false;
+        }
+
+        lock (memoryLock)
+        {
+            return unreadMorningByNpc.Contains(id);
+        }
     }
 
     /// <summary>档案里出现过的最大显示序号；一条都没有时返回 null（新档从 0 起）。</summary>
