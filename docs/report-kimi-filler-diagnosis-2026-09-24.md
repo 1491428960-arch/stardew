@@ -418,3 +418,77 @@ $env:PYTHONIOENCODING='utf-8'
 - `docs/report-style-compare-2026-09-24.md` —— 发现语气词问题的那份对照
 - `docs/report-verbatim-rate-2026-09-24.md` —— 原文复述率（同为「证据卡影响输出」的实例）
 - `docs/report-v11-baseline-2026-09-24.md` —— 基线读数
+
+## 九、四条遗留项的处置（2026-09-24 晚）
+
+结案方式是**两真两假**，其中两条假警报的排查过程比结论更值钱。
+
+### ① `Introduction` 证据卡泄露 —— **假警报，未改任何代码**
+
+原判断是「`prompts.py:6069` 的过滤只覆盖 `elliott_original_rhythm` 一支校准，
+全库 138 个角色没有保护」。**重新实测后不成立。**
+
+实测：拿索引里**全部 26 个**带 `Introduction` anchor 的角色，逐个走
+`_build_context`，把 `voice_card` 卡片的 content 解回 JSON 检查：
+
+```
+干净（Introduction 未进 prompt）: 26
+泄露: 0
+```
+
+规模本身也比原判断小得多——`voiceAnchors` 全库 601 条，
+`sourceKey == "Introduction"` 的只有 **26 条（4.3%）**，分布在 **26 个**角色上。
+
+**为什么干净**：索引构建期（`profile_index.py:2559` 的
+`selected["voiceAnchors"] = (specific + vanilla)[:8]`）与注入期
+（`prompts.py:5568` 的类别优先级 `weekday → weekday_variant → relationship →
+introduction → other`，以及 `_safe_voice_card:2257` 的只取前 6 条）两道关，
+实际效果就是 `Introduction` 排不进去。所以 6069 那段并非补丁，
+而是 `elliott_original_rhythm` 评测校准专用的节奏筛选，**保持原样**。
+
+**验证方法记下来**（这次的坑）：卡片 content 是 **JSON 字符串**而不是 dict，
+按 dict 键去 walk prompt 会一无所获，得出「根本没注入」的错误中间结论；
+另外 `_build_context` 依赖 `BRIDGE_PROFILE_INDEX`，
+**不设这个环境变量索引就不加载，`voiceCard` 直接是空的**。
+
+### ② 感叹号缺失（真） + `上线词：` 泄漏（假）
+
+感叹号：原文 `styleSamples` 每百汉字 **0.31–1.87** 个（Sebastian 0.31 /
+Shane 0.86 / Elliott 1.18 / Abigail 1.84 / Maru 1.87），两个模型输出都 ≈ **0.00**。
+
+**但不再动它。** 本日三条路（改 prompt 措辞 600 轮、修选样偏置 300 轮、
+加输出闸 300 轮）**全部无效**，已经证明这不是这条链路任何一环的缺陷。
+再加第四条约束只会重复同一个错误。
+
+`上线词：` 泄漏：全库搜「上线」**0 处**；`voiceAnchors` 里含中文冒号格式标记的
+**0 条**。**假警报。**
+
+### ③ 农场名 + `manifest.json` 的 `Author`
+
+农场名**用户已自行定为「芒种」**（存档 `芒种_449912068`，09-24 15:52），无需处理。
+
+`smapi/manifest.json` 的 `Author` 是脚手架默认的 `"OpenAI"`，已改为
+`stardew-ai-npc` 并同步到部署侧（junction 目标
+`D:\sbeam\...\Mods\StardewAI.NPC`），三处 SHA256 一致（`F1F550B42772`）。
+
+⚠ **`UniqueID` 保持 `OpenAI.StardewAI.NPC` 不动**：SMAPI 按 UniqueID 认 mod
+身份与存档数据，改它会让已有存档里的数据失联。Author 只影响显示。
+
+### ④ 探针脚本移出版本控制盲区
+
+`verbatim_probe.py` / `style_compare.py` / `compare_style_before_after.py`
+原在 `.tmp/topic-probe/`，而 `.tmp/` 在 `.gitignore` 里——
+**这些工具从来没进过版本控制**。移到 `scripts/probes/`；
+`parents[2]` 层级恰好不变，只改了文档字符串里的路径，已逐个验证定位仍指向项目根。
+
+数据文件（JSON / log）仍留在 `.tmp/`，不进版本控制。
+
+### 方法论补充
+
+5. **「我记得有这个问题」不等于「现在还有这个问题」。** 这一节两条假警报都源于
+   拿着旧结论直接开工。**修之前先重测一遍**——重测成本远低于修一个不存在的 bug，
+   而且重测往往顺带把问题的真实规模量出来（26 条 ≠ 138 个角色）。
+
+6. **统计指标分不出「没效果」和「没跑起来」。** 要把 `warnings` 之类的诊断码
+   一起记下来，否则会把「机制从未触发」误判成「机制无效」。
+
