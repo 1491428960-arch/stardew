@@ -27,7 +27,12 @@ from .source_aliases import (
 )
 
 
-_UNRESOLVED_I18N = re.compile(r"\{\{\s*i18n\s*:", re.IGNORECASE)
+# 未解析的 i18n 引用是**键名不是台词**。花括号数必须宽松：Content Patcher 用
+# `{{i18n:...}}`，而别的 mod 会把单花括号 `{i18n:Wellwick.dialogue.Mon8}` 原样
+# 留在文本里（实测 15 条，全部来自 `data/compatibility/Wellwick.json`）。它
+# `evidenceKind='dialogue'`、路径优先级 3（不降权）、事件门控返回 True，所以
+# 只认双花括号时它会**一路进检索池发给模型**。探针 `.tmp/retrieval-junk-audit.py`。
+_UNRESOLVED_I18N = re.compile(r"\{\{?\s*i18n\s*:", re.IGNORECASE)
 
 # 候选上限 —— **不是**"每轮注入几条"，那个由 `prompts._MAX_SPEECH_EVIDENCE` 管。
 # 这里决定的是"最多能取出多少条候选"，也就是**轮转池的物理宽度**。
@@ -1566,7 +1571,7 @@ def _is_generic_small_talk_input(player_input: str) -> bool:
 
 
 def _dialogue_selection_key_priority(
-    record: Mapping[str, Any], player_input: str
+    record: Mapping[str, Any], player_input: str, requested_season: str = ""
 ) -> int:
     """泛日常生成时把覆盖层 Introduction 留给无普通日常对白的情况。"""
 
@@ -1577,6 +1582,22 @@ def _dialogue_selection_key_priority(
         and str(record.get("sourceKey", "")).strip().casefold() == "introduction"
     ):
         return 4
+    # 当季键提前一档（3 → 2）。
+    #
+    # 为什么必须：当季键与普通日常键**同为 3**，排序于是落到 `_evidence_order_key`
+    # 的 `(内容分档, 索引原序)` —— 而季节句在索引里物理位置普遍靠后
+    # （`MarriageDialogue*.json` 追加在末尾），窗口（`_SPEECH_EVIDENCE_CANDIDATES`）
+    # 一截就被切光。实测 2026-09-27：Sophia married/summer 的候选池有 21 条当季键，
+    # 限 4 条的窗口里 0 条；婚后角色的季节感因此明显弱于 close 阶段。探针
+    # `.tmp/married-season-diagnose.py`、`.tmp/season-window-probe.py`。
+    #
+    # 为什么安全：真正更重要的两个键都在它前面 —— 话题分（第 0 位）与阶段具体度
+    # （第 1 位），所以不会挤压回答当前话题的平日对白；且跨季键已被季节闸门
+    # （`sample_season != requested_season`）拒掉，这里只抬高当季键。
+    if requested_season and dialogue_key_season(
+        str(record.get("sourceKey", ""))
+    ) == requested_season:
+        return 2
     return _dialogue_key_priority(record)
 
 # 「内容分档」与索引原序压成同一个整数的步长。
@@ -2161,7 +2182,9 @@ class ProfileIndexStore:
                         ),
                         _evidence_priority(raw_sample),
                         _unrelated_magic_priority(raw_sample, player_input),
-                        _dialogue_selection_key_priority(raw_sample, player_input),
+                        _dialogue_selection_key_priority(
+                            raw_sample, player_input, requested_season
+                        ),
                         _dialogue_path_priority(raw_sample),
                         -_source_priority(raw_sample.get("sourceMod")),
                         _evidence_order_key(raw_sample, original_index),
@@ -2390,7 +2413,9 @@ class ProfileIndexStore:
                         ),
                         _evidence_priority(raw_sample),
                         _unrelated_magic_priority(raw_sample, player_input),
-                        _dialogue_selection_key_priority(raw_sample, player_input),
+                        _dialogue_selection_key_priority(
+                            raw_sample, player_input, requested_season
+                        ),
                         _dialogue_path_priority(raw_sample),
                         -_source_priority(raw_sample.get("sourceMod")),
                         _evidence_order_key(raw_sample, original_index),

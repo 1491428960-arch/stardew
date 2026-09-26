@@ -17,7 +17,8 @@ from typing import Any
 
 
 RUNTIME_SAMPLE_SCHEMA_VERSION = 1
-_UNRESOLVED_I18N = re.compile(r"\{\{\s*i18n\s*:", re.IGNORECASE)
+# 花括号数宽松：CP 用 `{{i18n:...}}`，别的 mod 会留单花括号 `{i18n:...}`。
+_UNRESOLVED_I18N = re.compile(r"\{\{?\s*i18n\s*:", re.IGNORECASE)
 _ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2})")
 _MAX_TEXT_LENGTH = 2000
 _MAX_CONTEXT_ITEMS = 32
