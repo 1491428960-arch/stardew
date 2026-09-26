@@ -52,6 +52,21 @@ _LATIN = re.compile(
 #: 夹在中文里的假名（实测出现过 `ティーほかもない`）。
 _KANA = re.compile(rf"({_CJK_OR_PUNCT})[ \t]*[\u3040-\u309f\u30a0-\u30ffー]{{2,}}[ \t]*(?={_CJK_OR_PUNCT})")
 
+#: **行尾／段尾**的拉丁碎片（2026-09-26 补）。
+#:
+#: 实测形态（`victor-ab-before2-20260926-120422` 第 2 轮输出末尾）：
+#:     ...卸载了。\n\n你玩什么？ounced
+#: 左邻是中文标点、**右邻是句尾** —— 而 `_LATIN` 的前瞻要求右邻也是中文，
+#: 于是句尾的碎片一路漏出出口。这是 `_LATIN` 的**边界**，不是新一类问题。
+#:
+#: 尾随空白写在**前瞻里**（不进 `group(0)`）：删掉碎片不该顺手吃掉行尾双空格，
+#: 那是 markdown 硬换行，有语义（见文件头「保守原则」第二条）。
+_LATIN_AT_TAIL = re.compile(
+    rf"({_CJK_OR_PUNCT})[ \t]*([A-Za-z][A-Za-z0-9'’\-]*"
+    rf"(?:\s+[A-Za-z][A-Za-z0-9'’\-]*)*)(?=[ \t]*$)",
+    re.MULTILINE,
+)
+
 #: **必须留下的拉丁串**。目前只有一条，但它很关键：
 #: `FakeProvider` 的降级提示写作「本地演示·非真实 AI」，
 #: 早期版本把 `AI` 当碎片删掉，于是提示变成「本地演示·非真实」——
@@ -88,6 +103,7 @@ def scrub_reply(text: str) -> str:
     for _ in range(3):
         new = _KANA.sub(r"\1", out)
         new = _LATIN.sub(_drop_latin, new)
+        new = _LATIN_AT_TAIL.sub(_drop_latin, new)
         if new == out:
             break
         out = new

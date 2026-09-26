@@ -136,3 +136,45 @@ def test_the_demo_marker_survives() -> None:
     assert marker in out
     assert out == raw
 
+
+# --- 行尾碎片（2026-09-26 新增）---------------------------------------------
+#
+# 实测形态（`victor-ab-before2-20260926-120422` 第 2 轮输出末尾）：
+#     ...卸载了。\n\n你玩什么？ounced
+# 左邻是中文标点、**右邻是句尾** —— 而 `_LATIN` 的前瞻要求右邻也是中文，
+# 于是句尾的碎片一路漏出出口。这是 `_LATIN` 的边界，不是新一类问题。
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("你玩什么？ounced", "你玩什么？"),
+        ("前阵子卡在水牢，卸载了。\n\n你玩什么？ounced",
+         "前阵子卡在水牢，卸载了。\n\n你玩什么？"),
+        # 碎片与行尾之间还有空白时，同样删干净
+        ("他说下雨就收摊。 cancelled", "他说下雨就收摊。"),
+    ],
+)
+def test_scraps_trailing_fragment(raw: str, expected: str) -> None:
+    assert scrub_reply(raw) == expected
+
+
+def test_trailing_url_is_not_eaten() -> None:
+    """行尾的网址整体含 `:` `/` `.`，不在拉丁词字符集内，不能被当碎片删掉。"""
+
+    out = scrub_reply("你看这个 https://example.com/abc")
+
+    assert "example" in out
+    assert "/abc" in out
+
+
+def test_trailing_english_line_is_left_alone() -> None:
+    """整段中文后面跟一整行英文时，左邻是换行、不在 `_CJK_OR_PUNCT` 里，不匹配。
+
+    纯英文回复是另一类问题，见 `test_pure_english_reply_is_left_alone`。
+    """
+
+    out = scrub_reply("我读了那本书。\n\nGreat book about farming.")
+
+    assert "Great book" in out
+
