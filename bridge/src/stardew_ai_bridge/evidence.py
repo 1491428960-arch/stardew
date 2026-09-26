@@ -21,6 +21,59 @@ _SEASON_DIALOGUE_KEY = re.compile(
     r"^(?:spring|summer|fall|winter)(?:_|$)",
     re.IGNORECASE,
 )
+# 季节前缀 + 星期键（`summer_Mon` / `winter_Fri4`）是**日常独白**，不是特殊触发台词。
+#
+# 2026-09-27：这类键此前被上面的 `_SEASON_DIALOGUE_KEY` 一律拒掉，后果是
+# **整批素材没进过索引**。零请求探针（`.tmp/season-key-probe.py`）实测：
+# 语料 14063 条里这种形状有 **1283 条（9%）**，`is_model_evidence_record`
+# 放行 **0/1283**；把季节前缀剥掉再判，1224 条立刻放行 —— 挡路的就是季节判据本身。
+# 涉及 22 个以上角色（Victor 83 / Olivia 70 / Sophia 68 / Haley 48 / Sebastian 43…），
+# 其中 Linus 的 `summer_Mon`「今早有些起雾，我看见一只鹭鸟…」这类句正是
+# 用户说的"文艺哲理那一批"。
+#
+# 判据收三种形状（2026-09-27 扩了后两种）：
+#   ① 季节前缀 + 星期键（可带心级数字）：`summer_Mon4` —— 日常对白换季
+#   ② 季节前缀 + 纯数字：`spring_1`、`winter_25` —— 婚后对白的季节句（序号）
+#   ③ 季节前缀 + 人名：`spring_Olivia`、`winter_Lance` —— SVE 婚后对白的季节句
+# `winterstar`（冬日星节）、`summer_Mon_dance`（复合分支键）、`summer_festival`
+# 仍由上面的判据拒掉。
+#
+# ⚠ 初版只收 ①，理由是「`spring_13` 是节日日期，不是季节句」。**实测推翻了它**：
+# 索引里未识别的季节键有 340 条样本 / 118 个去重键，**全部**来自
+# `MarriageDialogue*.json`（Claire 86、Krobus 25、Abigail/Alex/Elliott/Harvey/
+# Leah/Maru/Penny/Sam/Sebastian/Shane 各 8~13）与 4 条 `data/compatibility/`，
+# **没有一条来自 Festivals/Events**。`spring_13` 的实际身份是 Abigail 婚后
+# 春季第 13 句（「嘿，明天就是复活节了，我不会因为我们结婚了而手下留情」），
+# 仍是"对玩家说的日常口吻"。代价是婚后阶段的季节句完全拿不到季节优先
+# （`speech.select_stage_voice_anchors` 里的 `season_rank` 恒为 1）。
+# 探针：`.tmp/season-key-shape-probe.py`、`.tmp/season-key-source-probe.py`。
+#
+# ③ 用**大小写敏感**的人名形状（首字母大写），这样 `summer_festival` 这类
+# 小写节日键不会被顺手收进来 —— 两个正则没法合成一个，正是这个原因。
+#
+# 季节键**不进**全局静态锚点（那张卡没有季节参数，见 `is_stable_voice_evidence_record`），
+# 只进带条件的检索，并在 `speech.select_stage_voice_anchors` 里按当前季节优先。
+_SEASON_DAILY_DIALOGUE_KEY = re.compile(
+    r"^(?P<season>spring|summer|fall|winter)_"
+    r"(?:(?:mon|tue|wed|thu|fri|sat|sun)\d*|\d+)$",
+    re.IGNORECASE,
+)
+_SEASON_NAMED_DIALOGUE_KEY = re.compile(
+    r"^(?P<season>(?i:spring|summer|fall|winter))_[A-Z][a-z]+\d*$"
+)
+
+
+def _season_daily_dialogue_match(source_key: object):
+    """季节日常键的形状匹配；不是这类键时返回 None。
+
+    两个正则都要试：星期/数字形状允许大小写混写（`WINTER_fri`），
+    人名形状必须首字母大写（`spring_Olivia`），合并不了。
+    """
+
+    key = str(source_key).strip()
+    return _SEASON_DAILY_DIALOGUE_KEY.fullmatch(
+        key
+    ) or _SEASON_NAMED_DIALOGUE_KEY.fullmatch(key)
 _SPECIAL_SCENE_DIALOGUE_KEY = re.compile(
     r"^(?:breakup|dumped|secondchance|movieinvitation|dumpster|fair_|"
     r"hitbyslingshot|spouse|wipedmemory|funleave|funreturn|makeup)",
@@ -166,8 +219,12 @@ def _is_special_dialogue_key(
     key = str(record.get("sourceKey", "")).strip()
     if relax_scene_context:
         key = _SCENE_CONTEXT_KEY_WORDS.sub(" ", key)
+    # 季节前缀的**日常**键（`summer_Mon4`、`spring_1`、`spring_Olivia`）不属于
+    # "特殊触发"：季节说的是这个角色的日常对白按季节换一批，而不是
+    # "只有满足某些条件才会说的话"。`winterstar`（节日）等其余季节键照旧被拒。
+    seasonal_daily = _season_daily_dialogue_match(key) is not None
     return bool(
-        _SEASON_DIALOGUE_KEY.match(key)
+        (_SEASON_DIALOGUE_KEY.match(key) and not seasonal_daily)
         or _EVENT_DIALOGUE_KEY.match(key)
         or _SPECIAL_SCENE_DIALOGUE_KEY.match(key)
         or _CONDITIONAL_DIALOGUE_KEY.search(key)
@@ -182,6 +239,44 @@ def _is_special_dialogue_key(
 
 def _is_special_dialogue_record(record: Mapping[str, Any]) -> bool:
     return _is_special_dialogue_path(record) or _is_special_dialogue_key(record)
+
+
+def dialogue_key_season(source_key: object) -> str:
+    """季节专属日常键的季节；不是这类键时返回空串。
+
+    承认的形状与 `_is_special_dialogue_key` 放行的**完全一致**（见
+    `_SEASON_DAILY_DIALOGUE_KEY` 的注释）：`summer_Mon4`（日常换季）、
+    `spring_1`（婚后对白的季节序号）、`spring_Olivia`（SVE 婚后对白）。
+    返回值是小写英文（`spring` / `summer` / `fall` / `winter`），
+    与 C# 侧 `gameState.season` 的闭集一致，调用方据此做季节优先
+    （`speech.select_stage_voice_anchors`、`ProfileIndexStore` 的两条检索）。
+    """
+
+    match = _season_daily_dialogue_match(source_key)
+    return match.group("season").casefold() if match else ""
+
+
+# `gameState.season` 在 C# 侧是小写英文闭集，但评测页/夹具里出现过中文季节字，
+# 所以两边都认。认不出来的值按"没给季节"处理（返回空串），而不是静默当成某个季节。
+_SEASON_ALIASES: dict[str, str] = {
+    "spring": "spring",
+    "春": "spring",
+    "summer": "summer",
+    "夏": "summer",
+    "fall": "fall",
+    "秋": "fall",
+    "autumn": "fall",
+    "winter": "winter",
+    "冬": "winter",
+}
+
+
+def normalise_season(value: object) -> str:
+    """把季节取值归一成小写英文闭集；认不出来返回空串。"""
+
+    if not isinstance(value, str):
+        return ""
+    return _SEASON_ALIASES.get(value.strip().casefold(), "")
 
 
 def is_model_evidence_record(record: Mapping[str, Any]) -> bool:

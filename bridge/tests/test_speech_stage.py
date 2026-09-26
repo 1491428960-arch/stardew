@@ -205,13 +205,33 @@ def test_select_stage_voice_anchors_tolerates_a_non_numeric_max_count() -> None:
 
 
 def test_select_stage_voice_anchors_prefers_staged_samples_over_unconditioned_ones() -> None:
-    # 队列里**存在**带阶段样本时，无阶段样本不得抢占窗口。
+    """2026-09-26 口径变化：从「**排斥**无阶段样本」改成「**优先**取带阶段样本」。
+
+    旧口径是"队列里存在带阶段样本时，无阶段样本不得抢占窗口"——它源于注释 ①
+    （Linus 的 married 档被补进「陌生人？……你好」这句初识句），当时的解法是把
+    `unconditioned_samples` 整个关掉。但代价是：无阶段样本占原版语料**九成以上**
+    （Lewis 118/126、Robin 154/164、Marnie 78/90），一律排斥会让 Lewis 这类角色的
+    锚点池只剩 1 条（`.tmp/anchor-pool-debug2.txt`）。
+    现在改成"带阶段样本仍排最前，窗口不满时无阶段样本可以补足"，
+    并另在来源层挡掉真正违和的初识句与事件对白（见 `_anchor_category`）。
+    """
+
     staged = _sample(sampleId="staged")
     plain = _sample(sampleId="plain", conditions={}, text="一句没有阶段条件的闲聊")
 
-    anchors = select_stage_voice_anchors([staged, plain], "Shane", "married")
+    # 「优先」的证据：窗口只容得下一条时，带阶段的那条胜出。
+    assert [
+        item["sampleId"]
+        for item in select_stage_voice_anchors(
+            [staged, plain], "Shane", "married", max_count=1
+        )
+    ] == ["staged"]
 
-    assert [item["sampleId"] for item in anchors] == ["staged"]
+    # 「补足」的证据：窗口有余量时无阶段样本也进得来（顺序交给能量排序，故用集合）。
+    assert {
+        item["sampleId"]
+        for item in select_stage_voice_anchors([staged, plain], "Shane", "married")
+    } == {"staged", "plain"}
 
 
 def test_select_stage_voice_anchors_falls_back_to_unconditioned_samples() -> None:

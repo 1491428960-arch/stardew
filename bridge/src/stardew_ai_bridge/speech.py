@@ -15,9 +15,11 @@ from .dialogue_stage import (
     stage_hint_applies,
 )
 from .evidence import (
+    dialogue_key_season,
     has_dialogue_control_residue,
     is_model_evidence_record,
     is_stable_voice_evidence_record,
+    normalise_season,
 )
 from .source_aliases import source_family
 
@@ -107,7 +109,8 @@ _ENERGY_CONTINUATION_MARKERS: tuple[str, ...] = (
 _ENERGY_EXCLAMATION_MARKERS: tuple[str, ...] = ("!", "！")
 _RELATION_RESPONSE_KEY = re.compile(r"^(?:neutral|good|bad)(?:_\d+)?$", re.IGNORECASE)
 _STAGE_CONDITIONAL_VOICE_KEY = re.compile(
-    r"^(?:(?:mon|tue|wed|thu|fri|sat|sun)\d+|"
+    r"^(?:(?:spring|summer|fall|winter)_)?"
+    r"(?:(?:mon|tue|wed|thu|fri|sat|sun)\d+|"
     r"(?:neutral|good|bad)(?:_\d+)?|outdoor_\d+)$",
     re.IGNORECASE,
 )
@@ -238,17 +241,25 @@ def select_stage_voice_anchors(
     npc_id: str,
     relationship_stage: str,
     max_count: int = _STAGE_VOICE_ANCHOR_MAX_COUNT,
+    season: str = "",
 ) -> list[dict[str, Any]]:
     """为当前角色选择当前关系阶段的普通和高能量语气锚点。
 
     只有存在带阶段条件的高质量原文时才会改变静态 voice card；调用方会在
     没有阶段候选时保留原有静态窗口。每条返回的锚点都保留能量信号计数，
     便于离线检查当前角色的表达节奏由哪些原文特征触发。
+
+    `season` 是当前季节（`gameState.season`，小写英文或中文季节字）。
+    季节前缀的日常键（`summer_Mon4`，语料里 1283 条）只在**季节吻合**时优先；
+    没给季节信息、或季节不吻合时，它们排在无季节限定的通用键之后 ——
+    否则放行这批素材就等于"夏天满口冬天的话"。**阶段仍然优先于季节**：
+    更早阶段的当前季节句不能挤掉当前阶段的通用句。
     """
 
     requested_stage = str(relationship_stage).strip().casefold()
     if not requested_stage:
         return []
+    requested_season = normalise_season(season)
     try:
         capped_count = max(
             0,
@@ -272,10 +283,10 @@ def select_stage_voice_anchors(
         stage_policy: Literal["exact", "at_most_present"] = "exact",
         unconditioned_samples: bool = False,
         stranger_samples: bool = False,
-    ) -> list[tuple[tuple[int, int, int, int], dict[str, Any]]]:
+    ) -> list[tuple[tuple[int, int, int, int, int], dict[str, Any]]]:
         """按给定阶段策略收集候选；两个开关决定放宽到哪一档。"""
 
-        candidates: list[tuple[tuple[int, int, int, int], dict[str, Any]]] = []
+        candidates: list[tuple[tuple[int, int, int, int, int], dict[str, Any]]] = []
         seen_texts: set[str] = set()
         for original_index, raw_sample in enumerate(sample_list):
             sample = dict(raw_sample)
@@ -334,6 +345,16 @@ def select_stage_voice_anchors(
             # 跳拍、停顿或直接反应被低能量陈述压平。
             energy_rank = {"high": 0, "medium": 1, "low": 2}[voice_energy]
             stage_rank = stage_distance if stage_distance is not None else 5
+            # 季节优先只排在阶段之后：阶段比季节更根本（陌生人阶段的夏季句
+            # 不能挤掉当前阶段的通用句）。没有季节限定的通用键恒为 1，
+            # 于是"给不出季节"时谁都不插队，行为回到放行之前。
+            sample_season = dialogue_key_season(sample.get("sourceKey", ""))
+            if not sample_season:
+                season_rank = 1
+            elif requested_season and sample_season == requested_season:
+                season_rank = 0
+            else:
+                season_rank = 2
             evidence_priority = _evidence_priority(sample, original_index)
             anchor = _stage_voice_anchor(
                 {**sample, "text": cleaned_text},
@@ -342,7 +363,13 @@ def select_stage_voice_anchors(
             )
             candidates.append(
                 (
-                    (stage_rank, energy_rank, evidence_priority[0], original_index),
+                    (
+                        stage_rank,
+                        season_rank,
+                        energy_rank,
+                        evidence_priority[0],
+                        original_index,
+                    ),
                     anchor,
                 )
             )
@@ -397,11 +424,33 @@ def select_stage_voice_anchors(
     if len(candidates) < capped_count:
         existing = {anchor["sampleId"] for _, anchor in candidates}
         seen_categories = {_anchor_category(anchor) for _, anchor in candidates}
-        supplement: list[tuple[tuple[int, int, int, int], dict[str, Any]]] = []
-        for key, anchor in collect_candidates(stage_policy="at_most_present"):
+        supplement: list[tuple[tuple[int, int, int, int, int], dict[str, Any]]] = []
+        # ⚠️ 2026-09-26 实测记录 —— 这里和 `_anchor_category` 的桶判别**必须成对改**，
+        # 只改一个都**完全无效**（两次都实测过，新进 0 条）：
+        #
+        #   ① 本行的 `unconditioned_samples=True`：无阶段标注的样本占原版语料的
+        #      九成以上（Lewis 118/126、Robin 154/164、Marnie 78/90），
+        #      而第一/二级会因 `elif not unconditioned_samples: continue`
+        #      把它们全部跳过 ⇒ 补足池等于空的。
+        #   ② `_anchor_category`（本文件上方）：它原本把事件键一律归 `other`，
+        #      于是本循环下面那道 `== "other"` 闸门又把进来的样本滤光。
+        #
+        #   只改 ① → 样本进了池子却被 `other` 闸门滤掉；
+        #   只改 ② → 样本根本到不了闸门。
+        #   两处一起改后，Lewis 的窗口才第一次拿到"对玩家说的"日常素材。
+        #   诊断：`.tmp/anchor-pool-debug2.txt`、`.tmp/anchor-category-probe.txt`。
+        for key, anchor in collect_candidates(
+            stage_policy="at_most_present",
+            unconditioned_samples=True,
+        ):
             if anchor["sampleId"] in existing:
                 continue
-            if _anchor_category(anchor) == "other":
+            # `introduction` 也要挡：注释 ① 记录的正是这个坑 —— Linus 的 married 档
+            # 被补进「陌生人？……你好。不要在意我。这里就只有我一个人住。」
+            # （`.tmp/anchor-daily-only-probe.txt` 里 Linus 的 Introduction 仍是它。）
+            # 同一个键在别的角色身上可能是叙事句（Lewis 的 Introduction 讲的是
+            # 玩家爷爷的旧床），但逐个角色判不划算，保守排除。
+            if _anchor_category(anchor) in {"other", "introduction"}:
                 continue
             existing.add(anchor["sampleId"])
             supplement.append((key, anchor))
@@ -453,19 +502,75 @@ def _topic_hints(features: Mapping[str, int]) -> list[str]:
     return hints
 
 
+# `/f <Name> <n>` —— 星露谷对话键里的条件段。名字是**本角色**时表示「好感 ≥ n」
+# （台词仍然是对玩家说的）；名字是**别人**时表示这段是事件里对那个人的台词。
+_F_SEGMENT = re.compile(r"/f\s+([A-Za-z][A-Za-z0-9_]*)\s+\d+")
+
+
+def _speaks_to_third_party(sample: Mapping[str, Any]) -> bool:
+    """判断这段台词是不是「在事件里对某个 NPC 说的」，而不是对玩家说的。
+
+    典型反例来自注释 ②：`6497428/e 6497423/f Leo 1500` 是 Linus 对 Leo 说的话
+    （「你好，雷欧……我叫莱纳斯」）、`639373/f Lewis 1500/f Marnie` 是 Lewis
+    对 Marnie 说的话、`3910674/f Shane 1000` 是 Marnie 对 Shane 说的。
+    这些放进锚点窗口会让角色"对着玩家说别人的事"，必须排除。
+    """
+
+    key = str(sample.get("sourceKey", ""))
+    if not key:
+        return False
+    npc = str(sample.get("npcId", "")).strip().casefold()
+    for match in _F_SEGMENT.finditer(key):
+        name = match.group(1).casefold()
+        if name and name != npc:
+            return True
+    return False
+
+
 def _anchor_category(sample: Mapping[str, Any]) -> str:
-    """给正向语气锚点分桶，避免窗口被同一类对白占满。"""
+    """给正向语气锚点分桶，避免窗口被同一类对白占满。
+
+    2026-09-26 改（与补足循环处成对，见那里的说明）：`other` 原本是「其余全部」
+    的兜底桶，实测它把绝大多数可用素材一起挡在窗口外，Lewis 这类角色每轮
+    只拿到 1 条锚点（`.tmp/anchor-pool-debug2.txt`）。放宽后又发现**单纯按内容判
+    「对玩家说」不够** —— 溯源 Lewis 放宽后的 8 条锚点，**5 条有问题**
+    （`.tmp/anchor-sourcekey-trace.txt`）：
+
+      · `Data/Events/BusStop.json:60367/u 0:event-line-6` —— 开场序列（玩家第一天）
+      · `Data/Events/Town.json:53/e 55:…:event-line-12` —— 在展览上**对莉亚**说话
+      · `Nom0ri.RomRas:…/Juna.json:ReadyToRumble` —— 别的 mod 的喊话键「好了！大家安静！」
+
+    `Data/Events/*` 的 `event-line-N` **无法从 sourceKey 判断说话对象**，
+    所以来源要收窄到**角色日常对话文件**（`Characters/Dialogue/<NPC>.json`）——
+    那里的台词按定义都是对玩家说的、也没有事件上下文。收窄后各角色仍有 4~8 条
+    （`Lewis 12→5`、`Linus 17→8`、`Marnie 15→4`、`Robin 14→4`、`Wizard 17→4`，
+    见 `.tmp/anchor-daily-only-probe.txt`），且 Lewis 的窗口里第一次出现
+    「旧社区中心不见了……我不禁有一点失落感」这种私人层素材。
+
+    ⚠ 这道**来源**筛选放在数据层 `profile_index.collect_stage_candidates()` 里，
+    本函数只管分桶。放在这里会让测试的合成样本（sampleId 是 `"exact"` 这种）
+    被误判成非日常对话而全落进 `other`，补足逻辑就没法单独测了。
+    """
 
     key = str(sample.get("sourceKey", "")).strip().casefold()
     if key == "introduction":
         return "introduction"
-    if key in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}:
-        return "weekday"
-    if re.fullmatch(r"(?:mon|tue|wed|thu|fri|sat|sun)\d+", key):
-        return "weekday_variant"
+    # 季节前缀的日常键（`summer_Mon4` / `winter_fri`）与它们的无季节孪生键同桶：
+    # 它们本来就是"这个角色平时怎么说话"，只是换季换了一批。分成新桶会让
+    # 补足循环的类别多样性判据把同一类素材当成两类，反而挤掉真正的多样性。
+    weekday = re.fullmatch(
+        r"(?:(?:spring|summer|fall|winter)_)?"
+        r"(?:mon|tue|wed|thu|fri|sat|sun)(\d*)",
+        key,
+    )
+    if weekday:
+        return "weekday_variant" if weekday.group(1) else "weekday"
     if re.fullmatch(r"(?:neutral|good|bad)_\d+", key):
         return "relationship"
-    return "other"
+    # 日常对话文件里仍可能有 `/f <别人>`（在事件中段对第三方说的话）。
+    if _speaks_to_third_party(sample):
+        return "other"
+    return "scene"
 
 
 def _speech_particle_counts(text: str) -> tuple[int, int]:

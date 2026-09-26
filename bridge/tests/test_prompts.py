@@ -5082,7 +5082,13 @@ def test_prompt_limits_voice_refs_and_knowledge_facts_in_compact_context() -> No
     assert len(knowledge) <= 3
     # turn_plan 是新增的单回合契约，允许少量固定开销；字段裁剪仍由上面的
     # voice/knowledge 断言保证，避免用旧的整段字符串阈值锁死消息结构。
-    assert len(rendered) < 4300
+    #
+    # 2026-09-26：4300 → 4400。voice_card.instruction 补回了「看待事情的眼光」
+    # 这一层（原文只准参考句式与收尾，导致角色私人层系统性缺失，见
+    # docs/report-perspective-diagnosis-2026-09-26.md），该卡因此长了约 36 个字符。
+    # 这个阈值是**防膨胀的守卫**，不是精确预算 —— 真正管字段裁剪的是上面三条断言，
+    # 所以按实际增量同步，而不是为了压回旧值去删 instruction 的语义。
+    assert len(rendered) < 4400
 
 
 def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
@@ -5308,8 +5314,16 @@ def test_prompt_exposes_positive_original_voice_anchors() -> None:
     # 也当成要复现的量。但锚点样本的语气词密度是全库的 1.8 倍（见
     # docs/report-kimi-filler-diagnosis-2026-09-24.md），照它复现会让每个角色
     # 都退化成同一种结巴。现在只要求参考句式与收尾，并说明颗粒是零星出现的。
-    assert "voiceAnchors 是当前 NPC 的正向原文语气锚点" in card
-    assert "参考其句式与收尾方式" in card
+    assert "voiceAnchors 是当前 NPC 的正向原文台词锚点" in card
+    assert "参考它的句式、收尾方式" in card
+    # 2026-09-26：在 09-24 的收窄之上补回「眼光」这一层。
+    # 09-24 的收窄是为了治口语颗粒复现过度（见
+    # docs/report-kimi-filler-diagnosis-2026-09-24.md），那条修复
+    # （「零星出现」）**仍然保留**；这里只是把「态度/立场」从
+    # 「不照搬其中的事实」这条禁令里拆出来 —— 原措辞把
+    # 「眼光」和「事实」一起禁掉了，于是角色只剩句式、没有视角。
+    assert "看待事情的眼光" in card
+    assert "不照搬其中的具体事实" in card
     assert "零星出现" in card
 
 
@@ -5776,7 +5790,11 @@ def test_plain_dialogue_keeps_character_voice_anchor_as_style_only() -> None:
     rendered = json.dumps(messages, ensure_ascii=False)
 
     assert "年轻的你" in voice["voiceCard"]["voiceAnchors"][0]["text"]
-    assert "只模仿表达方式，不照搬其中的事实" in rendered
+    # 2026-09-26：instruction 从「只模仿表达方式，不照搬其中的事实」
+    # 改成「借用看待事情的眼光，但不照搬具体事实，也不整句复读」。
+    assert "看待事情的眼光" in rendered
+    assert "不照搬其中的具体事实" in rendered
+    assert "也不要整句复读" in rendered
     assert "魔法与星界" not in rendered
 
 
@@ -7003,8 +7021,9 @@ def test_elliott_original_rhythm_drops_non_vanilla_marriage_voice_evidence() -> 
             source_mods: list[str],
             *,
             relationship_stage: str = "",
+            season: str = "",
         ) -> dict[str, object]:
-            del relationship_stage
+            del relationship_stage, season
             del npc_id, source_mods
             return {
                 "voiceAnchors": [
@@ -7028,8 +7047,10 @@ def test_elliott_original_rhythm_drops_non_vanilla_marriage_voice_evidence() -> 
             player_input: str = "",
             limit: int = 6,
             completed_event_ids: list[str] | tuple[str, ...] = (),
+            season: str = "",
         ) -> list[dict[str, object]]:
             del npc_id, source_mods, player_input, limit, completed_event_ids
+            del season
             if relationship_stage == "friend":
                 return [
                     {
@@ -7111,8 +7132,9 @@ def test_elliott_natural_topic_adds_short_vanilla_rhythm_samples() -> None:
             source_mods: list[str],
             *,
             relationship_stage: str = "",
+            season: str = "",
         ) -> dict[str, object]:
-            del relationship_stage
+            del relationship_stage, season
             del npc_id, source_mods
             return {
                 "voiceAnchors": [
@@ -7133,8 +7155,10 @@ def test_elliott_natural_topic_adds_short_vanilla_rhythm_samples() -> None:
             player_input: str = "",
             limit: int = 6,
             completed_event_ids: list[str] | tuple[str, ...] = (),
+            season: str = "",
         ) -> list[dict[str, object]]:
             del npc_id, source_mods, player_input, limit, completed_event_ids
+            del season
             if relationship_stage == "acquaintance":
                 return [
                     {

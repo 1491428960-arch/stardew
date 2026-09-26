@@ -11,8 +11,10 @@ from typing import Any
 from .behavior_quality import validate_behavior_example
 from .dialogue_stage import sample_stage_specificity, stage_hint_applies
 from .evidence import (
+    dialogue_key_season,
     has_dialogue_control_residue,
     is_model_evidence_record as _shared_is_model_evidence_record,
+    normalise_season,
 )
 from .personas import canonical_npc_id, is_female_bachelor_eligible
 from .relationship_gating import game_event_completed
@@ -1528,6 +1530,10 @@ def _dialogue_key_priority(record: Mapping[str, Any]) -> int:
         return 2
     if _EVENT_DIALOGUE_KEY.match(key):
         return 5
+    # 季节前缀的**日常**键（`summer_Mon4`）与 `Mon4` 同级（3），不是特殊触发
+    # 台词（4）。判定必须排在 `_SEASON_DIALOGUE_KEY` 之前 —— 两者都命中它。
+    if dialogue_key_season(key):
+        return 3
     if _SEASON_DIALOGUE_KEY.match(key):
         return 4
     if _WEEKDAY_VARIANT_DIALOGUE_KEY.fullmatch(key):
@@ -1775,12 +1781,17 @@ def _representative_category(record: Mapping[str, Any]) -> str:
     key = str(record.get("sourceKey", "")).strip().casefold()
     if key == "introduction":
         return "introduction"
-    if _WEEKDAY_DIALOGUE_KEY.fullmatch(key):
-        return "weekday"
+    # 季节前缀的日常键（`summer_Mon4` / `winter_fri`）与无季节孪生键同桶：
+    # 它们本来就是"这个角色平时怎么说话"，只是换季换了一批。
+    weekday = re.fullmatch(
+        r"(?:(?:spring|summer|fall|winter)_)?"
+        r"(?:mon|tue|wed|thu|fri|sat|sun)(\d*)",
+        key,
+    )
+    if weekday:
+        return "weekday_variant" if weekday.group(1) else "weekday"
     if _RELATION_DIALOGUE_KEY.fullmatch(key):
         return "relationship"
-    if _WEEKDAY_VARIANT_DIALOGUE_KEY.fullmatch(key):
-        return "weekday_variant"
     return "other_daily"
 
 
@@ -2088,6 +2099,7 @@ class ProfileIndexStore:
         *,
         relationship_stage: str = "",
         player_input: str = "",
+        season: str = "",
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
@@ -2096,6 +2108,7 @@ class ProfileIndexStore:
         if capped_limit == 0:
             return []
         source_mod_list = tuple(source_mods)
+        requested_season = normalise_season(season)
 
         def collect_candidates(
             *, allow_lower_stage: bool = False
@@ -2131,6 +2144,14 @@ class ProfileIndexStore:
                     # 原始索引保留模板供审计，但模板不是可模仿的实际台词。
                     continue
                 if not _is_model_evidence_record(raw_sample):
+                    continue
+                # 季节素材（`summer_Mon4`，语料 1283 条）只在与当前季节吻合时
+                # 进入检索窗口。这批键此前被整批拒在索引外（见 `evidence`），
+                # 放行后若不加闸门就成了"夏天满口冬天的话"；拿不到季节时一律
+                # 不收 —— 与全局静态锚点（`is_stable_voice_evidence_record`
+                # 排除季节键）同一个口径。
+                sample_season = dialogue_key_season(raw_sample.get("sourceKey", ""))
+                if sample_season and sample_season != requested_season:
                     continue
                 candidates.append(
                     (
@@ -2295,6 +2316,7 @@ class ProfileIndexStore:
         player_input: str = "",
         limit: int = 6,
         completed_event_ids: Iterable[str] = (),
+        season: str = "",
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
@@ -2302,6 +2324,7 @@ class ProfileIndexStore:
         capped_limit = max(0, min(int(limit), _SPEECH_EVIDENCE_CANDIDATES))
         if capped_limit == 0:
             return []
+        requested_season = normalise_season(season)
         raw_evidence = self._index.get("speechEvidence")
         schema_version = self._index.get("schemaVersion")
         if "speechEvidence" not in self._index or (
@@ -2354,6 +2377,10 @@ class ProfileIndexStore:
                 if _UNRESOLVED_I18N.search(text):
                     continue
                 if not _is_model_evidence_record(raw_sample):
+                    continue
+                # 季节闸门：口径与 `style_samples` 完全一致（同一批键、同一理由）。
+                sample_season = dialogue_key_season(raw_sample.get("sourceKey", ""))
+                if sample_season and sample_season != requested_season:
                     continue
                 candidates.append(
                     (
@@ -2514,6 +2541,7 @@ class ProfileIndexStore:
         source_mods: Iterable[str] = (),
         *,
         relationship_stage: str = "",
+        season: str = "",
     ) -> dict[str, Any]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return {}
@@ -2575,6 +2603,20 @@ class ProfileIndexStore:
                 def collect_stage_candidates(
                     *, allow_nearby_stage: bool = False
                 ) -> list[dict[str, Any]]:
+                    # 角色日常对白文件的路径标记。**必须列全所有已知形态**：
+                    # 漏掉一种，那个内容包的全部角色阶段锚点会**静默变空**。
+                    # 2026-09-27 实测：只列 `Characters/Dialogue/` 时，
+                    # SVE 的 `assets/CharacterFiles/Dialogue/<NPC>/Dialogue.json`
+                    # 形态被整批挡掉 —— 带 relationshipStage 的样本里 1525 条日常对白
+                    # 被误杀（Olivia 175/0、Victor 172/0、Sophia 163/0、
+                    # Claire 136/0、Lance 132/0、Apples 122/0…「通过」全是 0），
+                    # 其中 553 条的 sourceKey 本来就够格进阶段专属层
+                    # （358 条 `季节_星期+数字`、195 条 `星期+数字`）。
+                    # 探针：`.tmp/collect-stage-path-probe.py`。
+                    daily_dialogue_markers = (
+                        "Characters/Dialogue/",  # 原版 / CP：<…>/Characters/Dialogue/<NPC>.json
+                        "CharacterFiles/Dialogue/",  # SVE：assets/CharacterFiles/Dialogue/<NPC>/*.json
+                    )
                     stage_candidates: list[dict[str, Any]] = []
                     requested = str(relationship_stage).strip().casefold()
                     for raw_sample in raw_evidence:
@@ -2583,6 +2625,25 @@ class ProfileIndexStore:
                         sample = _normalise_dialogue_provenance(raw_sample)
                         if canonical_npc_id(sample.get("npcId", "")).casefold() != (
                             canonical_id.casefold()
+                        ):
+                            continue
+                        # 2026-09-26：锚点候选**只收角色日常对话文件**
+                        # （形态见上方 `daily_dialogue_markers`）的样本。
+                        # `Data/Events/*` 的 `event-line-N` 无法从 sourceKey 判断
+                        # 说话对象，实测混进来会让 Lewis 的 8 条锚点里 **5 条**有问题：
+                        # 开场序列（`Data/Events/BusStop.json:60367/u 0`）、
+                        # 在展览上**对莉亚**说的话（`Data/Events/Town.json:53/e 55`）、
+                        # 别的 mod 的喊话键（`Nom0ri.RomRas:…/Juna.json:ReadyToRumble`
+                        # 「好了！大家安静！」）。见 `.tmp/anchor-sourcekey-trace.txt`。
+                        # 日常对话文件里的台词按定义都是对玩家说的，且没有事件上下文。
+                        # 来源筛选放在这一层，`select_stage_voice_anchors` 保持纯算法。
+                        # 只在**能确定来源**时才排除：真实索引的 sampleId 是
+                        # `mod:path:key` 形式（至少两个冒号），测试夹具常是裸字符串
+                        # （`"exact"`），不该因为"看不出是日常对话"就被判死。
+                        sample_id = str(sample.get("sampleId", ""))
+                        if sample_id.count(":") >= 2 and not any(
+                            marker in sample_id
+                            for marker in daily_dialogue_markers
                         ):
                             continue
                         if requested_sources and not source_matches(
@@ -2642,6 +2703,7 @@ class ProfileIndexStore:
                     npc_id=canonical_id,
                     relationship_stage=str(relationship_stage),
                     max_count=8,
+                    season=season,
                 )
                 if stage_anchors:
                     selected["voiceAnchors"] = stage_anchors

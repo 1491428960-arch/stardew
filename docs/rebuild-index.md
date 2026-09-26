@@ -94,6 +94,22 @@ $batch = 'artifacts/corpus/20260923-extra-dialogue'      # 换批次名即可，
 **所以：mod 一更新，`records` / `styleSamples` 就会漂。**对不上时先按上表归因，
 再决定是"重建失败"还是"素材变了"。**别把本表当永久基线照抄。**
 
+### 2026-09-27 重建（季节前缀日常键纳入索引）
+
+| 项 | 实测 |
+|---|---|
+| 语料 `records` | 14063（按来源 6683 / 2231 / 5149，与上批逐项相同） |
+| 索引 `profiles` | 136 |
+| 索引 `styleSamples` / `speechEvidence` | **11391 / 11391**（其中季节键 **1178**） |
+| 索引 `knowledgeFacts` | 47 |
+| 索引 `warnings` | 10 |
+
+⚠ 这里的 `profiles` / `knowledgeFacts` 与上面 09-23 基线不同，**不是**季节修复造成的：
+`data/personas/{vanilla,sve,rasmodia,female-bachelors}.json` 于 **09-26 12:18:34** 被改过，
+而 09-26 那份索引生成于 **10:09:19**；新旧索引的 profiles 键集合差集为**空**、
+knowledgeFacts 47 → 47。季节修复的净效果就是 `styleSamples` 10213 → 11391（+1178，全是季节键）。
+判据与遗留详见 `active-work.md` 末节。
+
 **按来源对不上，就是 mod 传错了。** 2026-09-20 踩过这个坑：`[CP] Romanceable Rasmodius SVE`
 的 UniqueID 是 `Parrot.RomRas`（只出 1263 条），而旧语料要的是 `Nom0ri.RomRas`（2176 条），
 对应目录是 `[CP] Romanceable Rasmodia`——**早期报告里写的路径已经过时**。

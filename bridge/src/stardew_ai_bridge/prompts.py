@@ -1975,10 +1975,19 @@ class ContextBuilder:
                 if isinstance(interaction, Mapping)
                 else ""
             )
+            # 季节优先（2026-09-27）：索引里现在有 1283 条季节前缀的日常键
+            # （`summer_Mon4`），季节锚点只在**当前季节吻合**时优先，
+            # 否则"夏天满口冬天的话"。取不到 season 时不传，行为回到放行之前。
+            season_hint = ""
+            if isinstance(game_state, Mapping):
+                raw_season = game_state.get("season")
+                if isinstance(raw_season, str):
+                    season_hint = raw_season
             voice_card = self.profile_index.voice_card(
                 str(npc_id),
                 source_mod_list,
                 relationship_stage=profile_stage,
+                season=season_hint,
             )
             speech_evidence = self.profile_index.speech_evidence(
                 str(npc_id),
@@ -1987,6 +1996,7 @@ class ContextBuilder:
                 player_input=player_input,
                 limit=_SPEECH_EVIDENCE_POOL,
                 completed_event_ids=completed_event_ids,
+                season=season_hint,
             )
             elliott_original_rhythm = (
                 quality_context.get("styleCalibration") == "elliott_original_rhythm"
@@ -2027,6 +2037,7 @@ class ContextBuilder:
                     limit=_STYLE_SAMPLE_POOL,
                     relationship_stage=profile_stage,
                     player_input=player_input,
+                    season=season_hint,
                 )
                 if not elliott_original_rhythm
                 or source_matches(item.get("sourceMod", ""), ("vanilla",))
@@ -2055,6 +2066,7 @@ class ContextBuilder:
                     player_input="",
                     limit=6,
                     completed_event_ids=completed_event_ids,
+                    season=season_hint,
                 )
                 known_style_texts = {
                     str(item.get("text", "")).strip()
@@ -2089,6 +2101,7 @@ class ContextBuilder:
                     player_input="",
                     limit=4,
                     completed_event_ids=completed_event_ids,
+                    season=season_hint,
                 )
                 daily_candidates = sorted(
                     [
@@ -3152,6 +3165,11 @@ def _compact_voice_style(
         ("avoid", 2, 60),
         ("emotionRange", 4, 45),
         ("openers", 4, 60),
+        # 2026-09-26：`closers` 此前不在白名单 —— 41/44 个角色写了平均 3 条
+        # **可直接说出口的收尾台词**（「回头见，别把今天过得太无聊。」），
+        # 一条都没进过 prompt。它与 `signatureMoves`（怎么写）性质不同（说什么），
+        # 2-gram 覆盖率全部 <0.3 不冗余，且与 `openers` 对称；成本约 31 字符/角色。
+        ("closers", 4, 60),
     ):
         raw_value = value.get(key)
         if key == "tone":
@@ -6861,12 +6879,22 @@ class PromptBuilder:
                     "name": "voice_card",
                     "content": _json({
                         "voiceCard": safe_context["voiceCard"],
+                        # 2026-09-26：在 09-24 的收窄之上补回「眼光」这一层。
+                        # 09-24 为了治口语颗粒复现过度（report-kimi-filler-diagnosis-2026-09-24.md）
+                        # 把措辞收成「只模仿表达方式，不照搬其中的事实」——但这样一来
+                        # 「态度/立场」和「具体事实」被一起禁掉了，角色只剩句式、没有视角，
+                        # 于是私人层系统性缺失（docs/report-perspective-diagnosis-2026-09-26.md）。
+                        # 颗粒那条护栏**保留**，只把「眼光」从禁令里拆出来。
+                        # ⚠ 本卡参与紧凑 prompt 的总长守卫
+                        # （test_prompts.py::test_prompt_limits_voice_refs_and_knowledge_facts_in_compact_context），
+                        # 再加字要同步看那里。
                         "instruction": (
-                            "voiceAnchors 是当前 NPC 的正向原文语气锚点，"
-                            "参考其句式与收尾方式；"
+                            "voiceAnchors 是当前 NPC 的正向原文台词锚点，"
                             "锚点里的口语颗粒（嗯、呃、啊等）在原作对白中本就是零星出现的，"
                             "并不代表这个角色每句都带；"
-                            "只模仿表达方式，不照搬其中的事实。"
+                            "参考它的句式、收尾方式，以及说话人看待事情的眼光，"
+                            "把这些角度用在玩家当前问起的这件事上；"
+                            "不照搬其中的具体事实，也不要整句复读。"
                         ),
                     }),
                 }

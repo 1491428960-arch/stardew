@@ -2836,12 +2836,19 @@ def test_profile_builder_excludes_special_static_lines_from_model_evidence(
         corpus_paths=[corpus_path]
     )
 
+    # 2026-09-27：`spring_Mon` 这类「季节前缀 + 星期」键曾被当成特殊静态行而排除，
+    # 现在按日常独白收进索引 —— 它只是换季换了一批，不带任何触发条件
+    # （见 `evidence._SEASON_WEEKDAY_DIALOGUE_KEY`）。
+    # 仍然被排除的是：控制残渣（`separator`）、礼物应答、事件台词、
+    # 关系场景、配偶场景、婚后对白 —— 即上面除 `seasonal` 外的各条。
     assert [item["sourceKey"] for item in index["styleSamples"]] == [
         "Mon",
+        "spring_Mon",
         "Rain",
     ]
     assert [item["sourceKey"] for item in index["speechEvidence"]] == [
         "Mon",
+        "spring_Mon",
         "Rain",
     ]
 
