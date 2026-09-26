@@ -2171,3 +2171,28 @@ prompts._MAX_SPEECH_EVIDENCE              =   6   真正注入模型的切片
 3. 测试夹具所有样本用**同一段文本**，被 `_select_evidence_candidates` 去重压成 1 条 → **假绿**
 4. 修复只提到 2，**只看 close 就宣布有效** → married 完全没修到
 5. 重启脚本用 `CommandLine -like '*start_bridge*'` 匹配进程，**匹配到自己** → 自杀（exit 4294967295）
+
+## 收口决定（2026-09-27）
+
+四个未决项的处理与依据：
+
+| 项 | 决定 | 理由 |
+|---|---|---|
+| `docs/archive/` 15 个会话归档 | **加 .gitignore，文件不删** | 宿主插件自动生成、可再生、随会话数持续增长，提交会造成长期噪声；留在磁盘上照样能读，原件另有 `~/.dsh/sessions-archive-20260927/` |
+| 22 个 modified 文件 | **不动** | 属于另一条线（dialogue lab / morning scenario / personas / 5 个 smapi `.cs`）。完成度与测试状态未知，提交半成品会污染历史 |
+| `session-archive.mjs` 的 `groupNameFor()` | **不修**（见下） | |
+| `story-memory/docs/archive/` 里 2 个冗余副本 | **不删** | 删除不可逆；内容与 `~/.dsh/sessions-archive-*` 重复，但 gitignore 之后已不碍事，没必要冒险 |
+
+### 为什么不修 `groupNameFor`
+
+原本判断「明确的 bug 该修」，读到代码后改为不修：
+
+- 实测差异是 `.worktrees` **前多一个 `-`**（脚本产出
+  `--…-stardew-ai-npc.worktrees-story-memory--`，DSH 实际是
+  `--…-stardew-ai-npc-.worktrees-story-memory--`）。
+- 脚本现有规则**保留点号**（`[^A-Za-z0-9.-]`），而 DSH 的产出不同 ——
+  要改就得**先确定 DSH 真实的组名规则**，而我没有那个源码事实。
+- 已有绕法 `--group '*story-memory*'`，且脚本注释 L64-68 已完整记录症状与绕法。
+- `AGENTS.md` 明说会话归档**已全自动、别再手动跑** —— 这个脚本只在定向补归档时用。
+
+→ 收益极低，而「拿局部观察猜规则」正是本次连错 5 次的同一模式。**不动。**

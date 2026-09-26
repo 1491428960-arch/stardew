@@ -25,3 +25,8 @@ data/generated/
 
 # 压缩 prompt 期间的一次性备份（保留在磁盘，不进版本库）
 *.bak-*
+
+# 会话归档（宿主插件 session-auto-archive 在每次新建会话时自动生成，可再生）
+# 内容是过程性记录、体量随会话数持续增长，提交会造成长期噪声。
+# 文件保留在磁盘上，需要时直接读；定向补归档仍在 ~/.dsh/sessions-archive-* 里。
+docs/archive/
