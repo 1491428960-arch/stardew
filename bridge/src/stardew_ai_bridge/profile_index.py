@@ -1582,22 +1582,28 @@ def _dialogue_selection_key_priority(
         and str(record.get("sourceKey", "")).strip().casefold() == "introduction"
     ):
         return 4
-    # 当季键提前一档（3 → 2）。
+    # 当季键提到最高档（3 → 0）。
     #
     # 为什么必须：当季键与普通日常键**同为 3**，排序于是落到 `_evidence_order_key`
     # 的 `(内容分档, 索引原序)` —— 而季节句在索引里物理位置普遍靠后
-    # （`MarriageDialogue*.json` 追加在末尾），窗口（`_SPEECH_EVIDENCE_CANDIDATES`）
-    # 一截就被切光。实测 2026-09-27：Sophia married/summer 的候选池有 21 条当季键，
-    # 限 4 条的窗口里 0 条；婚后角色的季节感因此明显弱于 close 阶段。探针
-    # `.tmp/married-season-diagnose.py`、`.tmp/season-window-probe.py`。
+    # （`MarriageDialogue*.json` 追加在末尾）。更关键的是 `prompts` 只取前
+    # `_MAX_SPEECH_EVIDENCE`(6) 条**切片**注入，所以排序即结果。
+    #
+    # 实测 2026-09-27（`.tmp/inject-window-verify.py`，模拟真实链路 池 64 → 注入 6）：
+    #   close/summer    Sophia 6/6 当季、Olivia 6/6、Claire 5/6  ← 提到 2 就够
+    #   married/summer  Sophia 0/6、Olivia 0/6、Claire 0/6        ← 提到 2 完全无效
+    # married 阶段的 `MarriageDialogue` 里有大量 `Good_*` / `Neutral_*`
+    # （`_RELATION_DIALOGUE_KEY`，优先级 **1**），把只提到 2 的当季键又压了回去；
+    # close 阶段没有这些键，所以只看 close 会误判修复有效。必须到 0。
     #
     # 为什么安全：真正更重要的两个键都在它前面 —— 话题分（第 0 位）与阶段具体度
     # （第 1 位），所以不会挤压回答当前话题的平日对白；且跨季键已被季节闸门
     # （`sample_season != requested_season`）拒掉，这里只抬高当季键。
+    # 0 档原本只有 `_WEEKDAY_DIALOGUE_KEY`，实测 `Mon4` 走的是默认档 3，故不冲突。
     if requested_season and dialogue_key_season(
         str(record.get("sourceKey", ""))
     ) == requested_season:
-        return 2
+        return 0
     return _dialogue_key_priority(record)
 
 # 「内容分档」与索引原序压成同一个整数的步长。

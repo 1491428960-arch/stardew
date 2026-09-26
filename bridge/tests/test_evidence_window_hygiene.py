@@ -163,3 +163,39 @@ def test_plain_keys_still_present_when_no_season_given(tmp_path: Path) -> None:
     got = store.speech_evidence("Sophia", ["vanilla"], limit=8)
 
     assert [item["sourceKey"] for item in got] == ["Mon4"]
+
+
+def test_in_season_keys_outrank_relation_response_keys(tmp_path: Path) -> None:
+    """婚后阶段的关系反应键不能把当季键挤出窗口。
+
+    `MarriageDialogue` 里有大量 `Good_*` / `Neutral_*`（`_RELATION_DIALOGUE_KEY`，
+    优先级 **1**）。只把当季键提到 2 会被它们压回去 —— 实测 2026-09-27：
+    close 阶段 6/6 条是当季键（那里没有这些键），married 阶段 **0/6**。
+    这条测试用 married 的键构成钉住它，避免只看 close 就误判修复有效。
+    """
+
+    relations = tuple(
+        f"{prefix}_{index}"
+        for prefix in ("Good", "Neutral")
+        for index in range(6)
+    )
+    samples = [
+        _sample(key, f"这是关系反应类对白第{index}条，内容各不相同。")
+        for index, key in enumerate(relations)
+    ]
+    samples.append(_sample("summer_Mon4", SUMMER_TEXT))
+    samples.append(_sample("summer_1", SUMMER_ONLY_TEXT))
+
+    store = _store(tmp_path, samples)
+    got = store.speech_evidence("Sophia", ["vanilla"], limit=6, season="summer")
+    keys = [item["sourceKey"] for item in got]
+
+    assert any(key.startswith("summer_") for key in keys), (
+        f"关系反应键把当季键全挤掉了，婚后阶段会没有季节感：{keys}"
+    )
+
+
+# 注：曾想加一条「无季节时关系反应键照常可用」的测试，但实测单独一条 `Good_0`
+# 本就进不了窗口 —— 它属于特殊触发，被 `_is_model_evidence_record` 挡在外面
+# （真实索引里的 `Good_6` 能进，是因为它带着关系阶段条件）。无季节场景的行为
+# 已由上面的 `test_plain_keys_still_present_when_no_season_given` 覆盖。
