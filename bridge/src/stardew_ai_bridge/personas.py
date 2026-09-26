@@ -102,6 +102,27 @@ def _normalise_marker(value: object) -> str:
     return normalize_source_marker(value)
 
 
+#: 游戏/Mod 里同一个人的**全名写法** → 人设表用的短名。
+#:
+#: 不归一就会让同一个人拥有**两份 profile**：特质挂一份、语料挂另一份，谁也见不到谁。
+#: 2026-09-26 实测（索引 `profiles` 139 条）：`Morris` 与 `MorrisTod`、
+#: `Marlon` 与 `MarlonFay`、`Gunther` 与 `GuntherSilvian` 各自并存，而
+#: **`MorrisTod` 名下的 165 条日常对白从未出现在 `Morris` 的任何卡里**。
+#:
+#: 证据不是猜的：这些 npcId 的日常对白 `sourcePath` 目录名就是短名
+#: （`assets/CharacterFiles/Dialogue/Morris/Dialogue.json`），且 `MorrisTod`
+#: 的初见台词自报「我叫**莫里斯**，是鹈鹕镇 Joja 超市的经理」—— 与
+#: `data/personas/sve.json` 的 `Morris` 是同一个人。`scripts/mine_voice_fingerprint.py`
+#: 会**逐条复验**这个证据（`_alias_evidence()`），对不上直接报错。
+NPC_ID_ALIASES = {
+    "MorrisTod": "Morris",
+    "MarlonFay": "Marlon",
+    "GuntherSilvian": "Gunther",
+}
+
+_ALIAS_LOOKUP = {alias.casefold(): target for alias, target in NPC_ID_ALIASES.items()}
+
+
 def canonical_npc_id(npc_id: object) -> str:
     """将游戏中的别名归并到唯一 NPC ID。"""
 
@@ -113,7 +134,7 @@ def canonical_npc_id(npc_id: object) -> str:
             break
     if value.casefold() in {"wizard", "rasmodia"}:
         return "Wizard"
-    return value
+    return _ALIAS_LOOKUP.get(value.casefold(), value)
 
 
 # 这是“女性化表达 overlay”的资格集合，不等同于全部可恋爱角色。

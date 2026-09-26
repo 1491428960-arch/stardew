@@ -29,7 +29,8 @@
         "emotionTexture": [
           "被问到个人偏爱时先用克制、精确或干燥幽默挡住，再泄露一点明确偏爱",
           "情绪暴露后恢复克制，偶尔把句子收得更短"
-        ]
+        ],
+        "speechParticleHints": ["吧", "啊", "呢", "唔"]
       },
       "stageProfiles": {
         "stranger": {"addressing": "你", "openness": "疏离", "topicPool": ["天气与星象", "安全的魔法常识"], "boundaries": ["不谈私人关系和未确认的预言"]},

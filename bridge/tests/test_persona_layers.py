@@ -777,7 +777,10 @@ def test_sophia_persona_exposes_stage_energy_and_excited_particles() -> None:
 
     # 2026-09-25：去掉「哇」——它是 prompt 侧硬塞给她的，原文里她不说「哇」；
     # 换成她真正常用的三个（结巴与省略号另由 openers/signatureMoves 承载）。
-    assert voice["speechParticleHints"][:3] == ["嗯", "哦", "呀"]
+    # 2026-09-26：改为按 data/voice-fingerprints.json 的原文频次降序取前 4
+    # （嘿40 哦39 吧24 呃18）。旧值把最高频的「嘿」排到第 4、漏了第 3 的「吧」，
+    # 且写了 5 条而 prompt 的 _compact_voice_style 只读 4 条，第 5 条永不生效。
+    assert voice["speechParticleHints"] == ["嘿", "哦", "吧", "呃"]
     assert voice["energyProfile"]["married"]
     assert "兴奋" in voice["energyProfile"]["married"]
     assert any("先反应" in item for item in voice["emotionTexture"])
