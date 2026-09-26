@@ -2120,3 +2120,54 @@ _SEASON_NAMED_DIALOGUE_KEY = re.compile(      # ③ 人名（大小写敏感）
 
 - 本地 provider（Ollama `127.0.0.1:11435`）当前没在跑，`provider=local` 直接退化成
   兜底回复（`provider=fallback`、`usage=null`）。要跑免费生成需先起 Ollama。
+
+## 修：当季对白进不了注入窗口（2026-09-27，接上节）
+
+### 链路与根因
+
+素材注入是三段，之前只看了第一段：
+
+```
+profile_index._SPEECH_EVIDENCE_CANDIDATES = 128   候选上限
+prompts._SPEECH_EVIDENCE_POOL             =  64   preview 里看到的池
+prompts._MAX_SPEECH_EVIDENCE              =   6   真正注入模型的切片
+```
+
+决定季节感的只有最后那 6 条（`prompts.py:6948` 是**切片不是选择**）。
+根因：当季键与普通日常键**同为优先级 3**，排序落到 `_evidence_order_key` 的
+`(内容分档, 索引原序)`，而季节句在索引里物理位置普遍靠后（`MarriageDialogue*.json`
+追加在末尾），前 6 条永远轮不到。
+
+### 两次才改对
+
+- **第一次只提到 2**（3→2）：close/summer 变成 6/6 当季，看着很成功 ——
+  但 **married/summer 仍然是 0/6**。因为 `MarriageDialogue` 里有大量 `Good_*` /
+  `Neutral_*`（`_RELATION_DIALOGUE_KEY`，优先级 **1**），把只到 2 的当季键又压回去。
+  **只看 close 会误判修复有效。**
+- **改成 0** 才对：married 变成 3~5/6，且仍保留 `Good_*` / `Rainy_*` 日常，不是全占满。
+  0 档原本只有 `_WEEKDAY_DIALOGUE_KEY`，实测 `Mon4` 走的是默认档 3，故不冲突。
+
+### 顺手修的
+
+`_UNRESOLVED_I18N` 只认 Content Patcher 的**双花括号** `{{i18n:...}}`，而别的 mod 会把
+单花括号 `{i18n:Wellwick.dialogue.Mon8}` 原样留在文本里 —— 15 条，全是**键名不是台词**。
+它的 `evidenceKind='dialogue'`、路径优先级 3（不降权）、事件门控返回 True，于是
+**一路进检索池发给模型**。`profile_index` / `runtime_samples` / `voice_fingerprint` 三处同步放宽。
+
+### 验证
+
+- 全量 **4214 passed**（新增 6 条测试 → `bridge/tests/test_evidence_window_hygiene.py`）
+- 真实 HTTP（重启后新 PID 101172）：池 64 条里当季 **11 条**（改前 2~5），
+  注入前 6 条含 3 条当季键
+- ⚠ **生成层未见改善**：Sophia 婚后夏/冬同输入两条回复**都没提季节**
+  （「在手工房里收拾布料」/「整理了些布料」）。
+  → 检索层是**确定且无副作用**的改进，但季节感可能还需要提示词层显式要求，
+  或者这个泛输入（「你好，最近怎么样？」）本身就不触发季节表达。**不要把归因全放在检索。**
+
+### 本轮我犯的错（累计，按发现顺序）
+
+1. 「68% 素材被挡」—— 只对**锚点**成立，检索侧根本没挡
+2. 「240 条日常对白是误挡」—— 实际**大部分该挡**（节日脚本、婚后山顶剧透、别的 mod 的 i18n 占位符）
+3. 测试夹具所有样本用**同一段文本**，被 `_select_evidence_candidates` 去重压成 1 条 → **假绿**
+4. 修复只提到 2，**只看 close 就宣布有效** → married 完全没修到
+5. 重启脚本用 `CommandLine -like '*start_bridge*'` 匹配进程，**匹配到自己** → 自杀（exit 4294967295）
