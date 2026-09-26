@@ -30,6 +30,7 @@ public class ChatInputMenu : IClickableMenu
     private readonly int? friendshipHeartsOverride;
     private readonly string conversationChannel;
     private readonly bool openedFromPrivateChatRoster;
+    private readonly Action? onReturnToRoster;
     private readonly CancellationTokenSource cancellationSource = new();
     private readonly List<ChatDisplayMessage> messages = new();
     private readonly KeyboardSubscriberLease<IKeyboardSubscriber> keyboardSubscriberLease;
@@ -58,6 +59,7 @@ public class ChatInputMenu : IClickableMenu
         int? friendshipHeartsOverride = null,
         string conversationChannel = ConversationChannel.Remote,
         bool openedFromPrivateChatRoster = false,
+        Action? onReturnToRoster = null,
         ShareFriendshipLedger? shareFriendshipLedger = null)
         : base(0, 0, 1, 1)
     {
@@ -70,6 +72,7 @@ public class ChatInputMenu : IClickableMenu
         this.onClosed = onClosed ?? throw new ArgumentNullException(nameof(onClosed));
         this.friendshipHeartsOverride = friendshipHeartsOverride;
         this.openedFromPrivateChatRoster = openedFromPrivateChatRoster;
+        this.onReturnToRoster = onReturnToRoster;
         this.conversationChannel = string.Equals(
             conversationChannel,
             ConversationChannel.FaceToFace,
@@ -304,7 +307,22 @@ public class ChatInputMenu : IClickableMenu
         CleanupKeyboardSubscriber();
         cancellationSource.Cancel();
         onClosed(hasValuableRelationshipRepair);
+
+        // 从 F8 名单打开的这一层：Esc 只退一层，回名单，而不是一路退回游戏
+        // （用户口径 2026-09-26：「按 esc 退回上级界面而不是彻底退出」）。
+        //
+        // 顺序不能反：exitThisMenu 会把 activeClickableMenu 清成 null，
+        // 回调必须在它之后才装得上。这一层来自名单（openedFromPrivateChatRoster），
+        // 所以退出时不会弹「要不要继续聊聊」（见 ShouldOfferContinuationAfterExit）。
+        //
+        // 名单由回调**重开**而不是复用旧实例：聊了这几轮之后，未读标记、
+        // 谁在附近、好感度都可能变了，旧实例拿的是打开那一刻的快照。
+        var returnToRoster = openedFromPrivateChatRoster && onReturnToRoster is not null;
         exitThisMenu();
+        if (returnToRoster)
+        {
+            onReturnToRoster!();
+        }
     }
 
     protected virtual Task SendCurrentAsync()

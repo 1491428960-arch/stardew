@@ -216,6 +216,26 @@ public sealed class PrivateChatRosterMenu : IClickableMenu
                 status,
                 new Vector2(row.Right - 18 - statusWidth, row.Y + 12),
                 MenuSkinRules.InkSoft);
+
+            // 早上主动发来过、玩家还没点开的人：在状态字左边补一个「新消息」。
+            //
+            // 规则侧一直有这个字段（<see cref="PrivateChatRosterRules.UnreadLabel"/>），
+            // 排序也一直在用它置顶——但**这里以前没画**，于是实机上只看得见顺序变了、
+            // 看不见任何标记（2026-09-26 用户报告「F8 界面没有提示」）。
+            // 与那个只在名字序里排第一行的置顶相比，标记才是「有件事等你」的显式信号。
+            //
+            // 用行首同一条角色强调色：它不是警告（没坏事发生），是「谁在等你」，
+            // 颜色与名字左边那条竖线同源，扫一眼就能对上人。
+            var unread = entry.UnreadLabel;
+            if (!string.IsNullOrEmpty(unread))
+            {
+                var unreadWidth = Game1.smallFont.MeasureString(unread).X;
+                b.DrawString(
+                    Game1.smallFont,
+                    unread,
+                    new Vector2(row.Right - 18 - statusWidth - 12 - unreadWidth, row.Y + 12),
+                    accent);
+            }
         }
 
         MenuButtonDrawing.DrawButton(

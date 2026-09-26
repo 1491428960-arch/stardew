@@ -65,7 +65,8 @@ public sealed class ModEntry : Mod
             conversationService,
             storyStateStore,
             speaker => RuntimeDialogueSampler.Observe(Monitor, speaker),
-            shareFriendshipLedger);
+            shareFriendshipLedger,
+            ReturnToPrivateChatRoster);
         houseAccessController = new HouseAccessController(
             Monitor,
             GetHouseAccessOptions);
@@ -979,6 +980,26 @@ public sealed class ModEntry : Mod
         if (!PrivateChatRosterRules.ShouldShowRoster(entries.Count))
         {
             StartPrivateChat(entries[0]);
+            return;
+        }
+
+        Game1.activeClickableMenu = new PrivateChatRosterMenu(entries, StartPrivateChat);
+    }
+
+    /// <summary>
+    /// 从聊天窗口按 Esc 退回私聊名单（用户口径 2026-09-26：「按 esc 退回上级界面
+    /// 而不是彻底退出」）。名单是**重开**的：聊了这几轮之后未读标记、谁在附近、
+    /// 好感度都可能变了，复用旧实例拿的是打开那一刻的快照。
+    ///
+    /// 这里**不能**复用 <see cref="OpenPrivateChatRoster"/>：那条路带「只有一位候选时
+    /// 直接开聊」的短路（ShouldShowRoster），从聊天窗口退回来时再走一次
+    /// 就会立刻又打开同一个聊天窗口，变成一个退不出去的环。
+    /// </summary>
+    private void ReturnToPrivateChatRoster()
+    {
+        var entries = BuildPrivateChatRoster(Helper.Input.GetCursorPosition().GrabTile);
+        if (entries.Count == 0)
+        {
             return;
         }
 

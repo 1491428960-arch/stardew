@@ -15,6 +15,7 @@ public sealed class FaceToFaceConversationCoordinator
     private readonly StoryStateStore storyStateStore;
     private readonly Action<StardewNpc?>? runtimeDialogueObserver;
     private readonly ShareFriendshipLedger shareFriendshipLedger;
+    private readonly Action? onReturnToRoster;
     private readonly NpcKissAnimationController kissAnimationController = new();
     private ConversationService? conversationService;
     private StardewNpc? npc;
@@ -40,13 +41,15 @@ public sealed class FaceToFaceConversationCoordinator
         ConversationService? conversationService,
         StoryStateStore storyStateStore,
         Action<StardewNpc?>? runtimeDialogueObserver = null,
-        ShareFriendshipLedger? shareFriendshipLedger = null)
+        ShareFriendshipLedger? shareFriendshipLedger = null,
+        Action? onReturnToRoster = null)
     {
         this.conversationService = conversationService;
         this.storyStateStore = storyStateStore ??
             throw new ArgumentNullException(nameof(storyStateStore));
         this.runtimeDialogueObserver = runtimeDialogueObserver;
         this.shareFriendshipLedger = shareFriendshipLedger ?? new ShareFriendshipLedger();
+        this.onReturnToRoster = onReturnToRoster;
     }
 
     public FaceToFaceConversationState State => state;
@@ -133,6 +136,7 @@ public sealed class FaceToFaceConversationCoordinator
             initialMessages: conversationService.RecentMessages(target.Name),
             conversationChannel: ConversationChannel.Remote,
             openedFromPrivateChatRoster: openedFromPrivateChatRoster,
+            onReturnToRoster: onReturnToRoster,
             shareFriendshipLedger: shareFriendshipLedger);
         return true;
     }
@@ -602,6 +606,7 @@ public sealed class FaceToFaceConversationCoordinator
             initialMessages: conversationService.RecentMessages(target.Name),
             conversationChannel: ConversationChannel.FaceToFace,
             openedFromPrivateChatRoster: openedFromPrivateChatRoster,
+            onReturnToRoster: onReturnToRoster,
             shareFriendshipLedger: shareFriendshipLedger);
     }
 
