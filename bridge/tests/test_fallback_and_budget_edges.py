@@ -40,7 +40,7 @@ def test_fallback_marks_its_result_so_callers_can_tell_it_apart() -> None:
 
 def test_fallback_reply_defaults_to_a_neutral_apology() -> None:
     assert FallbackProvider().generate(_request()).reply == (
-        "Rasmodia：暂时没有合适的回复，请稍后再试。"
+        "（暂时没有合适的回复，请稍后再试。）"
     )
 
 

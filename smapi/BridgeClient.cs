@@ -139,7 +139,10 @@ public sealed class BridgeDialogueResponse
     {
         return new BridgeDialogueResponse
         {
-            Reply = "Rasmodia：暂时没有合适的回复，请稍后再试。",
+            // 与 Python 的 config.DEFAULT_FALLBACK_REPLY 逐字一致（由
+            // bridge/tests/test_cross_language_constants.py 锁住）。兜底不带角色名：
+            // 它不是任何一个角色的台词，署名具体角色会让玩家以为是那个人在说话。
+            Reply = "（暂时没有合适的回复，请稍后再试。）",
             Provider = "offline",
             Fallback = true,
             Warnings = new[] { warning },

@@ -17,7 +17,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 #
 # 跨语言那一份无法共享代码，只能靠测试锁住一致（见
 # `bridge/tests/test_cross_language_constants.py`）。
-DEFAULT_FALLBACK_REPLY = "Rasmodia：暂时没有合适的回复，请稍后再试。"
+# 2026-09-26：**不带任何角色名**。原值是「Rasmodia：暂时没有合适的回复，请稍后再试。」——
+# 兜底不是任何一个角色的台词（哪个 NPC 都可能触发），署名一个具体角色会让玩家
+# 以为那句话是法师在说话。改成括号形态，把它和角色台词在形状上分开。
+DEFAULT_FALLBACK_REPLY = "（暂时没有合适的回复，请稍后再试。）"
 
 _LOCAL_ENV_KEYS = frozenset(
     {
