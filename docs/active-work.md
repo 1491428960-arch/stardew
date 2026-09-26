@@ -2065,3 +2065,58 @@ _SEASON_NAMED_DIALOGUE_KEY = re.compile(      # ③ 人名（大小写敏感）
 连普通 dialogue 都放行，见第五节的同一条实测），本改动全部在读取路径上生效。
 
 **累计请求**：218（本轮 0 个请求，全部离线）。
+
+## 季节优先三层验证：离线 / HTTP / 生成（2026-09-27，同会话续）
+
+用户判断「不必进游戏测，游戏里状态单一」——成立。三处修复都在素材层，可离线枚举，
+按三层各自独立验完。
+
+### 一、素材层（零请求，1632 格全枚举）
+
+- 136 NPC × 6 阶段：**40 个全阶段空锚点全部合理**。38 个素材 100% 是 `event_dialogue`
+  （Bear / Junimo / Dusty / Governor / Grandpa / Bouncer 等本就不可正常对话）；2 个
+  （HighlandsDwarf / ScarlettFake）的日常对白文本是 `...` 占位，被
+  `VOICE_ANCHOR_MIN_TEXT=6` 正确拒掉。**同类 bug 残留 0 个。**
+- 季节优先效果面：1632 格中 290 格（18%）因季节改变选择，298 格（18%）锚点含当季键。
+  比例不高是 Robin / Marnie 这类**没有季节素材**的角色全程 0 拉低的，不是失效。
+
+### 二、HTTP 层（`POST /api/context/preview`，零模型请求）
+
+该端点只构建上下文、不调模型，且回显 `speechEvidence` 本体，是离线看素材的最佳入口。
+补上 `sourceMods` 后：
+
+| NPC | season | evidence | 季节键 | 季节不符 |
+| --- | --- | --- | --- | --- |
+| Sophia | summer | 38 | 18 | **0** |
+| Sophia | winter | 34 | 14 | **0** |
+| Olivia | summer | 40 | 18 | **0** |
+| Olivia | winter | 36 | 14 | **0** |
+| Lance | summer | 34 | 7 | **0** |
+| Lance | winter | 34 | 7 | **0** |
+
+「季节不符 = 0」是硬指标：检索池里没有任何跨季污染。
+
+### 三、生成层（`provider=cloud`，4 次真实调用）
+
+成本 input 28,352 / output 170 token。4 条里 3 条明确体现季节：
+
+- Sophia / summer：「手工房里收着几件刚染好的布料……斯嘉丽下周要来帮忙」（用到了
+  `npcRelations` 里「最好的朋友」那条，说明档案层也接上了）
+- Sophia / winter：「今天酒窖里挺忙的，刚把上年份的蓝月亮理完……你那边……冬天农活也还是要忙吗？」
+- Olivia / summer / married：「挺热的，但屋里晾着新摘的薰衣草」
+- Linus / summer：「夏天野外的东西多，得知道什么时候摘才正好」
+
+### 两个测量陷阱（都踩过，值得记）
+
+1. **只比数量会比出假结论**。summer 与 winter 的季节键都是 6 条，但 key 内容完全不同
+   （`summer_Mon4` vs `winter_Mon4`）。我曾据此误判「季节没生效」，实际是检索被硬闸门
+   `sample_season != requested_season` 精确换代了。**验证季节必须比 key 内容，不能比条数。**
+2. **`sourceMods` 不传 = 检索限定原版**。SVE 角色的 evidence 会掉到 1 条、`modSources`
+   回显为空 —— 而 `personaSummary` 依然完整，所以看起来像「档案在、素材没了」。
+   `/api/npcs` 逐个 NPC 给 `sourceMods`（Sophia 为
+   `["SVE","FlashShifter.StardewValleyExpandedCP"]`），离线复现必须照传。
+
+### 未做 / 未通
+
+- 本地 provider（Ollama `127.0.0.1:11435`）当前没在跑，`provider=local` 直接退化成
+  兜底回复（`provider=fallback`、`usage=null`）。要跑免费生成需先起 Ollama。
