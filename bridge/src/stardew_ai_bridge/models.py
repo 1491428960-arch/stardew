@@ -755,6 +755,11 @@ class DialogueResponse(ApiModel):
     provider: str = Field(min_length=1, max_length=50)
     fallback: bool = False
     latency_ms: int = Field(alias="latencyMs", ge=0)
+    # `latencyMs` 是**端到端总耗时**（`app.test_dialogue` 用 `perf_counter` 量的），
+    # 而这条路径上 `_retry_for_format_noise` 可能把同一个请求发两三次 ⇒
+    # 同一个端点会出现 3s 和 21s 两种读数。把次数一起返回，慢才能归因：
+    # 「3 次请求共 21s」和「1 次请求 21s」是两件完全不同的事。
+    request_count: int = Field(default=1, alias="requestCount", ge=1)
     warnings: list[str] = Field(default_factory=list, max_length=20)
     usage: ProviderUsage | None = None
     open_loop: OpenLoopSignal | None = Field(default=None, alias="openLoop")
@@ -801,6 +806,34 @@ class MorningPlanRequest(ApiModel):
 
 class MorningPlanResponse(ApiModel):
     messages: list[MorningMessagePlan] = Field(default_factory=list, max_length=4)
+
+
+class MorningScenarioView(ApiModel):
+    """一条晨间预设的**完整文本**，给游戏外测试页审阅用（`/test/morning`）。
+
+    与 `MorningMessagePlan` 的分工：那条是**发给游戏端**的（拿到就写进聊天记录，
+    所以只需要 npcId / displayName / scenarioId / opening）；这条是**给人看的**，
+    所以另外带上方向、边界、收尾与原话出处——审的就是这些措辞。
+
+    ⚠ 它**不是**游戏端契约：改这里的字段不影响 DLL，也不受「Bridge 必须先于 DLL
+    发布」那条约束（那条约束只针对 `DialogueTestRequest`）。
+    """
+
+    scenario_id: str = Field(alias="scenarioId", min_length=1, max_length=120)
+    npc_id: str = Field(alias="npcId", min_length=1, max_length=100)
+    display_name: str = Field(alias="displayName", min_length=1, max_length=100)
+    # 绝对天数触发时的天数；其他触发方式下为 null（页面上显示「非按天」）。
+    day_index: int | None = Field(default=None, alias="dayIndex")
+    opening: str = Field(min_length=1, max_length=600)
+    opening_source: str = Field(default="", alias="openingSource", max_length=1000)
+    direction: str = Field(default="", max_length=2000)
+    boundaries: list[str] = Field(default_factory=list, max_length=50)
+    closing_hook: str = Field(default="", alias="closingHook", max_length=1000)
+    allowed_kinds: list[str] = Field(default_factory=list, alias="allowedKinds", max_length=20)
+
+
+class MorningScenarioListResponse(ApiModel):
+    scenarios: list[MorningScenarioView] = Field(default_factory=list, max_length=200)
 
 
 class HealthResponse(ApiModel):

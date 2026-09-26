@@ -161,6 +161,8 @@ def test_dialogue_response_uses_camel_case_contract_fields(
         "provider",
         "fallback",
         "latencyMs",
+        # 延迟含重试，`requestCount` 是它的归因口径（2026-09-26 加）。
+        "requestCount",
         "warnings",
         "usage",
         "openLoop",
@@ -735,7 +737,7 @@ def test_dialogue_uses_builtin_safe_reply_when_fallback_is_guarded(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["reply"] == "Rasmodia：暂时没有合适的回复，请稍后再试。"
+    assert body["reply"] == "（暂时没有合适的回复，请稍后再试。）"
     assert body["provider"] == "fallback"
     assert body["fallback"] is True
     assert "upstream-warning" in body["warnings"]
@@ -828,6 +830,10 @@ def test_dialogue_retries_once_when_upstream_reply_contains_format_noise(
     assert router.calls[1]
     assert router.calls[1][-1]["name"] == "format_retry"
     assert "response_format_retry: markdown" in body["warnings"]
+    # 延迟是**端到端总耗时**：重试时它累计两次请求，所以必须同时给出次数。
+    # 2026-09-26 的晨间实测里同一个页面出现过 3.2s 与 21.1s，没有这个字段
+    # 就无法区分「上游慢」与「重试叠加」。
+    assert body["requestCount"] == 2
 
 
 def test_dialogue_usage_includes_bounded_format_retry_attempts(
@@ -914,6 +920,7 @@ def test_dialogue_does_not_retry_clean_upstream_reply(
     assert response.status_code == 200
     assert router.calls == 1
     assert "response_format_retry" not in response.json()["warnings"]
+    assert response.json()["requestCount"] == 1
 
 
 def test_dialogue_format_retry_is_bounded_and_then_uses_existing_fallback(

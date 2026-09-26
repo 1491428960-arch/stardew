@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -190,6 +191,29 @@ class TestRealData:
         assert fragments, "开场白里没有可核对的长片段"
         missing = [part for part in fragments if part not in lewis_text]
         assert not missing, f"这些片段在原话里找不到，疑似自由创作：{missing}"
+
+    def test_closing_hook_is_conditional_not_turn_counted(self) -> None:
+        """收尾条件**不能写成「第 N 轮」**——模型数不清轮次。
+
+        2026-09-26 云端实测（㊲）：原文案是「聊到第 2~3 轮时把话头交给玩家一次」，
+        实际它在**玩家第一次回应时就把这个问题问掉了**，之后第 5、6 轮又开始抛新问题。
+        收尾条件必须写成**玩家那边的信号**（他只回了一句应声、或者话已经说完），
+        而不是「聊了几轮」——判据要落在模型能直接看到的东西上。
+
+        另一半是**范本**：㊳ 的结论是「禁令单独用会削掉表达力（回复变短、还跑题），
+        配上范本才恢复」。只写「不要用问句结尾」它不敢写，给一句例子才落地。
+        """
+        store = MorningScenarioStore.load(REAL_DATA)
+        scenario = store.for_day(2)
+        assert scenario is not None
+        hook = scenario.closing_hook
+        assert not re.search(r"第\s*\d+", hook), (
+            f"收尾条件里出现了轮次表述，模型数不清轮次：{hook}"
+        )
+        examples = re.findall(r"「([^」]+)」", hook)
+        assert any(len(item) >= 6 for item in examples), (
+            f"收尾条件必须带一个引号里的示例句（只有禁令没有范本时模型会不敢展开）：{hook}"
+        )
 
 
 class TestVariantUniqueness:

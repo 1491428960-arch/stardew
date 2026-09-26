@@ -364,7 +364,12 @@ def test_chat_lab_topic_button_does_not_render_internal_topic_prompt_as_player_b
 
 
 def test_shared_ui_dialogue_lab_pages_share_the_same_workspace_shell() -> None:
-    routes = {"/test": "cases", "/test/chat": "chat", "/raw": "raw"}
+    routes = {
+        "/test": "cases",
+        "/test/chat": "chat",
+        "/raw": "raw",
+        "/test/morning": "morning",
+    }
 
     for route, default_view in routes.items():
         response = TestClient(app).get(route)
@@ -382,6 +387,9 @@ def test_shared_ui_dialogue_lab_pages_share_the_same_workspace_shell() -> None:
         assert "--ui-shell-version: 4;" in html
         nav = re.search(r'<nav class="workspace-nav".*?</nav>', html, flags=re.DOTALL)
         assert nav is not None
+        # 工作台视图清单：加视图时这里要一起加。
+        # `/test/group`（多人实验）是**独立页面**而不是工作台视图，它刻意不带
+        # `data-view-target`，所以不出现在这份名单里——这是本项目区分两者的既有做法。
         assert re.findall(
             r'<a class="workspace-tab" href="([^"]+)" data-view-target="([^"]+)"',
             nav.group(0),
@@ -389,6 +397,7 @@ def test_shared_ui_dialogue_lab_pages_share_the_same_workspace_shell() -> None:
             ("/test", "cases"),
             ("/test/chat", "chat"),
             ("/raw", "raw"),
+            ("/test/morning", "morning"),
         ]
         assert f'data-default-view="{default_view}"' in html
         assert re.search(
@@ -403,7 +412,7 @@ def test_integrated_workspace_uses_one_versioned_shell_and_content_frame() -> No
     assert 'data-ui-shell="v4"' in html
     assert 'class="dialogue-lab-shell"' in html
     assert html.count('class="workspace-content"') == 1
-    assert html.count('class="workspace-view ') == 3
+    assert html.count('class="workspace-view ') == 4
     assert "workspace-view-heading" in html
     assert "--ui-shell-version: 4;" in html
 
@@ -417,11 +426,12 @@ def test_integrated_workspace_injects_canonical_shell_only_once() -> None:
 def test_integrated_workspace_gives_each_view_the_same_title_region() -> None:
     html = TestClient(app).get("/test").text
 
-    assert html.count('class="workspace-view-heading"') == 3
+    assert html.count('class="workspace-view-heading"') == 4
     assert '<div class="heading">' not in html
     assert '<h1>测试例浏览</h1>' in html
     assert '<h1>单次聊天</h1>' in html
     assert '<h1>原始对白参照</h1>' in html
+    assert '<h1>晨间预设</h1>' in html
     assert html.count("--ui-shell-version: 4;") == 1
     assert html.count("grid-template-columns:minmax(220px,1fr) auto auto") == 1
     assert "--ui-shell-version: 2;" not in html

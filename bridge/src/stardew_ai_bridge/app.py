@@ -23,6 +23,8 @@ from .models import (
     MorningMessagePlan,
     MorningPlanRequest,
     MorningPlanResponse,
+    MorningScenarioListResponse,
+    MorningScenarioView,
     ProviderResult,
     ProviderUsage,
 )
@@ -235,6 +237,17 @@ def test_page() -> str:
 @app.get("/test/chat", response_class=HTMLResponse)
 def chat_test_page() -> str:
     return integrated_dialogue_lab_page("chat")
+
+
+@app.get("/test/morning", response_class=HTMLResponse)
+def morning_test_page() -> str:
+    """晨间预设的**游戏外**审阅页：看文本、试着接一句。
+
+    **为什么要有它**：预设的价值全在措辞上，而它只在某一天的早上出现一次，
+    靠开游戏来审等于每次都要过一整天的存档。这个页面把「看文本」和「试一句」
+    搬到浏览器里；真正只能靠游戏验的，只剩「`DayStarted` 会不会触发」。
+    """
+    return integrated_dialogue_lab_page("morning")
 
 
 @app.get("/raw", response_class=HTMLResponse)
@@ -498,6 +511,16 @@ def preview_context(payload: dict[str, object]) -> dict[str, object]:
             for message in prompt
         ],
     }
+    # 这一轮的历史首条如果命中某条晨间预设的开场白，就把它的 id 回显出来。
+    #
+    # **为什么要单独回显**：认人靠逐字比对（见 `match_scenario_by_history`），
+    # 而它对失败是**静默**的——没认出时只是少一层方向约束，回复照样正常生成。
+    # 测试页必须能一眼看出「这次到底认出来了没有」，否则试聊的效果无从归因，
+    # 正是本项目反复记的那类「数据写对但永不生效」。
+    matched_morning = match_scenario_by_history(
+        morning_scenario_store, payload.get("history")
+    )
+    response["morningScenarioId"] = matched_morning.id if matched_morning else None
     if "interaction" in context:
         response["interaction"] = context["interaction"]
     if "relationshipWorld" in context:
@@ -607,6 +630,16 @@ def _record_dialogue(
         return
 
 
+# 游戏端送进来的是 `Game1.Date.TotalDays`（第 1 年春季第 1 天 = 0），
+# 而 `data/scenarios/morning.json` 的 `absoluteDay.dayIndex` 写的是人话「第几天」。
+# 两者差 1。**2026-09-26 实机踩到**：预设挂在「第 2 天」、玩家也真的过到了第 2 天、
+# Bridge 也真的被调用了两次（`POST /api/morning/plan` → 200 OK），
+# 但游戏里一条消息都没有 —— 送进来的是 1、配置等的是 2，永远匹配不上。
+# 换算只在这一处做：`for_day()` 保持「按配置里的天数取」的纯语义，
+# 由端点负责把 API 的 0 基计数器翻成人话天数。
+_MORNING_DAY_OFFSET = 1
+
+
 @app.post("/api/morning/plan", response_model=MorningPlanResponse)
 def morning_plan(request: MorningPlanRequest) -> MorningPlanResponse:
     """游戏端在 `DayStarted` 时来问：今天早上有没有人要主动开口。
@@ -620,7 +653,7 @@ def morning_plan(request: MorningPlanRequest) -> MorningPlanResponse:
     `prompts.py` 是靠「历史首条 == 某条 opening」来认出「这是晨间对话的后续」的，
     两端一旦不一致，方向约束就会静默失效（这正是 ㉑ 那类「数据写对但永不生效」）。
     """
-    scenario = morning_scenario_store.for_day(request.day_index)
+    scenario = morning_scenario_store.for_day(request.day_index + _MORNING_DAY_OFFSET)
     if scenario is None:
         # 空数组而不是 404：绝大多数日子本来就没有预设消息，
         # 「今天没人发」是正常结果，不是错误。
@@ -633,6 +666,33 @@ def morning_plan(request: MorningPlanRequest) -> MorningPlanResponse:
                 scenario_id=scenario.id,
                 opening=scenario.opening,
             )
+        ]
+    )
+
+
+@app.get("/api/morning/scenarios", response_model=MorningScenarioListResponse)
+def morning_scenarios() -> MorningScenarioListResponse:
+    """列出全部晨间预设的**完整文本**，供 `/test/morning` 审阅。
+
+    **为什么不再读一次文件**：内容只有一个来源（`morning_scenario_store`），
+    页面上看到的就是游戏端会收到的。真去读第二遍文件，两处就会各自漂移——
+    而这个功能最怕的正是「页面看到的和游戏里发的不是同一句」。
+    """
+    return MorningScenarioListResponse(
+        scenarios=[
+            MorningScenarioView(
+                scenario_id=scenario.id,
+                npc_id=scenario.npc_id,
+                display_name=scenario.display_name,
+                day_index=scenario.day_index,
+                opening=scenario.opening,
+                opening_source=scenario.opening_source,
+                direction=scenario.direction,
+                boundaries=list(scenario.boundaries),
+                closing_hook=scenario.closing_hook,
+                allowed_kinds=list(scenario.allowed_kinds),
+            )
+            for scenario in morning_scenario_store.scenarios
         ]
     )
 
@@ -701,6 +761,9 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         provider=result.provider,
         fallback=result.fallback,
         latencyMs=latency_ms,
+        # 延迟是**含重试的总耗时**，所以必须同时说出「发了几次」——
+        # 否则审阅页上看到的 3.2s 与 21.1s 无法区分是上游慢还是重试叠加。
+        requestCount=len(attempts),
         warnings=_limit_warnings(result.warnings),
         usage=_merge_provider_usages(item.usage for item in attempts),
         openLoop=result.open_loop if not result.fallback else None,

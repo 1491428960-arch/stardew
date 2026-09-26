@@ -55,6 +55,10 @@ class MorningScenario:
     closing_hook: str = ""
     allowed_kinds: tuple[str, ...] = ()
     trigger: Mapping[str, Any] = field(default_factory=dict)
+    # 开场白的**原话出处**（数据文件里的 `_openingSource`）。
+    # 它不参与运行，只给游戏外测试页审阅用：这句话写死在文件里，
+    # 得让人一眼看出它是从哪条原话来的——见模块 docstring 硬约束第 1 条。
+    opening_source: str = ""
 
     @property
     def day_index(self) -> int | None:
@@ -104,6 +108,7 @@ def parse_scenario(raw: Mapping[str, Any]) -> MorningScenario:
         closing_hook=str(raw.get("closingHook") or "").strip(),
         allowed_kinds=_text_tuple(raw.get("allowedKinds")),
         trigger=dict(trigger) if isinstance(trigger, Mapping) else {},
+        opening_source=str(raw.get("_openingSource") or "").strip(),
     )
 
 

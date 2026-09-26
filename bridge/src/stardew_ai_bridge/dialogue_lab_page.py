@@ -102,7 +102,7 @@ DIALOGUE_LAB_HTML = """<!doctype html>
     function normalizeHistory(value) { return Array.isArray(value) ? value.filter((item)=>item&&["user","assistant"].includes(item.role)&&typeof item.content==="string").map((item)=>({role:item.role,content:item.content})).slice(-50) : []; }
     function normalizeUsage(value) { if(!value||typeof value!=="object") return null; const usage={}; ["inputTokens","outputTokens","totalTokens"].forEach((key)=>{if(Number.isInteger(value[key])&&value[key]>=0)usage[key]=value[key];}); return Object.keys(usage).length?usage:null; }
     function formatUsage(usage) { if(!usage) return "—"; const parts=[]; if(Number.isInteger(usage.inputTokens))parts.push(`输入 ${usage.inputTokens}`); if(Number.isInteger(usage.outputTokens))parts.push(`输出 ${usage.outputTokens}`); if(Number.isInteger(usage.totalTokens))parts.push(`合计 ${usage.totalTokens}`); return parts.length?parts.join(" / "):"—"; }
-    function normalizeDiagnostics(value) { if(!value||typeof value!=="object") return null; return {provider:typeof value.provider==="string"?value.provider:"",latencyMs:Number.isFinite(value.latencyMs)?value.latencyMs:null,fallback:Boolean(value.fallback),warnings:Array.isArray(value.warnings)?value.warnings.filter((item)=>typeof item==="string").slice(0,20):[],reply:typeof value.reply==="string"?value.reply:"",usage:normalizeUsage(value.usage)}; }
+    function normalizeDiagnostics(value) { if(!value||typeof value!=="object") return null; return {provider:typeof value.provider==="string"?value.provider:"",latencyMs:Number.isFinite(value.latencyMs)?value.latencyMs:null,requestCount:Number.isFinite(value.requestCount)?value.requestCount:null,fallback:Boolean(value.fallback),warnings:Array.isArray(value.warnings)?value.warnings.filter((item)=>typeof item==="string").slice(0,20):[],reply:typeof value.reply==="string"?value.reply:"",usage:normalizeUsage(value.usage)}; }
     function historyForNpc(npcId) { return normalizeHistory(state.messages.filter((item)=>canonicalNpcId(item.npcId)===canonicalNpcId(npcId)).map((item)=>({role:item.role==="user"?"user":"assistant",content:item.text}))); }
     async function saveSession() { const session={version:SESSION_VERSION,messages:state.messages,history:state.history,lastDiagnostics:normalizeDiagnostics(state.lastDiagnostics),compactPrompt:compactPathEnabled()}; try { const response=await fetch("/api/dialogue/session",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(session)}); if(!response.ok) throw new Error("本地会话保存失败"); return true; } catch (_) { return false; } }
     async function loadSession() { try { const response=await fetch("/api/dialogue/session"); if(!response.ok) throw new Error("本地会话加载失败"); const session=await response.json(); if(!session||session.version!==SESSION_VERSION){state.messages=[];state.history=[];state.initialHistory=[];state.lastDiagnostics=null;state.lastPayload=null;applyCompactPathPreference(true);return;} state.messages=normalizeMessages(session.messages);state.history=normalizeHistory(session.history);state.initialHistory=[];state.lastDiagnostics=normalizeDiagnostics(session.lastDiagnostics);state.lastPayload=null;applyCompactPathPreference(session.compactPrompt!==false); } catch (_) { state.messages=[];state.history=[];state.initialHistory=[];state.lastDiagnostics=null;state.lastPayload=null;applyCompactPathPreference(true); } }
@@ -167,7 +167,7 @@ DIALOGUE_LAB_HTML = """<!doctype html>
       });
       return [...counts.entries()].map(([label, count]) => `${label}${count > 1 ? `（${count} 次）` : ""}`);
     }
-    function renderDiagnostics(){const data=state.lastDiagnostics;$("provider-value").textContent=data?.provider||"—";$("latency-value").textContent=Number.isFinite(data?.latencyMs)?`${data.latencyMs} ms`:"—";$("fallback-value").textContent=data?data.fallback?"是":"否":"—";$("usage-value").textContent=formatUsage(data?.usage);const warningLines=formatChatWarnings(data?.warnings);$("warnings").textContent=warningLines.length?`提示：${warningLines.join("；")}`:"";$("raw-request").textContent=state.lastPayload?JSON.stringify(state.lastPayload,null,2):data?"会话已恢复；原始请求未保存。":"尚未发送请求。";$("reply").textContent=data?.reply||"";}
+    function renderDiagnostics(){const data=state.lastDiagnostics;$("provider-value").textContent=data?.provider||"—";$("latency-value").textContent=Number.isFinite(data?.latencyMs)?`${data.latencyMs} ms${Number.isFinite(data?.requestCount)&&data.requestCount>1?`（请求 ${data.requestCount} 次）`:""}`:"—";$("fallback-value").textContent=data?data.fallback?"是":"否":"—";$("usage-value").textContent=formatUsage(data?.usage);const warningLines=formatChatWarnings(data?.warnings);$("warnings").textContent=warningLines.length?`提示：${warningLines.join("；")}`:"";$("raw-request").textContent=state.lastPayload?JSON.stringify(state.lastPayload,null,2):data?"会话已恢复；原始请求未保存。":"尚未发送请求。";$("reply").textContent=data?.reply||"";}
     function updateDiagnostics(data,payload){state.lastDiagnostics=normalizeDiagnostics(data);state.lastPayload=payload;renderDiagnostics();}
     function renderContext(context){const summary=$("context-summary");summary.replaceChildren();const identity=context.personaSummary||{};const evidenceSources=[...new Set((context.speechEvidence||[]).map((item)=>item?.sourceMod).filter(Boolean))];const rows=[["预览路径",context.compactPrompt?"游戏端（紧凑）":"完整（非游戏端）"],["角色",identity.displayName||identity.npcId||"—"],["关系阶段",identity.stageProfile?.stage||"由当前场景推断"],["来源 Mod",(context.modSources||[]).join("、")||"—"],["原文证据来源",evidenceSources.join("、")||"未取到来源原文"],["事实",`${(context.recentFacts||[]).length} 条`],["风格证据",`${(context.speechEvidence||context.styleSamples||[]).length} 条`],["故事事件",`${(context.storyEvents||[]).length} 条`]];for(const [label,value] of rows){const row=document.createElement("div");const strong=document.createElement("strong");strong.textContent=label;row.append(strong,document.createTextNode(`：${value}`));summary.append(row);}}
     function errorText(data,fallback){if(Array.isArray(data?.detail))return data.detail.map((item)=>item.msg||"请求参数错误").join("；");return data?.detail||data?.message||fallback;}
@@ -1733,6 +1733,53 @@ def _build_integrated_dialogue_lab_template() -> str:
         )
     )
     integrated_styles = """
+    /* 晨间预设视图：左边挑预设，右边上半是文本、下半是试接一句。 */
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-layout {
+      display:grid; grid-template-columns:minmax(200px,.72fr) minmax(0,2fr); gap:12px; flex:1; min-height:0;
+    }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-list,
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-detail { min-height:0; }
+    /* 右栏：文本区吃掉剩余高度并自己滚动，试聊面板**固定在底部**。
+       反过来（文本 auto、试聊 1fr）时，预设文本一长就把「发一句」挤到滚动区外面，
+       打开页面根本看不到入口——而试聊正是这个视图的主要动作。 */
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-detail { display:grid; grid-template-rows:minmax(0,1fr) auto; gap:12px; min-height:0; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-list,
+    #dialogue-lab-workspace [data-workspace-view="morning"] #morning-text-panel { display:flex; flex-direction:column; min-height:0; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] #morning-text-panel .panel-body,
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-list .panel-body { min-height:0; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-list .panel-body { display:flex; flex-direction:column; gap:6px; overflow-y:auto; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-item {
+      display:grid; gap:2px; padding:9px 10px; border:1px solid transparent; border-radius:8px;
+      color:var(--ink); background:#fff; text-align:left; cursor:pointer;
+    }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-item:hover { border-color:#9cbaa4; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-item.active { border-color:#98b99f; color:var(--green); background:var(--green-soft); }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-item span { color:#6d796f; font-size:11px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-item small { color:#93a096; font-size:10px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-block { margin-bottom:11px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-block h3 { margin:0 0 4px; color:#5f7064; font-size:10px; letter-spacing:.06em; text-transform:uppercase; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-block p { margin:0; color:var(--ink); font-size:12px; line-height:1.6; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-block ul { margin:0; padding-left:16px; color:var(--ink); font-size:12px; line-height:1.6; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-opening { font-size:14px; line-height:1.75; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-source { color:#7d8a80; font-size:11px; word-break:break-all; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-kinds { color:#6d796f; font-size:11px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-note { margin:0 0 9px; color:#7d8a80; font-size:11px; line-height:1.55; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-field { display:block; margin-bottom:9px; color:#5f7064; font-size:10px; font-weight:700; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-field textarea,
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-field select { display:block; width:100%; margin-top:4px; padding:7px 8px; border:1px solid #d9e2d8; border-radius:7px; color:var(--ink); background:#fff; font-size:12px; font-weight:400; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-actions { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:end; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-provider { margin-bottom:0; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-result { margin-top:11px; padding:10px; border:1px solid #e0e8df; border-radius:9px; background:#f8faf6; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-bubble .morning-who { display:block; margin-bottom:3px; color:#849287; font-size:10px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-bubble p { margin:0; color:var(--ink); font-size:12px; line-height:1.7; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-meta { margin:7px 0 0; color:#93a096; font-size:10px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] .morning-empty { margin:0; color:#7d8a80; font-size:11px; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] #morning-match.is-ok { color:#3f7a4f; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] #morning-match.is-warn { color:#8a6425; }
+    #dialogue-lab-workspace [data-workspace-view="morning"] #morning-match.is-bad { color:#a2503f; }
+    @media (max-width:1050px) {
+      #dialogue-lab-workspace [data-workspace-view="morning"] .morning-layout { grid-template-columns:1fr; }
+    }
     #dialogue-lab-workspace.dialogue-lab-shell {
       height:100vh; max-width:1560px; margin:0 auto; padding:14px 18px;
       display:flex; flex-direction:column;
@@ -1828,6 +1875,7 @@ def _build_integrated_dialogue_lab_template() -> str:
         <a class="workspace-tab" href="/test" data-view-target="cases" __CASES_CURRENT__>测试例浏览</a>
         <a class="workspace-tab" href="/test/chat" data-view-target="chat" __CHAT_CURRENT__>单次聊天</a>
         <a class="workspace-tab" href="/raw" data-view-target="raw" __RAW_CURRENT__>原始对白</a>
+        <a class="workspace-tab" href="/test/morning" data-view-target="morning" __MORNING_CURRENT__>晨间预设</a>
         <a class="workspace-tab" href="/test/group">多人实验</a>
       </nav>
     """
@@ -1855,6 +1903,253 @@ def _build_integrated_dialogue_lab_template() -> str:
         <div><h1>原始对白参照</h1><p>查看已解析原文，作为角色语气和事实边界的人工参照。</p></div>
         <div class="heading-actions"><a class="secondary-link" href="/test" data-view-target="cases">回到测试例</a></div>
       </div>
+    """
+    morning_heading = """
+      <div class="workspace-view-heading">
+        <div><h1>晨间预设</h1><p>审预设写死的文本，并以这条开场为第一句试接一轮——不需要开游戏。</p></div>
+        <div class="heading-actions">
+          <button class="secondary" id="morning-reload" type="button">重新读取文本</button>
+        </div>
+      </div>
+    """
+    morning_inner = """
+      <div class="morning-layout">
+        <div class="morning-list panel">
+          <div class="panel-header"><strong>预设</strong><span id="morning-count">读取中……</span></div>
+          <div class="panel-body" id="morning-list-body"><p class="morning-empty">正在读取预设……</p></div>
+        </div>
+        <div class="morning-detail">
+          <div class="panel" id="morning-text-panel">
+            <div class="panel-header"><strong>文本</strong><span id="morning-scenario-id">—</span></div>
+            <div class="panel-body" id="morning-text-body"><p class="morning-empty">正在读取预设……</p></div>
+          </div>
+          <div class="panel" id="morning-tryout-panel">
+            <div class="panel-header"><strong>试接一句</strong><span id="morning-match">—</span></div>
+            <div class="panel-body">
+              <p class="morning-note">这条开场会作为<strong>历史首条助手消息</strong>发给模型，和游戏里玩家隔天早上回应它时收到的上下文同源。
+              差别只在：这里不带当天的游戏状态（季节／时间／地点／好感度），游戏里会带。</p>
+              <label class="morning-field" for="morning-input">玩家回应
+                <textarea id="morning-input" rows="3" placeholder="例如：还行吧，就是那张床一翻身就响。"></textarea>
+              </label>
+              <div class="morning-actions">
+                <label class="morning-field morning-provider" for="morning-provider">模型
+                  <select id="morning-provider">
+                    <option value="cloud">cloud（真实模型，会消耗额度）</option>
+                    <option value="fake">fake（假回复，只验链路不通模型）</option>
+                  </select>
+                </label>
+                <button class="btn gold" id="morning-send" type="button">发一句</button>
+              </div>
+              <div class="morning-result" id="morning-result" hidden></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    """
+    morning_script = """
+      const morningRoot = document.getElementById("morning-scenario-view");
+      const morningListBody = document.getElementById("morning-list-body");
+      const morningCount = document.getElementById("morning-count");
+      const morningIdLabel = document.getElementById("morning-scenario-id");
+      const morningTextBody = document.getElementById("morning-text-body");
+      const morningMatch = document.getElementById("morning-match");
+      const morningInput = document.getElementById("morning-input");
+      const morningProvider = document.getElementById("morning-provider");
+      const morningSendBtn = document.getElementById("morning-send");
+      const morningResult = document.getElementById("morning-result");
+      const morningReload = document.getElementById("morning-reload");
+      let morningScenarios = [];
+      let morningCurrent = null;
+
+      function morningEsc(value) {
+        return String(value === undefined || value === null ? "" : value)
+          .split("&").join("&amp;")
+          .split("<").join("&lt;")
+          .split(">").join("&gt;")
+          .split('"').join("&quot;")
+          .split("'").join("&#39;");
+      }
+
+      // 游戏端写进聊天记录的就是这条开场本身，所以「历史首条」就是它。
+      function morningHistory(opening) {
+        return [{ role: "assistant", content: opening }];
+      }
+
+      function morningDayLabel(scenario) {
+        return scenario.dayIndex === null || scenario.dayIndex === undefined
+          ? "非按天触发"
+          : "第 " + scenario.dayIndex + " 天早上";
+      }
+
+      // 认人自检：拿这条开场当历史首条问一次 /api/context/preview。
+      // 它**不调模型**（只构建 prompt），所以可以随选随查；靠它把
+      // 「这次到底认出这是晨间对话的后续没有」变成看得见的一行——
+      // 逐字比对失败时是**静默**的，不这样回显就只能凭感觉猜。
+      async function morningCheckMatch(scenario) {
+        morningMatch.textContent = "检查中……";
+        morningMatch.className = "";
+        try {
+          const response = await fetch("/api/context/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              npcId: scenario.npcId,
+              displayName: scenario.displayName,
+              message: "（试接占位，只用于构建上下文）",
+              intent: "chat",
+              compactPrompt: true,
+              history: morningHistory(scenario.opening),
+            }),
+          });
+          if (!response.ok) { throw new Error("HTTP " + response.status); }
+          const data = await response.json();
+          if (data.morningScenarioId === scenario.scenarioId) {
+            morningMatch.textContent = "认得出：" + data.morningScenarioId;
+            morningMatch.className = "is-ok";
+          } else if (data.morningScenarioId) {
+            morningMatch.textContent = "认成了 " + data.morningScenarioId;
+            morningMatch.className = "is-warn";
+          } else {
+            morningMatch.textContent = "没认出这是晨间对话";
+            morningMatch.className = "is-bad";
+          }
+        } catch (error) {
+          morningMatch.textContent = "检查失败：" + error.message;
+          morningMatch.className = "is-bad";
+        }
+      }
+
+      // 方向／收尾／边界是**写给人看的元信息**，数据里用了 markdown 的粗体记号；
+      // 转义在前，所以这里只做这一种替换，不引入第三方渲染。
+      // 开场白**不做**这个处理——它是台词，页面上必须与游戏收到的逐字相同。
+      function morningRich(value) {
+        return morningEsc(value)
+          .split("**")
+          .map(function (part, index) { return index % 2 === 1 ? "<strong>" + part + "</strong>" : part; })
+          .join("");
+      }
+
+      function morningRenderText(scenario) {
+        const blocks = [];
+        blocks.push('<div class="morning-block"><h3>开场白</h3><p class="morning-opening">' + morningEsc(scenario.opening) + "</p></div>");
+        if (scenario.openingSource) {
+          blocks.push('<div class="morning-block"><h3>原话出处</h3><p class="morning-source">' + morningEsc(scenario.openingSource) + "</p></div>");
+        }
+        if (scenario.direction) {
+          blocks.push('<div class="morning-block"><h3>方向</h3><p>' + morningRich(scenario.direction) + "</p></div>");
+        }
+        if (scenario.boundaries && scenario.boundaries.length) {
+          blocks.push('<div class="morning-block"><h3>边界</h3><ul>' + scenario.boundaries.map(function (line) { return "<li>" + morningRich(line) + "</li>"; }).join("") + "</ul></div>");
+        }
+        if (scenario.closingHook) {
+          blocks.push('<div class="morning-block"><h3>收尾</h3><p>' + morningRich(scenario.closingHook) + "</p></div>");
+        }
+        if (scenario.allowedKinds && scenario.allowedKinds.length) {
+          blocks.push('<div class="morning-block"><h3>允许类型</h3><p class="morning-kinds">' + scenario.allowedKinds.map(morningEsc).join(" · ") + "</p></div>");
+        }
+        blocks.push('<div class="morning-block"><h3>触发</h3><p>' + morningEsc(morningDayLabel(scenario)) + "</p></div>");
+        morningTextBody.innerHTML = blocks.join("");
+      }
+
+      function morningSelect(index) {
+        const scenario = morningScenarios[index];
+        if (!scenario) { return; }
+        morningCurrent = scenario;
+        Array.prototype.forEach.call(morningListBody.querySelectorAll("[data-morning-index]"), function (button) {
+          button.classList.toggle("active", Number(button.dataset.morningIndex) === index);
+        });
+        morningIdLabel.textContent = scenario.scenarioId;
+        morningRenderText(scenario);
+        morningResult.hidden = true;
+        morningResult.innerHTML = "";
+        morningCheckMatch(scenario);
+      }
+
+      async function morningLoad() {
+        morningListBody.innerHTML = '<p class="morning-empty">正在读取预设……</p>';
+        morningCount.textContent = "读取中……";
+        try {
+          const response = await fetch("/api/morning/scenarios");
+          if (!response.ok) { throw new Error("HTTP " + response.status); }
+          const data = await response.json();
+          morningScenarios = Array.isArray(data.scenarios) ? data.scenarios : [];
+        } catch (error) {
+          morningScenarios = [];
+          morningCount.textContent = "读取失败";
+          morningListBody.innerHTML = '<p class="morning-empty">读取失败：' + morningEsc(error.message) + "</p>";
+          return;
+        }
+        morningCount.textContent = morningScenarios.length + " 条";
+        if (!morningScenarios.length) {
+          morningListBody.innerHTML = '<p class="morning-empty">data/scenarios/morning.json 里还没有预设——没有它整条链路照常工作，只是早上没人主动开口。</p>';
+          return;
+        }
+        morningListBody.innerHTML = morningScenarios.map(function (scenario, index) {
+          return '<button type="button" class="morning-item" data-morning-index="' + index + '">' +
+            "<strong>" + morningEsc(scenario.displayName) + "</strong>" +
+            "<span>" + morningEsc(morningDayLabel(scenario)) + "</span>" +
+            "<small>" + morningEsc(scenario.scenarioId) + "</small>" +
+            "</button>";
+        }).join("");
+        Array.prototype.forEach.call(morningListBody.querySelectorAll("[data-morning-index]"), function (button) {
+          button.addEventListener("click", function () { morningSelect(Number(button.dataset.morningIndex)); });
+        });
+        morningSelect(0);
+      }
+
+      async function morningSendOnce() {
+        const scenario = morningCurrent;
+        if (!scenario) { return; }
+        const message = String(morningInput.value || "").trim();
+        if (!message) { morningInput.focus(); return; }
+        morningSendBtn.disabled = true;
+        morningResult.hidden = false;
+        morningResult.innerHTML = '<p class="morning-empty">正在生成……</p>';
+        const startedAt = Date.now();
+        try {
+          const response = await fetch("/api/dialogue/test", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              npcId: scenario.npcId,
+              displayName: scenario.displayName,
+              message: message,
+              provider: morningProvider.value,
+              intent: "chat",
+              compactPrompt: true,
+              history: morningHistory(scenario.opening),
+            }),
+          });
+          const data = await response.json().catch(function () { return {}; });
+          if (!response.ok) { throw new Error("HTTP " + response.status); }
+          const meta = ["provider=" + morningEsc(data.provider)];
+          if (data.latencyMs !== undefined && data.latencyMs !== null) { meta.push("latency=" + data.latencyMs + "ms"); }
+          // 延迟含重试；不显示次数就看不出「慢」是上游慢还是重试叠加。
+          if (Number.isFinite(data.requestCount) && data.requestCount > 1) { meta.push("请求 " + data.requestCount + " 次"); }
+          if (data.fallback) { meta.push("fallback=true"); }
+          // 只报条数、不贴原文：warning 是机器码，工作台其余页面都先翻成人话
+          // 再显示（见 chat 页的 `formatChatWarnings`）。贴原文既看不懂，
+          // 也会让「warnings 必须中文化」那条护栏失效。
+          if (Array.isArray(data.warnings) && data.warnings.length) { meta.push("质量提示 " + data.warnings.length + " 条"); }
+          meta.push("往返=" + (Date.now() - startedAt) + "ms");
+          morningResult.innerHTML =
+            '<div class="morning-bubble"><span class="morning-who">' + morningEsc(scenario.displayName) + "</span><p>" + morningEsc(data.reply) + "</p></div>" +
+            '<p class="morning-meta">' + meta.join(" · ") + "</p>";
+        } catch (error) {
+          morningResult.innerHTML = '<p class="morning-empty">请求失败：' + morningEsc(error.message) + "</p>";
+        } finally {
+          morningSendBtn.disabled = false;
+        }
+      }
+
+      if (morningRoot) {
+        morningReload.addEventListener("click", morningLoad);
+        morningSendBtn.addEventListener("click", morningSendOnce);
+        morningInput.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { morningSendOnce(); }
+        });
+        morningLoad();
+      }
     """
 
     return (
@@ -1894,6 +2189,10 @@ def _build_integrated_dialogue_lab_template() -> str:
         + raw_heading
         + raw_inner
         + "    </section>\n"
+        "    <section id=\"morning-scenario-view\" class=\"workspace-view __MORNING_CLASS__\" data-workspace-view=\"morning\">\n"
+        + morning_heading
+        + morning_inner
+        + "    </section>\n"
         + "    </div>\n"
         + "    "
         + _extract_case_toast(_DIALOGUE_CASE_BROWSER_SOURCE_HTML)
@@ -1906,6 +2205,9 @@ def _build_integrated_dialogue_lab_template() -> str:
         + "\n})();\n</script>\n"
         "  <script>\n(function () {\n"
         + raw_script
+        + "\n})();\n</script>\n"
+        "  <script>\n(function () {\n"
+        + morning_script
         + "\n})();\n</script>\n"
         "  <script>\n"
         "    (function () {\n"
@@ -1969,15 +2271,21 @@ def _build_integrated_dialogue_lab_template() -> str:
     )
 
 
+# 工作台的视图清单。**加视图时这里和模板里的 nav 要一起改**：视图的显隐由 DOM 里的
+# `[data-workspace-view]` 决定（前端自己收集），但首屏高亮与 `?view=` 的合法值来自这份
+# 清单——漏改的表现是「页面切得过去，但直接打开 /test/morning 时高亮还落在测试例上」。
+_WORKSPACE_VIEWS = ("cases", "chat", "raw", "morning")
+
+
 _INTEGRATED_DIALOGUE_LAB_TEMPLATE = _build_integrated_dialogue_lab_template()
 
 
 def integrated_dialogue_lab_page(default_view: str = "cases") -> str:
     """返回单页工作台；旧路由只决定首次打开的视图。"""
 
-    view = default_view if default_view in {"cases", "chat", "raw"} else "cases"
+    view = default_view if default_view in _WORKSPACE_VIEWS else "cases"
     html = _INTEGRATED_DIALOGUE_LAB_TEMPLATE.replace("__DEFAULT_VIEW__", view)
-    for name in ("cases", "chat", "raw"):
+    for name in _WORKSPACE_VIEWS:
         html = html.replace(
             f"__{name.upper()}_CLASS__",
             "is-active" if name == view else "",
