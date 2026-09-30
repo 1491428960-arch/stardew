@@ -815,7 +815,7 @@ def test_prompt_discourages_mechanical_voice_templates_and_bookish_summaries() -
         message for message in messages if message["name"] == "safety_rules"
     )
 
-    assert "15–80 字" in safety_message["content"]
+    assert "1–2 句" in safety_message["content"]
     assert "不要机械拼接 voiceStyle 中的开场、收尾或口头语" in safety_message[
         "content"
     ]
@@ -1082,7 +1082,7 @@ def test_prompt_teaches_voice_imitation_and_in_game_brevity() -> None:
     style = next(message for message in messages if message["name"] == "style_evidence")
 
     assert "模仿" in safety["content"]
-    assert "1–3 句" in safety["content"]
+    assert "1–2 句" in safety["content"]
     assert "不要用环境描写开头" in safety["content"]
     assert "不要主动引入玩家未提到的魔法设定" in safety["content"]
     assert "只用于模仿" in speech["content"]
@@ -1514,7 +1514,7 @@ def test_high_stage_chat_prompt_includes_conversation_lead_contract(
     assert payload["conversationLead"]["intent"] == "chat"
     assert payload["conversationLead"]["npcId"] == "Alex"
     assert payload["conversationLead"]["initiativeMode"]
-    assert "先回答当前输入" in payload["instruction"]
+    assert "先落这个角色自己的态度或反应" in payload["instruction"]
     assert "你呢" in payload["instruction"]
     if expected_required == "optional":
         assert "可以按话题自然递出" in payload["instruction"]
@@ -1777,7 +1777,14 @@ def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:
         (PERSONAS_DIR / "sve.json").read_text(encoding="utf-8")
     )["personas"]["Sophia"]["voiceStyle"]["preferredTopics"]
     assert source, "数据源读空了"
-    for topic in source:
+    # 2026-09-30：口径是**当轮窗口**。本用例 history 为空 ⇒ 第 0 轮；扩库后进 prompt 的
+    # 只有 `_topic_window_for_turn` 切出的 12 条窗口，整库不再送达 —— 而这条要验的
+    # "落点池接线到游戏路径"只能按窗口验（整库级别的要求早已不成立）。
+    from stardew_ai_bridge.prompts import _topic_window_for_turn
+
+    window = _topic_window_for_turn([str(topic) for topic in source], 0)
+    assert len(window) == 12, f"窗口宽度变了：{len(window)}"
+    for topic in window:
         assert topic in guidance, topic
 
 
@@ -1811,10 +1818,10 @@ def test_high_stage_prompt_projects_one_role_move_instead_of_a_full_script(
     lead_text = lead["content"]
     fingerprint = stage_policy["voiceFingerprint"]
 
-    assert "直接回答后最多追加一个角色化动作" in stage_text
+    assert "角色自己的态度或反应就写在台词里" in stage_text
     assert "不要强行同时解释、表达情绪、追问和安排" in stage_text
     assert fingerprint in stage_text
-    assert "直接回答后最多追加一个角色化动作" in lead_text
+    assert "角色自己的态度或反应就写在台词里" in lead_text
     assert "不要强行同时解释、表达情绪、追问和安排" in lead_text
     assert fingerprint in lead_text
 
@@ -1952,7 +1959,7 @@ def test_final_affection_check_no_longer_requires_strong_personal_reason_every_r
     messages = PromptBuilder().build(context, "把茶端过来，我们看看今晚的记录。")
     final = next(message for message in messages if message["name"] == "affection_priority_final")
 
-    assert "优先接住当前话题" in final["content"]
+    assert "优先用角色自己的态度接住当前话题" in final["content"]
     assert "不要求每轮使用强专属情话" in final["content"]
     assert "因为是你" not in final["content"]
 
@@ -5088,7 +5095,41 @@ def test_prompt_limits_voice_refs_and_knowledge_facts_in_compact_context() -> No
     # docs/report-perspective-diagnosis-2026-09-26.md），该卡因此长了约 36 个字符。
     # 这个阈值是**防膨胀的守卫**，不是精确预算 —— 真正管字段裁剪的是上面三条断言，
     # 所以按实际增量同步，而不是为了压回旧值去删 instruction 的语义。
-    assert len(rendered) < 4400
+    #
+    # 2026-09-27：4400 → 4420。任务类型翻转（方向 A：把「回答玩家的问题」降级为
+    # 「生成这个角色此刻会说的话」）让 compact 路径长了 38 个字符，同样按实际增量同步。
+    # 2026-09-29：4460 → 4480 → 4520。第一跳补「真的答」的定义（把动作写出来、不复述玩家整句），
+    # 治的是 NPC 遇到动作请求时不写动作、只会抄回玩家要求：历史批次 7014 轮里有 3 例
+    # mechanicalRestatement，全是这类逐字复读。第二跳补「不要只把玩家说过的内容应一声」，
+    # 治的是语义级原地打转 —— 现有指标对它完全失明（那轮 mechRestate=False、progression.overlap=0.0、
+    # score.tags 为空，系统判为无可挑剔，而人读判为「没推进对话」）。两跳都先精简文案再按实际
+    # 增量同步阈值，不为了压回旧值去删既有 instruction 语义。
+    #
+    # 2026-09-29（第三跳，**已回退**）：曾把第二跳那句换成正向的「每一轮都必须给玩家一个他还不知道的东西」。
+    # 实测**证伪**：wizard 三轮全部退化成「复述＋一个明天」（`好。那些记录等明天处理。过来吧。`），
+    # 人读判「基本上全是复述玩家的话，一点话题没推进」。机制是模型把「一件你要去做的事」
+    # 实现成「把我刚听你说的事延期到明天」—— 而 prompt 下文明写允许「NPC 可以把自己的记录、
+    # 笔记、研究、工作或普通事务延期」，它抓了这条许可当捷径。
+    #
+    # 2026-09-29（第四跳）：改成在第二跳原文后**追加一句正向的**，且**只给一个判据、不列出口菜单**。
+    # 用户裁定的验收标准是「玩家接不接得下去」（原话「如果全是这种我要不知道回什么了」），
+    # 不是「有没有新东西」—— p4 那轮 `坐这儿，还是你想去窗边？` 给了玩家可选项所以好，
+    # p5 那轮 `那些记录等明天处理。过来吧。` 玩家只能回「好」。第三跳给三个出口、
+    # 模型挑了最省力的那个，所以这次只写「接得上」这一条判据。
+    #
+    # 2026-09-29（第五跳）：第四跳原文是「他顺着能应一句，或者有个具体的东西可以接」，
+    # 实测**「顺着能应一句」被读成了对最短确认的许可** —— wizard t2 在四条路径上全塌
+    # （一二跳 36 字 → 第三跳 13 → 第四跳 compact 10 ／ full 15），而它正是唯一在
+    # 「玩家输入是纯事务指令」时退化的轮次（t1/t3 的输入自带情感或对抗，模型就有东西可接）。
+    # ⇒ 删掉松口的半句，压成单判据「总得有个具体的由头」。阈值 4560 → 4540（实测渲染 4521）。
+    # 批次与逐轮对照：artifacts/character-quality-eval/verify-action-process-7-20260929/（compare4.html）
+    #
+    # 2026-09-29（回退第五跳）：wizard 那三轮用例本身是「三轮都提记录」的坏用例——
+    # 玩家第一轮已经解决的事第二轮又提一遍，NPC 本就没东西可推进，那个「塌」是用例逼出来的。
+    # 用例改成人话的递进后重测（verify-action-process-9），wizard t2 从 10 字变成 23 字
+    # 且承接得住，要治的问题根本不在措辞。为在同一批新用例上做干净的 A/B，先回到第四跳原文。
+    # 阈值 4540 → 4560（实测渲染 4533）。
+    assert len(rendered) < 4560
 
 
 def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
@@ -6823,7 +6864,7 @@ def test_high_relationship_final_card_prioritizes_current_choice_before_new_sche
     )
 
     assert names.index("affection_priority_final") < names.index("player_input")
-    assert "先回答玩家已经给出的选项或当前动作" in final_check["content"]
+    assert "先接住玩家已经给出的选项或当前动作" in final_check["content"]
     assert "亲密信号只能嵌在同一话题" in final_check["content"]
     assert "不得另起未提到的未来社交安排" in final_check["content"]
     assert "不要把递入口理解成新的排期" in final_check["content"]
@@ -6860,10 +6901,10 @@ def test_prompt_adds_final_role_voice_contract_before_player_input() -> None:
     )
 
     assert names.index("final_role_voice_contract") < names.index("player_input")
-    assert "当前话题" in contract["content"]
+    assert "先说这个角色此刻会说的话" in contract["content"]
     assert "Alex" in contract["content"]
     assert "教练式说教" in contract["content"]
-    assert "玩家明确点名当前动作、地点或选择时，先回答这一项" in contract["content"]
+    assert "这一项要真的答，不能回避" in contract["content"]
     assert "不把当前动作改写成未来日期、预约或固定时长" in contract["content"]
 
 
@@ -7022,8 +7063,9 @@ def test_elliott_original_rhythm_drops_non_vanilla_marriage_voice_evidence() -> 
             *,
             relationship_stage: str = "",
             season: str = "",
+            completed_event_ids: object = None,
         ) -> dict[str, object]:
-            del relationship_stage, season
+            del relationship_stage, season, completed_event_ids
             del npc_id, source_mods
             return {
                 "voiceAnchors": [
@@ -7133,8 +7175,9 @@ def test_elliott_natural_topic_adds_short_vanilla_rhythm_samples() -> None:
             *,
             relationship_stage: str = "",
             season: str = "",
+            completed_event_ids: object = None,
         ) -> dict[str, object]:
-            del relationship_stage, season
+            del relationship_stage, season, completed_event_ids
             del npc_id, source_mods
             return {
                 "voiceAnchors": [
@@ -7715,7 +7758,7 @@ def test_natural_topic_drops_affection_booster_and_softens_quality_instruction()
             "content"
         ]
     )
-    assert "表达预算：直接回答后最多追加一个角色化动作" not in stage["instruction"]
+    assert "角色自己的态度或反应就写在台词里" not in stage["instruction"]
 
 
 def test_natural_topic_opener_does_not_require_a_polished_handoff_or_fresh_quote() -> None:
@@ -8982,8 +9025,8 @@ def test_natural_mode_removes_fixed_length_and_redundant_generation_cards() -> N
         "content"
     ]
 
-    assert "中文 1–3 句" not in safety
-    assert "通常 15–80 字" not in safety
+    assert "中文通常" not in safety
+    assert "明确追问时才可适度展开" not in safety
     assert "按当前内容自然收住" in safety
     assert "voice_execution_card" not in names
     assert "final_role_voice_contract" not in names
@@ -9241,3 +9284,66 @@ def test_natural_literary_style_is_local_to_elliott_rhythm_card() -> None:
     assert "保留角色已有的文学感" not in shane_contract
     assert "具体意象" in elliott_card
     assert "比喻" in elliott_card
+
+
+def test_length_directives_never_widen_across_cards() -> None:
+    """长度指令必须同向 —— 2026-09-28 收束的守卫。
+
+    本轮实测：同一轮 prompt 里曾有**六处**长度指令，而只有
+    `stage_execution_card` 那条给硬数字，模型于是**取最宽的那条**。
+    收束后全部同向（1–2 句 / ≤40 字）。这里把「不许再出现更宽的写法」钉死，
+    防止以后有人只在单点放宽，又把它变回取宽。
+    """
+
+    #: 比通用（1–2 句 / 15–40 字）更宽的写法，一律不许出现。
+    wider_forms = ("1–3 句", "2–3 句", "15–80 字", "20–80 字")
+
+    builder = ContextBuilder()
+    cases = [
+        ("普通回复·stranger", {"friendshipHearts": 0}),
+        ("普通回复·friend", {"friendshipHearts": 6}),
+        ("普通回复·close", {"friendshipHearts": 8}),
+        (
+            "普通回复·married",
+            {
+                "friendshipHearts": 12,
+                "relationship": "married",
+                "marriageStatus": "married",
+            },
+        ),
+    ]
+    for label, values in cases:
+        context = builder.build("lewis", **values)
+        joined = "\n".join(
+            str(card.get("content", ""))
+            for card in PromptBuilder().build(context, "你好啊")
+        )
+        for wider in wider_forms:
+            assert wider not in joined, f"{label} 出现更宽的长度指令：{wider}"
+
+    # 主动搭话路径（`topic_request`）：与普通回复共用 `PromptBuilder.build`，
+    # 但卡集合不同（多 topic_response_contract，少 stage_execution_card），
+    # 曾自带一条独立的「1–3 句」。
+    topic_context = {
+        "npcIdentity": {
+            "npcId": "lewis",
+            "displayName": "Lewis",
+            "stageProfile": {"stage": "friend"},
+        },
+        "qualityContext": {"naturalMode": False},
+        "interaction": {"intent": "topic", "channel": "remote"},
+        "gameState": {},
+        "history": [],
+    }
+    topic_joined = "\n".join(
+        str(card.get("content", ""))
+        for card in PromptBuilder().build(topic_context, "")
+    )
+    for wider in wider_forms:
+        assert wider not in topic_joined, f"主动搭话路径出现更宽的长度指令：{wider}"
+    # 正面：收束后的数字确实在
+    assert "1–2 句" in topic_joined
+    assert "1–2 句" in "\n".join(
+        str(card.get("content", ""))
+        for card in PromptBuilder().build(builder.build("lewis", friendshipHearts=8), "你好啊")
+    )

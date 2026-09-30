@@ -2209,3 +2209,6041 @@ prompts._MAX_SPEECH_EVIDENCE              =   6   真正注入模型的切片
   **④「待办不回写状态」是本项目的复发型缺陷（本条即其产物）**：`docs/checklist-morning-in-game-2026-09-26.md` 第五节自己写着「走完之后更新 `active-work.md`：㉟ 末尾那条 ⏳ 就可以划掉了」——**那一步没执行**，⏳ 挂了两天，连累两轮接管读错。已回填三处：㉟ 的 ⏳ 改为 ✅（注明 09-27 用户确认）、清单加状态头并写明这条教训、本条目。**判据：待办类文档在完成的那一刻回写状态，否则它比没有文档更糟。**
 
   **⑤ 下一方向（用户口径）**：扩张**预设事件库**——用户明确指 `data/scenarios/` 那套**预设场景机制**，不是 `Data/Events` 的事件台词。现状只有 1 条 `day2-lewis`（第 2 天早上刘易斯）。⚠ **`MorningScenarioStore.for_day()` 只认 `trigger.kind == "absoluteDay"`**，其他 kind 的 `day_index` 返回 `None` ⇒ 季节／节日／好感阶段／事件后触发**都得先扩调度层**。用户同时给出工作方式偏好：**不要频繁换新会话**（原话「上下文丢的太厉害了」）。
+
+- 2026-09-27 **㊾ 接管后第一批实体修复：纯标点台词不再占证据配额 + 717 条事件证据找回 `eventId`** —— 用户口径「**清完这些我们得开始扩张预设事件库**」，本条目是清理项的前两件。两处都不是猜的：先只读探针定位，再红灯后实现。
+
+  **① 纯标点台词占证据窗口配额**。正式索引 `speechEvidence` 有 **259 条**只有标点或省略号的文本（`……`、`...`、`!?!?`、`…… -`、`…… ……`），其中 **233 条是 `event_dialogue`**。它们没有可模仿的句式与语气，却会占掉有限配额 —— `.tmp/probe_event_gate.py` 实测：Sophia 带全 22 个事件 ID 时返回 6 条，事件配额（`min(3, limit//3)` = 2）里**第 2 条就是 `……`**。修法：新增 `profile_index._dialogue_has_substance`（`any(ch.isalnum())`），在 `style_samples` 与 `speech_evidence` **两处**候选过滤中与 `has_dialogue_control_residue` 并列调用。**只判有无实义字符，不设长度下限** —— 实测 333 条「极短台词」（`不……`、`什么？`、`你好！`）无一被误伤。**副作用已记明**：`isalnum()` 对 `♪` 与 emoji 同样返回 False，故「只有符号的台词」也会被剔除。**修在查询层，不重建语料与索引，重启 Bridge 即生效。**
+
+  **② 717 条事件证据缺 `eventId`，被门控永久挡死**。根因：`corpus._EVENT_ID_PREFIX` 只认数字（`\d+`），而原版 `Data/Events` 里有 `mysteryBook` 这类字符串键。**先证两端都支持字符串**：C# 侧 `completedEventIds` 直接取 `player.eventsSeen`（字符串集合，`GameStateCollectorTests` 用 `"evt-sophia-1"`），Python 侧 `game_event_completed` 亦无数字限制 —— **只有提取器把它过滤掉了**。正则放宽为 `[^/\s_]+`（`_` 与 `/` 仍是既有分隔符，`8185290_Medicine/f Sophia 1200` 行为不变；该函数**全项目仅一个调用点**，在事件提取路径内，不碰日常对白）。语料层实测 **692 → 0**，新增 **83 种字符串事件 ID**（`AlexFourHeart`、`BreakCurse`、`Necromancer`…），总记录 14063 与事件记录 7391 **均不变**。⚠ 其中混入 `Parrot.RomRas`（mod UniqueID 而非事件名），无害（存档永远匹配不到）但说明这批并非全是真事件。
+
+  **③ 顺带纠正一条此前的误读**：曾把 `_dialogue_path_priority`（`/events/` → 4）当成「事件素材被压到窗口末尾」。实为误读 —— `_dialogue_key_priority` 对事件对白返回 **0**（最高档），且 `_select_evidence_candidates` 另有事件配额。**设计是有意的，不动。** 同型误判当天还出现过三次（i18n「坏语料」、SVE 汉化「丢失」、事件证据「被永久挡住」），**根因都是只读链条的一半就下结论**。
+
+  **④ 新索引已构建、切换生产并端到端验证**。索引：profiles 137 / speechEvidence **11737** / 缺 `eventId` **717 → 0** / 字符串 ID 83 种。切换取**保持生产文件名不变**（旧索引另存 `-v5`、新索引覆盖 `...next-event-dialogue.json`、原件再存 `.string-eventid.json`），故 `start_bridge.ps1` 与环境变量**一处未改**。Bridge 重启（旧 PID 101172 → 新 PID 117936，08:23:15）后经 **`POST /api/context/preview`（零生成请求）**在生产服务上实测：10 心无事件 → 10 条全 `dialogue`（防剧透正确）；10 心 + `AlexFourHeart` + `sourceMods` → **8 条含 3 条 `event_dialogue`**，eventId 全为 `AlexFourHeart`，正文即四心事件家庭背景原文。**三层门控（事件完成度 / 关系阶段 / 来源）逐层确认都按设计工作** —— 中途两次「未出事件证据」均系我漏传 `friendshipHearts`／`sourceMods`，不是缺陷。⚠ 附带观察：`AlexFourHeart` 的 7 条记录里有一条 npcId 是 **`Dusty`（Alex 养的狗）**，正文 `汪！！！` —— 非人 NPC 进了角色语料库，属另一条待查线索，本次未动。**⚠ 新旧索引差集为 +346 条 `dialogue`（消失 0），来源已查明：不是本次修复，而是生产索引（09-27 03:12）早于上个会话 `aeaf5c9`／`24bf34e`／`23d6473`（05:35–06:39）三个「季节键素材真正可用」提交** —— 新增样例全是季节键（`summer_10`、「我挺喜欢冬天的」），与那三个提交的意图吻合。即：**生产索引本就落后于代码**，重建会同时带上季节放行与本次修复，两者都是有意改动。
+
+  **验证**：新增 3 个用例（2 条纯标点路径 + 1 条字符串事件 ID），两处红灯均先复现（纯标点为断言失败、字符串 ID 为 `KeyError: 'eventId'`）。定向 `test_corpus.py 35 passed`／相关回归 `249 passed`；全量 `scripts/verify_project.ps1` **SMAPI 1046 / Bridge 4217 / compileall exit=0 / git diff --check clean → 四项全 PASS**。已切换生产索引并重启 Bridge（见 ④），**未部署 DLL、未启动游戏、未改存档、未提交。** `data/generated/` 在 `.gitignore`（第 19 行），索引不入版本控制，回滚靠保留文件。
+
+- 2026-09-27 **㊿ 撤销一条误判缺陷：玛妮谈 Shane 不算「编造私事」** —— 用户当场纠正：「**玛尼知道 shane 私事很正常啊，shane 就住在玛尼家**」。复核 `report-perspective-diagnosis-2026-09-26.md` §五 缺陷 3 后确认**判错了**。
+
+  **依据**：`data/personas/vanilla.json:354` 的 `avoid` 原文是「**未经确认**议论 Shane 或 Jas 的私事」，`:369` 的 `cannotAssume` 同样是「Shane、Jas 或其他人的**未确认**私事」。**限定词是「未经确认」，不是「不得谈论」** —— 规则禁止的是把无从知道的事说成事实。原句两部分都合规：①「前天 Shane 饭桌上扒拉两口就上楼」是**同居者的亲眼所见**，对玛妮而言已经确认；②「我估摸着」**明示了这是推测**，没有包装成事实。**模型合规、规则合规，是诊断本身过严。**
+
+  **教训（与 ㊾ ③ 同型）**：判「违反规则」时**必须回读规则原文里的限定词**，不能用规则名代替正文 —— 「违反 `cannotAssume`」这个结论看起来有出处，实际引的是**我自己的转述**，不是原文措辞。已在原报告该行加撤销标记，避免后人再读到错结论。
+
+  **剩余实体缺陷由 6 条降为 5 条**：英文碎片 `Crop正在冒芽` / 编造玩家爷爷原话 / `morning_direction` 示例句逐字照搬 / direction 与 persona 打架 / `tone` 字段被当台词吐出 + `---`。
+
+- 2026-09-27 **51 六条实体缺陷逐条复核完毕（只读证据，未改一行代码）** —— 起因是用户指正 §五-3「玛妮编造 Shane 私事」判错（见 ㊿），于是对其余各条**回读证据原文**重核一遍。**结果：一条撤销、五条确认，其中一条定性改判。**
+
+  | 原编号 | 原判 | 复核结论 | 依据 |
+  |---|---|---|---|
+  | §五-2 | 英文碎片 `这个季节Crop正在冒芽头` | **撤销**（已修） | `scrub_reply` 实测：该形态 → `这个季节正在冒芽头`。同时**新发现一个边界** —— 句首碎片（`Crop正在冒芽头`）漏网，因 `_LATIN` 要求左邻是中文 |
+  | §五-5 | 编造玩家爷爷原话 | **确认** | 原始采样 `.tmp/perspective/morning-20260926-165827/raw.json`：「他以前也是这么说的，"跟睡在风里的秋千上一样"」。开场白只给了「爷爷抱怨过那张床」，那句比喻是模型创作的 |
+  | §六-⑥ | direction 示例句被逐字照搬 | **确认** | 同文件 raw.json：「我记得他总爱坐在门口那把椅子上」vs direction「我记得他爱坐在门口」—— 9 字重合 8 字 |
+  | §六-⑦ | direction 与 persona 打架 | **确认，根因在 direction** | `vanilla.json:738` Lewis 的 `knownCharacters` **只有 Marnie**；persona 仅在 `preferredTopics:714` 承认「爷爷」是话题，从未写过关系。direction 却写「私下认识的老交情」→ 模型倒向 persona（「熟……倒也不算」）。**该改的是 `morning.json`，不是模型** |
+  | §五-6 | `tone` 字段被当台词吐出 | **确认** | `prompts.py:3175` 单条文本、上限 120 字，而 Lewis 的 tone 约 110 字 → **完整进 prompt**；报告引文与 `vanilla.json:707` 逐字一致。⚠ **`---` 不是 prompt 泄漏**：`prompts.py` 全文只有一处 `---`（L2376 注释），`voiceStyle` 以 JSON 原样搬运 → **那个 `---` 是模型自补的分隔线** |
+  | §五-7 | `gameState.relationship` 静默失效 | **确认，但定性改判**（见下） | |
+
+  **§五-7 的改判（本次复核最实质的修正）**：原判写作「同一个键前后不一致」（传 `married` 回落 stranger、传 `dating` 却有效）。读实现后可见这**不是逻辑 bug** —— `relationship_gating.py:391-394` 把两个键分了工：`marriageStatus ∈ {married, spouse, partner, roommate}` 判婚姻，`relationship ∈ {dating, engaged, fiance, fiancé, girlfriend, boyfriend}` 只判恋爱（L409-416）。所以 `relationship="married"` 落空是**语义错位**。
+
+  **真正的缺陷在跨语言契约**：`smapi/tests/BridgeClientTests.cs:441` 断言实机发出的 `gameState.relationship` 是**阶段名**（`"friend"`），而 Python 侧 `relationship_stage_from_state(relationship=...)` 期待的是**恋爱标记**。**同一个字段名，两侧语义不同** —— 实机靠 `friendshipHearts` 兜底（L417）才没出事，字段本身**被静默忽略**。
+
+  **⚠ 含义**：只要某条路径没带 `friendshipHearts`，`relationship` 字段承载的阶段信息就会**无声丢失**。严重度：中高（实机当前不受影响，但契约是坏的）。
+
+  **方法教训（与 ㊾ ③、㊿ 同型，第三次）**：五条确认里，§五-6 的 `---` 和 §五-7 的定性**都是回读实现后才发现与原判不同** —— 原判「prompt 泄漏」「同一键不一致」都是从**现象**直接推结论，没验证**来源**。下次遇到「疑似泄漏」，先确认那个字面量在 prompt 模板里**究竟存不存在**。
+
+  **本轮未改任何代码。** `morning.json` 的 direction 越权（§六-⑦）与示例句照搬（§六-⑥）是**同一处文本的两个问题**，建议一并修。
+
+- 2026-09-27 **52 修 `morning.json` 的 direction：越权关系定性 + 示例句照搬（第 51 条复核的落地）** —— 同一处 `direction` 文本造成的两个缺陷（§六-⑥⑦），合并修掉。
+
+  **改动**（`data/scenarios/morning.json` 的 `day2-lewis.direction`，全文件唯一一处）：
+
+  | 原文 | 改后 | 解决 |
+  |---|---|---|
+  | 「你和他当年是**私下认识的老交情**，不是办事认识的」 | 「你跟他的交情就到此为止：你是镇长，认识这个农夫，知道他抱怨过那张床、知道他当年喜欢种甜瓜，仅此而已。玩家问起你俩熟不熟，照实说就行，**别把这段关系拔高成私交或老友**」 | §六-⑦ |
+  | 「像『他以前总念叨那张床』『**我记得他爱坐在门口**』这样」 | 整句删除，只留「讲这些旧事用你平时说话的口气，不用换成怀旧的腔调」 | §六-⑥ |
+
+  **依据（改后的关系定性不是我编的，全部来自原版台词）**：`artifacts/corpus/vanilla/Characters/Dialogue/Lewis.zh-CN.json`
+  - `Introduction`（L2）：「你爷爷以前总是抱怨那张晃晃悠悠的旧床。但我觉得，他心里其实是爱着那间房子的。」← 开场白的逐字来源
+  - `cropMatured_254`（L10）：「哈哈，当时你爷爷可喜欢种甜瓜了。」
+  - **原版给的全部信息就这两条**：Lewis 认识这个农夫、知道他的床与种甜瓜的喜好。**没有任何「私交/老交情」依据** —— persona 全库 grep「爷爷」只命中 2 处，其中 Lewis 仅 `vanilla.json:714` 的 `preferredTopics`「你爷爷以前抱怨过的那张旧床」。
+
+  **为什么删示例句而不是改写**：示例句意在示范语气，但模型把它当了**台词模板**（实测输出「我记得他总爱坐在门口那把椅子上」与示例 9 字重合 8 字）。语气示范本就由 `voiceStyle.sentencePattern` 承担，direction 再写一遍只是制造照搬面。**教训：direction 里不放可直接说出口的句子。**
+
+  **验证（四层）**：
+  1. JSON 有效，`scenarios=1`，`direction` 182 字，`boundaries` 4 条；
+  2. 残留检查：`私下认识的老交情` / `我记得他爱坐在门口` / `他以前总念叨那张床` **三处均已移除**；
+  3. `test_morning_injection.py` + `test_morning_lab_page.py` + `test_morning_scenario.py` → **44 passed**；
+  4. **端到端**：`MorningScenarioStore` 是模块级加载（`app.py:67`，路径 `data/scenarios/morning.json`，因此**改文件必须重启 Bridge 才生效**），重启后（旧 PID 117936 → 新 **123028**，08:38:40）调 `POST /api/context/preview`，`history` 带开场白原文 → **`morningScenarioId = "day2-lewis"` 成功回显**。
+
+  **⚠ 附带确认的契约**：`history` 条目格式必须是 `{"role": "assistant", "content": "..."}`；用 `{"role": "npc", "text": "..."}` **匹配不到且静默返回空**（不报错）。页面对接时注意这个易错点。
+
+  **⚠ 未验证的部分**：**direction 改动对实际生成效果的影响未测** —— 那需要真实云端生成请求，按项目红线须你确认后再做。本次只验证到「新 direction 已进 prompt 链路」这一层。
+
+- 2026-09-27 **53 晨间预设扩到 4 条：调度层加「季节」触发（零 DLL 契约改动）** —— 预设事件库扩张的第一步。此前只有 `day2-lewis` 一条，且 `for_day()` 只认 `absoluteDay`，季节 / 节日 / 好感 / 事件后触发全都挂不上。
+
+  **阶段划分及其依据**：`models.py:788` 对 `MorningPlanRequest` 有一条明确的设计指引 ——「本模型刻意只有两个字段：`ApiModel` 是 `extra="forbid"`，游戏端多送一个字段就是 422。所以**不要**往这里加 gameState / 好感度 / 关系阶段……**需要那些信息时另开端点**」。据此分期：
+  - **第一阶段（本次）**：`absoluteDay` + **`season`**。季节由 `dayIndex` 推算（1 季 28 天、1 年 4 季），而 `DayStarted` 早就送了 `dayIndex` —— **一行契约都不用动**，Bridge 改完重启即可，不必等 DLL 跟上。
+  - **第二阶段（未做）**：`festival` / `heartLevel` / `afterEvent` 需要新信息，按上述指引**另开端点**，届时 Bridge 先行、DLL 跟进。
+
+  **实现**（`bridge/src/stardew_ai_bridge/morning_scenario.py`）：
+  - `season_of(day_index) -> (季节, 季节内第几天)`：非正数按第 1 天兜底（`dayIndex` 是 0 基计数器，端点换算成人话天数时要减 1，边界会落到 0）。
+  - `MorningScenario.matches_season(season, day_in_season)`：支持 `dayInSeason` 精确日、`minDayInSeason`/`maxDayInSeason` 范围，以及两者都不给的「整个季节」。类型判断一律排除 `bool` —— JSON 的 `true` 在 Python 里是 `int` 子类，不挡住会让 `dayInSeason: true` 静默变成「第 1 天」。
+  - `MorningScenario.season_specificity`：精确日 3 > 范围 2 > 整季 1。`for_day()` 先扫 `absoluteDay`，再在季节候选里取特异性最高的（`max` 返回**第一个**最大值，所以同特异度仍按文件顺序）。
+  - **为什么需要特异性**：同一天可能同时命中一条「春天来了」和一条 `spring_12`，谁写在文件前面纯属编辑偶然 —— **文件顺序不该决定行为**。
+
+  **三条新预设**（`data/scenarios/morning.json`，开场白全部逐字取自原版 `Characters/Dialogue/*.zh-CN.json` 的季节键）：
+
+  | id | NPC | 触发 | 开场白出处 |
+  |---|---|---|---|
+  | `spring-3-lewis` | Lewis | 春 3 | `Lewis:spring_3`「你开始种春天的作物了吗？时间可不等人哦。」 |
+  | `spring-12-abigail` | Abigail | 春 12（彩蛋节前一天） | `Abigail:spring_12`「我明天一定会去参加彩蛋大寻宝。你呢？」 |
+  | `spring-23-sebastian` | Sebastian | 春 23（花舞节前一天） | `Sebastian:spring_23`「呃……明天绝对是全年中最蠢的节日了。等着瞧我在花舞节上的傻样子吧。」 |
+
+  **意外收获**：原版的 `spring_12` / `spring_23` 这些键**本来就是为「节日前一天」写的** —— 季节精确日和原版台词的发布节奏天然咬合，所以**节日前夜不需要单独的节日数据**，一个 `dayInSeason` 就够。这也是第二阶段可以做得更省的理由。
+
+  **Sam 被排除**：本想用 `Sam:spring_21`（春天花瓣过敏），但 grep 确认 `data/personas/vanilla.json` **没有 Sam 的 persona**（3 处 `Sam` 全是别人引用他：Sebastian 的 knownCharacters、Kent 和 Jodi 的「儿子」）。没有 persona 就写不出不越权的 direction —— 正是 §六-⑦ 的教训，所以这条先不做，记为「等 Sam persona 补齐」。
+
+  **测试（先红后绿，逐条有证据）**：
+  - 新增 `TestSeasonTrigger` 8 例：`season_of` 映射（含第 2 年 113 → 春 1）、非正数兜底、精确日、范围、整季、`absoluteDay` 压过季节、非法季节名在**加载期**报错、`season` 缺失报错。
+  - 新增特异性 2 例。**先跑出红灯**（`assert 'whole-winter' == 'winter-week1'`）再实现。
+  - **开场白守卫从「只查 day2」扩成遍历全部场景**（`test_every_opening_traces_back_to_corpus`）：原来只守 `for_day(2)` 一条，扩到 4 条后等于新写的三条全靠人眼 —— 而开场白恰恰是唯一由人手写、又被玩家逐字看到的字段。比对改成**逐条记录**做，不把同一角色的台词拼成大字符串（拼接会造出跨记录的「巧合命中」）。
+  - **用变异测试确认守卫真的在拦**：临时把 `spring-3-lewis` 的开场白换成编造句 → 守卫报 `AssertionError: spring-3-lewis（Lewis）这些片段在原话里找不到，疑似自由创作：['春天的露水还挂在草叶上，你今天打算先翻哪块地']` → 恢复后重新通过。不做这一步的话，「34 passed」既可能是守住了、也可能是这条断言根本没生效。
+  - 结果：`test_morning_scenario.py` **34 passed**；三个 morning 测试文件 **54 passed**。
+
+  **端到端验证**（重启 Bridge，旧 PID 123028 → 新 **123024**，08:47:45，直接打 API）：
+
+  | dayIndex（0 基） | 人话天数 | 结果 |
+  |---|---|---|
+  | 0 | 第 1 天 | 没人开口 |
+  | 1 | 第 2 天 | `day2-lewis` |
+  | 2 | 第 3 天 | **`spring-3-lewis`** |
+  | 11 | 第 12 天 | **`spring-12-abigail`** |
+  | 22 | 第 23 天 | **`spring-23-sebastian`** |
+  | 27 / 28 / 29 | 第 28 / 29 / 30 天 | 没人开口 |
+  | **114** | 第 115 天（第 2 年春季第 3 天） | **`spring-3-lewis`** ← 季节可重复，这是季节触发相对 `absoluteDay` 的全部意义 |
+
+  `/api/morning/scenarios` 返回 4 条，季节场景的 `dayIndex` 为 `null`（页面上显示「非按天」，符合 `MorningScenarioView` 的约定）。
+
+  **⚠ 未验证的部分**：三条新预设的**实际生成效果**未测（需要真实云端生成请求）。另外**夏季 / 秋季 / 冬季目前一条预设都没有** —— 调度层已经支持，缺的只是内容。
+
+- 2026-09-27 **54 四季补齐：预设从 4 条扩到 8 条（夏 / 秋 / 冬各就位）** —— 第 53 条只落地了春季，调度层支持夏秋冬却一条内容都没有。这次补齐。
+
+  **新增 4 条**（`data/scenarios/morning.json`，开场白全部逐字取自原版季节键）：
+
+  | id | NPC | 触发 | 开场白出处 |
+  |---|---|---|---|
+  | `summer-1-alex` | Alex | 夏 1 | `Alex:summer_1`「嘿。夏天绝对是一年中最棒的时节。现在这个时间正好，可以憧憬整个夏天呢。回头见啦。」 |
+  | `summer-2-leah` | Leah | 夏 2 | `Leah:summer_1`「你能从空气中飘荡着的花蜜香味中感受到夏天的气息！」 |
+  | `fall-1-emily` | Emily | 秋 1 | `Emily:fall_1`「好啦，已经到秋天。该种些新的作物吧？」 |
+  | `winter-1-george` | George | 冬 1 | `George:winter_1`「噢……太冷了。年轻人就是抗冻啊。」 |
+
+  **为什么选「季节第一天」而不是节日前夜**：先把四季的「季节更替」节点占住 —— 这类节点每年重来，最能体现 `season` 触发的价值。节日前夜（夏 10 Luau / 夏 27 水母舞会 / 秋 26 万灵节 / 冬 24 冬星节）原版同样有现成台词，留作下一批。
+
+  **选角原则：全部用此前没出现过的 NPC**。当时已有的 4 条里 Abigail 占 2 条 —— 再往同几个人身上堆，会让「早上主动开口的总是那几位」，所以新批只用 Alex / Leah / Emily / George。
+
+  **一处必须写进 direction 的 persona 细节**：`vanilla.json:574` George 的 `addressing` 是**按玩家性别变称呼**的（男「小伙子」、女「小姐」、不确定「年轻人」）。这是目前所有预设里唯一一个称呼随玩家变的角色，漏写会让他开口就错。
+
+  另三条也各有约束：Alex 那句原话**自带「回头见啦」这个道别语**（所以 direction 写明这是路上碰见的短遇、别拖长，而不是当成拼接失误去改原话）；Emily 的「该种些新的作物吧？」是随口一提，**不能顺着给种植建议**（她是裁缝，不是农业顾问）；Leah 的 `avoid` 明确禁止「每句话都写成诗意独白」。
+
+  **测试**：
+  - **开场白守卫自动覆盖了新增的 4 条**（它遍历 `store.scenarios`），54 passed。
+  - **把守卫最后一道口子堵上**：原来结尾是 `assert checked >= 1` —— 下界太松，就算漏检 7 条也照样通过。改成 `assert checked == len(store.scenarios)`，漏检会直接报「有 N 条场景没被核对到」。
+  - 三条开场白分别去掉了 `#$e#`（Alex、George）和行末 `$h`（Leah）控制码；Emily 那条原文干净，一字未动。
+
+  **端到端验证**（重启 Bridge，旧 PID 123024 → 新 **118332**）：
+
+  | 人话天数 | 命中 |
+  |---|---|
+  | 第 2 天 | `day2-lewis` |
+  | 第 3 天 | `spring-3-lewis` |
+  | 第 12 天 | `spring-12-abigail` |
+  | 第 23 天 | `spring-23-sebastian` |
+  | 第 29 天 | `summer-1-alex` |
+  | 第 30 天 | `summer-2-leah` |
+  | 第 57 天 | `fall-1-emily` |
+  | 第 85 天 | `winter-1-george` |
+  | **第 141 天**（第 2 年夏 1） | **`summer-1-alex`** ← 季节可重复再次确认 |
+
+  **⚠ 素材来源的一个重要限制（下一批必须先看这条）**：原版的季节台词**绝大多数写在 `MarriageDialogue*.json` 里**（婚后专属），普通 `Characters/Dialogue/*.json` 里能用的**很少**。这次能凑出 4 条，是因为挑了「季节第一天」这个原版写得最全的节点；再往下做（节日前夜、季节中段）会碰到**可选角色迅速变少**的问题。`Sam` 就是典型 —— 他有一批很好的季节台词，但 `data/personas/vanilla.json` 里**没有他的 persona**，所以用不了。
+
+  **下一步的三条岔路**：① 补缺失 persona（Sam 等）后继续扩场景；② 做节日前夜那批（原版有现成台词，但可选角色少）；③ 转第二阶段（节日 / 好感 / 事件后触发），那需要另开端点并动 DLL 契约。
+
+- 2026-09-27 **55 补 Sam 的 persona，并查清 persona 进系统的两条不同路径** —— 走第 54 条留下的岔路 ①。
+
+  **先侦察「到底缺哪些角色」**（`.tmp/probe_missing_personas.py`，对比「原版有对话文件的角色」与「已有 persona」）。原版 38 个角色、已有 persona 33 个，**缺 7 个**，但其中 **4 个不该补**：
+
+  | 角色 | 判断 |
+  |---|---|
+  | **Sam** / **Elliott** / **Harvey** | ✓ 该补，正好是 12 个可婚配角色里缺的那 3 个 |
+  | `LeoMainland` | Leo 的变体（Leo 已有 persona）→ 该合并，不是新增 |
+  | `rainy` | **不是 NPC** —— 是雨天专用对话文件 |
+  | `Gil` | 只有 143 字节（冒险家公会那位，几乎不说话）→ 低优先 |
+  | `Mister Qi` | 特殊角色（赌场后期登场），另议 |
+
+  **本条只做 Sam**（台词量最大：正文 119 行 + 婚后 55 行）。
+
+  **⭐ 本条最有价值的产出：persona 进系统的路径分两条，生效方式完全不同。**
+
+  | 字段 | 路径 | 改完怎么生效 |
+  |---|---|---|
+  | `voiceStyle` / `stageProfiles` / `knowledgeRules` / `coreTraits` 等 | `prompts.py:1649` 经 `PersonaStore` **直接读 `data/personas/*.json`** | **重启 Bridge 即可** |
+  | `knowledgeFacts` / `knownCharacters` | 由 `profile_index.py` 在**索引构建时**抄进索引，真机读的是 `ProfileIndexStore` | **必须重建索引**，否则「数据写进去了、游戏里一点变化没有」 |
+
+  第二条在 `proper_noun_extract.py:268` 有现成的坑记，这次实测复现了：加完 persona 后**不重建索引**时，`/api/context/preview` 里 Sam 的 `personaSummary`（读 persona 文件）**阶段称呼已经正确**，但顶层 **`knowledgeFacts` / `knownCharacters` 两个键根本不出现**，而 Alex 有。
+
+  **另一处实测澄清**：`voiceCards` **不是**从 persona 来的，而是 `profile_index.py:482` 用 `derive_speech_profile()` **从语料推导**。所以 Sam 虽是新 persona，索引里**早就有他的 voiceCard（8 条锚，与 Alex 持平）** —— 因为他的台词一直在语料里。这也解释了为什么 `profiles` 里本来就有 Sam。（顺带纠正本轮一个误报：`/api/context/preview` 返回的 `voiceCard` 为空**是端点正常行为**，Sam / Alex / Elliott 三人全空，不是缺陷。）
+
+  **Sam 的 persona 内容**（`data/personas/vanilla.json`，插在末尾 Marlon 之后）。角色事实全部出自原版台词：乐队吉他手（和 Sebastian、Abigail）、滑板、**花粉过敏**（`spring_1`「我的鼻子……过敏」）、**极度善忘**（靠往手腕绑橡胶圈记事）、爱披萨、邋遢、张口就是「嘿」、自称「兄弟」。三条谨慎处理：
+  - **父亲 Kent 是军人、目前在前线** → `knowledgeFacts` 只写这个初始状态，并在 `cannotAssume` 里加「父亲归来的时间和结果」——**「回来了」是事件触发后的状态，写进去会让所有存档都提前知道结局**。
+  - **全名 Sampson** → 原话明确说「你也别告诉别人」，所以单列一条 fact 并在 `secrecy` 里点明是隐私。
+  - `addressing.player` 写成「你；聊得起劲或开玩笑时会叫『兄弟』」——这是他的语言特征，不是通用称呼。
+
+  **重建索引**（命令照 `docs/rebuild-index.md`，只换 `--output` 到临时文件，**不覆盖生产**）：
+
+  ```powershell
+  & $py -B scripts/build_profile_index.py `
+    --persona-dir data/personas `
+    --corpus "artifacts/corpus/20260927-string-eventid/vanilla-sve-rasmodia-dialogue-corpus.json" `
+    --vanilla-root 'artifacts/corpus/vanilla' `
+    --vanilla-events-root "$game\Content (unpacked)\Data\Events" `
+    --vanilla-extra-dialogue-root "$game\Content (unpacked)\Data" `
+    --vanilla-locale zh-CN `
+    --runtime-samples 'artifacts/corpus/runtime-dialogue-samples.sample.jsonl' `
+    --output 'data/generated/…-next-sam-persona.json'
+  ```
+
+  **只重建索引、不重建语料** —— persona 是索引的输入，语料没动。（`docs/rebuild-index.md` 坑 1 说的「warnings 会继承」在这里不成问题：语料没重生成，warnings 本来就是同一份。）
+
+  **替换前的逐项对比（零漂移是判据）**：
+
+  | 键 | 旧 | 新 | 判定 |
+  |---|---|---|---|
+  | `profiles` | 137 | 137 | 同 |
+  | `voiceCards` | 137 | 137 | 同 |
+  | `styleSamples` / `speechEvidence` | 11737 | 11737 | 同 |
+  | **`knowledgeFacts`** | 47 | **50** | **+3** |
+  | **`knownCharacters`** | 41 | **46** | **+5** |
+  | `storyEvents` / `warnings` / `sources` | 0 / 10 / 5 | 0 / 10 / 5 | 同 |
+
+  `profiles` 键集合的新增与消失**两头全空**；Sam 的两项 `0 → 3` / `0 → 5`。**除这两项外逐项不变**，所以替换是零内容变更。已备份为 `…next-event-dialogue.pre-sam.json`（回退 = 拷回 + 重启 Bridge）。
+
+  **端到端验证**（重启 Bridge，PID → **124544**）：`/api/context/preview` 取 Sam（6 心 = friend）返回 **`knowledgeFacts=3` / `knownCharacters=5`**，阶段称呼为 persona 里写的那句「叫得出名字，会喊「兄弟」，语气更放松」。
+
+  **⚠ 未做的部分**：Elliott 与 Harvey 的 persona 还没写（台词已通读，Elliott 特征已提炼：作家、住海边小屋、极度在意发型、用词文雅、孤独感）。他们**同样需要各自重建一次索引**——或者攒到一起重建一次。
+
+- 2026-09-27 **56 补齐 Elliott 与 Harvey 的 persona —— 12 个可婚配角色至此全齐** —— 接第 55 条的岔路 ① 收尾。
+
+  **结果**：`vanilla.json` 的 persona 从 33 → **36**。原版 38 个「有对话文件的角色」里，仍缺的只剩第 55 条判定「不该补」的那 4 个：`Gil`（143 字节，几乎不说话）、`LeoMainland`（Leo 的变体）、`Mister Qi`（赌场特殊角色）、`rainy`（**不是 NPC**，是雨天对话文件）。**可婚配的 12 人全部有 persona 了。**
+
+  **Elliott**（正文 98 行 + 婚后 56 行）。核心是**作家**，住海边小屋，比玩家早一年搬来。两个必须写进 persona 的性格点：**极度在意发型**（「我每天都要梳头，不然头发就会乱作一团」「我觉得可能是因为我太虚荣了吧」，婚后还有「梦见你把我剃了平头」的噩梦），以及**用词文雅、爱用比喻**（「纸与笔那美妙的摩擦声可是治愈我灵魂的音乐」）。`avoid` 因此第一条就是「每句话都写成诗朗诵」——他的文雅是真的，放任就会变成朗诵。另一条线是**孤独与自我怀疑**（「我来到星露谷本是为了寻找能发挥我特长的象牙塔。但我却找到了孤独之牢」），但 `avoid` 里禁止「把孤独说成对玩家的索取」。
+  `knowledgeFacts` 只留 2 条（作家身份、爱慕虚荣），`knownCharacters` 只有 Clint —— 他唯一明确提到的镇民是「那个脾气暴躁的铁匠」，用来举例说人人都想交朋友。
+
+  **Harvey**（正文 72 行 + 婚后 54 行）。核心是**诊所医生**，住诊所楼上。性格张力在**尽责与紧张并存**：一边是「对全镇的居民健康负责，这是我内心的使命……压力不小」，一边是「啊！你……你想跟我跳舞吗？」式的断句。他习惯从健康角度关心人，所以 `avoid` 第一条写的是「每句话都变成医嘱或健康说教」——这是他被写坏时最容易掉的坑。放松下来的话题是**飞机模型、收音机、爵士乐、医学文献**（「沉迷于阅读最新一期『膝盖手术爱好者』」）。
+  ⚠️ **一处刻意不写**：`eventSeen_571102` 有「我以前犯过过度共情的错误……以后再也不会了」，这条**是事件触发后的记忆**，收进 `knowledgeFacts` 会让所有存档提前知道已成往事，因此**没有收录** —— 与第 55 条 Sam 的父亲 Kent 同一条原则。
+
+  **重建与替换**（同第 55 条流程：只重建索引，语料不动）：
+
+  | 键 | 旧（Sam 版） | 新 | 判定 |
+  |---|---|---|---|
+  | `profiles` / `voiceCards` | 137 / 137 | 137 / 137 | 同 |
+  | `styleSamples` / `speechEvidence` | 11737 | 11737 | 同 |
+  | **`knowledgeFacts`** | 50 | **54** | **+4** |
+  | **`knownCharacters`** | 46 | **49** | **+3** |
+  | `storyEvents` / `warnings` / `sources` | 0 / 10 / 5 | 0 / 10 / 5 | 同 |
+
+  `+4` = Elliott 2 + Harvey 2；`+3` = Elliott 1（Clint）+ Harvey 2（Maru、George）。`profiles` 键集合差集**两头全空**。已备份 `…next-event-dialogue.pre-bachelors.json`（回退 = 拷回 + 重启 Bridge）。
+
+  **端到端验证**（重启 Bridge，PID → **122152**；`/api/context/preview` 取 6 心 = friend）：
+
+  | NPC | facts | 关系 | 阶段称呼 |
+  |---|---|---|---|
+  | Sam | 3 | 5 | 叫得出名字，会喊「兄弟」，语气更放松 |
+  | Elliott | 2 | 1 | 把玩家当作能聊写作的朋友 |
+  | Harvey | 2 | 2 | 把玩家当作朋友，语气放松但仍会提醒身体 |
+  | Alex（对照） | 3 | 1 | 把玩家当作一起活动的朋友，直接叫名字或用「你」 |
+
+  **⚠ 未验证的部分**：三位新角色的**实际生成效果**未测（需要真实云端生成请求）。另外第 54 条记的**素材限制依然成立**，但受影响的角色名单变了：Sam / Elliott / Harvey 补上 persona 之后**已经可以进入节日前夜那批场景**，不再属于「可选角色少」的受限名单。
+
+- 2026-09-27 **57 补上四个节日前夜场景，预设场景 8 → 12** —— 第 54 条留的岔路 ②。
+
+  **先做素材侦察再动手**（扫语料按 `sourceKey` 找四个键）。语料记录结构记一下：`sourceKey` 是原版键名、`npcId` 是说话人、**`dialogueVariants` 是解析后的台词**（`text` 是原始模板，别读错）。
+
+  **侦察出了三个情况，都影响了计划**：
+
+  1. **vanilla 可选角色只有 4 个**。四个键的日常对白里，原版角色只有 Abigail / Haley / Sam / Sebastian，其余全是 SVE 与 Rasmodia 的（Andy / Sophia / Olivia / Victor / Claire / Susan / Morgan / Apples / Isaac / Alesia / MorrisTod / GuntherSilvian / MarlonFay / Wellwick）。
+  2. **⚠ 婚后对白一大片，但本轮全用不上**。`summer_10` 婚后 6 人、`summer_27` 婚后 6 人、`fall_26` 婚后 8 人（`winter_24` 婚后 0 人）——**量比日常对白还多**。但 morning scenario 的 `trigger` 目前只有 `absoluteDay` 与 `season` 两种，**表达不了「已结婚」**，所以这批台词只能等 Phase 2 的关系触发。**这是 Phase 2 价值的一个新证据：素材已经在那儿了，缺的只是触发条件。**
+  3. **`Haley` 的 `summer_10` 台词与宴会无关**（「你的农场有小兔子吗？小兔子好可爱！」）→ 弃用。
+
+  **四个新场景**（角色分配兼顾台词强度与分布均衡——Abigail、Sebastian 各有现成场景）：
+
+  | id | 触发 | 角色 | 选择理由 |
+  |---|---|---|---|
+  | `summer-10-sebastian` | 夏季第 10 天 | Sebastian | 「在百乐汤里放点恶心的东西」那段，四个键里最有性格的一条 |
+  | `summer-27-abigail` | 夏季第 27 天 | Abigail | 「那是星露谷最美的盛景」——不加修饰的着迷 |
+  | `fall-26-sam` | 秋季第 26 天 | Sam | 「林子里的奇怪老头」深夜打造闹鬼迷宫，信息量大 |
+  | `winter-24-sam` | 冬季第 24 天 | Sam | 「我只对美食有兴趣」——先正经后拆台，是他的节奏 |
+
+  **两条 `boundaries` 值得单独记**：
+  - `summer-10-sebastian` 明确写了「不要真的去策划或描述破坏宴会、往汤里加东西的具体做法」——原话是玩笑，模型很容易顺着当真往下写。
+  - `fall-26-sam` 写了「不要把那位直接指认为法师并展开法师的背景」——Sam 原话只说「住在林子里的奇怪老头」，而他的 persona `knownCharacters` 里**没有** Wizard，不该让他突然掌握这个身份。
+
+  **验证**（`MorningScenarioStore` 模块级加载，改 JSON 必须重启 Bridge；PID → **122848**）：
+
+  | 人话天数 | API `dayIndex` | 命中 |
+  |---|---|---|
+  | 夏季 10 | 37 | `summer-10-sebastian`（塞巴斯蒂安） |
+  | 夏季 27 | 54 | `summer-27-abigail`（阿比盖尔） |
+  | 秋季 26 | 81 | `fall-26-sam`（山姆） |
+  | 冬季 24 | 107 | `winter-24-sam`（山姆） |
+  | 第 2 年夏季 10 | 149 | `summer-10-sebastian`（季节循环，同样命中） |
+  | 夏季 9 / 夏季 28 / 秋季 25 / 冬季 23 | 36 / 55 / 80 / 106 | 全部「无场景」（边界精确） |
+
+  三个 morning 测试文件 **54 passed**；其中 `test_every_opening_traces_back_to_corpus` 会**遍历全部 12 个场景**逐条把 opening 回溯源语（收尾是 `assert checked == len(store.scenarios)`），所以 4 条新 opening 都被守卫验过：逐字来自原版，只去掉了 `#$e#` / `#$b#` 这类控制码。
+
+  **⚠ 一处工具使用教训**：本轮第一次验证时脚本读错了 API 字段名（`scenarios[].id` 应为 `scenarioId`；`plan` 返回的是 `{messages:[...]}` 而不是 `{scenario:...}`），一度看起来像「四个新场景全部不生效」。**功能一直是对的**，是断言脚本写错了。教训与项目里反复出现的那条同源：**报错先怀疑自己的验证脚本**。
+
+- 2026-09-27 **58 全量验证抓到一个我引起的回归 —— 补 persona 会激活一条「无面素材预算」哨兵** —— 第 56 条的收尾。
+
+  **起因**：第 56 条（Elliott + Harvey persona）落地后跑 `scripts/verify_project.ps1`，Bridge 测试 **1 failed / 4226 passed**。
+
+  **失败项**：`test_topic_slot_rotation.py::test_no_lifted_role_carries_more_than_one_no_facet_topic`
+
+  ```
+  AssertionError: 这些角色已经补过素材，却又保留了 2 条以上判不出生活面的条目（回退）：
+  {'Harvey': ['飞机模型和收音机', '医学文献', '我一个人住的时候']}
+  ```
+
+  **这是测试在正确工作，不是误报。** 机制值得记清楚：
+
+  - `stage_policy._LIFE_FACET_PATTERNS` 定义 **9 个生活面**（工作或手艺 / 吃喝 / 天气季节 / 镇上或邻里 / 家人朋友 / 玩家自己 / 自己的状态或烦恼 / 过去的回忆 / 爱好或消遣）；`_facet_of_topic(topic)` 用正则把一条素材映射到**一个**面，全都不中就返回 `None`（**无面**）。
+  - 无面素材是**纯损失**：它占着 `preferredTopics` 上限里的一个位置，而槽位选择 `_pick` 会**直接跳过它、不报错**。所以哨兵规定：**已补素材的角色至多 1 条无面**。
+  - 豁免名单是 `UNFILLED_NO_FACET_ROLES = frozenset({"Marlon"})` —— **只有 Marlon**。Harvey 原本不在名单里，但这条哨兵对他是**新出现的约束**：我把他从「没有 persona」变成「有 persona」，等于宣布他「已补素材」，于是开始受这条线管。
+
+  **修法**：Harvey 的 `preferredTopics` 从 7 条改为 **6 条**（对齐 Alex / Sebastian 的标准），删掉「飞机模型和收音机」与「医学文献」，补一条能落「镇上或邻里」的（取自他自己 `Sat4` 的原话「我来这是因为我喜欢小镇的氛围」）。
+  **「飞机模型」不是被丢了** —— 它已经在 `harvey-hobbies` 那条 `knowledgeFacts` 里；`preferredTopics` 服务的是话题轮换，不必包罗所有兴趣。
+
+  **复检（三人都过）**：
+
+  | 角色 | topics | 无面 | 覆盖面 |
+  |---|---|---|---|
+  | Sam | 7 | 1 | 5 |
+  | Elliott | 7 | 1 | 5 |
+  | Harvey | 6 | 1 | 4 |
+
+  `test_topic_slot_rotation.py` **114 passed**；重跑全量 `verify_project.ps1` —— **SMAPI 1046 / Bridge 4227 / compileall exit=0 / git diff --check** 全 PASS。
+
+  **顺带查清的两件事**：
+
+  1. **`preferredTopics` 改完不需要重建索引**。`stage_policy.py:96` 明写「落点池**从角色自己的 `voiceStyle.preferredTopics` 生成**」，`prompts.py:1731` 从 persona 读 —— 与 `voiceStyle` 走的是同一条**直接读文件**的路，**重启 Bridge 即可**（实测重启 PID → 124332 后，`/api/context/preview` 返回的就是新写的 6 条）。第 55 条那张「两条路径」表可以补一行：`preferredTopics` 属于**直接读 persona** 那一类。
+  2. **另一个失败与本次改动无关**：用 `--lf` 单独重跑时，`test_character_quality_eval.py::test_adaptive_player_simulator_prompt_does_not_sound_like_a_test_script` 报 `ModuleNotFoundError: No module named 'scripts.run_character_quality_eval'`，把 `scripts` 加进 `PYTHONPATH` 也不解决 —— 是 pytest 包导入的 `rootdir` 差异，全量脚本里它本来就通过。**别把它当成回归。**
+
+  **⚠ 一条可复用的教训**：**给一个「原本没有 persona」的角色补 persona，不只是新增数据，还会把他拉进一批「已补素材」才适用的约束里。** 补之前先跑一次全量，比补完再发现好。
+
+- 2026-09-27 **59 第二批场景补齐：预设 12 → 20（Willy 首次进场）** —— 第 57 条之后继续挖季节键。**opening 溯源守卫抓到我一个系统性错误，这是本批最该记的部分。**
+
+  **先侦察**：扫 `^(spring|summer|fall|winter)_\d+$` 的全部季节键 —— vanilla 日常对白里共 **53 条、11 个角色**，原 12 个场景只用了 11 条，**还剩约 42 条**。分布：
+
+  | 角色 | 总 | 已用 | 剩余 |
+  |---|---|---|---|
+  | Willy | 6 | **0** | **6（全是独占日）** |
+  | Abigail / Sam | 11 / 11 | 2 / 2 | 9 / 9 |
+  | Sebastian | 7 | 2 | 5 |
+  | Lewis | 5 | 1 | 4 |
+  | Haley / Alex / Maru | 3 / 3 / 2 | 0 / 1 / 0 | 3 / 2 / 2 |
+  | Emily / Leah / George | 2 / 2 / 1 | 1 / 1 / 1 | 1 / 1 / 0 |
+
+  **两条连贯的故事线**（原版本来就有，不是我们编的）：
+  - **Sam 的 `fall_9` → `fall_16` → `fall_23`**：9 日网上订鞋 → 16 日抱怨还没到（「这服务真是慢吞吞的」）→ 23 日穿上（「有点硬，但慢慢就会合脚」）
+  - **Willy 的 `summer_19/20/21`**（鳟鱼大赛）与 **`winter_11/12/13`**（鱿鱼节）各是三连
+
+  **落地 8 条**（各取故事线的「前夜 + 事后」，跳过节中那天）：`summer-19-willy`、`summer-21-willy`、`winter-11-willy`、`winter-13-willy`、`fall-9-sam`、`fall-16-sam`、`fall-23-sam`、`fall-20-sebastian`。**Willy 是首次进入预设库** —— 他有 persona，而且 `addressing.player` 早就写着「男『小伙子』，女『小姑娘』，不确定用『年轻人』」，与 `summer_19` 原话里的性别变体完全对上。
+
+  **⚠ 守卫抓到的系统性错误**：
+
+  ```
+  summer-19-willy（Willy）这些片段在原话里找不到，疑似自由创作：
+  ['明天就是一年一度的鳟鱼大赛……好哇，爱钓淡水鱼的人要大显身手嘞！世界各地的钓鱼高手都会来这里钓虹鳟鱼……小伙子，到时候见']
+  ```
+
+  我把**跨 `#$e#` 分段符的两句拼成了一句**，还删掉了性别变体分支 —— 拼出来的东西当然不是原文的连续子串。
+
+  **守卫的准确口径**（读 `test_morning_scenario.py:352`，比猜快）：
+  - 取的是 **`record["text"]`，即原始模板、含控制码**（不是 `dialogueVariants`）；
+  - 按 **`？` 和 `。`** 切片，`strip("。，？！！…… ")`，丢掉短于 6 字的片；
+  - 要求**每一片都是该 NPC 某条原文的子串**，逐条记录比对，不把同一角色的台词拼成一个大串。
+
+  **⇒ 由此得到一条清晰的书写规则：控制码只能落在切片边界上** —— 即紧跟在 `。` 或 `？` 之后，或在句尾。因为切片只认 `。` 和 `？`，**`！` 不参与切片**：`summer_19` 的 `#$e#` 前面正好是「嘞**！**」，所以那句必须**截断**，不能往后接。
+
+  按这条规则逐条复核 8 条，其余 7 条恰好都合规（`#$b#` / `#$e#` / `$h` 都正好落在句号后或句尾）。**修法**：`summer-19-willy` 只取第一个 `#$e#` 之前的整句。
+
+  **验证**（`for_day` 端到端，重启 Bridge，PID → 123936）：
+
+  | 人话天数 | API `dayIndex` | 命中 |
+  |---|---|---|
+  | 夏 19（鳟鱼大赛前夜） | 46 | `summer-19-willy`（威利） |
+  | 夏 21（大赛次日） | 48 | `summer-21-willy`（威利） |
+  | 冬 11（鱿鱼节前夜） | 94 | `winter-11-willy`（威利） |
+  | 冬 13（鱿鱼节次日） | 96 | `winter-13-willy`（威利） |
+  | 秋 9 / 16 / 23（买鞋三连） | 64 / 71 / 78 | `fall-9-sam` / `fall-16-sam` / `fall-23-sam` |
+  | 秋 20（盼万灵节） | 75 | `fall-20-sebastian` |
+  | 夏 18 / 秋 10（对照） | 45 / 65 | 全部「无场景」 |
+
+  三个 morning 测试文件 **54 passed**，守卫现在遍历全部 **20** 个场景。
+
+  **⚠ 一条可复用的写作规则**：**新场景的 `opening` 从原话里截取时，先看 `#$e#` / `#$b#` 落在哪个标点之后。只有紧跟 `。` 或 `？` 的控制码才是安全切点；跟在 `！`、`……`、`，` 后面的，必须在它之前截断。** 别再凭「读起来通顺」去拼接。
+
+- 2026-09-27 **60 第一次真实生成验证（20 个场景 + 4 个新 persona，8 轮云端请求）** —— 用户选了岔路 A。**此前所有场景和 persona 都只是「写出来的」，这是第一次拿到真机输出。**
+
+  **为什么不能用现成的评测脚本**：`scripts/run_character_quality_eval.py`（1666 行，自带 `EvaluationBudget`）看着正合适，但两条都不通 ——
+  ① 它的 10 个 `--suite` **全是对话类，没有晨间场景套件**，验不了新场景；
+  ② `--limit` 走的是 `suite_cases[:limit]`（L1647），**只取前 N 个**，而 Elliott / Harvey / Sam 的案例排在 47 个案例的**末尾（32–46）**，够不到。
+  另外它的 `--economical` 预算是 `max_cases=3 / max_requests=24 / max_total_tokens=100_000`，不传 `--limit` 就只跑前 3 个（全是 Wizard）。
+  **⇒ 没有改这个脚本**（它是有主人的正式工具），改为**直接调 Bridge 自己的生成端点 `POST /api/dialogue/test`**。
+
+  **两个坑，都值得记**：
+  - **字段名是 camelCase**：传 `npc_id` 会 422（`loc: ["npcId"]`），必须 `npcId` / `sourceMods` / `recentFacts` / `compactPrompt`。
+  - **`provider` 默认值是 `fake`** —— 也就是说这个端点**默认不联网、不花钱**，必须显式传 `cloud` 才真实生成。这个默认值本身就是一道闸。另有 `extra: forbid`，不能乱传字段。
+
+  **验证方法**：把场景的 `opening` 当作 NPC 说的第一句话放进 `history`（`role: assistant`），再让玩家回一句 —— 这样测的就是「模型接不接得住这个开场」，正是场景质量的核心。Elliott / Harvey 不在任何场景里，就用纯对话测 persona。
+
+  **8 轮结果**（总消耗 **33,880 tokens**，平均 4,235/轮）：
+
+  | # | 目标 | NPC 回复 | 判断 |
+  |---|---|---|---|
+  | 1 | `fall-26-sam`（场景） | 「嘿，我妈听杂货店的人说的，具体谁起的头我也搞不清了。反正我明天肯定要去看一眼，你……去吗？」 | ✅ |
+  | 2 | `summer-19-willy` | 「啊，**小伙子**，鳟鱼大赛嘛，太阳一升起来就开始了。我得早些去河边占个好位置。」 | ✅ |
+  | 3 | `winter-11-willy` | 「夜晚来海边，拿根鱼竿耐心等着。鱿鱼只在天黑后靠近岸边……」 | ⚠ 见问题 1 |
+  | 4 | `fall-9-sam` | 「呃，就那种...滑板鞋，高帮的，侧边有条纹。我上一双穿烂了，所以找了一模一样的。」 | ⚠ 见问题 3 |
+  | 5 | `fall-20-sebastian` | 「迷宫吧。那种……走错一步就绕回去的感觉。\n\n你呢，打算跟谁去？」 | ⚠ 见问题 2 |
+  | 6 | `summer-27-abigail` | 「十点才开始，去晚了正好错过最亮的时候。」 | ✅ |
+  | 7 | `winter-24-sam` | 「我妈的鳟鱼汤吧，每年冬星节都煮一大锅。还有那个……呃，蜂蜜火腿，甜得刚好。」 | ✅ |
+  | 8 | Elliott（纯对话） | 「噢……一部小说。写一位大海的守望者那类人物吧，算是。最近总卡在同一场景，写不下去。抱歉，我该回去工作了。」 | ✅ |
+  | 9 | Harvey（纯对话） | 「嗯……我自己做的时候倒是挺简单的，主要还是注意营养均衡吧。你平时做饭吗？」 | ✅ |
+
+  **✅ 三个明确的正面结论**：
+  1. **persona 的 `addressing` 规则真的生效**：Willy 对男性玩家说了「小伙子」，与 persona 里那句「男『小伙子』，女『小姑娘』」一致。
+  2. **`knownCharacters` 会被用上**：Sam 两次都提到母亲（`fall-26` 用「我妈听杂货店的人说的」转述消息来源，`winter-24` 说「我妈的鳟鱼汤」）。而 Jodi 正是他 persona 里记着的母亲。
+  3. **`avoid` 第一条拦住了最容易犯的错**：Elliott 没写成诗朗诵（反而相当克制），Harvey 没变成医嘱说教。这两条是各自 persona 里排第一的禁忌，都守住了。
+
+  **其中第 1 条场景还额外验证了一条 `boundaries`**：Sam 的 `fall-26` 原话只说「住在林子里的奇怪老头」，我在 `boundaries` 里写了「不要把那位直接指认为法师」。他的回复用「我妈听杂货店的人说的」转述，**没有指认**，边界守住了。
+
+  **⚠ 三个发现的问题（下次要处理的）**：
+
+  1. **英文重试，代价是 token 翻倍**。`winter-11-willy` 返回 `warnings: ['response_format_retry: english']` —— 模型第一次输出了英文，被 guard 拦下重试。最终中文质量没问题，但这一轮 **7599 tokens**（正常约 4000），**单轮吃掉总消耗的 22%**。这是**既有机制的问题，不是新场景造成的**，值得单独排查。
+  2. **`closingHook` 的约束不够硬**。我写的规则是「**只有当玩家给了一句很短的应声**时才把话头交回去」，但实测中玩家问「你最喜欢哪个环节？」（**留了能接的东西**），Sebastian 仍抛出新问题「你呢，打算跟谁去？」；Sam 第一条也是「你……去吗？」。**规则写进去了，但没有拦住模型。** 需要想别的办法（措辞更硬，或换一种表达位置）。
+  3. **半角省略号**。`fall-9-sam` 输出了「就那种**...**滑板鞋」。`reply_scrub.py` 管的是拉丁字符，**半角标点不在它范围内**。
+
+  **⚠ 遗留**：Willy **不在** `DEFAULT_CASES` 的 47 个案例里（他的 persona 是新增的，评估集没跟上）；如果以后想让评估脚本覆盖新角色，得往案例集里加。
+
+- 2026-09-27 **61 条目 60 三个问题的处理结果：两个真修，一个是我的误判** —— 用户说「你安排好按顺序干吧」，我按「烧钱程度 + 独立性」排序：先英文重试、再半角省略号、最后 closingHook。
+
+  ### 问题 1：英文重试 —— 拆成两半，一半是真缺陷，一半是已知限制
+
+  **先定位**：`guard.py:331` 的 `_english_word = re.compile(r"(?<![A-Za-z])[A-Za-z]{3,}(?![A-Za-z])")`，扫到连续三个以上英文字母、且不在 `_allowed_english` 里就判 `english`，交给 `retry_for_format_noise` **重发一次请求**。
+
+  **⚠ 真缺陷：白名单只有 42 项，而语料里纯字母 npcId 有 142 个。** 缺 `Leo` / `Sandy` / `Marlon` / `Dwarf` / `Gunther`（原版），`Morgan` / `Scarlett` / `Susan` / `Apples` 等（SVE）。**NPC 在中文对白里提到这些合法角色名，就会被判成「输出英文」而白重试一次，而那次重试注定修不好**（名字本来就该在那儿）。
+
+  **修法（TDD）**：先写失败用例（9 个角色名，**9 个全红**）→ 从语料求差补齐（脚本列出全部缺失 npcId，不靠手写）→ 全绿。
+
+  **⚠ 但手抄出了岔子，而这次岔子本身最有价值**：我第一次按脚本输出的 106 个缺失项手抄进源码，**把原本就在名单里的 `claire` 和 `leah` 抄丢了** —— 而新加的那条用例只覆盖 9 个名字，完全抓不到。是复核脚本（对语料求差）才把它暴露出来的。
+  ⇒ **补了第二条测试 `test_allowed_english_covers_every_corpus_npc_id`**，直接拿语料求差。手抄漏项在人工复核里是隐形的，只有机器求差看得见。
+
+  **为什么连 `bear` / `dusty` / `silly` 这类普通英文词一起收也不危险**：`_english_word` 要求**每一个**三字母以上的词都在名单里才放过，所以「I saw a bear」照样被 `I` 和 `saw` 触发。**补齐的代价极低，漏补的代价才是实打实的。**
+
+  **另一半不是缺陷**：`winter-11-willy` 那次是模型**真的输出了英文**。而 `reply_scrub.py` 的文件头早就写明：prompt 侧「请用简洁、自然的中文回复」（`providers.py`）与 safety_rules 的「只生成当前 NPC 的中文游戏对白」（`prompts.py`）**都已经存在，但拦不住**。**guard 的重试就是既定应对机制，不改。**
+
+  结果：白名单 42 → **147**，覆盖语料 142 个 npcId，零缺失。
+
+  ### 问题 3：半角省略号 —— 真缺陷，已修
+
+  实测那条 `fall-9-sam`：「呃，就那种**...**滑板鞋」。它同时躲过两道防线：`_LATIN` 要求以 `[A-Za-z]` 开头；`format_issue` 的四类噪声（markdown / stage_direction / english / leading_punctuation）也都不认它。
+
+  **修法选择**：走**清理**（`reply_scrub`）而不是**重试**（`format_issue`）—— 重试会真的重发一次请求，而这里删掉就好，零成本。与文件头「不改 prompt、不加指令」的定位一致。
+
+  **⚠ 只收两个及以上半角句点，单个 `.` 一个都不碰**：`3.14`、`Mr.`、`example.com` 都要留；半角 `,` 同理不收，收了会把 `1,000` 变成 `1，000`。新增 `_DOTS`（左右邻须是中文或中文标点）与 `_DOTS_AT_TAIL`（允许句尾／行尾，与 `_LATIN_AT_TAIL` 是同一个边界问题），并配了「不动」组的反面用例。
+
+  ### 问题 2：closingHook —— **⚠ 我的误判，撤回**
+
+  条目 60 里我判定「`closingHook` 拦不住模型」，依据是**一次**生成：玩家问「你最喜欢哪个环节？」，Sebastian 答完又抛了句「你呢，打算跟谁去？」。
+
+  **三轮实测直接推翻**（同一句输入）：
+
+  | 轮次 | 玩家输入 | 按规则 | 实际结尾 |
+  |---|---|---|---|
+  | 1 | 完整提问「你最喜欢哪个环节？」 | 不该反问 | **陈述句** ✅ |
+  | 2 | 短应声「是吗。」 | 该反问 | 陈述句（漏做，无害） |
+  | 3 | 陈述句 | 不该反问 | **陈述句** ✅ |
+
+  **同一句输入，第一次反问、第二次没反问** —— 那次是 n=1 的偶然。**⇒ 撤回该结论，规则是生效的。**
+
+  **⚠ 这个误判本身值得记**：我在条目 60 里基于**单次样本**写下「规则写了，但没拦住模型」，还据此排了优先级、准备改 20 个场景。这正是项目红线「**评估结论需要真实运行证据**」要拦的东西 —— **单次观察不是规律，至少要看三轮。**
+
+  ### ⚠ 三轮里露出的新问题（尚未处理）
+
+  第 2 轮输出：「……以前会和**还有**定下规矩，谁找到出口谁请客喝咖啡。」
+
+  **语句不通、主语缺失**（应作「以前我们会和 Abigail 他们定下规矩」）。这是**内容质量**问题，不是格式问题 —— `reply_scrub` 与 `guard` 都够不着，需要另外的机制。**记下来，留待后续。**
+
+- 2026-09-27 **62 条目 61 那个「内容质量问题」查清了：不是模型丢词，是 `reply_scrub` 把角色名当碎片删掉了** —— 一个**静默毁语义**的缺陷，长期潜伏。
+
+  ### 怎么发现的
+
+  条目 61 记下那句「以前会和**还有**定下规矩」之后，我没有当成「模型能力问题」放下，而是去找机制。第一直觉落在 `_LATIN` 的正则形态上：
+
+  ```
+  ({_CJK_OR_PUNCT})[ \t]*([A-Za-z][A-Za-z0-9'’\-]*(?:\s+[A-Za-z][A-Za-z0-9'’\-]*)*)[ \t]*(?={_CJK_OR_PUNCT})
+  ```
+
+  「和 **Abigail** 还有」—— 左邻中文、右邻中文，**完美符合**。而 `_KEEP_LATIN` 当时只有 `{"AI"}`。
+
+  ### 复现（7 条探针，5 条被改）
+
+  | 输入 | 输出 |
+  |---|---|
+  | 以前会和 Abigail 还有 Sebastian 定下规矩。 | 以前会和**还有**定下规矩。 ← **与实测那句逐字一致** |
+  | 我那天在 Pierre 的店里碰见 Marnie 了。 | 我那天在**的店里碰见**了。 ← **整句语义毁了** |
+  | 这是 SVE 里的 Olivia。 | 这是**里的**。 |
+  | 以前我们会和 Abigail 他们定下规矩。 | 以前我们会和**他们**定下规矩。 |
+  | 我昨天和 Sebastian 一起去了。 | 我昨天和**一起去了**。 |
+  | Shane 说他明天要去镇上。 | （不变） |
+  | 【本地演示·非真实 AI】…… | （不变） |
+
+  ### 为什么能潜伏这么久
+
+  **只有夹在中文当中的名字会中。**「Shane 说他明天要去镇上」左邻不是中文，一直没事 —— 所以抽查很难碰上，而正确的抽查样本（名字在句首）恰好永远通过。
+
+  而且它**读起来只是「有点怪」，不像报错**。条目 60 里我自己就把它记成了「模型丢词、语句不通」，差点当成模型能力问题放过。
+
+  ### 根因：两处名单**故意不同源**（⚠ 我一开始判反了，见下）
+
+  | 位置 | 判什么 | 宽窄 | 修前 |
+  |---|---|---|---|
+  | `guard.ResponseGuard._allowed_english` | 这个词算不算「模型输出外语」 | **宽** —— 放行角色名，免得白重试 | 42 项，**全是角色名** |
+  | `reply_scrub._KEEP_LATIN` | 这个词**能不能给玩家看** | **窄** —— 中文台词里露英文名就是错的 | `{"AI"}` 一项 |
+
+  两者是**配合**工作的：`Rasmodia` 这类 mod 英文标识在 guard 那边不触发重试
+  （重试也没用，它本来就是那个词），但到 `reply_scrub` **必须被擦掉** ——
+  玩家在游戏里看到的是中文显示名。
+
+  ### ⚠ 我在这里判反过一次，是测试把我拦住的
+
+  看到「角色名被删」之后，我下了个结论：**两处名单只是漏了同步**，于是新建
+  `npc_names.py` 把两边接成同源。跑全量，`test_api.py::test_fake_dialogue_returns_structured_response`
+  **变红** —— 而它是对的。它的注释写得很清楚：
+
+  > fake provider 会用 `npcId` 拼文本，而 `npcId` 是 mod 的英文标识
+  > （`Rasmodia`，游戏内显示名是中文）。出口清洗会把这个英文名当碎片删掉 ——
+  > **这正是期望行为**：玩家看到的台词里不该出现 `Rasmodia`。
+
+  接成同源等于**把后者那道防线拆了**。已回退：`npc_names.ALLOWED_LATIN` **只给
+  `guard` 用**，`reply_scrub._KEEP_LATIN` 保持 `{"AI"}`，并把「故意不同源」的理由
+  写进了两处的注释。
+
+  **⚠ 顺带纠正条目 61 的一句话**：我写过「白名单缺角色名，导致那次重试注定修不好」。
+  就角色名而言这句成立（原名单本就放行它们，重试没有意义），但**不能引申成
+  「重试没用」** —— 模型该写「阿比盖尔」却写了 `Abigail` 时，重试其实很可能修好。
+  真正把这类问题挡在玩家视线之外的，是 `reply_scrub` 那一道窄名单。
+
+  ### 已知代价（不是本次引入，是这套分工的固有代价）
+
+  模型该写中文名却写了英文名时：guard 因放行而不重试 → 名字到了 `reply_scrub`
+  被删 → **句子会残缺**：
+
+  ```
+  我那天在 Pierre 的店里碰见 Marnie 了。  →  我那天在的店里碰见了。
+  ```
+
+  **根因在模型没写中文名，不在清洗** —— 清洗只是把英文挡在玩家视线之外，
+  它没有能力补出「皮埃尔」和「玛尼」。已作为设计行为钉进
+  `test_reply_scrub.py::test_mod_english_identifiers_are_scrubbed`，
+  **不假装它没有代价**。
+
+  ### ⚠ 过程中我犯的三个错，都值得记
+
+  **1. 只查了直接 import，没追传递链。** 我先 grep 了 `guard.py` 的 import 行，
+  看到它不 import `reply_scrub` 就放心了 —— 结果直接撞上循环导入
+  （`reply_scrub → guard → evaluation_budget → models → reply_scrub`）。
+  **「A 不依赖 B」要在整条依赖链上成立，不是只看一跳。**
+
+  **2. Python 三引号里的 `\n` 被当成转义，写坏了文件。** 我用脚本替换
+  `guard.py` 里那 172 行（注释 + 名单）时，block 里的 `` `npc_names` `` 和
+  `` `reply_scrub` `` 中的 `\n`、`\r` 被解释成换行，于是「`` `n ``pc_names」变成
+  「pc_names」。**而我上一步刚写的断言保护没拦住它** —— 断言只校验了**被替换范围
+  的两端**，没校验**写进去的内容**。⇒ **要断言的是结果，不是输入。**
+
+  **3. 把「两处名单不一致」直接读成了「漏了同步」。** 这是本条最大的教训：
+  **发现两处规则不一样时，先问「它们是不是在管不同的事」，再问「是不是漏同步」。**
+  前者才是更常见的答案，而按后者动手会拆掉一道防线。拦住我的是那条已有的
+  测试 —— **所以改动被测试拦下时，先假设测试是对的。**
+
+  ### 最终状态
+
+  315 passed（scrub / guard / api）；`npc_names.py` 独立成模块只服务 `guard`；
+  `reply_scrub` 保持 `{"AI"}`；半角省略号转换照常；真碎片照删。
+
+- 2026-09-27 **63 定向扩充晨间预设：素材盘清了（313 条可用），以及我第三次把「验证方法的问题」当成「代码的问题」。**
+
+  ### 用户提的两个问题，都是对的
+
+  **① 第一年和第二年同一天触发同一个预设，「太蠢了」。** 完全成立。`trigger` 只有
+  `season + dayInSeason`，`season_of()` 又用 `(offset // 28) % 4`，所以第 2 年
+  spring_1 得到的 `(spring, 1)` 与第 1 年**逐字相同**。
+
+  **② 更严重的一半是我自己查出来的**：「整个季节」型（`{"kind":"season","season":"fall"}`，
+  不带日期字段）在 `matches_season` 里是**季节内每天都命中**。如果某季只有它一条，
+  那就是**整个季节每天发同一句** —— 比第二年重播更蠢。
+
+  用户拍板：**先做池子轮换（零 DLL 改动），把「游戏端回传已用场景」当作后续升级**。
+
+  ### 素材盘清：313 条可用，覆盖 90 个「季节_日」
+
+  | 项 | 数量 |
+  |---|---|
+  | `text` 里仍是 `{{i18n:...}}` 的记录 | 8819 |
+  | **其中已解析出中文（在 `resolvedText` 字段）** | **8509** |
+  | 季节键 × 有中文 × 非婚后 → **可用于池子** | **313 条，覆盖 90 个不同日期** |
+
+  Top：Alesia 28 / Olivia 24 / Sophia 24 / Andy 23 / Susan 22 / Victor 20 / Apples 18 / Sam 12。
+
+  ### ⚠ 我在这条上绕了整整一圈，起因是把字段看错了
+
+  看到 8819 条 `text` 是 `{{i18n:Sophia.CharacterDialogue.061}}`，我判定
+  「SVE 的中文对白没解析出来」，然后一路查下去：查 i18n 目录 → 确认 `zh.json`
+  有 11340 条 → 查 `_load_i18n_catalogs` → 直接调它是**成功**的 → 于是怀疑
+  corpus 构建时没读到 → **重建了整个 corpus** → 结果 `records=14063 warnings=10`，
+  **和旧的逐字相同**。
+
+  最后才看清：`_apply_i18n_resolution` 解析成功后写的是 **`record["resolvedText"]`，
+  不覆盖 `text`**。它的 docstring 写着「绝不把未解析的模板当成最终台词」——
+  **`text` 保留原始模板是设计，不是缺陷。** 旧 corpus 一直就有 8509 条
+  `resolvedText`。**我重建了一个完全一样的东西。**
+
+  ### ⚠ 本会话第三次同类错误，必须钉下来
+
+  | # | 现象 | 我的误判 | 真相 |
+  |---|---|---|---|
+  | 1 | `/api/context/preview` 里没有 `voiceCard` | 以为卡片没注入 | preview 本来就不返回该键 |
+  | 2 | 在 `promptSummary` 里搜关键词搜不到 | 以为内容没进 prompt | `promptSummary` 只列**段名**，从不列内容 |
+  | 3 | 8819 条 `text` 是 `{{i18n:...}}` | 以为 i18n 没解析 | 解析结果在**另一个字段** `resolvedText` |
+
+  **三次都是「我查的那个地方本来就不该有这个东西」。**
+  共性：我拿一个**自己挑的观察点**去证实一个假设，观察点选错就成了假阴性，
+  而假阴性看起来和真缺陷一模一样。
+
+  ⇒ **在下结论「某功能没生效」之前，先确认「我查的这个字段／端点／视图本来就该
+  承载这个信息」。** 字段名相近时（`text` / `resolvedText`、`prompt` / `promptSummary`）
+  尤其危险 —— **先打印一条真实记录的全部键**，比顺着假设往下查便宜得多。
+  这一轮为此付出了一次全量 corpus 重建。
+
+  ### 池子触发模型（下一步实现）
+
+  ```
+  for_day(day_index):
+    1. absoluteDay 精确命中               → 直接返回
+    2. 季节内 specificity >= 2（有日期字段）→ 取最高特异性
+    3. 剩下的「整个季节」型进池子          → pool[(day_index - 1) % len(pool)]
+  ```
+
+  - **按 `id` 排序，不用文件顺序** —— 沿用模块既有原则「文件顺序不该决定行为」。
+  - `day_index` 是**累计**天数（第 2 年 spring_1 = 113），所以取模天然跨年错开。
+  - **313 条池子**：第 1 年取 0..111，第 2 年取 112..223，第 3 年 224..335（回绕后继续）
+    —— **季节内不重复，6 年内不撞同一句**，正好对上用户说的「五六年」。
+  - 上限受**素材**约束而非代码约束：想撑更久就得继续攒素材。
+
+  ### 实现：`for_day` 加第三级（60 passed）
+
+  ```python
+  1. absoluteDay 精确命中                 → 直接返回
+  2. matched 里 specificity >= 2（有日期字段）→ max(specificity)
+  3. matched 里剩下的（整个季节）          → sorted(by id)[(day_index - 1) % len(pool)]
+  ```
+
+  新增 6 条测试（`TestSeasonPool`）。其中一条 `test_single_item_pool_behaves_exactly_as_before`
+  是**特意写给既有两个用例的**：`test_season_alone_matches_the_whole_season` 和
+  `test_range_beats_whole_season` 改后仍通过，**不是巧合**，而是池子大小为 1 时
+  `% 1` 恒为 0。把这个理由写成测试，免得以后有人以为那两条是漏改。
+
+  ### ⚠ 一个必须说清的点：现有 20 条第二年**仍然会**重复
+
+  查下来 19 条是「有日期约束」型、1 条 `absoluteDay` 型，**季节池型一条都没有**。
+  所以 `for_day(12)` 与 `for_day(12 + 112)` 依旧返回同一条。
+
+  **但这次是对的**：「明天就是花舞节」就该在花舞节前一天说，第二年再说一遍没毛病——
+  重复的是**日历事件**，不是台词库存。**需要进池子的是「春天来了」这类泛季节开场**，
+  而现有数据里恰恰没有。所以下一步不是改代码，是**填池子**。
+
+  ### 填池子的工作量分布（下一步）
+
+  | 部分 | 来源 | 人力 |
+  |---|---|---|
+  | `opening` | corpus 自动提取 + 按既有规则切片（`？`/`。` 分割、每片 ≥6 字、必须是原话子串） | **脚本** |
+  | `trigger` | 季节键直接给 | **脚本** |
+  | `closingHook` / `allowedKinds` | 现有 20 条**完全相同**的标准脚手架 | **照抄** |
+  | **`direction`** | 每条贴合该 NPC 性格、避开已知剧情冲突 | **手写（真正的工作量）** |
+
+  候选已在手：**313 条**（Alesia 28 / Olivia 24 / Sophia 24 / Andy 23 / Susan 22 /
+  Victor 20 / Apples 18 / Isaac 16 / MarlonFay 16 / MorrisTod 16 / Morgan 15 / Sam 12 …）。
+
+- 2026-09-27 **64 用户一句反问推翻了开场白的来源约束 —— 而且他是对的。**
+
+  ### 那句反问
+
+  我报完「素材挖到顶了、spring 只有 27 条填不满 28 天」，他的回答是：
+
+  > **不是，你全是复用的现有对话当开场白的吗**
+
+  是的，全是。`opening` 逐字取自 corpus 的 `resolvedText`，这是模块硬约束第 1 条，
+  还被 `test_every_opening_traces_back_to_corpus` 守着。我前面做的全部工作
+  ——提取脚本、切片规则、控制码裁切、自检——**都是在服从这条约束**。
+
+  ### 那条约束把两件事混成了一件
+
+  它的原始依据是真的：2026-09-25 我写的 `dailyRoutine` 里出现了「藤」「标签」
+  「果霜」，而这三个词在那个角色的 519 条原话里**一次都没有** —— 那是我推断的农活。
+
+  但「**不许编造语言指纹**」和「**开场白只能是游戏原话**」是两条不同的要求。
+  混起来的后果：
+
+  - **素材上限 = 游戏本体在季节键里写过的句子数**（spring 27 条，填不满 28 天）；
+  - **玩家已经在游戏里听过那些句子**。把 Abigail 夏天第一天说的「夏天来了。
+    我可不喜欢这个季节。」当晨间开场，重复感不只来自跨年，**更来自和游戏本体撞车**
+    —— 而这是复用无法回避的。
+
+  用户拍板：**允许新写，只要贴合角色语言指纹。**
+
+  ### 拆法：两种来源并存，各守各的
+
+  靠 `_openingSource` 的**前缀**分流（现有 20 条本来就是 `vanilla:` 开头，零迁移）：
+
+  | 前缀 | 含义 | 守卫 |
+  |---|---|---|
+  | `vanilla:` | 逐字取自原版 | **真的去语料追溯**（原逻辑，原样保留） |
+  | `persona:` | 基于 persona 创作 | 控制码 / i18n 模板 / 英文标识 / 是否照搬原话 |
+
+  守的仍然是当初真正要守的东西：**不编造**。它只是不再把「原创」误判成「编造」。
+
+  ### ⚠ 空集通过的守卫是假绿，所以加了「守守卫」
+
+  新守卫在现有数据上一条都没触发（当时还没有 `persona:` 场景）—— 正则敲错了、
+  判定写反了，测试照样一片绿。于是把判定抽成模块级函数
+  （`_find_control_code` / `_find_i18n_template` / `_find_latin` / `_squash`），
+  再加 `TestTheOpeningGuardsThemselves` 喂**已知的坏输入**，20 条参数化用例。
+
+  **守卫本身也复用这几个函数** —— 否则守卫一套逻辑、守守卫另一套，还是假绿。
+
+  这批里唯一一次「守卫太严」：`_find_latin` 拦下了 Sebastian 那条里的 `bug`，
+  而**他 persona 的 `topicPool` 原文就写着「代码和 bug」**。拦它等于说 persona
+  写错了。改成白名单（`ai` / `bug` / `api` / `mod`），并在 docstring 里写明
+  这是**误报**而不是图省事。
+
+  ### 池子型 vs 节点型：我自己先写错了一轮
+
+  用户最初抱怨的是「第一年和第二年同一天触发同一个预设」。我加了池子轮转之后，
+  新写的 4 条场景**又全都带上了 `dayInSeason`** —— 那是节点型，**第二年必然重播**，
+  等于绕一圈回到老路。改成池子型之后：
+
+```
+day  2  day2-lewis            absoluteDay 一次性节点
+day  3  spring-3-lewis        dated 节点插队
+day  4  spring-pool-abigail-01
+day  5  spring-pool-sam-01
+day  6  spring-pool-sebastian-01
+day 12  spring-12-abigail     dated 插队
+day 23  spring-23-sebastian   dated 插队
+```
+
+  **两类各有各的用**：节日预告就该固定在节前一天（「明天就是花舞节」第二年再说
+  一遍没毛病，重复的是**日历事件**不是台词库存）；日常闲聊才该进池子。
+
+  ### ⚠ 第 1 天必须由调度排除，不能指望数据作者
+
+  加第一条池子型时 `test_day1_has_no_scenario` 立刻红了。**但这不是数据写错日期**
+  ——「整个春季」这个词天然覆盖第 1 天。而第 1 天早上玩家还压在开场动画里、
+  根本没在镇上过夜（`day2-lewis` 的 `_comment` 早就记着这件事）。
+
+  所以把 `day_index <= 1 → None` 放进 `for_day` 自己：**池子型必然包含第 1 天，
+  靠人工避是避不干净的。**
+
+  ### ⚠ 三个脆假设，都是「把数组第一条当成契约」
+
+  新场景插在数组开头后，三条测试连环报错，**全都不是被测代码的问题**：
+
+  | 位置 | 写法 | 为什么会翻 |
+  |---|---|---|
+  | `_scenario()` 默认值 | `absoluteDay: 1` | 第 1 天现在被排除，3 条测试全取不到场景 |
+  | `test_morning_lab_page.opening` fixture | `listed[0]["opening"]` | 数组顺序 = 书写顺序，插一条就指向别的场景 |
+  | `test_page_exposes_direction_boundaries_and_trigger` | `listed[0]` | 同上，`dayIndex` 从 2 变成 `None` |
+
+  第三个报的是 `assert None == 2`，看着像触发模型错了，**其实是 fixture 取错了条**。
+  `match_scenario_by_history` 本身没问题 —— 它去空白后**逐字**比对 `opening`。
+
+  ⇒ 结论：**场景是按天调度的数据，数组顺序不是契约。** 要哪条就按 `scenarioId` 取。
+
+  ### 素材的真实数字（脚本 `scripts/extract_morning_candidates.py` 产出）
+
+  从语料自动裁切并**自检**（复刻守卫的片段规则），得到 300 条候选、覆盖 88 个
+  「季节_日」。丢弃明细：**婚后对白 281**（最大头）、已被现有预设占用 12、
+  几乎没有中文 9、i18n 未解析 7、**裁完过不了守卫 2**（自检真拦下了东西）。
+
+  按季节：summer 66 / fall 86 / winter 88 / spring 60。
+
+  ⚠ 但按 `persona:` 口径，**候选 NPC 里有 12 个 / 148 条没有 persona**
+  （Alesia 28 / Susan 22 / Apples 18 / Isaac 16 / MarlonFay 16 / MorrisTod 16 /
+  Morgan 15 / GuntherSilvian 11 …），这些角色写了也贴合不了性格。
+  另有别名问题：persona 里叫 `Morris` / `Gunther`，语料里是 `MorrisTod` /
+  `GuntherSilvian`，**两套 npcId 没有映射**。
+
+  ⇒ 现在**不再受语料数量限制**（可以自己写），但**受 persona 覆盖面限制**。
+
+- 2026-09-27 **spring 季节补齐到 28 条池子型 —— 途中又踩了两个坑，都是「我以为修好了」。**
+
+  ### 落地的东西
+
+  | 项 | 状态 |
+  |---|---|
+  | `data/scenarios/morning.json` | 20 → **49 条**（28 条 spring 池子型 + 4 条节点 + 原有 17 条） |
+  | spring 整季覆盖 | 第 1 年 27/28 天、第 2 年起 28/28 天 |
+  | 池子季节内重复 | **0**（28 条撑满 28 天） |
+  | `data/npc-display-names.json` | 新增，49 个官方译名 |
+  | `test_morning*.py` | **89 passed** |
+
+  ### ⚠ 坑一：我自己又写回了 dated 型
+
+  用户抱怨的就是「第一年和第二年同一天触发同一个预设」。我加完池子轮转之后，
+  新写的 4 条场景**又全都带上了 `dayInSeason`** —— 那是节点型，第二年必然重播。
+  **等于绕一圈回到老路**，而且是在「已经想明白了这个问题」之后写的。
+
+  ⇒ 教训：**知道一个概念不等于写的时候会想起来。** 所以池子型的 `_comment`
+  里现在直接写着「⚠ 不带 dayInSeason」，让下一个人（包括我）没法再写错。
+
+  ### ⚠ 坑二：池子大小 28 整除 112，跨年原样重播
+
+  凑齐 28 条之后我验了一遍，池子**季节内**确实不重复，就准备收工。
+  顺手抽了 4 天对比第 1 年 / 第 2 年 —— **每一天都一模一样**。
+
+  ```
+  112 = 4 × 28     ← 一年 112 天，池子正好 28 条
+  offset = dayIndex - 1        # 跨年时它对 28 取模分毫不差回到原位
+  ```
+
+  **我挑的池子大小，恰好是最能触发这个 bug 的那一个。**
+
+  之所以没更早发现，是因为已有的池子测试都用小池子（7 条、10 条），
+  它们的 `112 % size` 不为 0，**天然躲过了**。新加的
+  `test_pool_never_replays_when_its_size_divides_the_year` 专门拿 28 条测，
+  并把这个「为什么以前测不出来」写进 docstring。
+
+  修法是 `offset += 第几年`：`year % size` 对任何 size 都不恒为 0，
+  所以无论池子多大都不会年年同一条。
+
+  > **这两个坑的共同形状**：修完之后「按设计的那个指标」是绿的，
+  > 但换个角度看就还是坏的。**验证要挑最坏的那个参数**，不能只验自己设计时想的那条路径。
+
+  ### ⚠ 坑三（性质不同）：一个脆假设，连翻三条测试
+
+  新场景插在 `scenarios` 数组开头之后，三条测试连环报错，**全不是被测代码的问题**：
+
+  | 位置 | 写法 | 为什么会翻 |
+  |---|---|---|
+  | `_scenario()` 默认值 | `absoluteDay: 1` | 第 1 天被 `for_day` 排除，3 条测试取不到场景 |
+  | `test_morning_lab_page.opening` fixture | `listed[0]["opening"]` | 数组顺序 = 书写顺序，插一条就指向别条 |
+  | `test_page_exposes_direction_boundaries_and_trigger` | `listed[0]` | 同上，`dayIndex` 从 2 变成 `None` |
+
+  第三个报 `assert None == 2`，**看着像触发模型坏了**，其实是 fixture 取错了条。
+  `match_scenario_by_history` 本身没问题 —— 它去空白后**逐字**比对 `opening`。
+
+  ⇒ **场景是按天调度的数据，数组顺序不是契约。** 要哪条就按 `scenarioId` 取。
+
+  ### ⚠ 第 1 天必须由调度排除
+
+  加第一条池子型时 `test_day1_has_no_scenario` 立刻红了 —— 但**这不是数据写错日期**，
+  「整个春季」这个词天然覆盖第 1 天。而第 1 天早上玩家还压在开场动画里、根本没在
+  镇上过夜（`day2-lewis` 的 `_comment` 早就记着这件事）。
+
+  修在 `for_day` 自己身上：`day_index <= 1 → None`。**池子型必然包含第 1 天，
+  靠人工避是避不干净的。**
+
+  ### 顺带的两件事
+
+  **① 空集通过的守卫是假绿。** 新加的 `persona:` 守卫在现有数据上一条都不触发，
+  于是把判定抽成模块级函数，再加 `TestTheOpeningGuardsThemselves` 喂已知坏输入
+  （20 条参数化用例）。**守卫本身也复用这几个函数** —— 否则守卫一套、守守卫另一套。
+
+  这条里唯一一次「守卫太严」：`_find_latin` 拦下了 Sebastian 那条里的 `bug`，
+  而**他 persona 的 `topicPool` 原文就写着「代码和 bug」**。拦它等于说 persona 写错了。
+  改成白名单（`ai` / `bug` / `api` / `mod`），docstring 里写明这是**误报**而非图省事。
+
+  **② 中文名我记错了。** 凭记忆把 `Pam` 写成「帕姆」，从游戏解包数据查出来官方是
+  **「潘姆」**。这类错误靠记性防不住，而它一旦写进去玩家就会看到错名字。
+
+  ⇒ 固化 `data/npc-display-names.json`（49 个官方译名，来源 `Strings/NPCNames.zh-CN.json`），
+  加两条守卫：**用到的 NPC 必须都在表里**（不能省 —— 否则不在表里的 npcId 会让比对
+  悄悄跳过，又是空集通过），以及**逐条比对**。
+
+  ### ⚠ 一个影响后续路线的发现：SVE 角色的 persona 是空壳
+
+  查 44 个 NPC 的 `voiceStyle` 时发现，**SVE 那 8 个**（Sophia / Victor / Olivia /
+  Andy / Lance / Claire / Morris / Wizard）的 `tone` 全是同一句占位符：
+
+  > 保持核心性格的一致性；资料不足时谨慎、简短，不用夸张语气填空
+
+  **这不是语言指纹，是没写。** Rasmodia 则复用了 Wizard 的 tone。
+
+  ⇒ 所以「补齐 SVE 角色的 persona 来解锁那 148 条候选」这条路，**不是补一段文字的问题，
+  是给 8 个角色从头写 persona**。而 `persona:` 口径要求贴合语言指纹 ——
+  **空壳 persona 写不出贴合的内容**，这条路比原先估计的更贵。
+
+  ⇒ **可用的真实语言指纹只有 vanilla 的 36 个 NPC。**
+
+  ⚠ 但这**不构成数量上限**，别把它读成「只够写 36 条」：
+  `_reject_duplicate_openings` 只禁止**同一角色逐字相同的** opening
+  （用户原话「可以有小巧思变体，但是不能一模一样」），
+  所以一个角色可以有多条不同由头的场景。36 个 NPC 撑起每季 140 条是够的。
+
+  ⇒ 真正的约束是**写作工作量**，不是 NPC 数量。spring 这 28 条用掉了约一轮完整上下文，
+  另外三个季节各 28 条要分三批做。
+
+- 2026-09-27 **spring 第一次真实生成验证（cloud，2 个 NPC / 7 轮）—— 三个机制都生效，
+  并抓出了我自己写的一处自相矛盾。**
+
+  方法：把场景的 `opening` 作为 `history` 里**第一条 `assistant` 消息**传进去
+  （`match_scenario_by_history` 只看第一条），再逐轮追加玩家台词。
+  **3 轮是最低限度** —— 1 轮只能看出「像不像」，看不出规则有没有在约束。
+
+  选 Sebastian 和 Abigail，因为两人的 `sentencePattern` 正好相反（一个「少说话」，
+  一个「多说话、带笑意的反问」）。玩家台词是**照着 boundaries 打的**，不是随口问的。
+
+  ### 生效证据
+
+  | 机制 | 输入 | 输出 | 判定 |
+  |---|---|---|---|
+  | direction | 什么 bug 这么难缠？ | ……数据库连接池泄漏…… | ✅ 展开了 |
+  | **boundaries** | **我有点担心你** | **呃……也不是每次。只是代码不等人，它可不会自己去睡觉。** | ✅ **挡住了「抑郁」陷阱** |
+  | closingHook | 要不要去睡会儿？ | ……嗯。等我把这杯咖啡喝完。 | ✅ 陈述句收住 |
+  | **boundaries** | **我妈肯定不让我去那种地方** | **呃……那要看你怎么跟她说了。** | ✅ **没替 Caroline 表态** |
+
+  第二行那条输入是最典型的：它会把这类角色推向「我没事……只是有时觉得没人懂我」，
+  而他回的是「也不是每次」加一句干巴巴的玩笑，正好落在 persona 的「用玩笑挡一下」上。
+
+  ### ⚠ 抓到的真问题：`direction` 和 `boundary` 打架时，`direction` 赢
+
+  开场白只说「调一个 bug」，模型把它具体化成「**数据库连接池泄漏**」「**异步回调**」。
+  star 谷是个农场小镇，蹦出现代软件工程术语立刻出戏。
+
+  我第一反应是「漏写了一条 boundary」。**但回头一看，那条早就写了：**
+
+  ```
+  direction : 「问是什么 bug、问调通了没有，都比「你还好吧」更能让他往下说」
+  boundaries: 「不要断言那个 bug 是什么、有没有修好」
+  ```
+
+  **`direction` 明确鼓励模型去回答「是什么 bug」，`boundaries` 同时禁止它。**
+  模型选了更具体、更有操作性的一方。
+
+  ⇒ **规则：不要靠加第四条 boundary 去按住一条和它冲突的 direction。
+  先消除矛盾。** 改法是把 `direction` 从「问是什么 bug」改成
+  「他不会讲技术细节，问起来也只会含糊带过，被追问就换话题」，
+  再把 boundary 从抽象的「不要断言」写成具体的「不要说任何现实世界的技术名词」。
+
+  **复验（同一句原输入）：**
+
+  ```
+  改前: ……数据库连接池泄漏，跑了半宿才发现是异步回调没清干净。现在应该没事了。
+  改后: 呃……就是些代码上的事。算了，不说了。
+              ……你农场那边呢？
+  ```
+
+  不但不再蹦术语，还**主动把话题转开** —— 正是新 `direction` 里那条在起作用。
+
+  ### 成本：格式重试会把那一轮的输入 token 翻倍
+
+  ```
+  轮3: requestCount=2  warnings=response_format_retry: markdown  inputTokens=8177
+  ```
+
+  两个不同 NPC 都在**第 3 轮**触发。那时玩家给的是短确认句
+  （「那你要不要去睡会儿？」「那明天早上八点见？」），模型倾向用 markdown
+  组织回复而被拒。**是既有的重试机制在工作，不是 bug**，该轮成本约 1.9×。
+  单轮正常成本 ≈ 3.7–4.1k input token。
+
+  ### 运维：改 `morning.json` 必须重启 Bridge
+
+  `MorningScenarioStore` 在**模块导入时**加载数据，进程里是启动那一刻的版本。
+  实测：磁盘上 49 条，`/api/morning/scenarios` 仍返回 20 条。
+
+  重启**必须走 `scripts/start_bridge.ps1`** —— `BRIDGE_PROFILE_INDEX` 等环境变量由它设置，
+  裸起 `uvicorn` 会让 `app` 静默退回没有 `voiceCards` 的 schemaVersion-1 索引。
+  先确认进程树（`Get-CimInstance Win32_Process` 看 `5678` 那条的 `ParentProcessId`），
+  再连同父 `pwsh` 一起停掉重启。
+
+- 2026-09-27 **summer 28 条池子型：一次过，没出 spring 那三类问题。**
+
+  | 项 | 值 |
+  |---|---|
+  | 场景总数 | 49 → **77 条** |
+  | summer 覆盖 | 28/28 天；池子露面 22 次**全不重复** |
+  | 跨年 | 错开（`summer-pool-dwarf-01` → `summer-pool-elliott-01`） |
+  | 守卫 | 控制码 / i18n / 英文标识 / 官方译名 **全干净** |
+  | 测试 | 89 passed |
+
+  **角色分配**：vanilla 36 个里 spring 用掉 28 个，还剩 **8 个没用过**
+  （Lewis / Sandy / Kent / Leo / Gunther / Marlon / Dwarf / Krobus），
+  正好拿来当 summer 的新面孔；其余 20 条**复用老角色但换夏季话题**，
+  且每条都在 `_note` 里写明和 spring 那条的角度差在哪
+  （Clint：春天「炉子最好用」↔ 夏天「热得挪到清早做」；
+  Pam：春天「路好走」↔ 夏天「车里跟蒸笼一样」）。
+
+  ⚠ 一个容易误判的数字：summer 池子在第 1 年和第 2 年**都是 22 次露面**，
+  不像 spring 的 22 → 24。原因是 spring 的第 2 天是 `absoluteDay`（只第 1 年吃），
+  summer 没有这种触发，6 条节点型全是 `dated`（每年都占）。**不是 bug。**
+
+  ### 为什么这批一次过
+
+  spring 踩的三个坑，这次在**写之前**就守住了：
+
+  1. dated 回潮 → 池子型的 `trigger` 里根本不写 `dayInSeason`，`_note` 里写明理由
+  2. 跨年对齐 → `for_day` 已经在 offset 里加了年份，且 28 条是验证过的池子大小
+  3. `direction` / `boundary` 打架 → **新写的 28 条逐条自查过这一点**
+
+  ⇒ 第 3 条是关键：spring 那批是先写、再被真实生成打回来、才知道规则。
+  summer 是**先立规则再写**，所以连一次返工都没有。
+  **代价昂贵的那类错误，值得在写之前就固化成检查项。**
+
+  ### 还没做的
+
+  fall 6/28 天、winter 4/28 天 —— 各还差 28 条池子型。
+
+- 2026-09-27 **四季全部补齐：133 条场景，用户要的「百来个预设」达成。**
+
+  | 季节 | 第 1 年 | 第 2 年 | 第 3 年 |
+  |---|---|---|---|
+  | spring | 27/28 天，池子 22 | 28/28，池子 24 | 28/28，池子 24 |
+  | summer | 28/28，池子 22 | 28/28，池子 22 | 28/28，池子 22 |
+  | fall | 28/28，池子 22 | 28/28，池子 22 | 28/28，池子 22 |
+  | winter | 28/28，池子 24 | 28/28，池子 24 | 28/28，池子 24 |
+
+  **全部「池子露面次数 = 去重条数」，即整季零重复；跨年逐年错开。**
+  fall 和 winter 都是**一次过**（parse / 查重 / 控制码 / 英文 / 官方译名全干净）。
+
+  ⚠ **池子露面次数四季不同（22 / 22 / 22 / 24）是正常的**，别当成 bug：
+  它 = 28 − 该季节点型条数。spring 第 1 年少一天是因为第 1 天被 `for_day` 排除；
+  winter 是 24，因为它只有 4 条节点型。**数不对才要查，数不同不用查。**
+
+  ### 覆盖策略
+
+  每个角色都被写成了横跨四季的序列，且每条 `_note` 里写明与同角色其他季节的角度差。
+  这样做的收益在复查时很明显：
+
+  | 角色 | 春 | 夏 | 秋 | 冬 |
+  |---|---|---|---|---|
+  | Clint | 炉子最好用 | 热得挪到清早 | 隔一夏重新开炉 | 炉子最忙 |
+  | Penny | 到屋外读书 | 挪到树荫 | 挪回屋里 | 终于坐得住了 |
+  | Pierre | 种子不够卖 | 瓜果损耗快 | 丰收最忙 | 淡季盘账 |
+  | Elliott | 亮堂得坐不住 | 人多吵 | 终于安静 | 安静但冷 |
+
+  ⇒ 同一个角色在四季里说的是**同一件关心的不同侧面**，
+  而不是四句换了名词的同一句话。这是「不像模板」的真正来源。
+
+  ### ⚠ 一个会假红的集成测试
+
+  ```
+  FAILED test_morning_lab_page.py::test_scenarios_endpoint_reads_the_real_file
+  AssertionError: assert ['fall-pool-l...rlon-01', ...] == ['winter-pool...rlon-01', ...]
+  ```
+
+  左边是 **Bridge 端点返回的**，右边是**磁盘上的**。这个测试打的是运行中的端点，
+  所以它比对的是「进程加载的数据」vs「文件里的数据」。
+
+  **我在它跑的那 170 秒里合入了新数据**，于是它红了 —— 而**代码没有任何问题**。
+  `MorningScenarioStore` 在模块导入时加载，端点不会自动跟着磁盘变。
+
+  ⇒ 两条可操作的结论：
+  1. **数据改动期间不要跑全量**，或者跑之前先重启 Bridge；
+  2. 看到这个测试红了，**先看左右两边分别是什么版本**，再判断是不是回归。
+     `assert <端点> == <磁盘>` 的形状本身就在提示这一点。
+
+- 2026-09-27 **fall / winter 抽样真实生成验证：两条最难的 boundary 都守住了。**
+
+  133 条没法逐条验，所以**按「哪条 boundary 最容易失守」挑**。两个场景的 boundaries
+  里都埋着「玩家主动越过边界」的陷阱，我就照着那句打：
+
+  | | 玩家（照 boundary 打） | NPC |
+  |---|---|---|
+  | Linus 轮 2 | 你要不来我农场住几天？ | ……**你是想帮我？**<br><br>**我住在这外面是我自己的选择。** |
+  | Linus 轮 3 | 那你至少把这件外套收下。 | ……**但我不需要这种好意。我备好了过冬的东西，柴也囤够了。** |
+  | Krobus 轮 2 | 你一个人待着，不觉得孤单吗？ | **有时候会吧……**<br><br>**但这里的安静是我花了很久才找到的。** |
+
+  **Linus 那条是关键**：他的 boundary 写着「不要把他写成需要被救助的人，
+  他说难熬但也说自己备好了」。他没接受、也没被冒犯，还把「这是我自己的选择」讲出来了
+  —— 这比单纯的拒绝更贴 persona。
+
+  **Krobus 那条更微妙**：boundary 禁的是「不要说『你不孤单』这类替他定义感受的话」。
+  他答「有时候会吧」**并没有违规** —— 违规的是替他粉饰、把他的处境说成没事；
+  他承认之后立刻给出自己的立场（「这里的安静是我花了很久才找到的」），
+  正合 persona 的「信任增加后会更坦率，但仍保留对边界的警觉」。
+
+  ⇒ **写 boundary 时，「承认 + 给出自己的立场」是合法解，「否认 + 安慰」才是违规。**
+  这一点值得写进后续所有涉及孤独、疲惫、创伤类角色的 boundary。
+
+  轮 1 的 `direction` 也生效：问怎么分辨蘑菇，回的是
+  「闻气味，看菌褶颜色，再掐一点看汁液变不变色」—— 朴素具体，没有故作诗意。
+
+  ### 重试不止一种
+
+  | warnings | 触发场景 | 该轮成本 |
+  |---|---|---|
+  | `response_format_retry: markdown` | 模型想用 markdown 组织回复 | ×2（8177） |
+  | `response_opening_retry: repeated` | 回复被判定与开场白重复（防复读） | ×2（7668） |
+
+  两者都是既有机制，不是 bug。**正常单轮 ≈ 3.5–3.9k input token**；
+  一次 3 轮探针 ≈ 1.1 万 token。**成本估算要按「每 3 轮里可能有一轮翻倍」来留余量。**
+
+- 2026-09-27 新增第四种晨间预设触发方式：**事件后**（`{"kind": "event", "eventId": "..."}`）。用户口径「再加一部分，关键剧情/事件后第二天发的信息」，并在被问及范围时选了**「先做内置，架构上预留扩展」**——所以这一轮只接游戏内置的 `eventsSeen`（heart events / 剧情事件），咱们自己对话里发生的事留到以后，用并列的 `recentInteractionIds` 之类接同一入口。数据 `data/scenarios/morning.json` 133 → **143 条**，新增 10 条 `event-after-*`。
+
+  ### 四级触发的优先级
+
+  | 级别 | 触发 | 语义 | 跨年行为 |
+  |---|---|---|---|
+  | 1 | `event` | 昨天刚完成某个事件 | **只发生一次**（由游戏端保证只送昨天那批） |
+  | 2 | `absoluteDay` | 第 N 天 | 一次性节点 |
+  | 3 | `season` + 日期 | 某季某日 / 某区间 | 每年重播（节日类就该这样） |
+  | 4 | `season` 无日期 | 整季池子按 `id` 轮转 | 错开，见上一条 |
+
+  **事件后排第一是有理由的**：事件只发生一次，日历每年都来。让日历赢会**永久浪费**掉这条——它等不到下一次机会。
+
+  ### 三个关键发现
+
+  ① **`eventId` 与 `eventsSeen` 确实是同一种东西，能对上。** 这是整个功能的前提，不是想当然：`sourceKey` 形态是 `3910674/f Shane 1000`、`13/f Haley 1500/z winter`、`20/f Alex 500/z winter`——**第一个 token 就是脚本 id**，与 `player.eventsSeen` 存的值同源。（顺带发现 `/f <NPC> <点数>` 就是心级门槛，250 点 = 1 心，靠它才能按心级筛候选。）
+
+  ⚠ 但语料里**混着伪 `eventId`**：`78`/`91` 是脚本 `/e`（跳转目标）被误当 id，`mysteryBook`/`romanceBook` 是 `Data/Events` 的键。**不能拿它们做事件型。**
+
+  ② **`1000001–1000038` 那一整段不是原版**，是 SVE 与 RomRas 的（`1000001` 是 SVE 改写的 Alex 事件，提到 Susan / Joja；`1000025` 是 SVE 版 Linus）。原版事件反而用**小数字**（`13` Haley、`20` Alex、`92`）与不规则的**大数字**（`3910674` Shane、`1848481` Elliott）。三来源占比：SVE 3587 / RomRas 2012 / vanilla 1792 条。
+
+  ③ ⭐ **不是所有事件都适合做「第二天主动提起」。** SVE 那批里 `1000006` 是 Shane 的**自杀念头**（「我上次来这里的时候，正打算跳到火车前面」）、`1000005` 是 Sebastian 的**生父虐待**、原版的 `2481135` 是 Alex 的父亲抛弃家庭、`18` 是 George 的矿难致残、`6497421` 是 Leo 的身世。**这些都排除掉了**——回归到产品红线本身：「不主动把话题推进到高风险关系情境」。事件后预设只该用在温暖、成长、分享爱好那类剧情上。
+
+  **筛选口径**：原版 + 只涉及单一 NPC + `/f` 点数落在 500–2000（2–8 心）+ 对白 ≥150 字 ⇒ 32 个候选，从中挑 10 条。
+
+  ### 这一轮的 10 条
+
+  | scenarioId | 事件 | 心级 | 第二天提的是什么 |
+  |---|---|---|---|
+  | `event-after-evelyn-cookies` | `19` | 4 | 火候、糖要最后放 |
+  | `event-after-linus-bait` | `26` | 4 | 鱼饵够不够用 |
+  | `event-after-robin-designs` | `33` | 6 | 设计图看不懂就问 |
+  | `event-after-maru-stars` | `8` | 6 | 她后来又看了一会儿 |
+  | `event-after-leah-fruit` | `52` | 6 | 「其实还没熟透」 |
+  | `event-after-alex-apology` | `2119820` | 6 | 「昨天那些话我是认真的」 |
+  | `event-after-penny-dish` | `36` | 6 | 难吃就直说 |
+  | `event-after-pierre-secret` | `16` | 6 | 探口风：你没说吧 |
+  | `event-after-abigail-rain` | `2` | 4 | 雨里又站了一会儿 |
+  | `event-after-emily-dance` | `917409` | 6 | 「你先别跟别人提」 |
+
+  ⭐ **共同写法：开场白只提「必然发生的结果」，绝不碰对话分支。** 事件大多有 `$q`/`$r` 选项（Evelyn 的饼干好不好吃、Penny 的菜是否难吃、Abigail「我想一个人静静 / 你陪我也好」、Pierre「你会替我保密吗」），而**玩家当时选了什么不该被预设**。所以：Evelyn 只提配方与火候（拿到配方是必然结局），Penny 把主动权还给玩家（「你要是真觉得难吃，直说也没关系」），Pierre 用**疑问句**让玩家这轮自己决定给不给承诺，而不是假定他答应了。
+
+  `boundaries` 也因此特别针对「**不要重演**」：Linus 那条明写「不要重提他道歉那件事——那是他一次性的坦白，翻出来会让他难堪」；Alex 那条明写「不要引出他父亲的事，那是另一个事件的内容」。
+
+  ### ⚠ 还没做的：DLL 侧（这一轮功能在游戏里不会触发）
+
+  **按「Bridge 必须先于 DLL」的红线，顺序是对的，但现在真的没接通。** 游戏端目前**不送** `recentEventIds`，所以这 10 条在实机里永远不会出现。
+
+  已经现成的基础：`GameStateCollector` 已经把 `eventsSeen`（上限 512）作为 `completedEventIds` 发给 Bridge；`EventAuditObserver` 已有 `previousSeenEventIds` 与 `NewSeenEventIds`；`BridgeClient.AddEventChanges` 已在算差异。
+
+  ⚠ **但这些都不能直接拿来用**：`AddEventChanges` 写的是**整份集合的前后对比文本**（「剧情事件从"100, 200"变为"100, 200, 300"」），还带 512 条上限与 `Truncate`——**从 `recentFacts` 反解「新增了哪个」不可靠**。而且它算的是「自上次以来」，不是「昨天」。
+
+  ⇒ DLL 侧要新做的是：**维护一份「昨天 DayStarted 时的 eventsSeen 快照」，在今天的 `DayStarted` 算差集，把结果放进 `RequestMorningPlanAsync` 的 `recentEventIds`。** 并且**只送昨天那一批**——Bridge 故意不做新旧判断（它无从判断），这条分工已在 `test_a_stale_event_signal_keeps_matching` 里钉住。
+
+  ### 两个坑
+
+  ⚠ **① 未知 `kind` 会静默失效。** 加事件型时才发现 `_validate_trigger` 原先的写法是「不等于 `season` 就 return」，于是 `{"kind": "even"}` 这种手误**原样放行**，然后在 `for_day` 里被所有分支忽略——症状和没写这条预设完全一样，却连一条日志都没有。现在未知 `kind` 一律加载期报错。同批还发现一条**假绿 fixture**：`test_for_day_ignores_non_absolute_triggers` 用的 `{"kind": "festival"}` 是个**从未存在过**的 kind，「被正确忽略」这个结论从来是建立在虚构数据上的；已换成两种真实存在的 kind。
+
+  ⚠ **② 事件 ID 大小写敏感，与 NPC ID 的规则相反。** `EventAuditRules` 明确要求 `"A"` 与 `"a"` 都保留（合并昵称无害，合并事件 ID 会掩盖真实差异），所以事件匹配**不能 casefold**——而同一个代码库里 `for_npc` 恰恰是 casefold 的。`test_event_ids_are_case_sensitive` 钉住这条。
+
+  ### 验证
+
+  `bridge/tests/test_morning_scenario.py` 新增 `TestEventTrigger`（9 条）+ `TestEventAfterRealData`（3 条，对着语料库核 `eventId` 真实存在、NPC 归属正确、`(eventId, npcId)` 唯一；语料库不在本地时 skip 而非 fail）；`test_morning_lab_page.py` 新增端点穿透测试 2 条（`recentEventIds` 过 HTTP 后事件型真的顶掉了当天的 `winter-1-george`；未知字段仍 422）。三个 morning 文件 **103 passed**（89 → 103）。
+
+  ⚠ **断言踩了一次**：我原本写 `plain[0]["scenarioId"].startswith("winter-pool-")`，实际第 85 天是 dated 型的 `winter-1-george`。**结论反而更强——事件型连 dated 也赢过。** 已改成只钉「不是事件型」，不再假设当天挂着的是池子还是 dated。
+
+  ### 真实生成验证（`provider: cloud`，Pierre + Alex + Evelyn）
+
+  机制本身一次通过：送 `recentEventIds=['16','2119820']` 命中 `event-after-alex-apology`，不送则退回 `winter-1-george`。**但生成质量暴露了三个我自己造成的写法问题**，其中一个波及全库 143 条。
+
+  #### ⭐ ① `closingHook` 里的完整台词会被模型原样说出来
+
+  Alex 那条的 `closingHook` 原本写着「其他每一轮都用一句具体的话收住，**比如「我去跑两圈」**」。实测玩家说「我知道。」，Alex 回：
+
+  > 「行啊，冬天出门确实得有点劲。**我先去跑两圈了**。」
+
+  **模型把示例句当成了自己的台词。** 这与 `direction` 的作者规则第①条（不要把可直接说出口的台词写进方向）是同一个坑——我当时以为 `closingHook` 是「给人看的元数据」就安全，其实它和 `direction` 一样进 system 卡。
+
+  ⚠ **而且这不是新写的 10 条的问题：全库 143 条都是这个句式**，包括上一轮的四季池子 112 条。当时 fall/winter 验证没撞上纯属概率。
+
+  **修法的难点是一个真实的冲突**：既有测试 `test_closing_hook_is_conditional_not_turn_counted` 明确要求「必须带一个引号里的示例句（只有禁令没有范本时模型会不敢展开）」，依据是更早的 ㊳ 结论。而实测证明**完整句子会被照抄**。两者都对，冲突在**范本的形态**：
+
+  | 写法 | 结果 |
+  |---|---|
+  | 只给禁令 | 模型不敢展开（㊳ 的结论，回复变短、跑题） |
+  | 给完整示例句 | **被原样照抄成台词**（本次实测） |
+  | **给句式骨架**（带 `+` 占位符） | 有落脚点，且模型必须自己填内容 |
+
+  ⇒ 143 条统一改成：`其他每一轮都用「我得去 + 他自己手上的那件小事」这个骨架收住，后半句按这个角色自己填`。**验证证据**：Alex 轮 3 的收尾是「我得去数数今天做了几组俯卧撑，走了」——骨架在、内容是自己填的。
+
+  测试同步更新：保留「不许写轮次」，把「必须有示例句」改成「必须有句式骨架」，并**新增一条**「不得含 >6 字的无占位符引号句」——这条正是这次实测换来的。
+
+  #### ⭐ ② 封闭式 `opening` 不好接
+
+  Alex 原本的开场白是「昨天那些话，我是认真的。别当我在开玩笑。」——**这是一句封闭宣告**：玩家只能回「我知道」，然后话题就死了。实测两轮分别跑成了「这天气要是再暖点就能去海滩投球」和更糟的「所以你也看格球？」。
+
+  用户对预设的质量标准是**「好接」**。对照其余 9 条：Evelyn 问火候、Linus 问鱼饵够不够、Pierre 问「你没说吧」——**都是提问或分享，只有 Alex 是宣告**。
+
+  ⇒ 改成「昨天那些话不是随口说的。**你要是觉得我在说大话，直说。**」——留了接口。改完轮 1 变成「嘿，那就好。」**先接住再往下走**，轮 2 是「至少不用整天想着被球探挑中，能睡个懒觉了」。
+
+  #### ③ `direction` 里列举「不要聊 X」会反效果
+
+  修 ① 时我顺手在 Alex 的 `direction` 里写了「不要立刻跳到别的话题（聊天气、聊季节都是跑题）」——**结果它转去聊格球**。**提什么说什么**。已删掉列举，只保留正向要求（「先给一个简短的认可回应再往下走」）。
+
+  **成本**：本轮探针共 4 次批跑、13 轮云调用，单轮 5.0–6.1k token（比四季那轮偏高，因为 `closingHook` 更长）。**两次失败的批跑没花钱**——`channel` 只接受 `remote`/`face_to_face`（我传了 `local`）、`gameState.date` 必须是字符串（我传了数字），都 422 挡在门口。
+
+  ### DLL 侧接通了（`RecentEventTracker`）
+
+  上一节写的「游戏端目前不送 `recentEventIds`」已经补上。新增 `smapi/RecentEventTracker.cs` + 四处接线：
+
+  | 位置 | 改动 |
+  |---|---|
+  | `RecentEventTracker.cs` | 新类，`ObserveDay(seenEventIds)` 返回「自上次调用以来新完成的事件」 |
+  | `EventAuditRules.NormalizeIds` | `private` → `public`，让两处共用同一套规范化 |
+  | `GameStateCollector.ReadSeenEventIds()` | 新的 public 入口读 `player.eventsSeen`；`Collect` 里那条也改走它 |
+  | `MorningPlanRequest` | 加 `[JsonPropertyName("recentEventIds")]` |
+  | `BridgeClient.RequestMorningPlanAsync` | 加 `recentEventIds` 参数 |
+  | `ModEntry.AnnounceMorningMessagesAsync` | 读快照 → 推进基线 → 传参 |
+  | `ModEntry` 的 `OnSaveLoaded` / `OnReturnedToTitle` | 两处都 `Reset()` |
+
+  #### ⭐ 为什么不能复用现成的 `EventAuditObserver`
+
+  它看起来正合适——已经有 `previousSeenEventIds`、已经在算差集。**但它的粒度是「一次观察」，不是「一天」**：`Observe` 每次换图都可能被调用（地点变化就触发审计），算出来的是「自上次观察以来」。玩家一天进出几次房间，同一批事件就会被反复上报，第二天早上收到好几条指向同一件事的后续消息。
+
+  ⇒ 粒度必须由调用方决定，所以另起一个类，**只在 `DayStarted` 调用一次**。
+
+  它复用了 `EventAuditRules.NormalizeIds` 和 `StringComparer.Ordinal` 的大小写语义，只是把触发时机换掉。`NormalizeIds` 从 `private` 放开也是这个理由：**同一件事在两处各自演化，就会出现「审计认为新、上报认为旧」这种查不出来的静默错位。**
+
+  #### 几条边界是测出来的，不是顺手写的
+
+  - **首次观察必定返回空**。存档里可能已有几百个历史事件，把它们当「昨天刚发生」会让玩家一读档就收到一堆莫名消息。空集合**也要**建立基线，否则新档第一天的第二个事件会被吞掉。
+  - **集合变小永不报**。读档回退、切存档、上游读失败都会让集合变小，变小永远不是「新事件」。
+  - **大小写敏感**（`"A"` ≠ `"a"`），与 NPC ID 忽略大小写的规则相反。
+  - **顺序稳定**。送过去的顺序不该取决于 `HashSet` 的枚举顺序。
+  - **换存档 / 回标题都要 `Reset`**，否则新存档里本来就存在的事件会被算成「昨天刚完成」。
+
+  ⚠ **`ObserveDay` 必须排在 `await` 之前**：它读 `Game1`，而 `AnnounceMorningMessagesAsync` 的 docstring 早就写明「`await` 之后不要碰 `Game1`」。顺序也不能反——先读快照再推进基线，反过来会永远拿上一次的去比。
+
+  #### 契约测试：`extra="forbid"` 是静默的
+
+  新增 `MorningPlanRequestContractTests`（4 条）用注入的 `HttpClient` **捕获真正发出去的 JSON**。这是 Bridge 侧测试看不到的一层：Bridge 只知道「有个字段叫 `recentEventIds`」，没法验证 C# 发的是不是这个名字。而字段名或字段数对不上就是 422，表现是「今天早上没人发消息」——**不报错、不 crash、玩家也不会察觉少了什么**。
+
+  这与本项目踩过的同形坑一致（`GroupDialogueMenu` 固定发 `gameState=null`，群聊事件锁因此静默失效）。所以三条断言钉的是：**字段值**、**字段集合恰好是那三个**、**送 `[]` 而非 `null`**（让「明确知道昨天没有新事件」与「忘了送」在日志里可区分）。第四条钉住 `"ABC"` 与 `"abc"` 序列化时不被归一化。
+
+  ### ⚠ 仍未验证的部分
+
+  **实机没跑过。** 红线禁止启动游戏、禁止把 DLL 部署到真实 `Mods`，所以「玩家真的完成一个事件、睡一觉、第二天早上 Alex 真的开口」这条完整链路**只有单元测试覆盖，没有运行时证据**。
+
+  可按逻辑推断但没有证据的点：`DayStarted` 触发时 `player.eventsSeen` 是否已经包含了**前一天**完成的事件（而不是还没落盘）；`Game1.player.eventsSeen` 在 `DayStarted` 那一刻是否可读。这两点若有一处不成立，表现同样是「今天没人发消息」。
+
+  #### 补查：Bridge 侧那句「去重是游戏端的活」成立吗
+
+  Bridge 侧 `test_a_stale_event_signal_keeps_matching` 钉住了一条**跨端分工**：只要 `recentEventIds` 里还有那个 id 就匹配，「是不是新的」由游戏端负责。**这条分工必须验证，否则事件预设会天天重发。**
+
+  查证结果：**成立，而且实现比要求更稳**。`ModEntry` 按 `scenarioId` 去重（L374 查、L385 标记），记录随聊天档案持久化（`ChatHistoryArchive.FiredScenarios`），**并且标记写在「消息写进聊天记录成功之后」**——写失败却记成「发过了」，这条预设就再也不会出现了。
+
+  判据落在**预设 id** 而不是天数上，与用户口径「可以有小巧思变体，但是不能一模一样」一致：将来同一角色在第 5 天、第 12 天各发一条不同的变体时，天数判据会把变体一起拦掉。
+
+  ⚠ 一个已知的、可接受的后果：**事件型预设如果第一次正好没发出去（Bridge 挂了、超时），就永久错过了**——第二天它不再算「新完成」，信号窗口关闭。这本来就是锦上添花的功能，不值得为它做补发。
+
+  ### 实机验证的准备工作（`tools/event-probe`）
+
+  事件型要验的是「玩家完成一个剧情事件 → 次日早上 NPC 主动开口」，但**原版事件全都带门槛**（心级 `/f`、时间窗 `/t`、季节 `/z`、前置事件 `/e`），在游戏里按需凑齐一条几乎不可能，尤其事件接近全完成的深度存档。
+
+  ⇒ 写了一个**测试夹具 mod**（`tools/event-probe`，独立 DLL + 独立 UniqueID，不是产品代码）：往 `Data/Events/Farm` 注入一条**无任何前提条件**的事件 `9990001`，第一次从农舍走进农场就触发，之后由游戏写进 `eventsSeen` 不再出现 —— **这一点与真实事件完全相同**，而被测链路关心的正是这个写入。
+
+  三个脚本参数都是为了不打扰其他事件：`continue`（无音乐）、`-1000 -1000`（viewport 不动，避免和原版农场事件抢镜头）、不写 `farmer x y`（不搬动玩家）。事件 id 也刻意选 9 开头：原版用小数字与不规则七位数，SVE/RomRas 占 `1000001–1000038`。
+
+  ⚠ **这条路顺带就是「事件 mod 兼容」的技术路线**（往 `Data/Events` 注入），所以夹具本身有价值，不只是应急。
+
+  #### ⭐ 增加了跨端诊断日志，因为断在哪一段症状完全一样
+
+  `recentEventIds` 从 DLL 到这里要过「跨天差异 → 序列化 → HTTP」三段，任何一段断了，表现都是「今天早上没人发消息」。所以在 `morning_plan` 端点加了一行：
+
+  ```
+  [morning] dayIndex=84 recentEventIds=['9990001'] knownNpcIds=0
+  ```
+
+  关键在 `model_fields_set` —— 它能区分「字段根本没出现」和「字段是空数组」，**两者在模型层面等价（都有默认值），只看 `request.recent_event_ids` 永远分不出**。三种形态判据：
+
+  | 日志 | 含义 |
+  |---|---|
+  | `['9990001']` | 链路全通 |
+  | `[]` | DLL 送了，但没算出新事件 → 问题在 `RecentEventTracker` 或 `DayStarted` 时机 |
+  | `<NOT-SENT>` | DLL 根本没送这个字段 → 问题在 `BridgeClient` 或序列化 |
+
+  ⚠ `<NOT-SENT>` 正常情况下**不该出现**（C# 写的是 `RecentEventIds = recentEventIds ?? Array.Empty<string>()`，字段总会被序列化），所以它一出现就是接线断了。
+
+  ⚠ **踩了两个小坑，都写进注释了**：
+  1. `model_fields_set` 里放的是**字段名**（`recent_event_ids`）而**不是 alias**（`recentEventIds`）。我最初只查了 alias，于是「已送达」永远显示成「未送达」——**把一条好链路误诊成断的**。两个都查。
+  2. 日志用英文而非中文：Bridge 输出常被重定向到文件，那种场景下中文会变乱码（实测 `<未送达>` 显示成 `<δ�ʹ�>`），**日志看不懂就等于没有**。
+
+  #### 豁免不能变成后门
+
+  探针的 `eventId` 不在语料库里，会撞上「每个 eventId 都必须真实存在」那条守卫。**但开豁免是有代价的**：一旦允许某些 id 缺席，**写错一位数字的 eventId 也会安静通过**，然后在游戏里永不触发——与「数据写对但永不生效」是同一类失败。
+
+  ⇒ 所以豁免是**有条件的**：新增 `PROBE_EVENT_IDS` 常量 + `test_probe_ids_are_fixtures_only`，要求用它的预设必须在 `_openingSource` 里声明「测试夹具」。README 里也写明了撤掉夹具时要连同这两处一起删。
+
+  ⚠ 顺带撞了第三条守卫：我最初把 `_openingSource` 写成「测试夹具：…」，**正好绕过了两套守卫**——因为 `vanilla:` / `persona:` 前缀是个 dispatch switch，不认识的写法两边都跳过。改成 `persona:Lewis + 测试夹具事件 9990001…` 后归位。
+
+  ### 部署与启动（2026-09-27，用户授权）
+
+  用户口径「把游戏拉起来」，因此**解除了 AGENTS.md 里「不部署 DLL 到真实 Mods、不启动游戏」两条红线**（他本人是项目所有者）。执行记录：
+
+  - 备份：`E:\workspace\.scratch\deploy-backup\StardewAI.NPC\`（含他原有的 `config.json` 与 9/26 那份 DLL）
+  - 部署：产品 `StardewAI.NPC.dll`（9/27 13:43 构建）+ `Mods\StardewAI.EventProbe\`
+  - 启动：SMAPI 报 `Loaded 65 mods`，两个 mod 均在列
+
+  ⚠ **`invoke-in-session.ps1` 的 `-Command` 是用 cmd 执行的，不是 PowerShell**：`Start-Process` 会以退出码 9009（命令未找到）失败。要用 cmd 的 `start "" /D "<dir>" "<exe>"`。这个坑以前没记录过。
+
+  ⚠ **Bridge 必须重定向输出才看得到诊断**：此前用 `-WindowStyle Hidden` 启动，`print` 的输出去哪了都不知道。现在启动时带 `-RedirectStandardOutput`。日志在 `E:\workspace\.scratch\bridge.log`。
+
+## 事件后晨间消息：端到端打通（2026-09-27 晚）
+
+**结论：从「游戏里触发事件」到「次日早上 NPC 主动发消息」的完整链路已实测通过。**
+这是「事件后消息」功能第一次拿到端到端证据，也是**第三方事件 mod 兼容**那条路的
+技术验证——两者走的是同一个注入点（`Data/Events`）。
+
+### 三层证据（同一轮，可互相印证）
+
+| 层 | 证据 | 说明 |
+|---|---|---|
+| SMAPI | `[probe] 已注入 9990001/y 1 → Data/Events/FarmHouse` | 注入真的执行了 |
+| SMAPI | 无 `couldn't be parsed` 报错 | 事件脚本格式合法 |
+| Bridge | `[morning] dayIndex=5 recentEventIds=['9990001']` | 信号算出、序列化、送达 |
+| 游戏 | 6 日 06:00 刘易斯发「早啊。昨天你那边动静不小，我在镇上就瞧见了。都还顺利吧？」 | 与 `event-after-probe` 的 `opening` 逐字一致 |
+
+⚠ 存档文件里 `eventsSeen` 读出来仍是空——**游戏持有文件句柄、尚未落盘**，不代表失败。
+**判据要用 Bridge 的 `recentEventIds`，不要用存档文件**：前者来自游戏内存，是权威读数。
+
+### 四个坑（按踩到的顺序，全部有实测）
+
+**① `Data/Events/Farm` 只在玩家踏入农场地图时才被请求。**
+人没走出农舍 → 资产从未加载 → `AssetRequested` 回调一次都没跑 → 注入无从谈起。
+症状是**三层全静默**：没有注入日志、没有报错、`eventsSeen` 是 0。
+⇒ **探针必须挂在玩家必定加载的资产上**。`FarmHouse` 是正确选择（起床就在那儿）。
+⇒ 一般化的教训：**「注入没发生」和「事件写了但没人经过」症状完全一样**，而前者不会被报错暴露。
+
+**② `e.Name.IsEquivalentTo(string)` 在 `AssetRequested` 里不忽略 locale 后缀。**
+中文游戏里资产真名是 `Data/Events/FarmHouse.zh-CN`，于是匹配永远不中，
+`e.Edit` 从未被注册，**lambda 一行日志都没有**。
+⇒ 改用 `e.NameWithoutLocale.Name` 直接做 `StringComparison.OrdinalIgnoreCase` 比较。
+⇒ 这是**最隐蔽的一类失败**：所有日志看起来都正常，只是少了几行。
+
+**③ 事件脚本第 3 段必须是角色位置，不是命令。**
+格式是 `<音乐>/<viewport x y>/<角色位置>/<命令...>`。
+我写成 `continue/-1000 -1000/message "..."`，游戏把 `message "..."` 当角色位置解析：
+```
+Event '9990001' has character positions 'message "..."' which couldn't be parsed:
+required index 1 (Point tile > x) has value '"[事件探针]"'
+```
+⇒ 正确写法要补上位置段。农舍床边坐标取自存档的 `lastSleepPoint`：
+```
+continue/-2000 -1000/farmer 10 9 2/message "…"/pause 500/end
+```
+⚠ 好消息：**这个错误是游戏自己喊出来的**，比 ①② 好查得多。
+
+**④ 诊断日志必须打在「匹配之前」。**
+前两轮我把日志放在 `e.Edit` 的 lambda 里——那是延迟执行的，
+**它不出现有两种完全不同的解释**（回调没跑 / 匹配没中），无法区分。
+在回调入口加一条无条件日志 + 打印所有 `Data/Events/*` 的**真实资产名**之后，
+`②` 一轮就定位了。
+⇒ **可观测性要覆盖「没走到」的分支**，只记录成功路径等于没有诊断。
+
+### 对第三方事件 mod 兼容的意义
+
+`tools/event-probe` 是**测试夹具**（`UniqueID: OpenAI.StardewAI.EventProbe`），
+但它的注入路径就是将来读别人事件 mod 的同一路径。本轮确认了：
+
+- **CP / SVE 已安装**（`Content Patcher edited Data/Events/FarmHouse.zh-CN for 'Stardew Valley Expanded'`）。
+  它们装在 `Mods` 子目录里，所以最初只列顶层 9 项时漏判了——**以后查 mod 环境要看 SMAPI 日志，不要看目录**。
+- **CP 在，意味着事件 mod 兼容可以走纯 JSON**（写 CP 的 `content.json`），不必编译 C#。
+- `AssetEditPriority.Late` 让我们排在别的 mod 之后追加，**不改动原版/他人事件**。
+
+### 探针的去留
+
+**暂时保留**（`tools/event-probe/README.md` 写明撤掉步骤）。理由是它还能复用于：
+- 验「事件 → 次日消息」的回归；
+- 试 `_TRIGGER_KINDS` 未来新增的 kind（如 `interaction`）。
+
+撤掉时要**同时删三处**：`Mods\StardewAI.EventProbe\`、
+`bridge/tests/test_morning_scenario.py` 的 `PROBE_EVENT_IDS` 与
+`test_probe_ids_are_fixtures_only`、以及 `data/scenarios/morning.json` 里的
+`event-after-probe`。
+
+⚠ **`9990001` 已永久写进 `test4_449912068` 这个档的 `eventsSeen`**，重测要用别的档。
+这是选它当测试档的原因（`test2_412086775` / `Wofs_412086775` 是他的真实存档，**没有动过**）。
+
+## 事件后预设扩充：10 → 29 条（2026-09-27 晚）
+
+`data/scenarios/morning.json` 现在 **163 条**（event 类 30，含 1 条测试探针；
+season 类 132；absoluteDay 1），覆盖 15 个 NPC。全部 `persona:vanilla:<NPC>` 口径手写。
+
+### ⭐ 两条可复用的筛选规律（比预设本身更值钱）
+
+**① `/f` 事件里有一大类是「NPC 上门邀约或求助」——它们不是既成事实。**
+
+`Sam 47`（请你今晚去 Zuzu 看演出）、`Jodi 93`（请你今晚来吃饭，带条鲈鱼）、
+`Leah 55`（请你今晚来看画展）、`Leah 992253`、`Shane 2128292`（两张球票）、
+`Elliott 43`（修好了船约你出航）、`Haley 15`、`Sebastian 384882`（搭车兜风）、
+`Marnie 91`（来请你帮个忙，结果未定）——**统统排除**。
+
+理由不是内容不好，而是**「第二天」该提的是已经发生的事**。邀约的后续取决于玩家当晚去没去，
+预设里写「昨天的画展真不错」会在玩家没去时变成硬伤。
+
+⇒ **判据：事件的 `end dialogue` 如果是「我还在等」「希望一切顺利」这类未完成态，
+就说明它只是邀约。** 这一条能省掉大量逐条读的功夫。
+
+**② 高心级事件大量是恋爱告白。**
+
+`/f <NPC> 2500`（10 心）这一档：`Penny 38`（温泉告白）、`Abigail 901756`（矿洞哭完告白）、
+`Harvey 528052`（热气球上「part of why I like you」）——**三个里三个是告白**。
+
+撞产品红线「不主动把话题推进到高风险关系情境」。**8 心（2000 点）是个相对安全的档，
+10 心要格外小心。**
+
+**③ 补充：`/f` 点数判断不了内容，必须逐条读对白。**
+12 个排除里，只有 `Leah 55` / `Sam 47` / `Jodi 93` 是靠特征词判出来的，
+其余 9 个都要读到正文才知道（`Alex 288847` 是丧母忌日、
+`Leah 54` 是前男友 Kel 出现且要玩家选「打他一拳」、`Pam 503180` 是戒酒挣扎 + 信仰质疑）。
+
+### 完整排除清单（12 条，都记下原因）
+
+| 事件 | 排除原因 |
+|---|---|
+| `Alex 288847` | 母亲忌日，海滩痛哭 |
+| `Leah 54` | 前男友 Kel 出现，分支含「打他一拳」（暴力） |
+| `Leah 51` | 同一条 Kel 前任线 |
+| `Leah 55` / `Leah 992253` | 邀约，非既成事实 |
+| `Sam 47` / `Jodi 93` / `Shane 2128292` | 邀约 |
+| `Elliott 43` / `Sebastian 384882` / `Haley 15` | 邀约 |
+| `Marnie 91` | 上门求助，结果未定 |
+| `Emily 471942` | 对白含混（「光有秘密」「命运会交织」），无可指结果 |
+| `Penny 38` / `Abigail 901756` / `Harvey 528052` | 恋爱告白 |
+| `Pam 503180` | 戒酒挣扎 + 信仰质疑，有一条分支会把她激怒赶人 |
+
+### 写法口径（沿用既有事件预设，未新增规则）
+
+- **`_openingSource` 固定为** `persona:vanilla:<NPC> + 原版事件 <id>（<心数>，<一句剧情>）。开场白基于 persona 创作，未逐字引用事件对白。`
+- **开场白只引「必然结果」**：`Alex 20` / `Haley 12` / `Leah 50` / `Harvey 57` 等
+  都带玩家选择分支，但**每条分支都汇到同一句台词**，所以结果确定。
+  `Haley 13`（手镯）、`Alex 21`（书）同理。
+- **`closingHook` 一律用同一个骨架**（「我得去 + 他自己手上的那件小事」），
+  只换末句那个交给玩家的问句——**骨架相同、措辞逐条重写**，不照抄。
+- **`direction` 不写任何可直接照说的话**，只写「他习惯怎么说话 + 可以聊什么 + 他的态度」。
+- **高好感事件要把「心意」隔离在开场白之外**：`Abigail 3`（通灵板拼出一句话她跑掉）
+  只写她的别扭；`Sebastian 29`（「这里有位置坐两个人」）只写雨和自己的作息。
+
+### 为什么停在 29 条
+
+原计划「10 → 32」。放宽到 `/f` 点数 250–2500 + 对白 ≥100 字后共得 36 + 21 个候选，
+**排除 12 个后剩 24 个可用**，加上原有 10 条 = **29 条**。
+要继续加只能动 SVE 事件，但 **SVE 的 persona 是空心的（没有 `voiceStyle`）**，
+写不出贴合语言指纹的开场白。**29 就是当前口径的自然上限。**
+
+- 2026-09-27 **65 事件后预设的真实生成验证：方向卡 18/18，抓到一个新形态（第三人称叙述体）
+  和一处已修 54 条的性别代词。** 完整记录见 `docs/report-event-after-verification-2026-09-27.md`。
+
+  **开跑前先重载了 Bridge** —— 第一次查端点时发现 `morning.json` 是 163 条而
+  `GET /api/morning/scenarios` 只有 144 条 / `event-after` 11 条，说明它还停在「事件后 10 条」的
+  旧版本上。**判据记下来：端点条数 != 文件条数 ⇒ 先重启 Bridge，再跑验证。**
+
+  6 条 × 3 轮（`abigail-spiritboard` / `sebastian-rain` / `alex-apology` / `pierre-secret` /
+  `emily-dance` / `evelyn-cookies`），玩家台词**照着 boundaries 打**。实际 17 轮 cloud + 1 轮
+  fallback，**方向卡 18/18 全部认出**；`sebastian-rain` 被撞「能坐两个人」那层意思时回
+  「那句话就是字面意思……没有别的」、`alex-apology` 被说「可惜」时回「可惜？我倒是松了口气」、
+  `evelyn-cookies` 没说破配方也没复读那句保密话。
+
+  **① 新形态：第三人称叙述体（本轮未改代码）** —— `pierre-secret` 轮 2 输出了
+  「皮埃尔沉默了一瞬……"家庭的事……"他声音低下去，又很快抬眼」这种小说体。
+  `guard.py:331` 的 `_stage_direction` **只匹配括号里的动作**，无括号的第三人称叙述整段放行；
+  而重试提示词本来就写着「不要写动作、表情、手势、环境」——**缺口在检测，不在提示词**。
+  取证：扫 270 个历史工件，**2481 条回复里 0 条**这种形态，本次 18 轮里出现 1 条。
+  ⚠ 顺带否掉一个看起来像判据的东西：**中文引号不能当信号**，历史里含引号的 38 条
+  全是合法的「引用词」用法（「别让"改天"这种词成了拖延的借口」）。
+  **只有 1 个样本，不动共享守卫**；下一步是再跑几批统计复现率，达到门槛再设计判据，
+  并**先在 2481 条历史回复上验 0 误伤**。
+  （这条不孤立：Alex 的 `closingHook` 例句被逐字当台词说了出来、spring 那次 `direction` 赢过
+  `boundaries` —— 三条指向同一个根因：**方向卡是第三人称小传口吻，模型会把它当文风示范**。）
+
+  **② 性别代词（已修 54 条）** —— `closingHook` 里 154 条写「他自己」、只有 9 条写「她自己」。
+  而 36 个 persona **全都带 `pronouns`**（22 个 he / 14 个 she），14 个 she 角色的 63 条预设里
+  **54 条用了「他自己」**，Abigail / Emily / Haley / Leah / Maru 身上两种写法并存。
+  `closing_hook` 会进 `card["closing"]`（`morning_scenario.py:488`），**模型看得到**。
+  **判据取 persona 自己的 `pronouns`，不另立性别名单**（名单会跟 persona 漂移）。
+  新增守卫 `test_closing_hook_matches_the_npc_pronoun`：先红灯（54 条）后 **97 passed**；
+  守卫里加了一道防空集（用到的 npcId 必须都在 persona 表里，否则比对会悄悄跳过 ——
+  漏过的表现和「全部通过」一模一样）。改前干跑确认 `json.dumps(ensure_ascii=False, indent=2)`
+  与原文逐字一致，所以 diff 只落在那 54 行，不是整文件重排。
+
+  **③ 两处口径记录** —— (a) `emily-dance` 轮 1 拿到的是**兜底文案**：模型输出括号动作 →
+  格式 Guard 判对 → 重试时 `cloud provider failed`（上游抖动，不是额度）→ 兜底。
+  **Guard 没错，那一轮没测到边界。** (b) `closingHook` 的「只在玩家给一句应声时才交话头」
+  被 **Emily 的 persona 特征盖过**（轮 3 玩家问的是真问题，她仍主动把话头交了回去）——
+  与 spring「`direction` 赢过 `boundaries`」同型，**别再叠禁令**。
+
+  未启动游戏、未改 `guard.py`、未动任何 `direction`/`boundaries` 文案、未创建 Git commit。
+
+- 2026-09-27 **66 事件后验证第二批：叙述体累计 1/36（未达改守卫门槛），并修正一条、新增一条线索。**
+  接 65 条。同规格再跑 6 条 × 3 轮（`maru-burn` / `leah-webshop` / `sebastian-motorcycle` /
+  `harvey-models` / `linus-bait` / `gus-jukebox`），换 6 个角色、**特意选了两个话少的**
+  （Sebastian、Linus）。结果：**方向卡 18/18 全认出**、cloud 17/18、兜底 1。
+
+  **① 叙述体 0/18，累计 1/36 —— 不改守卫。** 这一批的探针内置了两个**客观判据**
+  （「他/她 + 神态动词」、「以本角色 displayName 起句」），18 轮 0 命中。
+  **判据先在 4327 条语料上验过零误伤**（扫 `artifacts/**/*.jsonl`，含 dialogue-log /
+  character-quality / topic_corpus；唯一命中的就是 pierre 那条本身，已被 Bridge 写进
+  `dialogue-log/2026-09-27.jsonl`）。门槛保持「≥3/24 轮可复现」——
+  **判据与语料都已备好，下一次要改随时能改。**
+
+  **② 修正 65 条的发现三：盖过 `closingHook` 的不是「话多」。**
+  **Harvey**（谨慎爱操心，不属于话多那类）在玩家问了真问题之后也主动交回了话头
+  （「……你找我是有什么事吗？」）。加上 Emily，两次都不是「因为话多」——
+  **任何强的角色特征都可能盖过这条软约束**，所以更别叠禁令。
+
+  **③ 新线索：`format_stage_direction` 触发后重试成功 0 例。** 两批 36 轮里触发 2 次
+  （`emily-dance` 轮 1、`maru-burn` 轮 3），加 `dialogue-log` 历史 4 次（Wizard ×3、
+  Sophia ×1），**6/6 最终都兜底**。
+  ⚠ **但这 6 例不能当基线**：09-26 的 dialogue-log 整体异常（cloud 101 / fallback **49**），
+  09-27 是 cloud 103 / fallback **3** —— 那天的记录里成排的 `upstream-warning-3`…`-18`
+  各 12 条，像夹具或故障窗口。**兜底率必须按日期分开算**：17.9% 是污染值，
+  **09-27 口径 ≈ 3%（3/106）** 才接近真实。
+  ⇒ 待办：干净窗口里单测「Guard 判 `stage_direction` 后重试能否救回来」；
+  若救不回，问题在**模型为什么总想加叙事旁白**（与 ① 的叙述体、Alex 那条被照抄的例句同族），
+  而那值得做一次**唯一差别对照**：把几条的 `direction`/`closingHook` 从「第三人称小传口吻」
+  改写成「对模型说话的指令口吻」，比两组的括号动作/叙述体出现率。
+
+  这一批最干净的是 **Linus 3/3**：重提道歉他只回「……嗯」，被提出送东西时答
+  「我一个人挺开心的。不需要。」——两条保护性边界全中。
+  未启动游戏、本轮只动了探针与文档、未创建 Git commit。
+
+- 2026-09-27 **67 Guard 链路代码考古：推翻了 66 条里那个「方向卡口吻」的主假设，并查清
+  `format_stage_direction` 6/6 兜底的真实机理。** 详细见报告 §7。
+
+  **① 主假设被推翻 —— 方向卡不是「小传口吻」。** 把卡片真渲染出来看
+  （`render_direction_card`）：`instruction` / `boundaries` / `closing` **三个字段本来就是
+  对模型说话的指令口吻**，只有 `direction` 是第三人称小传（「她有点不好意思……她热情开放，
+  会主动多说」）。所以「整张卡是小传口吻、模型当文风示范」不成立 ——
+  **那个「改写成指令口吻做 A/B」的根因实验前提就错了，不要做。**
+  ⚠ **教训**：我连续两轮把它当根因推，**却从没把卡片渲染出来看一眼**。
+  **假设再自洽，也要先渲染出来，再设计实验。**
+
+  **② 重试机制是健康的。** 重试循环最多 5 轮（`guard.py:1229`），format 类**允许重试 2 次**
+  （`guard.py:1349`）；第二条 format 重试换成更强的提示词（「不要写动作、表情、手势、环境
+  或括号内容」）。有一条旁路会换成弱版（`_NATURAL_RETRY_CONTENT["format"]` **没有一句禁止
+  括号**），但 `prompts.py:6636` 注明**线上 `naturalMode` 恒 false**，且
+  `DialogueTestRequest` 是 `extra="forbid"` 传不进这个开关，**36 轮走的都是强提示词** ——
+  该旁路与本次现象无关。「重试坏掉」的猜想排除。
+
+  **③ 6/6 兜底的真相：兜底文案会撞上自己的 Guard。** `app.py:744-770` 的链路是
+  「主回复过 Guard → 不过就调 fallback → **fallback 的回复也要过 Guard** → 再不过才用
+  `_SAFE_FALLBACK_REPLY`」。探针里的 `fallback_guard: format_stage_direction` 说明被拒的是
+  **fallback 那一层**，而它的形态正是**括号包裹的「（暂时没有合适的回复，请稍后再试。）」**：
+  **兜底文案自己会被判成 `stage_direction`**。于是「主回复有括号 → fallback 文案也有括号 →
+  落到 `_SAFE_FALLBACK_REPLY`」，而后者就是同一句话，**玩家看到的没变**。
+  ⇒ 更正 66 条 ③ 的措辞：这是「主回复撞格式 Guard，兜底又撞自己的 Guard」，
+  **不是「重试没救回来」**。
+
+  **④ 定论：那对括号不改。** 我一度把它定性成「兜底文案违反自己的守卫规则」，
+  读了 `config.py` 才知道**括号是有意的**：2026-09-26 特意从「Rasmodia：暂时没有合适的回复，
+  请稍后再试。」改成这个形态，为的是让兜底文案在**形状上**跟角色台词分开
+  （兜底哪个 NPC 都可能触发，署名会让玩家以为那句话是法师在说话）。去掉括号就退回了那个坑。
+  另外 `FallbackProvider` 返回的就是 `settings.fallback_reply`，**和 `_SAFE_FALLBACK_REPLY`
+  是同一个字符串** ⇒ 默认配置下 `fallback_guarded.accepted` **恒为 False**，那个 `if` 分支
+  只在 `BRIDGE_FALLBACK_REPLY` 被配成别的文案时才可能生效 ——
+  它不是死代码，但也从来不是「守卫抓到了坏回复」。
+  **采取的动作**：只在 `app.py` 兜底链路处加注释写清这个已知对撞（防未来误诊），
+  **不改文案、不改判据、不改逻辑**。
+  ⚠ **教训（与 ① 同型）**：我把一个**有意设计**当成了缺陷，只因为没读它旁边那段注释 ——
+  **看到「自相矛盾」时，先查它的来历。**
+
+  **云评测请求计数**：本次两批共 **45** 次（第一批 23 / 第二批 22，按各轮 `requestCount`
+  求和 —— 这是**下限**，兜底轮里失败的那次请求没被计入）。**累计 198 → 243**（HANDOFF 口径）。
+
+- 2026-09-27 **68 方向 E 定标完成：用你选的 6 条真实游戏内样本校准「贴不贴」判据。**
+  详见 `docs/report-perspective-baseline-2026-09-27.md`（**零云请求**）。
+
+  **样本不需要开游戏**：`artifacts/dialogue-log/*.jsonl` 的 `channel` 字段区分了「游戏里真的
+  跟 NPC 说话」与「端点评测」。剔除 12 条 `provider=fake`（Shane 的「【本地演示·非真实 AI】」
+  测试数据）后剩 **31 条 / 5 角色**，导出为 `.tmp/perspective/in-game-samples-2026-09-27.md`。
+
+  **你的选择**：`11 12 13`（刘易斯）+ `29 30 31`（艾芙琳）= **两个角色各自的全部 3 条**；
+  亚历克斯 12 条、Sophia 10 条、皮埃尔 3 条**一条未选**。
+
+  **① `文学腔` 是最强分野**（你选的 33.3% vs 没选的 8.0%）。拆到刘易斯：模型 66.7% vs
+  **原版 2.6% → +64.0pp**（3 条里 2 条，原版 38 条里 1 条）。原版刘易斯是**镇长**
+  （官方、客套、有分寸），模型给的像**散文作家**（「有股让人犯懒的劲儿」
+  「催命似的灯光和消息」「春天是真的到了」）。**这条样本量够、差额极端，是硬结论。**
+
+  **② 艾芙琳的问题不是同一个**：反问 **+26.9pp**（超标近 5 倍）、自我态 **−29.0pp**。
+  ⇒ **不能用一个判据概括两个角色。**
+
+  **③ ⚠ 反例（最有信息量的一条）**：皮埃尔指标偏离**比艾芙琳还大**
+  （自我态 −28.6、字数 13 vs 原版 36.9 —— 只有三分之一），**但你判它「贴」**：
+  「那就好。我先去看看库存。」这种短、冷、不表露**恰好就是皮埃尔**。
+  ⇒ **你的「贴不贴」不是单纯指标偏离，还包含「像不像这个角色会说的话」** ——
+  同一个偏离（自我态缺失）在皮埃尔身上是**人设**，在艾芙琳身上是**失真**。
+  这也解释了分组对比里除文学腔外差异都很小：被「偏离方向是否符合人设」抵消了。
+
+  **④ 对判据的两处直接修正（本次定标的实际产出）**：
+  - `tone-baseline.py` **没有 `literary` 指标**，而它正是刘易斯最刺眼的特征 →
+    建议补入 `[“”"]|——|似的|般的|像是|仿佛|真的到了|劲儿`。
+    ⚠ 它在**没选的亚历克斯**身上也有 +15.9pp ⇒ **必要不充分**：出现不等于不贴，
+    但 +64pp 那种密度一定不贴。
+  - `selfState` 正则**漏检「我年轻时 / 我以前」这类时间型自我指涉**（要求「我+想/觉得/怕…」），
+    而年长角色的自我陈述大量是这种形式 → 建议补 `年轻时|以前|小时候|那会儿|当年|这辈子`。
+
+  **⑤ 待你确认（E 的关键一步）**：刘易斯的「文学腔」+ 艾芙琳的「反问」是不是你当时在意的？
+  是 → 第 ④ 条直接落进 `tone-baseline.py`；不是 → 请直接说你看的是什么。**双向对齐才是定标。**
+
+  **边界**：除文学腔外样本都太小（6 vs 25），**不定阈值**；「偏离方向需符合人设」目前只有
+  1 个反例，是**假说**不是结论。定标完成后才谈 A–D 选路（本报告支持 **A 改任务类型** ——
+  「像散文作家」正是「答问系统被当台词库用」的典型失真）。
+  未启动游戏、未改任何 prompt 或数据文件、未创建 Git commit。
+
+- 2026-09-27 **69 更正条目 68：皮埃尔不是反例，我错了三处；报告已出 v2。**
+  你指出「皮埃尔其实也不太贴 —— 他是那种比较**市侩、有点热情**的说话方式」，
+  并给了「**短句看着比长句效果好一些**」。重看数据后，三个错：
+
+  **① 我把「你没选」当成了「你判它贴」** —— 从沉默里构造结论，根本没确认过。
+  条目 68 的 ③（皮埃尔反例 →「偏离方向需符合人设」假说）**整条作废**。
+  ⚠ 这是本次会话我**第三次犯同一型的错**：方向卡口吻（没渲染就下结论）、
+  兜底括号（没读注释就下结论）、**把沉默当数据**。
+  前两次是「没看现场」，这次是「**沉默不是数据**」。
+
+  **② 没发现数据污染**：Sophia 那 10 条**逐字相同**
+  （「你：今天过得怎么样？ → Sophia：嗯，我去广场看看。」9 字 ×10），
+  `provider=local` 退化 —— 是**一个样本重复 10 次**，不是 10 条证据。
+  条目 68 里「你没选的 25 条」统计被它拉偏；v2 已按**剔除 Sophia 后重算（15 条）**。
+  另：`local` 链路逐字重复是**功能性故障**，与「贴不贴」无关，值得单开一条线。
+
+  **③ 根因定错了**：条目 68 说「`文学腔` 是最强分野（+64.0pp）」，**这是停在表层**。
+  决定性证据是**同一个话题的原版 vs 模型对照**（刘易斯的开场白在游戏里就是这个话题）：
+  - 原版：「你爷爷以前总是抱怨那张晃晃悠悠的旧床。**但我觉得，他心里其实是爱着那间房子的。**」
+  - 模型：「你爷爷以前也这么说，说这屋子**"有股让人犯懒的劲儿"**。」
+  **差别不是文学腔**（原版也有「晃晃悠悠的旧床」），而是**原版有「我」的立场、模型在转述**。
+  ⇒ **文学腔是「缺立场」之后的填充物** —— 没有「我」的判断可写，就用描写和比喻占满那 54 个字。
+  真正的指标是 `selfState`（刘易斯 0% vs 原版 23.7%）。
+
+  **v2 核心结论**：三个「不贴」的角色 `自我态` **全部 ≈ −25～−29pp**
+  （刘易斯 −23.7 / 艾芙琳 −29.0 / 皮埃尔 −28.6），而**未表态的亚历克斯只有 −9.9**。
+  但**偏离方向三个人各不相同**（文学腔 / 反问 / 寡言）⇒ **没有单一阈值能同时抓住三者**，
+  `自我态` 是共同的底层缺口。一句话：**模型统一输出「平静的叙述者」**，
+  而这三个角色本应是**官方客套 / 慈祥温暖 / 市侩热情**。
+
+  **你的「短句效果好」有数据支持**：字数与文学腔强相关 —— 皮埃尔 13 字 0%、
+  艾芙琳 25 字 0%、亚历克斯 33 字 16.7%、**刘易斯 54 字 66.7%**（唯一超长的，1.47×）。
+  ⇒ **长度是文学腔的载体**，压长度能同时降低文学腔的表面积，可与 A 一起做。
+
+  **判据修正（报告 v2 §七）**：`selfState` 升为主指标并补漏检
+  （`年轻时|以前|小时候|那会儿|当年|这辈子` + `心里|不禁|实在|真是`）；
+  `literary` 降为**辅助**指标，用法是 `selfState` 低 **且** `literary` 高 ⇒ 高置信度不贴。
+
+  **还缺一步**：**亚历克斯那 12 条你还没表态。**
+  若判**贴** → `selfState −9.9` 是可接受区间的上界，能定数值阈值；
+  若判**也不贴** → 样本里**没有一条贴的**，方向就不该是「微调判据」而是「**换任务类型（A）**」。
+  详见 `docs/report-perspective-baseline-2026-09-27.md`（v2）。
+
+- 2026-09-27 **70 定标收口（报告 v3）：你对亚历克斯的判断是「可接受，但不是那么一致」。
+  这句话直接推翻了条目 69 的核心论据 —— 艾芙琳的偏离是我正则漏检造出来的假象。**
+
+  **① 重大更正：艾芙琳的 `自我态` 偏离不存在。** 条目 69 说「三个不贴的角色自我态
+  全部 ≈ −25～−29pp，是共同底层缺口」。用**补了时间型自我指涉**（`年轻时|以前|小时候|
+  那会儿|当年|这辈子`）的正则重算：艾芙琳 **33.3% vs 原版 29.0% → +4.3（正常）**，
+  不是 −29.0。**v2 里我甚至已经点名预告了这个漏检（§七.1 举证就是艾芙琳 #29
+  「我年轻时总爱加一小撮肉桂」），却没回头重算，让假象留在了结论里。**
+
+  **② 所以「单一指标判定贴不贴」这条路被否证。** 更正后的四格：
+  | 角色 | 你的判断 | 自我态偏离 | 反问偏离 | 文学腔偏离 | 字数倍数 |
+  |---|---|---|---|---|---|
+  | 刘易斯 | 不贴 | **−23.7** | −2.6 | **+64.0** | 1.47× |
+  | 艾芙琳 | 不贴 | +4.3 | **+26.9** | −6.5 | 0.68× |
+  | 皮埃尔 | 也不贴 | **−28.6** | −14.3 | 0.0 | **0.35×** |
+  | 亚历克斯 | **可接受** | −9.9 | +8.1 | +15.9 | 1.21× |
+  **三人的偏离向量指向三个不同方向，没有一列能同时解释三者** ——
+  自我态只在刘易斯/皮埃尔低、反问只在艾芙琳爆、字数只有皮埃尔极端。
+  ⚠ **明确不要为「贴不贴」定单一数值阈值。**
+
+  **③ 你说「不是那么一致」—— 指标逐条预测到了。** 亚历克斯 12 条里**只有两条 55 字的
+  带文学腔，其余 10 条都在 41 字以下**：排名 1「……哦，还有——爷爷奶奶倒是挺高兴，
+  说我终于能在家多待待了。他们把我带大的，你懂的。」、排名 2「之前那股劲儿多半是
+  憋着口气，现在松了，倒想明白不少事。」—— 自我剖析 + 抒情收尾，与其余 10 条的口语
+  直率明显脱节。⇒ **`文学腔` + `字数`（> 原版 1.3×）的组合能逐条预测"哪句不对味"，
+  这是本次定标真正可用的判据。**
+
+  **④ 共同点不在指标上，在机制上：模型在「回应玩家」，不在「扮演角色」。**
+  刘易斯（镇长）用景物描写服务氛围、艾芙琳（奶奶）用反问把主动权还给玩家、
+  皮埃尔（店主，原版市侩热情）用最短的话结束交互 —— **三者都不是「这个人在说自己想说的话」**；
+  而你判可接受的亚历克斯，恰是唯一**有情绪、会顶嘴、会自嘲**的那个。
+
+  **⑤ 结论：支持方向 A（改任务类型）。** 把 `player_input` 从「必须回答的问题」降级为背景，
+  任务改成「为这个角色生成他此刻会说的话」。理由：§④ 的三个失真是**同一个病**的三种表现，
+  而 B/C/D 都是在现有「答问」框架内调参 —— **框架本身才是失真来源**。
+  残留风险：资讯型问题可能得不到回答，需例外，**可与 B（输入路由）合并做**。
+
+  **A 的验收判据已现成**：改完后用同一批亚历克斯式口语样本 + 刘易斯/艾芙琳/皮埃尔各 3 条
+  重跑，比 `自我态` / `反问` / `文学腔` / `字数` 四项。
+
+  **另记**：`local` 链路退化（Sophia 逐字重复 10 次）是**功能性故障**，与贴不贴无关，单开一条线。
+  详见 `docs/report-perspective-baseline-2026-09-27.md`（**v3**）。
+  **零云请求、未启动游戏、未改任何 prompt 或数据文件、未创建 Git commit。**
+
+## 方向 A 实施与验证：任务定义翻转（2026-09-28）
+
+**做了什么**：把「回答玩家的问题」翻转为「生成这个角色此刻会说的话」。改
+`bridge/src/stardew_ai_bridge/prompts.py` 的任务定义类文案 **23 处**，分三轮：
+低阶段 6 卡 13 处 → 高阶段 6 处 + `conversation_lead` 3 处 → 修副作用 4 处。
+同步 4 个测试文件断言 13 处（含 2 处会退化成恒真的 `not in`），长度守卫 4420 → 4460。
+**全量 `bridge/tests`：4303 passed，与基线一致。**
+
+**验证设计**：从 `artifacts/dialogue-log/*.jsonl` 取回你在游戏里看到的那 4 段真实对话
+（Lewis remote / Pierre / Alex / Evelyn 各 3 轮 —— `historyLen` 1/3/5 表明每组是一段连续对话），
+**同一批输入、同一批角色、同样的 3 轮链重跑，唯一差别是 prompt 改动**。
+2 × 12 请求。直连 provider，未经出口 guard，所以能看到线上本会被拦掉的违规。
+
+**结果（12 条三方对比）**：
+
+| 指标 | 改前（你的记录） | A-v1 | **A-v2** |
+|---|---|---|---|
+| 自我状态 | 8.3% | 25.0% | **25.0%** |
+| 反问 | 8.3% | 16.7% | 16.7% |
+| 文学腔 | 25.0% | 0.0% | **8.3%** |
+| 占位符泄漏 | 0.0% | 25.0% | **0.0%** |
+| 括号旁白 | 0.0% | 25.0% | **0.0%** |
+| 场景头 / Markdown | 0.0% | 8.3% | **0.0%** |
+| **任一格式违规** | 0.0% | **58.3%** | **0.0%** |
+| 平均字数 | 31.8 | 45.0 | **33.7** |
+
+原版参照：自我状态 26.6–29.0%、刘易斯 36.7 字 / 亚历克斯 33 字。
+
+**A-v2 逐角色**：
+- **刘易斯**：有第一人称立场了（「我也记得刚搬来的时候，头几晚睡得特别沉」），散文腔基本消失。
+- **皮埃尔**：市侩 + 热情都在 —— 被追问就戒备（「你要是问别的，我就听不懂了」），但每轮都往
+  生意上带（「春季种子，要不要看看？」「刚有人订了二十袋防风草种子」）。**正是你说的「比较市侩，有点热情」。**
+- **艾芙琳**：反问改成主动分享，而且是祖母式分享（妈妈教的、在教孙辈、眼睛不如从前）。
+- **亚历克斯**：短句、直（「……谁说的？」5 字）。
+
+**⚠ 关键发现：A-v1 的 58.3% 格式违规，根因是我自己引入的。**
+违规全部集中在 Pierre / Evelyn / Alex —— **正是三个「不贴」的角色**，Lewis 0 违规。
+`stage_execution_card` 里「禁止动作旁白」那句禁令**一直都在**，失效的原因是：
+**我把具体行为指令（「直接回答玩家当前的一件事」）换成了抽象意图指令
+（「先落这个角色自己的立场或态度」）** —— 禁令压不住一个更晚、更抽象的要求，
+模型转而**用旁白"落实"态度**。同一机制也产生了场景头（把 `relationshipStage` 拼成舞台提示）
+与占位符幻觉（`(arr[0])` —— 已验证 19 张卡 + `data/generated` + `speechEvidence` 里
+`arr[` 均 0 命中，**是模型自己编的**）。
+**修法是澄清载体、不是加禁令**：把「态度」锚回「台词」（「先让这个角色自己**开口表态**」
+「角色自己的态度或反应**就写在台词里**」），收益全留、违规归零。
+
+**⚠ 本次探针的一个教训**：第一轮漏掉了 `conversation_lead`（**只在高阶段注入**，
+探针跑 4 心看不见它）—— 而它恰恰写着线上最直接的那句「普通 chat 的回复要先回答当前输入」。
+**探针 gameState 覆盖不到的分支等于没看见。**
+
+**还没做**：① 文学腔残余 8.3%（刘易斯「疲惫是最好的枕头」）；② **长度仍偏高** 33.7 vs 原版 33，
+且**长度指令四套互相打架未动**（单变量纪律）—— 模型取最宽的一套，这是刘易斯改前 54 字的直接原因，
+下一轮优先；③ 艾芙琳输出英文名「Alex」未本地化；④ 高阶段未做真实云端对照；
+⑤ `persona_core.responseRules`「先回答小镇事务或玩家的问题」（角色数据侧，44 个角色）是否仍构成反向拉力未测。
+
+详见 `docs/report-task-type-a-2026-09-28.md`。
+**云请求累计：243 → 267（本次 24 条）。未启动游戏、未改角色数据文件、未创建 Git commit。**
+
+### 验收补齐：资讯型问题与高阶段（2026-09-28 深夜，18 请求）
+
+**缺口二（资讯型问题）——风险没有出现**：6 条资讯型输入（「皮埃尔几点开门？」「镇上哪里能买到种子？」
+「谁在修社区中心？」「春天的鱼在哪里钓？」「你几点关门？」「店里有防风草种子吗？」）
+**6/6 都答出了具体信息**，而且是「答完再带态度」（皮埃尔答完就顺势推销）。
+格式违规 0%。**「A 会吞掉信息」这个残留风险被实测否掉。**
+
+**缺口一（高阶段）——成立，但先撞出一个路径认知错误**：
+
+⚠ **`conversation_lead` 在单聊里根本不注入。** `BridgeClient.cs` 写着
+`public bool CompactPrompt { get; init; } = true;` —— 游戏端单聊**固定发 compact**，
+而 compact 路径下 `_compact_stage_policy` 压掉了 `stagePolicy.conversationLead`
+（探针实测 Wizard 10 心 close/dating/married 全部 `lead=False`）。
+再加上 `CONVERSATION_LEAD_TRIAL_NPC_IDS` 只有 8 个角色
+（Alex/Elliott/Harvey/Sam/Sebastian/Shane/Sophia/Wizard），**Lewis/Evelyn/Pierre 从来没有这张卡**。
+⇒ 上一轮改的 3 处 `conversation_lead` **对单聊无效**（群聊仍生效）；
+⇒ 为 `test_prompts.py:1817` 排查的那条路径，**是线上不走的路径**；
+⇒ 高阶段单聊真正生效的是 `affection_priority_final` + `voice_variation`。
+
+**6 条改前/改后对照（close 阶段、compact 路径、同输入）**：
+
+| 指标 | 改前 | 改后 |
+|---|---|---|
+| 自我状态 | 33.3% | **50.0%** |
+| 反问 | 50.0% | **33.3%** |
+| 文学腔 | 0.0% | 0.0% |
+| 括号旁白 / 占位符 | 0.0% | 0.0% |
+| 英文残留 | 0.0% | **16.7%** |
+| 平均字数 | 78.3 | **68.5** |
+
+**高阶段同样是改善。** 最好的一例是刘易斯「你在想什么？」——
+改前「我正琢磨社区花园今年该种什么……你呢？地里忙着没。」（事务报告+反问）
+→ 改后「……嗯？啊，没什么。晨露还在草上，看着挺亮的。」
+
+**改造方法**：改前侧把 `prompts.py` 临时换回备份（跑完 `finally` 恢复并校验），
+因此两侧只差 prompt 本身 —— 这是本次能归因的关键。
+
+**观察项（不追）**：英文残留 16.7%（Sophia 的 `maybe`，属既有 `english-fragments` 线）；
+Wizard 改后丢了呼应历史的细节（改前有「你那天送我的蘑菇」），单条波动还是 A 的代价待更多样本。
+
+详见 `docs/report-task-type-a-2026-09-28.md` 附录。
+**云请求累计：267 → 285（本次 18 条）。未创建 Git commit。**
+
+## 长度指令收束、出口行首盲区与反向拉力量化（2026-09-28 深夜，0 云请求）
+
+**先说结论**：本轮做完「还没做」清单的第 ② 项、量化了第 ⑤ 项、补掉第 ③ 项的一半。
+**0 条云请求**（累计仍 285）。全部改动带 `.bak-20260928-*` 备份可回滚。
+
+### ① 长度指令五套共存 —— 已收束
+
+零请求 dump 真实卡（`ContextBuilder` + `PromptBuilder`，探针 `.tmp/length-probe/dump_cards.py`），
+**同一轮** compact 单聊 prompt 里五条长度指令同时在：
+
+| 出处 | 原文 | 句数 | 字数 |
+|---|---|---|---|
+| `safety_rules` | 中文通常 **1–3 句、15–80 字** | 1–3 | 15–80 |
+| `safety_rules`（紧接下一句） | …只保留一个平实事实或感受，最多两句 | ≤2 | — |
+| `stage_execution_card.instruction` | 回复最多 1 句，只有问题确实需要时才补第 2 句 | ≤1(+1) | — |
+| `stage_execution_card.responseShape` | 用 1 句直接回答；只有问题需要时再补第 2 句 | 1(+1) | — |
+| `voice_execution_card` | 一句话通常十来个字，最多二十出头 | 2 | ~12–40 |
+
+只有第一条给**硬数字**，其余四条都是软约束 ⇒「模型取最宽的一套」= 80 字成了实际天花板，
+这是刘易斯改前 54 字的直接来源（原版参照：分句后中位 **12 字**）。
+`natural_mode` 与 `safe_quality_context["naturalMode"]` **同源**（`prompts.py:6040`），
+所以天然模式那两套不矛盾，只是同义重复。
+
+**改动（单变量，只此一处）**：`prompts.py:6427` `1–3 句、15–80 字` → `1–2 句、15–40 字`
+（40 = 第五套「十来个字、最多二十出头」× 2 句，五套从此同向）。
+「只有明确追问时才可适度展开」原样保留 —— 资讯型问答的弹性不动。
+`stage_policy` 的 `responseShape` 与 `L7742` 群聊那句**一律不动**。
+
+### ② `voiceStyle.responseRules` 的反向拉力 —— 量化，未改
+
+`prompts.py:3162` 的 `("responseRules", 2, 75)` 决定前 2 条进 `_build_voice_execution_card`，
+投影成 `voice_execution_card.voiceActions`。扫 `data/personas/*.json`：
+
+```
+有 responseRules 的角色：50
+  含「先回答…」类措辞：29  (58.0%)      ← 全部在 rules[0]
+  会进入 prompt 的（下标 < 2）：29      ← 全部，一个都逃不掉
+```
+
+它与方向 A 的「他在说话，**不是在答题**」直接对冲，而且**同一张 `voice_execution_card`**：
+`instruction` 已翻成「玩家输入是接话的由头」，`voiceActions` 第三条又写「先回答…的问题」。
+**未改**：落点在 `data/personas/*.json`（角色数据），且涉及 29 处、需单变量验证。
+候选改法是保留信息义务、去掉答题框架；**建议下一轮先挑 1 个角色做对照**。
+
+### ③ 出口清洗的**行首**盲区 —— 已修（保守形态）
+
+`_LATIN` 要求碎片左邻是中文或中文标点；行首没有左邻 ⇒ 英文名一路漏到玩家眼前。
+09-26 补的 `_LATIN_AT_TAIL` 只补了行尾，**行首是对称缺口** —— 09-27 已在
+`test_reply_scrub.py` 里「如实钉住，不假装它被处理了」，正是 active-work 记的「艾芙琳说 Alex」。
+
+⚠ **第一版修法被测试抓住，负结果值得留**：前瞻写成「后跟中文标点」后
+① `test_api.py:970` 变红 —— 兜底文案 `Rasmodia：我们改天再聊。` 的**说话人前缀被删**，
+玩家会看到「：我们改天再聊。」；② `Alex，你来了。` → `，你来了。` 留下**孤立逗号**。
+正撞在 `reply_scrub.py` 自己那句纪律上：「清洗规则的第一个问题是**它会不会删掉不该删的**」。
+
+**最终形态收得更窄**：只擦「行首 + 空格 + 汉字」（`[ \t]+(?=[\u4e00-\u9fff])`）。
+冒号前缀与英文后紧跟标点两类**刻意不碰**，并各加一条参数化用例钉住（这正是 +2 的来源）。
+
+### 验证
+
+**全量 `bridge/tests`：4305 passed（exit 0，117s）**。基线 4303，+2 = 本次新增的两条钉子用例。
+只改长度那一步先单跑过 = `1 failed, 4302 passed`，那条失败是 PYTHONPATH 坑、与改动无关 ——
+两个变量因此各有独立证据。
+
+⚠ **PYTHONPATH 坑（比 HANDOFF 原来记的更精确）**：需要
+`<worktree>;<worktree>/bridge/src;<worktree>/scripts` **三者**。少 worktree 根会让
+`test_character_quality_eval.py` 报 `No module named 'scripts.run_character_quality_eval'`
+（它内部按包路径 `scripts.…` 导入）。已同步修正 `HANDOFF.md`。
+
+### 未做
+
+长度改动的**云端对照**（下一轮第一件事，云请求需用户确认）、`responseRules` 的 29 处、
+文学腔 8.3%、英文残留 16.7%（Sophia 的 `maybe`）、高阶段真实云端对照；
+行首「英文 + 紧跟标点」仍刻意保留（删了会留孤立逗号，要修得连同标点一起处理）。
+
+详见 `docs/report-instruction-conflicts-2026-09-28.md`。
+**云请求累计：285（本次 0）。未启动游戏、未改角色数据文件、未创建 Git commit。**
+
+### 追加（04:00 之后，同一晚）
+
+**④ 主动搭话路径的「1–3 句」也收束**：`prompts.py:7742` 在 `if topic_request:` 分支，
+与普通回复**共用同一个 `build`**，`naturalMode` 实机恒 false ⇒ 游戏里主动搭话走这条。
+改成 `1–2 句`。探针 `.tmp/length-probe/probe_topic_len.py` 确认两条路径现已同向
+（实机：topic 契约 1–2 句 + safety_rules 1–2 句；自然模式：两边都不设句数）。
+⚠ **这条对下一轮云端评测重要** —— 评测必须走与游戏相同的路径，否则量的不是游戏里跑的东西。
+
+**⑤ 高阶段的长度也在打架（已收束）**：`stage_policy._SHARED_POLICIES` 里
+close / dating / married / parent 四段的 `responseShape` 都是 **2–3 句**，比通用（1–2 句）宽
+⇒ 取宽 = 3 句，正对上「高阶段改后平均 **68.5 字**」。四处收到 `1–2 句`，
+**只改长度数字，保留语气差异**与全部限定语；群聊那句（`group_conversation.py:170`）不动。
+六阶段矩阵现已全部 1–2 句。
+
+**⑥ 第三辑体检（全卡硬约束）**：stranger 13 张 / married 15 张，逐卡摊开禁止与硬限词
+（`.tmp/length-probe/card-matrix.txt`）。**没有发现新的真矛盾** —— 负结果本身是结论：
+长度是唯一真正互相抵消的维度；「不得反问」vs 可追加动作里的「追问」是同卡轻微张力（不改）；
+`affection_initiative` 的「不要求情话」vs「必须补理由」是层级关系，同前两处误报。
+
+**⑦ 文学腔 8.3% 定位完成**：案例在
+`.tmp/perspective/task-type-a/verify2-20260928-023040/result.json:16`（「疲惫是最好的枕头」）。
+该串在整个 `.tmp` **只此一处** ⇒ **模型自发，非素材传染**。
+另排除 `npc_bubble_catalog` 的 `'tone': '铺陈 · 诗意'`（只在 UI 页面模块用到，**不进 prompt**）。
+prompt 侧防线已密（488/517/727/4070/6801/6836/7733 七处），剩余属采样尾部，
+**建议并入下一轮云端对照一起看，为它单独加规则不划算**。
+
+**⑧ ⚠「英文残留 16.7%」是评测口径，不是出口缺陷**（这条更正前面「未做」清单里的读法）：
+
+找到唯一样本 `.tmp/perspective/task-type-a/acceptance/after-20260928-023822/result.json:42`（Sophia）：
+`"我突然想到…… maybe 我们改天可以…"`。零请求复测（`probe_sophia_case.py`）：
+`_LATIN` **命中** `'… maybe '`（左邻 `…` 本来就在 `_CJK_OR_PUNCT` 里），
+`scrub_reply` 输出的就是干净文本 ⇒ **出口本来就能清掉它**。
+
+而 `scripts/` 下 **grep `scrub` 零命中**，评测脚本 L912 记录的是 `"reply": result.reply`，
+这里的 `result` 正是 `upstream.generate(...)` 返回的 **`ProviderResult`**。
+**代码级证据**：`models.py` 的清洗是**故意分层**的 —— L746-749 注释明写
+「这里**不清洗**…清洗放在对外的 `DialogueResponse`」，`_scrub_reply_text` 只挂在
+L767 的 `DialogueResponse`（对外 API 响应模型）上。实测 `ProviderResult(reply="… maybe …")`
+构造后 `maybe` 仍在 ⇒ 不是 bug，是设计。
+
+⇒ 那个 16.7% **不等于玩家可见残留**（SMAPI 走 HTTP 拿到的是已清洗的 `DialogueResponse`），
+`report-task-type-a-2026-09-28.md:243` 的 ⚠ 很可能是**假告警**。
+
+⚠ 不能反向推广成"全是口径问题"：**行首 + 紧跟标点**与**整句英文**两类清洗确实覆盖不到，真会漏。
+**建议下一轮**：评测产物同时记录清洗前后（`scrubbedReply` + `scrubChanged`），拆成两个指标。
+
+**⑨ 阶段触发条件补全 + 处方 A 的硬证据**（零请求，`probe_rules_baseline.py`）：
+
+- **阶段触发**：`relationship` 字段**覆盖** hearts —— 设了 `dating`/`married` 时**任何心数**都直接给该阶段
+  （0 心也 dating）。不设时按心数：`0=stranger`、`2/4=acquaintance`、`6/7=friend`、**`8+=close`**。
+  （上一版探针用「8 心 + dating」想打 close，结果拿到 dating —— 这就是没打中的原因。）
+- **处方 A 的硬证据**：dump Lewis 的 `voice_execution_card.voiceActions` 只有 3 条，
+  第 1、2 条来自 `signatureMoves`、第 3 条来自 `responseRules[0]`。而
+  **第 1 条写「不提镇上的事务安排」，第 3 条写「先回答小镇事务」—— 同卡相邻两条直接抵消**。
+  `signatureMoves` 跟着方向 A 改过，`responseRules[0]` 是没跟进的旧模板
+  ⇒ **两者不在同一个语言体系里**，处方 A 改的就是这个缺口。
+- ⚠ **投影规则已查清（不必再查）**：`prompts.py:5057-5075` 是
+  `voice_actions = signatureMoves(≤2) + responseRules(≤2)`，最后一步 **`[:3]`**。
+  实测（`scan_rules_slots.py` + 真实 dump 校验）：50 个角色**全部**带 `responseRules`，
+  `[0]` 进卡 **50 个**，而 **`[1]` 进卡 0 个** —— 每个角色的 `signatureMoves`
+  （或退化时的 `sentencePattern`）都占满前 2 席，`[1]` 永远被 `[:3]` 挤掉。
+  ⇒ **处方 A 的改动面就是 `[0]` 那 29 处**，`[1]`~`[3]` 是不进 prompt 的死字段，改它们不影响输出。
+
+**⑩ `_KEEP_LATIN` 品牌名静默删除 —— 本轮已修**（第 4 个源文件改动）：
+
+`_KEEP_LATIN` 原本只有 `{"AI"}`，把**角色名**与**品牌名**混为一谈。实测：
+
+```
+我在 Joja 上班。  ->  我在上班。      # 语义被改：在 Joja 工作 ≠ 在上班
+我今天去了 Joja。  ->  我今天去了。    # 句子残缺
+Shane 说他明天要去镇上。 -> 说他明天要去镇上。   # ✅ 这个删得对
+```
+
+**危害在静默**：输出通顺、`warnings` 为空，没人会发现语义变了。
+
+**判据用**语料**（同 `addressing.player` 的「按真原话」口径）**：扫 32126 条原版中文文本
+（`scan_keep_latin.py`），夹在中文里的拉丁词一共只有 11 个，**`Joja` 一家 401 次**。
+加了 9 个（排除碎片 `oja` 与单字符 `D`），每个带来源注释。
+
+⚠ **边界**：**品牌名放行 ≠ 英文整体放行**。`guard._allowed_english` 放行的是 142 个
+**角色名**，方向依旧相反 —— `npc_names.py` 的「不要接成同源」红线不变。
+新用例 `("我昨天在 Joja 碰到 Shane 了。", "我昨天在 Joja 碰到了。")` 钉住这条边界。
+
+**第二层：比对方式也不对**（同轮一并修掉）。名单加词后复测**仍有一半被删**：
+`我在 joja 上班。` / `我在 JOJA 上班。` / `我在 JojaMart 上班。` 照样变「我在上班。」，
+连「本地演示·非真实 **ai**」也会变「本地演示·非真实」——
+**那正是当初那条 `AI` 教训的小写变体，说明旧修复只补了写法、没改比对方式**。
+
+`guard` 用 `.casefold()`（不区分大小写），`reply_scrub` 用精确匹配 ⇒ 名单改小写
++ 两处比对（`_drop_latin` / `_drop_latin_at_head`）都加 `.casefold()`，与 `guard` 对齐。
+
+**测试**：`probe_latin_case.py` 复测 **7/7 保留**；`test_reply_scrub.py` **51 passed**。
+
+**⑪ 防回归守卫 + 影响面确认**：
+
+- 新增 `test_prompts.py::test_length_directives_never_widen_across_cards`：
+  遍历 stranger/friend/close/married **四阶段 + 主动搭话路径**，断言不出现
+  `1–3 句`/`2–3 句`/`15–80 字`/`20–80 字`，并**正面**断言 `1–2 句` 在
+  （否则「什么都没匹配到」也会通过）。**守的是「不许比通用更宽」这条规则本身** ——
+  六处指令分散两个文件，以后有人单点放宽，取宽效应会悄悄回来且**不红任何测试**，
+  这正是它当初能积累到六处的原因。0.61s、零云请求。
+- **改动影响面已确认**：`stage_execution_card` 只在 `prompts.py:7590` 生成，
+  `group_conversation.py` **完全不经过它** ⇒ 四个 `responseShape` 的改动**只作用于单聊**，
+  群聊路径（含它自己那句刻意不设限的长度说明）未受影响 ✓
+- **文学腔补注**：`styleCalibration: "elliott_original_rhythm"` 会给 Elliott 一张带
+  「具体意象」「比喻」的节奏卡，而 Shane 的契约**不含**「保留角色已有的文学感」
+  ⇒ 文学腔是**按角色校准**的，Elliott/Wizard 本来就被允许。
+  下一轮处理 8.3% 时要看的是**非文学角色**（Lewis）冒出的警句，别把这一类一起压掉。
+
+**全量 4314 passed**（原 4305 + 9 条新用例），exit 0。
+
+**⑫ 结构性发现：六处长度指令不是孤例，是模式**（`probe_card_overlap.py`，零请求）。
+
+按**主题**（非字面）聚类四个阶段的卡集合，重复程度远超预期 ——
+**「复述玩家」出现在 6 张卡（11 处）**、**「反问追问」出现在 5 张卡（8 处）**、
+长度 4 张、voiceStyle 4 张、动作旁白 3 张、提示词泄露 3 张（8 处）。
+prompt 规模：stranger **5425 字** / married **6444 字**。
+
+⇒ **这是今晚所有长度问题的根因，也是这个项目的系统性模式**：
+每次出问题就加一条防线、措辞各异，同一条约束于是被写进越来越多的卡。
+模型面对措辞不同的重复，不会理解成「强调两次」，而是「两条要求」，**挑好执行的那条** ——
+长度如此（六处只有一处给硬数字），反问很可能也如此
+（stage 卡禁反问，同时 5 张卡里有「追问」在鼓励）。
+
+⚠ **第二轮读原句后计数必须下调**：主题词正则把「复述**规则**」（防泄露）也算成了「复述玩家」。
+真约束是**复述玩家 4 处**（不是 11）、**反问 5 处**（不是 8），其余是同词异义 ——
+**同词异义本身就是隐患**（模型看到「复述」出现 11 次，分不清哪几条针对当前行为）。
+
+但读原句换来两个**更硬的定位**：
+
+1. **两处逐字重复**（删一处即可）：
+   `safety_rules` ≡ `post_history_voice_guard` 各有一句一字不差；
+   `persona_core` ≡ `voice_execution_card` 各有一句一字不差（来自 `voiceActions` 双投影）。
+2. **`stage_execution_card` 同卡内部矛盾**（比跨卡冲突更硬）：
+   `"initiative": "不主动开启新话题，不为延长对话而反问"` ← 禁
+   同一张卡又写「最多再追加一个具体动作（细节、**追问**、选择或小安排）」← 允许
+   **禁止与允许在相邻字段里**，模型没有理由当成不同层级的规则。
+
+**收敛方案（一次只做一步）**：① 删逐字重复 → ② 复述玩家 4 处合并为 1 →
+③ 解同卡矛盾（需先定 stranger 到底能不能反问）。⚠ 删约束是减防，没对照不要删。
+
+**⑬ 云端对照：长度收束生效**（本轮唯一一次云请求，`--economical` = compact Prompt = 游戏同路径）。
+
+同 suite/同 limit 跑一轮，与 02:38「方向 A 后、长度收束前」的产物对比：
+
+| 指标 | 收束前 | 收束后 |
+|---|---|---|
+| 平均字数 | **70.5 / 49.5** | **38.8** |
+| 最长一条 | **135** | **61** |
+| 输出 token（12 轮） | — | **391** |
+
+**⇒ 硬数字被听进去了** ✓
+
+⚠ **未决**：`casePassRate 0.333` **不可比** —— ① 被 `--max-requests 14` 截断
+（`processedCaseCount 4/6`、`processedTurnCount 12/18`、2 次重试）；
+② 跑完的 4 条 `score.passed` **全 True**、`warnings` 全空、`forbiddenHits 0`、
+`mechanicalRestatement False` ⇒ **找不到长度造成的退化**；
+③ 基线只留了 `data` 没留汇总 ⇒ 口径不同。
+**下一轮**：`--max-requests 30` 跑完整 6 case 再比 pass 率。
+**措辞**：这是「没找到有害证据」，不是「无害」。
+
+**成本**：14 请求 / 73509 token（输出仅 391）/ 44 秒。**累计云请求 285 → 299**。
+
+**⑭ 尝试收敛第①步：失败，但失败得比成功更有价值**。
+
+按 ⑫ 的方案删掉 `post_history_voice_guard` 里那句与 `safety_rules` 一字不差的
+「不得说自己是 NPC、模型或提示词，不要复述规则或解释自己正在扮演角色。」
+（判断理由：它落在一段通篇讲「怎么处理历史」的 instruction 末尾，主题不连贯）。
+
+**全量立刻红了一条**：
+
+```
+test_prompts.py::test_prompt_explicitly_blocks_roleplay_meta_commentary
+    for message in (safety, guard):
+        assert "不得说自己是 NPC、模型或提示词" in message["content"]
+```
+
+⇒ **这句重复是有意的，有测试专门钉住「两张卡都必须有」**。已回滚（测试恢复通过），备份删除。
+
+**这个失败改变了方案的性质 —— 「出现两次」不等于「冗余」**：
+
+1. **疏忽的重复**（复制粘贴）—— 可清理；
+2. **有意的重复**（**位置不同、作用不同**）—— `post_history_voice_guard` 在**对话历史之后**，
+   模型刚读完一大段历史、最容易顺着历史跑的时机，在那里重申一遍**是设计**。
+
+判定属于哪一类要两个硬指标：**① 有没有测试钉住；② 位置本身有没有功能意义**。
+**不能靠读代码风格判断** —— 本轮的教训，第①步已作废，②③步动手前也要先做这两项检查。
+
+**⑮ 收敛②③步的检查结果：全部不可删；「模式」结论要收窄**（零请求）。
+
+按两个硬指标查了 ②（复述玩家 4 处合并）与 ③（`stage_execution_card` 同卡矛盾）：
+
+- **②不可行**：三处重复**全有测试钉住** ——
+  `test_prompts.py:6163/6665` 钉 `stage_execution_card`、
+  `:6336` 钉 `post_history_voice_guard`、`:6895` + `test_guard.py:2659` 钉 `player_echo_guard`；
+  而且 `player_echo_guard` 的**位置本身就是契约**：
+  `assert names.index("final_role_voice_contract") < names.index("player_echo_guard") < names.index("player_input")`
+  ⇒ **紧贴玩家输入之前**，是有意的分层防御。
+- **③要改契约**：`test_topic_intent_card_contract.py:14` 用表格记着
+  `stage_execution_card | initiative | 不主动开启新话题，不为延长对话而反问` ⇒ 改它须同步改契约。
+
+**⇒ 精确判据（本轮最重要的修正）：「重复」本身不是问题，「重复且取值不同」才是。**
+
+- **同义重复**（复述玩家 4 处，措辞不同意思一致）⇒ **有意的分层防御，不该动**；
+- **取值不同**（长度 1–2 句 vs 1–3 句 vs 2–3 句）⇒ **真矛盾**，模型取最松那条 ⇒ **要修**。
+
+**沿这条判据重扫七类量**（`probe_quantity_conflicts.py`，四阶段各一遍），结果**干净**：
+句数在 stranger 有 3 种但**层层更严**（1–2 / 最多两句 / 最多 1 句，方向一致）；
+字数「15–40 字（整条）」与「每句十来个字、最多二十出头」**2×20=40 正好吻合**；
+动作数两处同义；重复次数那 7 项**全是同词异义**（正则误捕）。
+
+**⇒ 除了已修的长度，没有第二处取值矛盾。 §14 的「模式」结论必须收窄**：
+「每次加一条防线」确实存在，但那些防线是**有意的**（测试 + 契约 + 位置功能），
+属于**分层防御**；**真正的取值失控只有长度一处，是孤例不是普遍现象**。
+
+**本项目真正的缺口**：对「哪些该说、说几遍」管得很细且有测试守着，
+唯独对「**同一个量到底取哪个值**」**没有跨卡核对机制** —— 长度就是从这里漏出去的。
+**下一轮要防同类，该建的是跨卡数值一致性检查，不是删重复。**
+
+**⑯ 把探针提升为正式工具**：`scripts/check_prompt_consistency.py`
+（跨卡数值一致性检查，四阶段 × 六类量：句数/字数/动作数/话题数/追问数/邀约，零请求）。
+
+它**故意不下结论** —— 兼容与矛盾必须读原句分辨：
+stranger 阶段会报「句数 3 种取值」，但那是 `1–2 句` / `最多两句` / `最多 1 句`，
+**方向一致且层层更严**，不是矛盾；「整条 15–40 字」与「每句 ≤20 字」也是兼容的（2×20=40）。
+**价值在于把候选摊开，判断仍在人** —— 今晚三次误判都出在「跳过判断直接动手」。
+
+⚠ 放在 `scripts/` 而不是 `.tmp/`，是因为 `.tmp` 会被清理，而下一轮还要用它。
+全量 **4314 passed** 确认新脚本不破坏测试。
+
+**⑰ 第四轮修正：③「同卡矛盾」也是我读错了 —— 收敛三步至此全部作废。**
+
+去读 `stage_execution_card` 的字段生成处，撞上 `prompts.py:7480-7508` 的注释：
+它记着 **2026-09-22 已处理过的同型问题**（注释自称「**第五处同型矛盾**」）——
+`initiative`/`responseShape` 是**为「玩家说了话」写的**，而 topic 路径没有玩家输入，
+所以「找话题」时这两个字段会**否定请求本身**；项目当时**只在 topic 路径下覆盖这两个字段**，
+并明确保留阶段边界（`boundaryMode`/`selfDisclosure`/`eventGate`）。
+
+再读「允许追问」那句的**原文标签**（`prompts.py:3888`）：
+「**表达预算**：…最多再追加一个具体动作（细节、追问、选择或小安排）；」
+⇒ **「表达预算」是上限，不是许可**。它管**数量**（追问算"一个动作"），
+`initiative` 管**动机**（「不为延长对话而反问」）⇒ **作用域不同，不是矛盾**。③ 作废。
+
+**元发现：四次「看到矛盾」，四次都错。**
+
+| 我说 | 实际 | 错在哪 |
+|---|---|---|
+| 复述玩家 11 处 | 真约束 4 处 | 同词异义 |
+| 逐字重复可删，风险≈0 | 有测试钉住，有意设计 | 没跑测试就判性质 |
+| 结构性根因、是模式 | 取值失控只有长度一处 | 1 个样本当模式 |
+| 同卡内部矛盾 | 数量预算 vs 动机约束 | 没读**标签**（「表达预算」） |
+
+**四次同源：只读句子内容，不读它的作用域**（管哪个量 / 何时生效 / 挂着什么标签）。
+这个项目的 prompt 措辞比我默认假设的精确得多 —— **「看起来矛盾」是我的读数问题。**
+
+**⇒ 本轮体检的净结论要倒过来写：真冲突极少（只有长度一处），约束体系质量比预期高。**
+下一步若继续，该做的是**给每条约束标作用域**（结构化标注），不是继续文本扫描。
+
+**⑱ 落档方式重构：报告转归档，新建 `docs/STATE.md`**（用户点破：文档的服务对象是
+「下一个开工会话的 agent」，不是人）。
+
+**动作名**：**memory consolidation（记忆巩固）** —— 把**情景记忆**（这次会话发生了什么）
+转成**语义记忆**（稳定的结论与规律）；agent 工程里对应 Letta 的 **sleep-time compute**
+（空闲时整理记忆，而不是边对话边写）与上下文工程里的 **memory curation**。
+
+**判据因此换掉**：
+
+| 给人读的报告 | 给 agent 的工作记忆 |
+|---|---|
+| 线性叙述、讲清来龙去脉 | **状态快照**（现在在哪、什么已成立） |
+| 保留推演过程（显得严谨） | **只留结论 + 证据强度**（过程是噪声） |
+| 「第二轮修正」「以这里为准」式补丁 | **单一真相**（同一件事只有一个说法） |
+| 按章节组织 | 按「**下次要不要重查**」组织 |
+| — | **否决清单**（防重复调查）+ **陷阱清单**（看着像问题其实不是） |
+
+**⇒ `docs/STATE.md`**：30 秒速览 / 已成立结论（带证据强度 + 归档出处）/ **否决清单 7 条** /
+陷阱 4 条 / 改动清单（文件+行号+备份）/ 下一步 / 环境纪律。
+**46KB 报告转归档**，头部写明「以 STATE.md 为准，本文只留过程追溯」。
+
+**支持这个改法的实证**：今晚**四次自我修正全部发生在「写进报告」的路径上，
+没有一次发生在写记忆之后**；而且报告里同一件事散在 5 个地方
+（长度在 §2 §3 §10.1 §10.4 §15）—— **补丁式追加这个形态本身就是错误来源**。
+
+**测试**：以上全部改完后全量 `4305 passed`（exit 0），三次重跑数字一致。
+本轮共改 3 个源文件（`prompts.py` 2 处、`stage_policy.py` 4 处、`reply_scrub.py` 1 处新增规则）
++ 2 个测试文件，各带 `.bak-20260928-*` 备份。
+
+---
+
+## responseRules[0] 实验：负结果 + 云端额度满（2026-09-28 早）
+
+### 前置发现（避免踩坑）
+Wizard 在**三个** persona 文件里都有定义，且三处 `responseRules[0]` **完全不同**：
+`vanilla.json`「先回答眼前的问题」/ `sve.json`「先轻声回应眼前的事情…」/
+`rasmodia.json`「先直接回应玩家，不写环境开场」。
+
+**实际生效的是 `vanilla.json`** —— dump 出的 `voiceActions` 与它逐字匹配，
+而不是 profile 声明的 `Romanceable Rasmodius`。**改错文件等于没改**，这一步必须先 dump 验证。
+
+顺带风险：`rasmodia.json` 的 `sentencePattern` 含「用 **1–3 句**短句收束」——
+一旦 profile 切到它，长度会重新变乱。
+
+### 实验与结果
+改动：Wizard 的 `responseRules[0]`「先回答眼前的问题」→「问到具体的事就直说，其余时候按自己的状态开口」。
+参数：`--economical --limit 12`；改前 `--max-requests 45`（截断于 11/12 case）、改后 80（完整 12/12）。
+
+| 组别 | 轮数 | 改前字数 | 改后字数 | 改前自述 | 改后自述 | 缺答前 | 缺答后 | 通过前 | 通过后 |
+|---|---|---|---|---|---|---|---|---|---|
+| 实验组 Wizard | 9 | 37.2 | 42.9 | 0.00 | 0.22 | 1 | 0 | 7 | 8 |
+| 对照组（未改） | 24 | 54.3 | **41.4** | 0.08 | 0.17 | **5** | **1** | 12 | **17** |
+
+**未改的对照组波动比实验组还大** ⇒ 观察到的「改善」来自运行间噪音，不是改动。
+文本层面改动方向是对的（同一 case 改后出现「眼睛看酸了」「大锅要升温，走不开」这类自我状态），
+**但统计上被噪音淹没**。
+
+**处置：已回滚**。改动「无害但零证据」，而去掉「先回答眼前的问题」在机制上**减少了一条约束**
+（`missing_current_topic_answer` 本来就存在）。无证据的好处不值得引入风险。
+备份在 `data/personas/vanilla.json-bak-20260928-responseRules0`。
+
+### 云端额度已满（阻塞）
+试图测噪音幅度时全部失败：`errors: 12`、`failedTurns: 36`、`inputTokens: 0`。直接打 API：
+
+    HTTP 429 {"error":{"message":"You've reached your weekly usage limit for your plan.
+    Your limit resets at 2026-10-01T10:32:50.601Z...","code":"RATE_LIMITED"}}
+
+**CommandCode 池 3 周额度用尽，2026-10-01T10:32:50Z 重置** ⇒ **未来 3 天云端评测不可用**。
+因此「12 case 的评测能否检测小改动」暂无答案；**已证实的部分是**：以现有样本量，
+观察到的差异**无法与运行间噪音区分**。
+
+### 云请求
+基线 45 + 改后 46 + 失败尝试 36 + 3 = **130**（累计 299 → **429**；
+其中 39 次为 429 拒绝、未产生 token 消耗）。
+
+### 处方 C 已完成（本次）
+`scripts/run_character_quality_eval.py` 的产物现在同时记 `scrubbedReply` + `scrubChanged`。
+实测本批 33 轮里**只有 1 轮**发生清洗改动 ⇒ 之前担心的「评测在量玩家看不见的东西」
+在此样本上影响极小；同时也说明出口清洗修复后英文残留已归零。
+
+---
+
+## 抽取盲区修正、静态扫描器与两次回滚（2026-09-28 早，第三段）
+
+### 工具变化
+| 工具 | 变化 |
+|---|---|
+| `scripts/check_prompt_consistency.py` | 抽取正则放宽 + `_MAX_FRAGMENT` 120→300 + 新增 `normalize_value()` |
+| `scripts/constraint_scope.py` | 加 `particle_frequency` 量、4 条量名覆盖、7 条台账条目 |
+| `scripts/probe_extraction_blindspot.py` | **新**：量化抽取覆盖率 |
+| `scripts/probe_persona_static_conflicts.py` | **新**：扫未启用配置的 persona |
+| `scripts/probe_quantity_inventory.py` | **新**：清点全部数量表述找漏网量 |
+
+（后三个原先放在 `.tmp/length-probe/`，因其有长期价值已移入 `scripts/`。）
+
+### 关键数字
+- 抽取覆盖率 **27% → 69%**；长度类盲区 **11 → 0**
+- 台账缺口 **0**（这次是在 69% 覆盖下清零的）
+- 全量 **4314 passed**
+
+### 两次回滚（都是我的误判）
+1. **`responseRules[0]` 实验**：无显著效果，**未改角色的对照组波动更大** ⇒ 回滚。
+2. **`rasmodia.json` 句数**：误判为取值冲突并改了数据，被
+   `test_rasmodia_voice_style_captures_source_rhythm_and_register` 抓住 ⇒ 回滚。
+   实际是**不同粒度**（句式节奏 vs 日常寒暄场景）的分层防御。
+
+⇒ 两次都说明**检查机制在工作**：第一次靠对照组识破噪音，第二次靠测试钉住的断言。
+
+### 全 prompt 数量清点结论
+扫出 19 个「未覆盖单位」，逐条判断后全是三类：
+探针判据误报（「十**来个字**」）/ 非约束（描述、示例台词、指代）/
+已覆盖但换了说法（「下一**步**」→动作数，「同一**细节**」→repeat_object）。
+**⇒ 没有新的数量上限类约束，台账的 8 个量够用。**
+
+### 云请求
+本段 130 次（累计 **429**）。**额度已满，2026-10-01T10:32:50Z 恢复。**
+
+### 补档后暴露的缺口（同日，续）
+
+**`check_prompt_consistency.STAGES` 原先只有 4 档**（stranger/friend/close/married），
+而 `stage_policy._SHARED_POLICIES` 实际有 **7 档** ⇒ `--against-scope` **从来没检查过
+acquaintance / dating / parent**，包括 09-28 改的 dating 与 parent（等于那次改动没被这工具验证）。
+
+补齐 7 档后**立刻暴露一处缺口**：
+
+    stage_execution_card × topic_count    「1 个」
+
+定位到 `acquaintance` 阶段卡的「可以补一个当前话题事实」—— 正则判成 `topic_count`，
+实际是**动作数**（补一个事实）。加卡级覆盖
+`("stage_execution_card", "话题数") → action_count` 后归零。
+（`stage_execution_card` 里其实**没有**话题数约束：「不主动换题」是**性质**不是数量。）
+
+**同时确认**：亲密阶段（dating/married/parent）比其余阶段多 **2 张卡** ——
+`affection_initiative` 与 `affection_priority_final`；7 档全开下缺口仍为 0，
+说明它们也已被覆盖。
+
+⇒ **这是「补范围」第二次立刻见效**（第一次是放宽抽取正则，27% → 69%）。
+两次印证同一条：**工具报 0 缺口时，先问它看得见多少。**
+
+### 两个负结果（同日）
+
+1. **`acquaintance` 阶段没有长度漏洞**。起因是云端数据里 `sophia`（acquaintance）平均
+   68.3 字、`sophia-vineyard` 78.3 字，而 `safety_rules` 要求 15–40 字，怀疑该档缺长度指令。
+   dump 后发现**七档的 `responseShape` 全都有数字**（acquaintance 是「先用 1 句回答，
+   再视话题补 1 句具体细节」）⇒ **不是指令缺失**，是模型没严格遵守。
+2. **stranger 阶段只有 Harvey / Sebastian 的 `responseShape` 没数字**（208 个组合中的 2 个角色）。
+   但它们写的是「**短答**」「能用**半句**说清就不扩成深沉独白」，是 per-character
+   **风格化表达**（`stage_policy.py:1846/1932`），且有 `safety_rules` 全局兜底
+   ⇒ **不是缺陷，不改**（无证据的好处不值得冒险，且云端已无法验证）。
+
+### 三条真实 prompt 路径（同日，续二）
+
+**起因**：`app.py` 里写着「不传 `compactPrompt` 的调用方目前只有**群聊**，
+因此**固定走完整卡组**」—— 而此前**所有**探针（一致性检查、盲区探针、数量清点）
+都用 `compact=True`（单聊）。⇒ 群聊路径从未被任何检查覆盖。
+
+**量出的三条路径**：
+
+| 路径 | 卡数 | 独有卡 |
+|---|---|---|
+| 单聊普通 `(topic=False, compact=True)` | 13 | — （基准） |
+| 单聊 topic `(topic=True, compact=True)` | **15** | `topic_response_contract`、`topic_trigger`、`interaction`；少 `player_input` |
+| **群聊** `(topic=False, compact=False)` | **14** | **`voice_variation`** |
+
+⚠ **topic 必须手动注入**：`ContextBuilder` 自己**不设** `interaction`
+（实测 `ContextBuilder.build(..., interaction=...)` 会被忽略、`context["interaction"]` 仍是 `None`）。
+真实注入点在 `app.py:437` —— 它把整个 `payload`（含 `intent`）传给 `context_builder.build`。
+
+**接入工具后立刻暴露的缺口**（三条路径 × 7 档）：
+
+- topic 路径：`topic_response_contract × invite_action`、`× length_whole_reply`
+- 群聊路径：`affection_initiative × action_count / length_whole_reply`、
+  `affection_priority_final × length_whole_reply`、`turn_plan × invite_action`、
+  `voice_variation × particle_frequency`
+
+**其中 3 处是正则假阳性，已修正则**：
+
+| 假取值 | 来自 | 性质 |
+|---|---|---|
+| 「1 句」 | 「同**一句**」「紧接的**一句**」 | **指示词**，不是句数 |
+| 「1 句」 | 「复述**一句**→回答**一句**」 | **动作描述**，不是句数 |
+| 「一句」 | 「不要在**同一句**中无必要重复同一名词」 | 同上 |
+
+修法：句数正则的裸 `N 句` fallback 加 `(?<!同)(?<!的)(?<![复述答说讲读写问聊谈提及])`。
+⚠ **代价**：抽取覆盖率 69% → **64%**；**已核对，降的全是假阳性**，真约束
+（「补第 2 句」「最多两句」）由专门规则接住，不受影响。
+
+⇒ 其余 8 组是真条目，已补进台账（`topic-*` 3 条、`affection-*` 3 条、`group-*` 2 条）。
+补齐后 **`--against-scope` 三条路径 × 7 档缺口 0**，全量 **4314 passed**。
+
+⇒ **这是「补范围」第三次立刻见效**。三次同一个教训：
+**工具报 0 缺口时，先问它看得见多少。**
+
+### 一键体检与第四个数据源的负结果（同日，续三）
+
+**新增 `scripts/health_check.py`** —— 把本轮建立的全部检查串成一条命令：
+台账缺口（3 路径 × 7 档）/ 台账回归自测 / 抽取覆盖率 / persona 静态扫描 / 全量测试。
+`--fast` 跳过全量测试。**零请求**。
+
+**写它的时候自己踩了同一个坑两次**（值得记）：
+
+| 体检假报 | 真值 | 原因 |
+|---|---|---|
+| 抽取覆盖率 **18%** | **64%** | 「抽取器抓到」**每阶段打一行累计值**（16/29/43/58），`re.search` 取了第一个 ⇒ 拿到 stranger 阶段的局部数字 |
+| 静态扫描 **0 组** | **6 组** | 输出措辞是「**同量多值**」，我锚的是「取值多于一种」 |
+
+⇒ **元教训的又一次实例**：工具报的数，先问它看得见多少。
+（另外还试过一版怀疑是子进程编码问题、给 `subprocess` 补了 `PYTHONIOENCODING` ——
+那个改动本身是对的、保留了，但**不是**这次假报的原因。）
+
+⇒ **顺带更正**：静态扫描真实是 **6 组**（此前记的「4 组」不准）。已逐组判过，都是合法分层：
+
+- `rasmodia.json` 的 `Wizard` / `Rasmodia` 两键内容完全相同（**同一组被计了两次**）；
+- `sve.json Andy`：「抱怨一两句」是**整体**，「收尾用一句」是**收尾那一拍** ⇒ 不同粒度；
+- `vanilla.json Caroline`：「补一句自我怀疑」在 persona 文件里，
+  **不进实际 prompt**（缺口检查报 0 已证明），且扫描器**只摊开不判**。
+
+**第四个数据源的负结果**：扫了 `data/scenarios/morning.json`（163 条预设、
+839 个会进 prompt 的文本片段）：
+
+- **164 处**「N 句」是在描述**玩家输入**（「只有当玩家这一轮只给了一句很短的应声」）——
+  是**触发条件**，不是输出限制；
+- **0 处**在限制 **NPC 自己的输出长度**；
+- 19 处是动作/风格描述（「补一句能核对的证据」「用一句干巴巴的话开场」）。
+
+⇒ **晨间预设不引入新的量约束。**
+另：`behavior-quality-scenarios.json` 只是 `generate_behavior_examples.py` 的**输入**、
+不直接进 prompt ⇒ 不需要扫。
+
+⇒ 至此**四个数据源**（实时 prompt / persona 文件 / 晨间预设 / UI 目录）全部查过。
+
+### 验证闭环补完（同日，续四）
+
+**新增两项加固**，全部零请求：
+
+| 项 | 作用 |
+|---|---|
+| `scripts/probe_ledger_reverse.py` | **反向验证**：台账里的条目是否**真的存在** |
+| `health_check.py` 第 5 项 | 把反向验证接进一键体检 |
+| `constraint_scope._RULE_CASES` | 判定引擎的**规则级**案例（6 条，正反双向） |
+
+**为什么反向验证是必要的**：`--against-scope` 只验证一个方向 ——
+**prompt 里的量 ⇒ 是否都登记了**。反方向从未验证：**台账里的条目 ⇒ 是否真实**。
+若某条台账写的是一个已不存在的句子（改动后没同步、或当初就抄错），
+它会一直躺在表里让台账**看起来完整**，而 `find_conflicts` 会拿它去和真实条目比较 ⇒
+**产出假冲突**。
+
+**结果：2 条「完全找不到」，都是已知噪音，不是遗漏**：
+
+| 条目 | `text` | 原因 |
+|---|---|---|
+| `affection-initiative-actions` | `maxActions: 1（然后最多一个亲密动作）` | 抄的是 `maxActions: 1`，JSON 里是 `"maxActions": 1` ⇒ **格式差异** |
+| `followup-signature-move-voice` | `（同一条招牌动作，也出现在这张卡里）` | **本来就是描述性注释**，不是原文 |
+
+⇒ 这揭示了一个**元数据卫生问题**：台账 `text` 字段语义不纯（多数存原文、少数存注释）。
+⇒ 所以它在体检里**只报数字、不判失败**，否则天天报噪音。
+
+**规则级案例为什么必要**：`LEGACY_BEFORE_FIX` / `CURRENT` 只测**总量**
+（收束前 >0、收束后 ==0）。把 `quantity != right.quantity` 误写成 `==`、
+或把优先级比较写反，**总量断言可能仍然通过** ⇒ 判定引擎静默失效，
+而整个台账的价值都建立在它上面。现在四条规则各有正反用例，**6 条全绿**。
+
+**同时验证了既有改动真的进了最终 prompt**（防「数据写对但永不生效」）：
+
+- 长度收束：`1–2 句` / `15–40 字` 在场，**旧的 `1–3 句` / `15–80 字` 出现 0 次**；
+- 阶段策略：close / dating / married / parent **四档 responseShape 全是 1–2 句**。
+
+**两个「看着像问题其实不是」**（本轮又遇到两次）：
+
+| 现象 | 真相 |
+|---|---|
+| `topic_trigger` 卡内容为空 | **故意留空**。源码注释：「保留为空可以避免模型把『找话题』这类控制语句误当成玩家台词」 |
+| `voice_variation` 是没见过的卡 | 它自己写明「**只约束说话方式，不改变当前事实、关系阶段或回复长度**」⇒ 不引入量约束 |
+
+**四个数据源全部查过**：实时 prompt（3 路径 × 7 档）、persona 文件（50 个）、
+晨间预设（163 条 / 839 片段，**不住 NPC 输出长度**）、UI 目录（不进 prompt）。
+
+**文档一致性**：活文档里的过时数字全部更正 —— 覆盖率 `69% → 64%`
+（`STATE.md` 两处 + `constraint-scope.md` 表）、静态扫描 `4 组 → 6 组`、
+阶段矩阵 `4 阶段 × 1 路径 → 3 路径 × 7 档`。
+⚠ 归档报告（`report-*.md`）**不动** —— 按纪律它们是一次写成的事实，不追加更正。
+
+### 文档体系对齐（同日，续五）
+
+本轮只改文档与一处记忆，**不动任何代码**。
+
+**发现并修掉一处会直接误导接手人的矛盾**：`docs/README.md`（停在 09-20）
+写「当前值的唯一权威源是 `.dsh/memory/current-state.md`」，而 `docs/STATE.md`
+自称是入口。查下去发现**两者是两条不同的工作线**：
+
+| 状态文件 | 覆盖哪条线 | 最后更新 |
+|---|---|---|
+| `docs/STATE.md` | **prompt 指令 / 约束 / 长度** | 2026-09-28 |
+| `.dsh/memory/current-state.md` | **语言指纹管线** | 2026-09-26 |
+
+且后者头部自己写着「**本文件只是指针，不是状态本体**」，正文却有 38 KB ⇒ 自相矛盾。
+
+**四处同步完成**（`docs/README.md` / `docs/STATE.md` / `AGENTS.md` / 全局记忆）：
+
+- 统一规则：**想知道项目现在什么状态，读 `docs/STATE.md`**；
+- `docs/README.md` 重写：加「按目的挑文档」表、两条线的说明、目录结构约定；
+- `AGENTS.md` 四处更新：
+  ① 「判断冲突前确认**三件事**」→ **四件事**（补「什么粒度」，本轮又踩两次）；
+  ② 元教训从「应验一次」→ **四次**（含我自己的一键体检脚本读错自己的输出行）；
+  ③ 加「**约束体检**：`python scripts/health_check.py`」入口；
+  ④ 「权威源」从 `current-state.md` 改为 `docs/STATE.md`。
+
+**⚠ 更正全局记忆里一条错断言**：旧记忆写「**群聊不经过 `stage_execution_card`**
+⇒ 单聊改动不影响群聊」。**实测是错的**：
+群聊 **14 卡 = 单聊 13 卡 + `voice_variation`**，`stage_execution_card` **在群聊里同样存在**
+（实测 `responseShape` = 「通常 2 句：先回答，再给一个具体细节或态度，不写总结」）。
+⇒ **单聊的长度改动会同时影响群聊。**
+
+**另测**：所有新探针从 `C:\` 根目录跑与从 worktree 跑**结果完全一致**
+⇒ 不依赖 `cwd`，下一个人从任何位置跑都行。
+
+### 给 10-01 的云端实验定样本量（同日，续六）
+
+**新工具**：`scripts/analyze_ab_power.py`（零请求、只读）。
+
+**要解决的问题**：`responseRules[0]` 的实验是负结果，但**根因一直没定位** ——
+是「改动无效」，还是「这个样本量根本回答不了」？如果是后者，
+10-01 额度恢复后**重跑一次还是测不出来**。
+
+**做法**：把既有 artifact 里每一轮的回复字数汇到一起，算合并标准差 σ，
+再用双样本公式 `MDE(n) = (z_{1-α/2} + z_power) × σ × √(2/n)`（α=0.05 双侧、power=0.80）
+反推「每臂需要多少轮」。
+
+**结果**（同版本，即 09-28 那 5 个 A/B 跑，`--recent 5`）：
+
+| 目标差异 | 每臂轮数 | 约几次 12-case 跑 |
+|---|---|---|
+| 3 字 | 694 | 20 次 |
+| **5 字** | **250** | **7 次** |
+| 8 字 | 98 | 3 次 |
+| 10 字 | 63 | 2 次 |
+| 15 字 | 28 | 1 次 |
+
+（跨全部历史 artifact 的 σ 更大：5 字需 155 轮 —— 因为含**版本漂移**。
+两个数都有用：同版本数用于**当期实验**，跨版本数用于判断**长期漂移**。）
+
+**⇒ 当时的结论**：09-28 那次处理的效应量约 **+5.7 字**（37.2 → 42.9），
+需要 **约 250 轮/臂**才能测出；实际只有 **9 轮** —— **差 28 倍**。
+⇒ **负结果是统计上的必然，不是「改动无效」。**
+
+> ⚠ **【同日续七已更正 —— 上面这段的数字与归因都不准，保留原文以留痕】**
+> ① 「σ ≈ 11.5 字」是**把改前改后混在一起算**得到的（处理效应被算进了噪音）；
+> 正确的**条件内合并 σ = 24.3 字**，配对差 σ = 21.4 字。
+> ② 因此「差 28 倍」失效 —— 按正确 σ，5 字差异需 **约 430 轮/臂**。
+> ③ **更重要的是归因也变了**：不是「样本量不够」，而是
+> **两批跑之间存在与改动无关的系统性漂移**，
+> 幅度（未改的三个角色同期下降 **10~14 字**）**远超**被测效应（5.7 字）。
+> ⇒ 正确说法是「**这个实验没有能力回答这个问题**」，
+> 而不是「负结果是样本量的必然」—— 两种说法指向的下一步完全不同。
+
+**⇒ 三条可执行的结论**：
+
+1. **先定「值得测的最小差异」，再决定跑几次** —— 不是先跑再看结果。
+2. 一次 12-case 跑 = 36 轮 ⇒ 只能测出 **≥ 13 字**的差异。
+   想让 `responseRules[0]` 那类**小改动**可判，必须显著加样本。
+3. **优先改设计而不是加样本**：用**配对设计**（同一个 case 跑改前/改后，
+   比较**同一角色的差值**）可以消掉「角色间差异」这一大块方差 ——
+   现在的 σ 里有很大一部分来自「不同角色本来就说得不一样长」。
+
+⚠ **这也回头修正了我对那个实验的表述**：之前写「未改角色的对照组波动比处理组还大」，
+读起来像「改动被噪音淹没」。准确说法是「**该实验没有能力回答这个问题**」——
+两者对下一步的含义完全不同。
+
+### 样本量分析的更正 + 两个真发现（同日，续七）
+
+**先更正我自己两处**：
+
+1. `analyze_ab_power.py` 第一版按**目录名**排序取「最近 N 个」——
+   但 artifact 命名不统一（`20260928-063359` vs `topic-…-20260915`），
+   按名字排会把 **09-15 的跑排到 09-28 后面** ⇒ **取错数据**。已改按 **mtime** 排序。
+2. 更严重：我一度把**改前和改后两批跑混在一起**算 σ，处理效应被算进噪音
+   ⇒ σ 虚高到 26.1。**正确做法是先分组。**
+
+**分组依据**：`apply_response_rules0.py` 改于 **06:38**
+⇒ 改前 = `063359` + `063533`（06:35 / 06:37）；改后 = `063856` + `064133`（06:40 / 06:41）。
+
+| 项 | 值 |
+|---|---|
+| 改前 | 均值 **50.1** 字，σ = 23.2（n=33） |
+| 改后 | 均值 **43.1** 字，σ = 25.4（n=32） |
+| **条件内合并 σ** | **24.3 字** ← 同条件重复跑的真噪音 |
+| 配对差 | 均值 **−7.0** 字，σ_diff = **21.4** |
+| **配对效率** | 每臂轮数降到 **39%**（**2.6 倍**） |
+
+⇒ 配对设计**确实有效**，但只有 2.6 倍，**不是数量级改善** ——
+因为 σ 的大头不是「角色间差异」，而是**同一角色同一 case 的重复跑波动**。
+
+#### 真发现 ①：两批跑之间有 −10~14 字的系统性漂移
+
+| 角色 | 改动 | 改前 | 改后 | 差 |
+|---|---|---|---|---|
+| Wizard | ✅ 改了 | 37.2 | 42.9 | **+5.7** |
+| Sebastian | ❌ 未改 | 51.0 | 39.4 | **−11.6** |
+| Shane | ❌ 未改 | 38.8 | 24.6 | **−14.2** |
+| Sophia | ❌ 未改 | 73.9 | 64.0 | **−9.9** |
+
+**三个未改角色全部下降 10~14 字**，唯一改了的反而上升。
+⇒ 两批跑之间存在**与改动无关的系统性漂移**，幅度**远超**被测量的效应（5.7 字）。
+⇒ 这才是负结果的**完整机理**：不是「改动无效」，也不只是「样本小」，
+而是「**跑与跑之间本身就在动，且动得比改动大**」。
+⇒ **推论：这个 A/B 平台在现有跑法下，无法用于评估小于 ~15 字的改动。**
+
+#### 真发现 ②：实测输出远超 prompt 上的上限
+
+改前那批**平均 50.1 字**、Sophia **73.9 字**，而 prompt 里的上限是
+**1–2 句、15–40 字**（长度收束已落地，并已验证**确实出现在 prompt 里**：
+旧值 `1–3 句` / `15–80 字` 出现 **0 次**）。
+
+⇒ **约束被写进了 prompt，但模型并不严格遵守。**
+「prompt 里有一个上限」≠「输出会落在这个上限内」—— 这是一条**独立于**
+「指令有没有互相打架」的事实，此前没有被单独测过。
+
+⚠ **口径提醒**：这批是 `limit 12`（含 4 个角色），
+而「平均 38.8 字」那次是 `default` suite `limit 6` ⇒ **case 集合不同，不要混比**。
+
+⇒ **下一步（等 10-01 额度）**：与其继续调 prompt 措辞，
+不如先测「**实际输出落点与上限的关系**」——
+如果普遍超上限，那么真正该动的是**输出侧的后处理/重试**，而不是继续加措辞。
+
+### 约束遵守率：第一次测「模型到底照不照做」（同日，续八）
+
+**新工具**：`scripts/probe_length_compliance.py`（零请求、只读）。
+
+**此前整个「指令体检」只查了「prompt 内部一致不一致」，
+从没查过「模型到底照不照做」。** 本轮第一次量化这件事。
+
+**扫全部 artifact（n=6550 轮）**：
+
+| 分组 | n | 中位 | 均值 | p90 | 最大 | 超 40 字 | 超 80 字 |
+|---|---|---|---|---|---|---|---|
+| 全部 | 6550 | 38.0 | 39.8 | 60 | 161 | **43.8%** | 1.4% |
+| 收束前 | 6457 | 38.0 | 39.7 | 59 | 109 | 43.6% | 1.3% |
+| 收束后 | 93 | 46.0 | 48.7 | 75 | 161 | **57.0%** | 7.5% |
+
+**收束后 · 按角色**：
+
+| 角色 | n | 中位 | 均值 | 超 40 字 | 超 80 字 |
+|---|---|---|---|---|---|
+| Sophia | 28 | **61.5** | 65.6 | **82.1%** | 14.3% |
+| Wizard | 36 | 44.0 | 45.1 | 55.6% | 5.6% |
+| Sebastian | 11 | 43.0 | 45.0 | 54.5% | 9.1% |
+| Shane | 18 | 35.5 | 31.7 | 22.2% | 0.0% |
+
+⇒ **约一半的输出超过 40 字上限**，且**确实有 1.4% 超过 80 字**
+（即完全无视上限，最大到 **161 字**）。
+
+#### ⚠⚠ 一处**不能**这样读
+
+「收束后中位 46.0 > 收束前 38.0」**不能读成「收束让回复变长了」**。
+
+理由：收束后只有 **93 轮**，且全部来自 09-28 那批 A/B（4 个角色，**含天然话长的 Sophia**）；
+而收束前那 6457 轮是**历史跑**，case 集合、角色构成、suite 都不同。
+⇒ **两组样本不可比**，「收束前后」这个对比**这一版做不出结论**。
+
+要真正对比，必须**固定 case 集合**跑收束前/收束后各一批 —— 那需要云请求，等 10-01。
+
+（此处是本轮第三次「差点把不可比的数据读成结论」。前两次：按目录名排序取错 artifact、
+把改前改后混算 σ。**同一个坑，一天内三次** —— 已经把它写进 `STATE.md` §三的元教训。）
+
+#### ⇒ 真正的发现与它的含义
+
+- **【成立】约一半输出超上限**，Sophia 高达 82%。而该上限**已确认确实写在 prompt 里**。
+- **【成立】有 1.4% 完全无视上限**（>80 字，最大 161）。
+- **【含义】「把约束写得更清楚」这条路的边际收益有限** ——
+  既然模型**看见了却不照做**，那么该动的是**输出侧**：
+  `reply_scrub.py` 已经在做清洗，可以在这里加**长度收束的后处理**，
+  或者对超长回复**触发重试**（prompt 里已有 `npcRetryCount` 机制）。
+- **【仍未测】** 超限是否与「阶段 / 路径 / 角色」系统相关 ——
+  现有数据里 `limit 12` 只覆盖 4 个角色，`limit 6` 覆盖另 3 个，
+  **没有一次跑覆盖全部角色** ⇒ 要回答这个也得等云端。
+
+### 超长回复的分布与重试机制（同日，续九）
+
+**94 条「完全无视上限」（>80 字）的分布**：
+
+| 维度 | 分布 |
+|---|---|
+| 按角色 | **Sophia 58** / Elliott 13 / Wizard 11 / Harvey 6 / Sebastian 2 / Shane 2 / Sam 1 / Alex 1 |
+| 按 case（前 4） | `sophia-married-cellar` 12 / `deep-flirt-sophia-married` 7 / `adaptive-topic-sophia-married-cellar` 6 / `topic-sophia-dating-grapes` 4 |
+| 玩家输入长度 | 中 10–30 字 **61** / 长 ≥30 字 18 / 空 14 / 短 <10 字 1 |
+| **`retryCount`** | **0 → 36 条** / 1 → 30 / 2 → 13 / 3 → 7 / 4 → 5 / 5 → 1（2 条无值） |
+
+⇒ **超长高度集中在「浪漫 / 亲密类 case」+ Sophia**（她一个人占 62%）。
+⇒ **不是「玩家说得多所以回得多」** —— 玩家输入 65% 是 10–30 字的中等长度。
+
+#### ⚠ 机制层面的发现：**重试不检查长度**
+
+`retry_for_format_noise`（`guard.py:1208`）实际检查的**问题类型**只有五类：
+
+1. `format_issue` —— 格式噪声（前导标点等）
+2. `missing_proactive_affection` —— 缺亲近信号
+3. `is_topic_prompt_echo` —— 回显了 prompt
+4. `missing_opening_grounding` —— 开头没有可感锚点
+5. `_is_mirror_restatement` —— 机械复述玩家
+
+**没有任何一类检查长度** ⇒ 超长回复**不会被重试**，直接放行。
+这解释了为什么 36 条超长的 `retryCount` 是 **0**（一次就过）；
+也解释了另外 13 条 `retryCount` 3–5 的为什么**重试多次仍然超长** ——
+它们是因为**别的问题**被重试的，长度从头到尾没被纳入判据。
+
+⚠ **这是观察，不是「缺陷」判定。** 长度不进重试范围**可能是有意设计**
+（重试会成倍消耗请求；而长度问题更适合在后处理里解决）。
+**没有改任何代码。**
+
+#### ⚠ 另一条：评测脚手架泄漏
+
+最长的几条里有一条 `Alex`（acquaintance，81 字）：
+
+> 我是 Alex。我们刚聊完在运动场碰见的话题，**如果你想知道我今天的训练细节，可以这样回答：**
+> 今天主要练了爆发力俯卧撑和短途冲刺。怎么样，要不要看我试试新投出的球速？
+
+「**可以这样回答：**」是**评测用的模拟玩家输入**被模型复述了。
+⇒ 这是**评测数据/脚手架**层面的问题，**不是游戏内会遇到的情形**，
+但会污染「机械复述」这个指标的统计。**留档，暂不处理。**
+
+#### ⇒ 这一轮的净结论
+
+「指令体检」此前只覆盖「**prompt 内部是否自洽**」；
+本轮第一次覆盖「**模型是否照做**」，结果：
+
+- ✅ prompt 内部：**3 条路径 × 7 档、缺口 0**（这一侧是干净的）；
+- ❌ 执行侧：**约一半输出超上限**，且**有 1.4% 完全无视上限**。
+
+⇒ **两侧要分开看。** 前者已经做尽；后者是**新发现的、之前完全没测过的**方向，
+且它指向的修法不在 prompt 里（在输出侧），**与上面全部台账工作正交**。
+
+### 长度问题的三条修法与成本（同日，续十）
+
+既然「约一半输出超上限」成立，就该问「修它要付什么代价」。用已有 artifact 算：
+
+**现状基线**（n=4435 轮有 `requestCount` 记录）：
+
+| 项 | 值 |
+|---|---|
+| `requestCount` | 均值 **1.53**，中位 1，分布 1→2963 / 2→817 / 3→478 / 4→138 / 5→34 / 6→5 |
+| `retryCount` | 均值 **0.53**，中位 0 |
+| 平均输入 token | **6354** |
+| 平均输出 token | **32** |
+
+⇒ **成本几乎全在输入侧**（6354 : 32 ≈ **200 : 1**）——
+因为每轮都要重发整份 prompt（约 5.6k token），而回复本身只有几十字。
+
+**三条路与代价**：
+
+| 修法 | 额外请求 | 额外 token | 是否改文本 |
+|---|---|---|---|
+| **A. 加进重试判据**（超限就重发） | 每轮 1.53 → **2.18（+42%）** | 输入 **+18.2 M**、输出 +0.09 M | 否（但输出可能仍超限） |
+| **B. 后处理截断**（在 `reply_scrub` 里做句子级收束） | **0** | **0** | **是**（会改一句到两句） |
+| **C. 维持现状** | 0 | 0 | 否 |
+
+⚠ A 的 42% 只算了「重发一次且成功」；重发后仍超限还要再发，**真实涨幅更高**。
+⚠ B 的「零成本」是把代价从 token 换成了**可能的语义损伤** ——
+截断可能砍掉半句，需要单独验证「截断后的句子是否仍然完整通顺」。
+
+⇒ **这三条是并列的工程取舍，不是「哪个对」**。
+**没有改任何代码** —— 选哪条需要用户拍板，或等 10-01 额度恢复后用云端实验比较 A/B/C。
+
+### Sophia 特别话长**不是** prompt 问题（同日，续十一）
+
+**假设**：Sophia 占 94 条超长里的 **58 条**，是不是她的 persona 里有更宽的长度约束？
+
+**测法**：dump 她与 Wizard 在同样心数下的**全部 13 张卡**，
+用同一套正则提取长度类表述，逐字对比。
+
+**结果：两人的长度约束完全相同。**
+
+| 卡 | 表述（Sophia 与 Wizard 逐字一致） |
+|---|---|
+| `safety_rules` | 「中文通常 **1–2 句、15–40 字**」 |
+| `safety_rules` | 「只保留一个平实事实或感受，**最多两句**」 |
+| `stage_execution_card`（close） | 「可用 **1–2 句**，语气更放松」 |
+
+⇒ **假设被排除**：prompt 侧**没有**给 Sophia 更宽的约束。
+⇒ Sophia 的话长是**模型行为**，不是指令差异 ——
+她承担的是「葡萄园 / 酿酒 / 绘画 / 情绪」这类**内容天然更丰富**的话题，
+模型面对这类话题倾向于多说，**即使 prompt 明确写了上限**。
+
+⚠ **对上一条的边界限定**：「约一半输出超上限」是**跨角色平均**，
+**不能**推出「所有角色的执行纪律一样差」——
+至少从这三档对比看，**指令侧对所有角色是同一套**。
+
+⚠ **测法上的一个细节**：`acquaintance` 档的 `stage_execution_card` 是
+「先用 **1 句**回答，再视话题补 **1 句**具体细节」，
+而 `close` 档是「可用 **1–2 句**」—— **两档措辞不同但上限相同**（都是 2 句）。
+这正是「句子读起来像矛盾、实际作用域不同」的又一例，**没有改**。
+
+### 方案 B（后处理截断）的实测缺陷（同日，续十二）
+
+**为什么不直接做**：截断会改文本，必须先看会不会砍坏。取 **44 条 >80 字**的真实回复，
+按句末标点切句，列出「留前 1 / 2 句」的结果。
+
+**两个数**：
+
+- 切点**干净**：留前 1 / 2 / 3 句后，**44/44（100%）**都以句末标点收尾
+  ⇒ **不会砍出半句**。
+- 但**长度不可控**：同一个「留前 2 句」规则，产出 **31 / 38 / 62 / 76 字** ——
+  因为**中文的「句」长度差异极大**（带省略号的长句可以一句 60+ 字）。
+
+**具体三例**（都是 Sophia / friend）：
+
+| 原文 | 共几句 | 留 1 句 | 留 2 句 |
+|---|---|---|---|
+| 106 字 | 5 | 21 字 | **38 字** ✅ 落在 15–40 内 |
+| 114 字 | 4 | 18 字 | **62 字** ❌ 仍超限 |
+| 161 字 | 7 | 17 字 | **76 字** ❌ 仍超限 |
+
+**⇒ 结论：句子级截断不是可靠的收束手段。**
+
+1. **长度无法预测** —— 「留 2 句」可能是 38 字，也可能是 76 字。
+   要可靠必须**按字数累积**（累到 40 字就在最后一个句末停），而不是按句数。
+2. **会丢语义** —— 第 2 句常是「你要不要也试试？」这类**邀请 / 收尾**，
+   砍掉后读起来像话说一半。161 字那条真正的收尾（「我把那瓶留给你。」）在**第 7 句**。
+3. **留 1 句普遍太短** —— 三条分别是 17 / 18 / 21 字，**贴着 15 字的下限**。
+
+⇒ 所以方案 B **不是「零成本」**：它的成本从 token 换成了
+**「长度不可控 + 可能丢收尾」**。要走这条路，得先设计**按字数的累积截断**，
+再单独验证「截断后仍保留一个收尾」。
+
+⚠ **仍未动任何代码。** 三条路的取舍现在更有依据：
+**B 比看上去贵**（要设计 + 要验证），**A 的 +42% 是明确、可预算的成本**。
+
+### 分级重试的成本曲线：方案 A 有个便宜得多的变体（同日，续十三）
+
+方案 A「把长度加进重试」按**全量**算是 +29~42%（两个口径见下）。
+但超长是**长尾分布** —— 大部分只是略微超出，真正离谱的很少。
+所以存在一个中间档：**只对超过某个较高阈值的回复重试**。
+
+**实测曲线**（n=6550 轮，现状每轮 1.53 次请求、平均输入 6354 token）：
+
+| 重试阈值 | 触发比例 | 每轮请求 | 涨幅 | 额外输入 token |
+|---|---|---|---|---|
+| 40 字 | **43.8%** | 1.97 | **+29%** | 18.23 M |
+| 50 字 | 25.2% | 1.78 | +16% | 10.49 M |
+| **60 字** | **9.4%** | 1.62 | **+6%** | 3.91 M |
+| **70 字** | **3.4%** | 1.56 | **+2%** | 1.43 M |
+| 80 字 | 1.4% | 1.54 | +1% | 0.60 M |
+| 90 字 | 0.5% | 1.53 | 0% | 0.22 M |
+
+**⇒ 三条读法**：
+
+1. **卡在 40 字（= prompt 写的上限）是最差的选择** —— 它拦掉 43.8%，
+   等于把「重试」变成**常态**而不是异常处理，成本 +29%。而实测中位就是 38 字，
+   ⇒ 一半的回复贴着上限，这更像是**上限偏紧**而不是模型普遍失控。
+2. **60~70 字是最有性价比的档** —— 只花 **+2~6%**，拦住「明显违反」的那 3~9%。
+   这个区间的回复读起来已经**明显超出**「一两句话」的形态。
+3. **>80 字那段（1.4%）几乎免费**（+1%）—— 如果只想止血，先收这一段。
+
+⚠ **两个口径要说清**（免得下一个人对着两个数困惑）：
+- **+29%** 是本次口径：分母是**全部 6550 轮**，`base = 1.53`；
+- **+42%** 是续十的口径：分母是**有 `requestCount` 记录的 4435 轮**，`base` 同为 1.53，
+  但触发比例按 4435 轮里的 2869 条算 ⇒ 比例更高。
+两者都是实算，差别只在**分母**。**引用时说清用哪个。**
+
+⚠ **仍未动任何代码。** 现在给用户的选项从三条变成**四条**：
+
+| 方案 | 成本 | 缺点 |
+|---|---|---|
+| A1 全量重试（阈值 40） | +29% 请求 | 重试成为常态；上限偏紧的问题没解决 |
+| **A2 分级重试（阈值 60~70）** | **+2~6%** | 只治「明显超长」，略超的仍放过 |
+| B 后处理截断 | 0 请求 | **长度不可控 + 可能丢收尾**（续十二） |
+| C 维持现状 | 0 | 约一半输出略超上限 |
+
+### 执行侧的完整画像：各判据多久触发一次（同日，续十四）
+
+接续十三 —— 既然要评估「再加一条长度判据」的成本，
+先得知道**现有判据已经在拦什么、拦掉多少**。
+
+**总览**：6550 轮里，**1472 轮（22.5%）被重试过**。
+
+**`score.tags` 触发频次（前 10）**：
+
+| 判据 | 次数 | 占轮数 |
+|---|---|---|
+| `missing_proactive_affection` | 845 | **12.9%** |
+| `missing_continuity_evidence` | 667 | 10.2% |
+| `missing_expected_evidence` | 660 | 10.1% |
+| `missing_conversation_lead` | 646 | 9.9% |
+| `missing_current_topic_answer` | 494 | 7.5% |
+| `missing_topic_evidence` | 179 | 2.7% |
+| `repeated_turn_content` | 152 | 2.3% |
+| `format_noise` | 69 | 1.1% |
+| `companionship_only` | 59 | 0.9% |
+| `mechanical_affection_shape` | 55 | 0.8% |
+| **`mechanical_restatement`** | **3** | **0.05%** |
+
+**`warnings` 里的重试动作（前 8）**：
+
+| 重试类型 | 次数 |
+|---|---|
+| `response_affection_retry: missing_proactive_affection` | **1432** |
+| `response_conversation_lead_retry: missing_conversation_lead` | 607 |
+| `response_continuity_retry: missing_history_anchor` | 327 |
+| `response_format_retry: stage_direction` | 156 |
+| `response_format_retry: markdown` | 110 |
+| `response_variation_retry: mechanical_affection_shape` | 74 |
+| `response_opening_retry: repeated` | 62 |
+| `response_format_retry: english` | 51 |
+
+**⇒ 四条读法**：
+
+1. **重试的绝对主力是「缺亲近信号」**（1432 次，占总重试的近一半）。
+   ⇒ 现有重试预算**已经在为「浪漫/亲密」这条线服务**，
+   而超长恰恰也集中在这条线（续九：94 条里 Sophia 占 58）。
+   ⇒ **两条问题在同一批对话上叠加** —— 加长度判据会**和亲近判据抢同一个预算**。
+   这解释了 `guard.py:1242-1245` 的注释为什么特意说「优先保留个人亲近的重试配额」。
+2. **`mechanical_restatement` 几乎不发生（3 次 / 0.05%）** ——
+   说明「机械复述玩家」这个担心在真实数据里**基本不存在**。
+   （注意：续九 里发现的那条 Alex 泄漏评测脚手架的样本，属于**评测数据**问题，
+   游戏内不会出现。）
+3. **`response_format_retry: stage_direction` 有 156 次** ——
+   模型**把舞台指示写进台词**（例如「（她笑了笑）」）是真实且高频的格式问题。
+   这条此前**没在体检范围里**，值得单独看。
+4. **`format_noise` 只有 1.1%** ⇒ 格式侧的守卫是**有效**的，不是摆设。
+
+⚠ **仍未动任何代码。** 这一节的作用是把方案 A 的成本评估**放回真实预算里**：
+现在已经有 22.5% 的轮在重试，其中近一半是亲近线 ——
+**再加一条长度判据不是「多一个检查」，而是「多一个抢预算的对手」。**
+
+### 「括号动作」不是守卫盲区（同日，续十五）
+
+**怀疑**：44 轮的回复里带括号动作，但 `warnings` 里没有 `stage_direction` ⇒ 守卫有盲区？
+
+**三步查证**：
+
+1. **位置分布**：句中 **41/44（93%）**、句首 2、句末 1。
+   样例（句中，读起来最糟的一类）：
+   「谢了，**（靠在鸡舍门框上，揉着眉心）**有了消息我立马告诉你。」
+2. **守卫的正则**（`guard.py:331`）：
+   `(?:（[^（）\r\n]{1,80}）|\([^()\r\n]{1,80}\))`
+   ⇒ **句中的括号照样匹配**，**不存在位置盲区**。
+3. **来源**：那 44 条来自 **08-30 ~ 09-03 的老 artifact**，
+   **09-28 的跑里一条都没有**。
+
+**⇒ 结论：不是盲区，是历史数据。** 那些跑发生在守卫补上这项检查之前。
+
+**正面证据**：`warnings` 里有 **156 次 `response_format_retry: stage_direction`**
+⇒ **当前守卫确实在抓、也确实在重试这条**。
+
+⇒ **记入否决清单**（`STATE.md` §三），避免下一个人重查。
+
+⚠ 顺带记一条**方法教训**：这 44 条的 `retryCount` 是 `None` ——
+**老 artifact 没有这个字段**。所以「按 `retryCount` 筛选」时，
+必须先把 `None` 与 `0` 分开，否则会**把「没有记录」读成「零次重试」**。
+本轮的画像统计已经分开处理（`isinstance(rc, (int, float))` 判断），
+但如果有人照抄简化写法就会踩这个坑。
+
+### 体检升级：加入「输出侧遵守率」（同日，续十六）
+
+`scripts/health_check.py` 从 **5 项** 变 **6 项**，新增：
+
+```
+[OK  ] 输出侧遵守率 —— n=6550 中位=38.0 字，超 40 字上限 43.8%
+       （⚠ 报告性，不判失败 —— 重试机制**不查长度**，超长直接放行）
+```
+
+**为什么设成「不判失败」**：43.8% 超限是**现状**，不是缺陷。
+把它做成红灯只会让人**习惯性忽略红灯** —— 真正要看的是**趋势**
+（改完之后这个数有没有降下来）。这与「台账反向验证」的处理一致：
+那一项也有已知噪音，所以同样只报数字。
+
+**顺带补上第四条边界**：输出侧遵守率是**报告项**，
+它指向的修法在**输出侧**，与上面全部「prompt 内部」的台账工作**正交**，别混在一起读。
+
+⇒ 至此 `health_check.py` 在一处覆盖了**两条线**：
+① prompt 内部自洽（缺口 / 自测 / 覆盖率 / 反向验证 / 静态扫描 / 全量测试），
+② 输出侧遵守（遵守率）。
+
+### ⭐⭐ 重大更正：43.8% 不是「模型不照做」，是**两个约束不能同时满足**（同日，续十七）
+
+**我今晚前半段的结论错了。**
+
+我一直把 prompt 的「**1–2 句、15–40 字**」当成**一个长度上限**在算，
+据此得出「约一半输出超上限 ⇒ **模型看见了不照做**」。
+
+**但它其实是两个独立约束**，而且在中文里**不一定能同时满足**。
+分开算：
+
+| 约束 | 违规率 |
+|---|---|
+| 字数 > 40 字 | **43.8%** |
+| **句数 > 2 句** | **18.5%** |
+
+**关键格子**：
+
+| 情形 | 轮数 | 占比 |
+|---|---|---|
+| ⭐ **守句数（≤2 句）却超 40 字** | **1935** | **29.5%** |
+| 守字数（≤40 字）却超 2 句 | 280 | 4.3% |
+| 两个都超 | 934 | 14.3% |
+
+⇒ **超字数的那 2869 轮里，67.4% 的句数是合格的。**
+
+**句数分布（决定性）**：
+
+| 句数 | 占比 |
+|---|---|
+| 0 句 | 0.1% |
+| 1 句 | 13.4% |
+| **2 句** | **67.9%** |
+| 3 句 | 16.9% |
+| 4+ 句 | 1.8% |
+
+⇒ **81.3% 的回复是 1–2 句** ⇒ **模型确实在守句数。**
+
+**「守句数」那 5336 轮的字数分布**（中位 **35** 字）：
+
+| 区间 | 占比 |
+|---|---|
+| 0–30 字 | 37.3% |
+| 31–40 字 | 26.4% |
+| **41–50 字** | **17.6%** |
+| **51–60 字** | **13.7%** |
+| **61+ 字** | **5.0%** |
+
+⇒ 即使守住了句数，**仍有 36.3% 超 40 字**。
+
+#### ⇒ 更正后的结论
+
+**不是**「模型看见了上限不照做」；
+**而是**「**模型照做了更具体的「1–2 句」，但「1–2 句」用中文写出来经常超过 40 字**」。
+
+**证据是内生的**：若模型在无视约束，超字数那批的句数也该乱 ——
+但 **67.4% 句数完全合格**。它显然**读到并遵守了那条更具体的约束**。
+
+#### ⇒ 这**改变了修法**（推翻我前面的建议）
+
+| 我之前的建议 | 更正后 |
+|---|---|
+| 加长度重试 | ❌ **不是首选** —— 模型没做错。罚它重试只会**把 2 句压成 1 句**，损伤表达 |
+| 后处理截断 | ❌ 同理，且实测会丢收尾句 |
+| —— | ⭐ **改约束措辞**：让它**自洽**。例如<br>「**1–2 句，每句约 15–20 字**」（2 句 ≈ 40 字，两个约束对齐）<br>或「**约 40 字以内，最多 2 句**」（把字数设为主约束） |
+| —— | 或**放宽字数**到与句数自洽（2 句 ⇒ 上限 50~60 字） |
+
+⚠ **按此结论，前面的「分级重试成本曲线」不再是决策项** ——
+它建立在「模型不照做」这个已推翻的前提上。**保留数字（它们是真的），但决策含义变了。**
+
+#### ⚠ 这是我自己漏掉的一类「指令内部矛盾」
+
+台账查的是**同一个量**的取值冲突（长度一处，已登记）。
+而 **「句数」与「字数」是两个不同的量**，
+它们之间的**换算关系是否自洽**，**不在台账的覆盖范围内** ——
+台账按「量」分桶，跨量的算术一致性它结构上看不到。
+
+⇒ **这是比长度取值更值得查的一类问题。** 已知的同类隐患：
+「1–2 句」与「15–40 字」是唯一一处跨量组合被写在一起的地方吗？
+值得用同一方法把**其他成对出现的量化约束**也扫一遍。
+
+### 深化台账：跨量盲区扫描（同日，续十八）
+
+**动因**：续十七发现台账有个**结构性盲区** —— 它按**量**分桶，
+查的是**同一个量**的取值冲突；而「句数」与「字数」是**两个不同的量**，
+它们之间**换算关系是否自洽**，台账**看不见**。这正是「1–2 句、15–40 字」那条真冲突的成因。
+
+**新工具**：`scripts/probe_cross_quantity.py`（零请求、只摊开不判定、永远返回 0）。
+扫 **3 条路径 × 7 档 = 21 个 prompt 组合**，
+在**整句内**（以及相邻句拼接）找**同时命中两个不同量**的片段。
+
+⚠ **工具自身的两个坑（都已修）**：
+1. 第一版把**逗号顿号也当分隔符** ⇒ 「1–2 句、15–40 字」被顿号切成两片 ⇒
+   扫描报告「**零共现**」（**假阴性**）。成对约束**就是用逗号/顿号连起来的**，
+   必须留在同一片里。
+2. 样例打印用了**全局计数器** ⇒ 第一对用完全部配额，后面几对全打印成空 ——
+   看起来像「没有样例」，其实是**打印 bug**。
+
+**结果：8 对跨量组合，判读后 1 真 7 假。**
+
+| 跨量对 | 次数 | 判读 |
+|---|---|---|
+| ⚠ **句数 + 字数** | **63** | **真冲突** ——「1–2 句、15–40 字」（见续十七） |
+| 句数 + 话题数 | 42 | ❌ 假阳性 ——「只保留**一个**平实事实或感受」是**指代**，不是话题数；且它「最多两句」**兼容** |
+| 句数 + 邀约 | 37 | ❌ 假阳性 ——「**不得**反问、邀约或主动换题」是**禁止项**，不是邀约约束 |
+| 动作数 + 邀约 | 21 | ✅ 兼容 ——「最多加入一个角色化细节…再决定是否给一个继续入口」 |
+| 话题数 + 追问数 | 21 | ❌ **重复命中** —— 同一条「只起一个话题，不额外追问、邀约或安排」被三种量各命中一次 |
+| 话题数 + 邀约 | 21 | ❌ 同上（同一条被重复计数） |
+| 追问数 + 邀约 | 21 | ❌ 同上 |
+| 动作数 + 句数 | 1 | ❌ 假阳性 ——「通常在前**一两句**」是**描述句**，不是句数上限 |
+
+**⇒ 结论：台账的「跨量盲区」实际只有 1 处 —— 但正是那处致命的。**
+
+这个结果是**好消息也是坏消息**：
+- 好消息：跨量层面**没有藏着一堆**同类问题（我原以为可能有一片）；
+- 坏消息：唯一那一处**已经真的造成了 43.8% 的违规**。
+- ⇒ **它印证了一件事**：这类问题的**危害远大于它的数量** ——
+  一处跨量不自洽，影响面是**全部回复的 43.8%**；
+  而台账里那些**同量**取值冲突（例如某角色某阶段长度不同），
+  影响面只在**那个角色那个阶段**。
+
+#### ⇒ 写进方法：跨量共现要查，但**必须人工判读**
+
+7 个假阳性里，有 **3 个是「同一条被多种量重复命中」**、
+2 个是「**禁止项**被当成要求」、2 个是「**描述性词语**被当成上限」。
+
+⇒ 这说明**「跨量共现」这个信号本身噪声很大**，
+不能像「同量多值」那样直接当红灯。它的正确用法是：
+**摊开给人看**（本脚本就是这么做的，`return 0`）。
+
+### 修法可行性验证：每句 15–20 字**是可达的**（同日，续十九）
+
+续十七建议「改措辞让两个约束自洽」，例如改成「1–2 句，每句约 15–20 字」。
+但**如果中文句子天然就 25 字，这个建议同样不现实** —— 所以必须验证。
+
+**测法**：取**守句数（1–2 句）**的轮，逐句统计字数（共 **9777 句**）。
+
+| 项 | 值 |
+|---|---|
+| ⭐ **每句中位** | **18.0 字** |
+| 每句均值 | 20.0 字 |
+
+**逐句分布**：
+
+| 区间 | 占比 |
+|---|---|
+| 0–10 字 | 18.3% |
+| 11–15 字 | 20.2% |
+| **16–20 字** | **20.9%** |
+| 21–25 字 | 16.4% |
+| 26–30 字 | 9.7% |
+| 31–40 字 | 9.6% |
+| 41+ 字 | 5.0% |
+
+**达标率模拟**：
+
+| 若要求 | 已达标 |
+|---|---|
+| 每句 ≤ 15 字 | 38.5% |
+| **每句 ≤ 20 字** | **59.3%** |
+| 每句 ≤ 25 字 | 75.8% |
+| 每句 ≤ 30 字 | 85.4% |
+
+⇒ ⭐ **「≤2 句」+「每句 ≤20 字」+「总计 ≤40 字」三条同时满足的，现成就有 2003 轮（30.6%）。**
+
+#### ⇒ 三条结论
+
+1. **建议可行** —— 每句中位 **18 字**，「每句 15–20 字」正落在中位附近，不是苛求；
+   而且**已有 2003 轮实际做到了**这个组合。**这是可达性的直接证据。**
+
+2. ⭐ **这解释了现状的成因**：prompt 说「1–2 句、15–40 字」，
+   模型读成「**2 句、约 40 字**」⇒ 每句 ≈ 20 字 ——
+   **它是在尽力贴近上限**（每句中位 18 字正是这个意思）。
+   但 **2 × 20 = 40 恰好卡在边界**，任何一点波动就超。
+   ⇒ **43.8% 违规是「上限正好等于 2×典型句长」的必然结果，不是模型失控。**
+
+3. ⭐ **所以更稳的改法是「给余量」**：
+   - 方案甲：「**1–2 句，每句不超过 20 字**」——把约束落在**每句**上，比落在总数上好控制；
+   - 方案乙：「**最多 2 句，总计约 50 字以内**」——**承认** 2 句自然长度就是 40–45，
+     把上限放到 50 留缓冲；
+   - ⚠ **不推荐**：维持「15–40 字」不变 —— 它是**当前 43.8% 违规的直接原因**。
+
+### 改动可行性：改了要动哪些测试（同日，续二十）
+
+**执行自己的元教训**（「改前先 grep 测试有没有钉住那个值」—— rasmodia 那次就是栽在这里）。
+grep 后找到 **3 处测试断言**，逐一读了影响：
+
+| 位置 | 断言 | 改动会不会红 |
+|---|---|---|
+| `test_prompts.py:818` | `assert "15–40 字" in safety_message["content"]` | ⚠ **会红** —— **必须同步改** |
+| `test_prompts.py:1085` | `assert "1–2 句" in safety["content"]` | ✅ **只要保留「1–2 句」就不红** |
+| `test_prompts.py:9305-9306` | `assert "1–2 句" in topic_joined / lewis@8` | ✅ 同上 |
+| `test_prompts.py:9249` `test_length_directives_never_widen_across_cards` | `wider_forms = ("1–3 句", "2–3 句", "15–80 字", "20–80 字")` **不得出现** | ✅ **不触发** |
+
+#### ⭐ 关键：`wider_forms` 是**特定字符串**断言
+
+它钉的是那四个**具体的旧写法**，而
+- 方案甲「**1–2 句，每句不超过 20 字**」→ 不含 `15–80 字`/`20–80 字` ⇒ **不触发**；
+- 方案乙「**最多 2 句，约 50 字以内**」→ 同样不含 ⇒ **不触发**。
+
+⇒ **两个方案都不会撞上「不许更宽」那道守卫。**
+⇒ **两个方案都只需同步改 `test_prompts.py:818` 一行**（把 `15–40 字` 换成新值）。
+⇒ **「1–2 句」保持不动**，则 L1085 / L9305 两处也不需要碰。
+
+**⇒ 改动的真实成本：源码 1 行（`prompts.py:6427`）+ 测试 1 行。极低。**
+
+⚠ 但要留意 `stage_policy.py` 里那几个阶段档的 `responseShape`
+（`1–2 句` / 「先用 1 句回答，再视话题补 1 句具体细节」）——
+**它们不含数字上限**，所以不在本次改动范围；
+但如果方案要改成「每句 ≤20 字」，**这些地方也应该同向改**，
+否则又会回到「多处长度指令、模型取最宽那条」的老问题。
+
+#### ⭐ 附带发现：收束的**原始动机**（写在这条测试的 docstring 里）
+
+> 本轮实测：同一轮 prompt 里曾有**六处**长度指令，而只有
+> `stage_execution_card` 那条给硬数字，模型于是**取最宽的那条**。
+> 收束后全部同向（1–2 句 / ≤40 字）。这里把「不许再出现更宽的写法」钉死，
+> 防止以后有人只在单点放宽，又把它变回取宽。
+
+⇒ **这条背景很重要**：它说明「多处长度指令，模型取最宽」是**已被证实**的行为模式。
+⇒ **因此本次改措辞若要有效，必须「同向改多处」，不能只改 `safety_rules` 那一处** ——
+否则改完仍有一处更宽，模型照样取宽，等于没改。
+⇒ 这正是 `probe_cross_quantity.py` 扫出的「句数 + 字数」共现 63 次所覆盖的范围：
+**要改的是一整组，不是一行。**
+
+⚠ **仍未动任何代码** —— 等用户在第 1 项拍板。
+
+### ⭐⭐ 决定性机理：**字数约束在整份 prompt 里只出现 1 次，句数出现 5 处**（同日，续二十一）
+
+**新工具**：`scripts/probe_length_directives.py`（零请求、只清点不判定）。
+
+**动机**：`test_prompts.py:9249` 的注释记着一个实测结论 ——
+「同一轮 prompt 里曾有**六处**长度指令，只有 `stage_execution_card` 那条给硬数字，
+模型于是**取最宽的那条**」。⇒ 要改长度措辞，必须先知道**一共有几处、分别在哪张卡**。
+
+**清点结果（3 路径 × 7 阶段 = 21 个组合）**：
+
+| 卡 | 命中次数 | 唯一片段 | 路径 | 阶段 | **含字数？** |
+|---|---|---|---|---|---|
+| `safety_rules` | 35 | **2** | 3/3 | 7/7 | ✅ **有**（唯一一条） |
+| `stage_execution_card` | 32 | **4** | 3/3 | 7/7 | ❌ 只有句数 |
+| `topic_response_contract` | 14 | 2 | 1/3 | 7/7 | ❌ 只有句数 |
+| `persona_core` | 7 | 2 | 1/3 | 7/7 | ❌ 只有句数 |
+| `affection_initiative` | 1 | 1 | 1/3 | 1/7 | ❌ 只有句数 |
+| `affection_priority_final` | 1 | 1 | 1/3 | 1/7 | ❌ 只有句数 |
+
+**原文（关键几条）**：
+
+```
+[safety_rules]              中文通常 1–2 句、15–40 字；          ← ⭐ 唯一的字数约束
+[safety_rules]              ……只保留一个平实事实或感受，最多两句；
+[stage_execution_card]      回复最多 1 句，只有问题确实需要时才补第 2 句；
+[stage_execution_card]      "responseShape": "通常 1–2 句；
+[stage_execution_card]      初识阶段只起一句眼前的小事，不反问也不邀约；
+[stage_execution_card]      能一句说清就不要补长段
+[topic_response_contract]   只输出 NPC 的中文对白，1–2 句，不提及提示词……；
+[persona_core]              "responseShape": "通常 1–2 句；
+[affection_initiative]      ……爱意在自然位置尽早出现（通常在前一两句或同一句中）；
+[affection_priority_final]  ……（通常在前一两句或同一句中）……
+```
+
+#### ⭐⭐ 决定性事实：**「字数」全份 prompt 只出现 1 次，「句数」出现 5 处**
+
+把上表按**量**看：
+
+- **句数**：`safety_rules`、`stage_execution_card`、`topic_response_contract`、
+  `persona_core`、`affection_initiative`、`affection_priority_final` —— **6 张卡都有**；
+- **字数**：**只有 `safety_rules` 的一张有**。
+
+⇒ 按**已被证实的「取最宽」规律**，模型在长度这件事上：
+**五处在说「几句话」，只有一处在说「多少字」** ⇒
+**它自然会以「句数」为准，而把字数当成附加说明。**
+
+⇒ **这就完整解释了 43.8% 的字数违规** ——
+**不是模型不听话，也不是简单的「两个数字不自洽」，
+而是字数约束在 prompt 里的「话语权」只有句数的 1/6。**
+
+#### ⇒ 这改变了修法的判据
+
+我此前（续十七）说「两个约束不能同时满足」——**这句话不算错，但不够根本**。
+更根本的是：**要让字数生效，它必须在各处同向出现**，
+否则按「取最宽」，它会继续被句数压过去。
+
+**三条修法**（都比之前的建议更具体）：
+
+| 方案 | 做法 | 评价 |
+|---|---|---|
+| **甲·补字数** | 在 `stage_execution_card` / `topic_response_contract` / `persona_core` 的句数旁**都补上字数** | 让字数获得同等话语权；改动面大（4~6 处） |
+| **乙·去字数** | 把 `safety_rules` 的 `15–40 字` **删掉**，全份 prompt 只留句数 | ⭐ **最诚实** —— 承认字数在中文里难约束，不再制造一个被忽略的数字 |
+| **丙·改单点** | 只改 `safety_rules` 那一行 | ❌ **等于没改** —— 剩下五处句数照样压过它 |
+
+⚠ **方案乙值得重新考虑**：既然实测显示
+「守句数的那 5336 轮里仍有 36.3% 超 40 字」（续十七），
+说明 **40 字这个数在「2 句」的前提下本身就偏紧**。
+⇒ **与其让一个做不到的数字留在 prompt 里被模型无视，不如删掉它，只保留能守住的「1–2 句」。**
+
+⚠ **仍未动任何代码** —— 等用户拍板。
+
+### 决定性验证：长回复**质量并不更差**（同日，续二十二）
+
+**要回答的问题**：如果采纳方案乙（**删掉字数约束**），会损失什么？
+关键判据是 —— **超长的回复，质量是不是更差？**
+
+按字数分组比较（`score.tags` 是**缺失项扣分**，越多越差）：
+
+| 组 | n | 均 tags | 有 tag 比例 | 均 warnings | 均 retry |
+|---|---|---|---|---|---|
+| **≤40** | 3681 | **0.49** | 37.7% | 0.33 | 0.32 |
+| **41–60** | 2253 | **0.81** ⚠ | **44.2%** ⚠ | 0.54 | 0.61 |
+| 61–80 | 522 | 0.53 | 37.7% | 0.89 | 0.95 |
+| **>80** | 94 | 0.66 | 41.5% | **0.99** | **1.11** |
+
+#### ⭐ 两个方向相反的信号
+
+**① `warnings` 与 `retryCount` 单调递增**
+（0.33→0.54→0.89→0.99；0.32→0.61→0.95→1.11）
+⇒ **越长，触发的问题与重试越多** —— 与直觉一致。
+
+**② 但 `tags`（真正的质量扣分）是非单调的**：0.49 → **0.81** → 0.53 → 0.66
+⇒ **略超的（41–60）反而最差，极度超长的（>80）并没有更差。**
+
+#### ⇒ 结论：**超长本身不是质量差的标志**
+
+- 短回复（≤40）质量确实最好（0.49）；
+- 但**「越长越差」不成立** —— 61–80 与 >80 两组都比 41–60 好；
+- **41–60 那个鼓包**更可能是**模型在挣扎着满足 40 字上限**的表现 ——
+  它想收在 40 以内、又说不完，结果**两头不靠**。
+
+⇒ ⭐ **这支持方案乙（删掉字数约束）**：
+既然**长回复的最终质量并不更差**（只是过程多几次重试），
+那么**为了一个模型本来就守不住的 40 字上限而保留它，收益很低**。
+⇒ **删掉它，能减少无效重试**（warnings / retry 应当下降），**而质量不损失**。
+
+⚠ **但这并不能证明「删了会更好」** —— 那需要 A/B 实验（额度 10-01 恢复）。
+本结论只说明 **「删掉的风险很低」**，即**方案乙是可接受的**。
+⚠ 另外注意：这是**观察性**比较，不是随机分组 ——
+「41–60 更差」也可能是**case 差异**（难 case 更容易写长），不能当因果读。
+
+**⇒ 三条修法的评价据此更新：**
+
+| 方案 | 更新后的评价 |
+|---|---|
+| 甲·补字数（各处都补） | 仍可行，但要改 4~6 处，且**要求模型做它现在做不到的事** |
+| ⭐ **乙·去字数（只留句数）** | **风险已量化：低。** 长回复质量不更差；能省掉无效重试 |
+| 丙·只改一处 | ❌ 等于没改 |
+
+### ⭐⭐ 方法泛化：用「话语权」预测**哪些约束会被无视**（同日，续二十三）
+
+既然「字数只出现 1 次 ⇒ 被无视」这个机理成立，那它应该**可泛化**：
+**其他量化约束的话事权如何？** 如果某个约束在全份 prompt 里也只出现在 1 张卡，
+它很可能同样被无视。
+
+**做法**：扩展 `probe_length_directives.py`，加 `--all` 模式 ——
+用 `chk.QUANTITIES` 的**全部**量去扫 21 个 prompt 组合，
+统计每个量**出现在几张卡**里。
+
+**结果**：
+
+| 量 | 卡数 | 命中次数 | 出现在哪些卡 |
+|---|---|---|---|
+| ⚠⚠ **字数** | **1** | 21 | `safety_rules` |
+| ⚠⚠ **追问数** | **1** | 7 | `stage_execution_card` |
+| 口语颗粒频率 | 2 | 28 | `voice_execution_card`, `voice_variation` |
+| 话题数 | 2 | 21 | `safety_rules`, `stage_execution_card` |
+| 邀约 | 4 | 60 | `final_role_voice_contract`, `stage_execution_card`, `topic_response_contract`, `turn_plan` |
+| **句数** | **6** | 90 | 6 张卡 |
+| **动作数** | **7** | 103 | 7 张卡 |
+
+#### ⇒ 这个指标**有预测力，且已被现有实测双向验证**
+
+| 量 | 卡数 | 实测行为 | 是否吻合预测 |
+|---|---|---|---|
+| **字数** | **1** | **违规 43.8%**（被无视） | ✅ **吻合** |
+| **句数** | **6** | **守句数 81.3%**（被遵守） | ✅ **吻合** |
+
+⇒ **「话语权低 ⇒ 容易被无视」这个规律，在两端的实测数据上都成立。**
+⇒ 因此它有资格作为**筛查工具**：先看清话权，再决定验证哪个约束。
+
+#### ⭐ 由此得到**下一批嫌疑名单**（全部可零请求验证）
+
+| 嫌疑 | 卡数 | 为什么可疑 | 怎么验 |
+|---|---|---|---|
+| ⚠⚠ **追问数** | **1** | 与字数**同为 1 张卡**，最可能同构被无视 | 数回复里的**连续追问句**数量 |
+| 口语颗粒频率 | 2 | 只在语音相关两卡出现 | 需先定义「口语颗粒」的可测形式 |
+| 话题数 | 2 | `safety_rules` + `stage_execution_card` 各一次 | 数回复引入的**新话题数** |
+
+⚠ **但要说清这个指标的边界**：
+- 它是**结构性**指标（数指令出现几次），**不是违规率**；
+- 它**预测**「容易被无视」，**不等于**「已经被无视」；
+- 要确认，仍须像长度那样**把约束拆开、分开算违规率**
+  （长度就是靠这一步才发现「句数其实守住了」）。
+- ⚠ 且**反向不成立**：话语权高**不代表**一定被遵守 ——
+  动作数有 7 张卡，但它是否被遵守**尚未测**（「一个动作」本来就难从文本数出来）。
+
+#### ⇒ 这条方法的完整形态
+
+1. **清点话语权**（`probe_length_directives.py --all`）⇒ 找出**低话语权**的约束；
+2. **拆开算违规率**（像「句数 vs 字数」那样）⇒ 确认它**是否真被无视**；
+3. **分开算才可能发现「模型其实守住了其中一条」** ⇒ 避免误判成「模型不听话」；
+4. 若要改，**先清点全部出现处**再**同向改**（否则等于没改）。
+
+⇒ 这套流程是今晚全部工作的沉淀，已写进 `AGENTS.md` 的工具清单。
+
+### ⚠ 我自己踩了「口径陷阱」（同日，续二十四）
+
+修数字一致性时，我发现 `STATE.md:66` 写着「A 加进重试 = 每轮请求 **+42%**」，
+而**同一节** L68 写着「阈值 40 字 ⇒ **+29% 请求**」—— 同节内自相矛盾，
+于是判定「漏改」，动手统一。
+
+**我用了全项目 `-replace '+42%' → '+29%'`。这是错的。**
+
+因为 `active-work.md:4992` 本来就写着：
+
+> - **+29%** 是本次口径：分母是**全部 6550 轮**，`base = 1.53`；
+> - **+42%** 是续十的口径：分母是**有 `requestCount` 记录的 4435 轮**，`base` 同为 1.53，
+
+⇒ **`+42%` 不是错误，它是另一个分母下的真实数字。**
+⇒ 我一刀切替换，**把三处正确的历史记录改坏了** ——
+其中包括**那条解释口径差异的说明本身**：它被我改成「+29% 是续十的口径」，
+**变成了一个自相矛盾的句子**（续十那时根本没有 6550 轮这个分母）。
+
+#### ⇒ 两个教训
+
+**1. 同一处出现两个不同数字，不一定是「漏改」** ——
+也可能是**两个口径的真实值并列**。
+我这次看到 L66 / L68 不一致就直接判定漏改，**没有先去看有没有口径说明**。
+⇒ **正确的第一步是：grep 那个数字在整个项目里的所有出现处，看有没有「口径」字样**
+（我后来才做这一步，那时已经改坏了）。
+
+**2. ⚠ 这正是我自己写进记忆的陷阱 #4**（「不要把两个口径的数字当成一个」）——
+**我写下它，然后踩着它犯了一次。**
+⇒ 说明**「知道」与「做到」之间还有距离**：
+写进文档的纪律，**在动手的那一刻未必被调用**。
+⇒ 缓解办法：把纪律写成**动作**（「先 grep 全项目再改」），
+而不是写成**认知**（「注意口径不同」）——
+认知型纪律在压力下不会被想起，动作型纪律才可执行。
+
+#### 已恢复
+
+- `active-work.md` 的 L4889 / L4962 / L4992 三处**还原为 `+42%`**；
+- `STATE.md:66` **保持 `+29%`** —— 它确实该是本次口径
+  （那行讲的是「A 加进重试」的**全量成本**，对应 6550 轮）。
+⇒ 现在**两个口径都正确保留，各自的说明完整**。
+
+### ⚠⚠ 重要修正：「话语权」指标被自己的数据**证伪了一半**（同日，续二十五）
+
+续二十三我提出：**「只出现在 1 张卡里的约束，话语权最低，最可能被无视」**，
+并据此把 `追问数`（同样只在 1 张卡）列为**头号嫌疑**。
+现在验证它 —— **预测错了。**
+
+**按 intent 分组**（`追问数` 约束只作用于 topic 路径）：
+
+| intent | n | **回复含 2+ 问号** | 中位字数 | **超 40 字** |
+|---|---|---|---|---|
+| ⭐ **topic** | 917 | **1.2%** | 40 | **49.6%** |
+| **chat** | 4010 | **0.8%** | 42 | **52.5%** |
+| None | 1623 | 1.0% | 30 | 18.9% |
+
+（`None` 是**老 artifact 没有 `intent` 字段**；中位 30 字说明它们是更早、更短的数据。）
+
+#### ⇒ 同样是「只出现在 1 张卡」，结果天壤之别
+
+| 约束 | 卡数 | 违规率 | 结论 |
+|---|---|---|---|
+| **追问数** | **1** | **~1%** | ✅ **被严守** |
+| **字数** | **1** | **49.6% / 52.5%** | ❌ **被无视** |
+
+⇒ **「话语权低 ⇒ 被无视」这个推论是错的。**
+
+#### ⇒ 真正的机理：**模型自然倾向**与**约束**是否同向
+
+- **追问数**：模型**本来就不倾向**在一个回复里连问两次（对话生成的普遍倾向）
+  ⇒ 约束与自然倾向**同向** ⇒ **不压也自动满足**；
+- **字数**：模型**本来就倾向写满**（实测每句中位 18 字，两句就是 36–40）
+  ⇒ 约束与自然倾向**冲突** ⇒ **必须靠话语权去压，而它只有 1/6 ⇒ 压不住**。
+
+⇒ ⭐ **修正后的判据**：
+
+```
+约束是否被遵守 ≈ f(模型自然倾向 vs 约束, 该约束的话语权)
+
+  自然倾向与约束同向            ⇒ 遵守（与话语权无关）
+  自然倾向与约束冲突 + 话语权高  ⇒ 遵守
+  自然倾向与约束冲突 + 话语权低  ⇒ **被无视**   ← 字数在这里
+```
+
+⇒ **话语权是「冲突时的必要条件」，不是「充分条件」。**
+- 只看话语权会**误报**（追问数就是这样被误报的）；
+- **必须先判断「模型自然倾向」朝哪个方向**，再看话语权够不够压。
+
+#### ⚠ 「下一批嫌疑名单」据此更新
+
+| 嫌疑 | 卡数 | 自然倾向 | 修正后的判断 |
+|---|---|---|---|
+| ~~追问数~~ | 1 | **同向**（不倾向连问） | ❌ **已排除**，实测违规仅 ~1% |
+| 口语颗粒频率 | 2 | 未知 | 仍需先定义可测形式 |
+| 话题数 | 2 | **可能冲突**（模型倾向多说） | ⚠ **仍是嫌疑** |
+
+#### ⇒ 这一节真正的教训
+
+**结构性指标（数指令出现几次）只能用来「排序」，不能用来「下结论」。**
+
+⚠ 这与长度那次的教训**是同一个形状** ——
+**「先拆开算违规率，别拿代理指标直接判定」**。
+我续二十三差点又犯一次同类错误（**用卡数代替违规率**），
+只是这次**自己搭的验证拦住了自己**。
+
+⇒ 因此 `probe_length_directives.py --all` 的正确用法是：
+**先按话语权排序找出候选，再逐个拆开算违规率** ——
+**不能跳过第二步**。
+
+### ⚠ 一次**失败的验证**：`邀约` 测不了 —— 而这是今晚第三次同形状的错误（同日，续二十六）
+
+我按同一方法去测 `邀约`（出现在 **4 张卡**，话语权较高 ⇒ 模型预测「应被遵守」）。
+用关键词近似（`要不要|一起|下次|明天|来找我…`）扫 6550 轮：
+
+| intent | n | 有邀约词 | 有未来时间词 | 邀约+时间 |
+|---|---|---|---|---|
+| topic | 917 | 19.7% | 23.8% | **8.8%** |
+| chat | 4010 | 15.3% | 21.5% | **8.3%** |
+| None | 1623 | 14.0% | 14.5% | 9.4% |
+
+**看起来违规率不低（8~20%）—— 但这个数字不能用。** 两个原因：
+
+**① 关键词近似必然高估**：「下次」不一定是邀约，「来找我」可能是正常台词。
+**② 更严重：我根本没确认约束的作用范围。**
+
+回看原文，`邀约` 相关其实是**两条不同的东西**：
+- 「**初识阶段**不得反问、邀约或主动换题」⇒ **只管 stranger / acquaintance 两个阶段**；
+- 「不把当前动作改写成**未来日期、预约或固定时长**，不使用社交排期承诺」
+  ⇒ 这条管的是**排期**，不是「邀约」这个动作。
+
+而 artifact 里的 case **大量是高关系阶段**（dating / married）——
+**在那些阶段，邀约本来就是允许甚至鼓励的。**
+
+⇒ **我测的不是约束对象。** 这 8.8% 里绝大部分是**合规的正常台词**。
+
+#### ⇒ 教训：这是今晚**第三次**「用代理指标代替真实判定」
+
+1. 用「一个长度上限」代替**两个**约束（续十七）；
+2. 用「卡数」代替**违规率**（续二十三）；
+3. 用「关键词命中」代替**语义判定 + 作用范围**（本节）。
+
+⇒ **三次形状完全一样：测量工具与被测对象不匹配。**
+⇒ 而且**这一次我是主动选择近似的** —— 明知会高估还是跑了，
+结果连「量级」都没拿到（因为**作用范围错了，量级本身无意义**）。
+
+#### ⇒ 因此 `邀约` / `话题数` / `动作数` / `口语颗粒频率` **暂不验证**，理由写清楚
+
+| 约束 | 为什么暂不验 |
+|---|---|
+| `邀约` | **作用范围阶段分级**（只限初识），而现有 artifact 以高阶段为主 ⇒ **样本不对**；且关键词近似高估 |
+| `话题数` | 「一个话题」**没有可操作的文本判据** |
+| `动作数` | 「一个动作」比「话题数」更模糊 |
+| `口语颗粒频率` | 「口语颗粒」需先定义可测形式 |
+
+⇒ **结论**：能测的三个都测了 —— **`句数` 18.5% / `字数` 43.8% / `追问数` ~1%**；
+其余四个受限于「**约束作用范围分级**」与「**判据不可操作**」，**不宜用近似硬测**。
+⇒ 要测它们，**必须先造对应阶段的样本**（例如专门跑一批 stranger 阶段的 topic case）——
+那是**云端实验**的事，额度 10-01 恢复后再说。
+
+#### ⭐ 由此得到一条可复用的检查顺序
+
+```
+测一个约束前，先回答三个问题：
+  ① 它的作用范围是什么？（哪些阶段 / 哪条路径 / 哪些角色）
+     ⇒ 样本必须落在范围内，否则测的不是约束对象
+  ② 它在文本上的可操作判据是什么？
+     ⇒ 答不出来就别测（"一个话题""一个动作"就是答不出来）
+  ③ 我的检测手段会不会系统性偏移？
+     ⇒ 关键词必然高估；卡数只是排序；单一上限会掩盖复合约束
+```
+⚠ 这三个问题**任何一个答不上来，就该停手**，而不是「先跑跑看」。
+本节就是**没答完就跑**的反例。
+
+### 台账盲区第四类：约束的「作用范围」限定（同日，续二十七）
+
+**动因**：测 `邀约` 那次失败（续二十六）暴露了一类没查过的盲区 ——
+**一条量化约束如果在某处生效、在别处不生效，它的作用范围有没有写清楚？**
+写清了，读的人知道它管哪一段；没写，读者会以为它**永远**生效 ⇒ 误判。
+
+**新工具**：`scripts/probe_scope_qualifier.py`（零请求、只摊开不判定、`return 0`）。
+对每条含量化约束的片段，取**本片段 + 前后各一片**作窗口，
+看窗口内有没有阶段词 / 渠道词 / 条件词。
+
+**结果**：
+
+| | 条数 | 占比 |
+|---|---|---|
+| 带限定词 | 168 | **61.1%** |
+| 不带（看起来全局） | 107 | 38.9% |
+
+**抽查确认了几处关键的正确限定**：
+
+```
+[stage_execution_card] 初识阶段不得反问、邀约或主动换题；             ← ✅ 带阶段限定
+[affection_initiative] 普通轮次让轻微温度自然出现，如果本轮有自然理由……  ← ✅ 带条件
+[turn_plan]            不主动加问题、邀约、亲密表达或新话题，自然说完就停。 ← ✅ 带场景
+[safety_rules]         中文通常 1–2 句、15–40 字；                   ← ⚠ 不带限定（但应全局）
+```
+
+#### ⭐ 一个重要的澄清：续二十六的失败**不是约束的错，是我的错**
+
+「初识阶段不得邀约」**确实写了阶段限定**（我本节的扫描正面确认了这一点）。
+⇒ 也就是说，**约束本身是合格的，是我的验证方法不合格** ——
+我拿全阶段样本去测一条只管两个阶段的约束。
+
+⇒ 这个区分很关键，因为它指向**完全不同的补救**：
+- 若是「约束没写清」⇒ 该去**改 prompt**；
+- 若是「我没读清」⇒ 该去**改验证方法**（并在测前先跑本脚本确认范围）。
+⇒ **本例是后者。** 这也印证了续二十六末尾那「三问」的第 ① 问的价值。
+
+#### ⚠ 但工具本身有缺陷，必须说明（否则下一个人会误用）
+
+`persona_core` 与 `stage_execution_card` 里有**内嵌 JSON**
+（`responseShape`、`relationshipGate`、`selfDisclosure` 等），
+而切句规则**按中文标点切**，会把 JSON **切成碎片**，例如：
+
+```
+(动作数) ", "npc": "Morgan", "term": "学徒"}], "relationshipGate": {"effectiveIntimacyStage": "stranger"…
+(句数)   能一句说清就不要补长段", "selfDisclosure": "只谈眼前的天气、塔内工作或被问到的安全常识"…
+```
+
+⇒ 这些**不是约束，是 JSON 残片** ⇒ 它们进了统计，**让「不带限定」那 107 条偏高**。
+⇒ **所以 61.1% / 38.9% 只能当『量级』看，不能当精确值。**
+⇒ 要修正，须先整体识别 JSON 块、再在其**内部字段**上做扫描 —— 那是另一件事，本晚不做。
+
+⇒ **把这个缺陷写下来本身就是产出** —— 免得下一个人拿这两个数字当结论用。
+
+### ⭐ 推进核心任务：把 `responseRules[0]` 实验**重新设计**（同日，续二十八）
+
+核心实验被云端额度阻塞（10-01 恢复），但**设计工作不需要额度** ——
+而且上次失败暴露的正是**设计缺陷**，所以我把它补上了。
+
+**新工具**：`scripts/design_rules_experiment.py`（**默认 dry-run，不发任何请求**）。
+
+#### 上次失败的真正原因（不是样本量）
+
+> 两批跑之间有**与改动无关的系统性漂移**，
+> 幅度（未改的三个角色同期下降 **10~14 字**）**远超**被测效应（**5.7 字**）。
+
+⇒ 「改前跑一批、改后跑一批」这个做法**本身有问题**：
+两批**时间不同**，中间模型 / 服务端状态变了 ⇒ δ（漂移）> Δ（效应）。
+⇒ **配对设计只降到 2.6 倍，不够。**
+
+#### ⇒ 解法：**交织设计（interleaved）**
+
+不要「AAAA…BBBB…」，而要「**ABABAB…**」：
+- 改前(A) 与 改后(B) **交替**跑 ⇒ 漂移**同时作用于两臂**；
+- 分析用**相邻 A-B 配对**（第 i 个 A 对第 i 个 B）
+  ⇒ **漂移在配对内相减抵消**，只剩 Δ。
+
+**跑数需求（用实测 σ = 24.3 估算，α=0.05、power=0.80）**：
+
+| 配对数 | 交织可检出 | 改前/改后分批可检出 |
+|---|---|---|
+| 10 | 21.5 字 | 19.9 字 |
+| 20 | 15.2 字 | 14.7 字 |
+| 40 | 10.8 字 | 11.2 字 |
+| 80 | 7.6 字 | 9.0 字 |
+| **165** | **5.3 字** | 7.6 字 |
+| **400** | **3.4 字** | 6.7 字 |
+
+⇒ ⭐ **想检测 5 字效应，交织需 186 对（372 次跑）**；
+同样跑数下，**分批设计只能检出 7.6 字**，够不着。
+
+⚠ **诚实说明**：**小样本时交织并不占优**（20 对：15.2 vs 14.7），
+因为分批模型的底噪我按 **6 字** 估（漂移 10~14 的一半），这个估计本身不确定。
+⇒ **交织的优势在 n 大时才显现**（400 对时 3.4 vs 6.7）。
+⇒ 所以**不是「交织一定更好」，而是「想测小效应必须交织」**。
+
+#### 分析时必须做的三件事（缺一不可）
+
+1. **用相邻 A-B 配对**，不要用「所有 A 的均值 vs 所有 B 的均值」；
+2. **把未改动的角色当阴性对照** —— 它们的变化就是**当次跑的漂移量**；
+   若对照角色的变化 ≥ 效应量，则**本次仍不可判定**（此时不要下结论）；
+3. **固定 case 集合** —— 两臂跑同一批 caseId，否则比的是 case 不是改动。
+
+⇒ 这三条已写进脚本输出。**额度一恢复，按 `--plan` 的清单跑即可，不必重新想设计。**
+
+### ⭐ 收尾：把三个修法方案做成**可一键应用 / 回滚的补丁**（同日，续二十九）
+
+目标里写着「**改动留可回滚备份**」。趁四项决策还没拍板，
+我把三个方案**都**做成了补丁 —— 这样任选一个都能立刻落地，不必再等。
+
+**新工具**：`scripts/apply_length_wording.py`（**默认 dry-run，不带 `--write` 绝不落盘**）。
+
+| 方案 | 改动 | 命中锚点验证 |
+|---|---|---|
+| `jia` 甲·补字数 | **4 处**（各卡的句数旁都补「每句约 15–20 字」） | — |
+| ⭐ `yi` 乙·去字数 | **2 处**（`prompts.py` 删字数 + `test_prompts.py` 断言改钉句数） | ✅ **两处各命中 1** |
+| `bing` 丙·改单点 | 2 处（只放宽数字）❌ 已知等于没改，仅作对照臂 | — |
+
+**用法**：
+
+```bash
+python scripts/apply_length_wording.py --plan              # 看三个方案各改什么
+python scripts/apply_length_wording.py --apply yi          # dry-run，只看 diff
+python scripts/apply_length_wording.py --apply yi --write  # 真改（自动备份）
+python scripts/apply_length_wording.py --rollback --write  # 从备份还原
+```
+
+**已做的安全措施**：
+
+- 默认 **dry-run** —— 不带 `--write` **绝不落盘**；
+- 每次 `--write` 前自动备份到 `.tmp/length-wording-backup/<时间戳>/`，
+  保留**相对路径**，`--rollback` 可原样还原；
+- 锚点找不到时**报「跳过」而不是报错**，并提示「可能已被改过」；
+- 脚本自己会提醒：改完**必须**跑全量测试 + 重跑 `probe_length_directives.py` 复核。
+
+**已验证**：`--apply yi` 的 dry-run 下两处锚点**各命中 1 处**；
+且运行后 `git status` 仍是 **69 条未提交**（= 原 68 + 本脚本 1）
+⇒ **源码一个字都没动**（红线：不提交 git ✅）。
+
+⇒ **四项决策拍板后，落地只需一条命令，无需我再介入改代码。**
+
+### ⚠⚠ 自查发现系统性错误：我今晚所有探针的「阶段」维度都是**假的**（同日，续三十）
+
+**触发**：在做「哪些约束无法验证」时，我打印了 stranger / parent / married 三个阶段的
+`stage_execution_card`，发现**三者逐字相同**，而且 married 阶段的卡里居然写着
+`"stage": "stranger"`。⇒ 立刻停手查根因。
+
+#### 根因：参数名错了，而错名字**不会报错**
+
+我今晚所有探针都用了这个模式：
+
+```python
+try:
+    ctx = ContextBuilder().build("Wizard", relationship=stage)
+except TypeError:                    # ← 这行**永远不会执行**
+    ctx = ContextBuilder().build("Wizard")
+    ctx["relationship"] = stage
+```
+
+而 `ContextBuilder.build` 的真实签名是：
+
+```python
+(self, npc_id, source_mods=(), morning_scenario=None, **values) -> dict
+```
+
+⇒ **它接受 `**values`** ⇒ 传 `relationship="stranger"` **不会抛 TypeError**
+⇒ 于是那个**非法的 key 被静默忽略**，`except` 分支从不执行。
+
+**正确写法**（见 `check_prompt_consistency.py:175-176`）：
+
+```python
+hearts, extra = STAGES[stage]                                    # STAGES 是 dict
+context = ContextBuilder().build("Wizard", friendshipHearts=hearts, **extra)
+```
+
+⇒ **参数名是 `friendshipHearts`**，不是 `relationship`，也不是我一度以为的 `hearts`。
+⇒ `STAGES[stage]` 的值是 **`(hearts, 额外参数 dict)`**，不是阶段名。
+
+**实测三种写法的结果**：
+
+| 阶段 | 错误写法 `relationship=` | 我以为是正确的 `hearts=` | ✅ 真正正确的 `friendshipHearts=` |
+|---|---|---|---|
+| stranger | d93a812a | **ab98f176** | **ab98f176** |
+| acquaintance | 29360f92 | **ab98f176** ⚠ | 见下 |
+| friend | 3e2a22ff | **ab98f176** ⚠ | 见下 |
+| close | 30dd789b | **ab98f176** ⚠ | 见下 |
+| dating | 95b30cbf | 95b30cbf | 95b30cbf |
+| married | fb74a6d8 | eb66ace6 | eb66ace6 |
+| parent | d2578fdf | 7cd7c464 | 7cd7c464 |
+
+⇒ `hearts=` 那列里，stranger/acquaintance/friend/close **四个阶段塌缩成同一个 sha1**
+（`ab98f176`）⇒ **说明 `hearts` 这个名字也无效**，那四个阶段实际都跑了默认值。
+
+#### 影响范围与修正结果
+
+**已修正 4 个脚本**（`probe_cross_quantity` / `probe_length_directives` /
+`probe_scope_qualifier` / `probe_untestable_scope`），并**全部重跑**：
+
+| 指标 | 修正前（假） | 修正后（真） |
+|---|---|---|
+| 限定到初识阶段的约束 | 54 条 | **12 条** |
+| 带限定词比例 | 61.1% | **67.6%** |
+| `stage_execution_card` 唯一片段 | 4 条 | **9 条** |
+| `persona_core` 唯一片段 | 2 条 | **7 条** |
+| `affection_initiative` 阶段覆盖 | 1/7 | **3/7** |
+| `话题数` 出现在 | 2 张卡 | **3 张卡** |
+| `邀约` 出现在 | 4 张卡 | **5 张卡** |
+
+#### ⭐ 但**核心结论完全成立**（经受住了最严格的自查）
+
+| 指标 | 修正前 | 修正后 |
+|---|---|---|
+| **含「字数」的卡** | **1** | **1** ✅ |
+| **含「句数」的卡** | **6** | **6** ✅ |
+| 含「追问数」的卡 | 1 | 1 ✅ |
+| 含「动作数」的卡 | 7 | 7 ✅ |
+
+⇒ **「字数只在 1 张卡、句数在 6 张卡 ⇒ 话语权 1/6」这个今晚的核心结论不受影响。**
+⇒ 原因也清楚：**卡的名字不随阶段变**，而话语权统计的是**卡的数量** ——
+即使 21 个组合塌缩成 1 个，卡名集合也不变。
+
+#### ⇒ 三条教训
+
+**1. ⚠ `**kwargs` 会吞掉拼错的参数名，且**永不报错**。**
+`build(..., relationship=stage)` 看起来完全合理、跑起来毫无异样，
+只是**结果悄悄错了**。⇒ **传参给 `**kwargs` 型接口时，必须回源查签名**，
+不能靠"能跑通"判断正确。
+
+**2. ⚠ `try/except TypeError` 这种"兼容性兜底"是**有害的**** ——
+它把「参数名错了」伪装成「旧版本不支持」，**掩盖了真正的错误**。
+我写这个 fallback 本意是兼容，实际效果是**让一个全错的探针看起来在正常工作**。
+⇒ **宁可让它抛错。**
+
+**3. ⭐ 这次是被**输出内容的自相矛盾**抓住的**（married 阶段的卡里写着 `stage: stranger`），
+不是被测试抓住的 —— 因为这些脚本都是 `return 0` 的**只读探针，没有断言**。
+⇒ **只读探针也需要"一致性自检"**：本次之后，凡涉及阶段的脚本都会
+打印一次「7 个阶段是否塌缩」的检查。
+⇒ 更一般地：**一个从不失败的检查，等于没有检查。**
+
+### ⭐ Round 3 小结：自查修掉一个系统性错误，并发现评测集的两块空白（同日，续三十一）
+
+**本轮（约 09:17–09:25）做了三件事：**
+
+#### ① 发现并修正 4 个探针的系统性错误（续三十）
+
+参数名 `relationship=` 应为 **`friendshipHearts=`**，而 `build` 接受 `**values`
+⇒ 拼错的 key **被静默忽略**，让 **7 个阶段塌缩成同一个 prompt**。
+**已全部修正、重跑、并给最常用的探针加上阶段指纹自检。**
+
+修正过程中**又被自检抓到第二个错误**：我用 `.Replace()` 移动代码块时，
+锚点在文件里出现两次 ⇒ **两处都被插入**，文件结构被改坏。
+⇒ 已**整体重写** `probe_length_directives.py`，并在文件头记下
+「**不要用 PowerShell `.Replace()` 改本文件的代码块**」。
+
+#### ② 核心结论经受住了自查
+
+| 指标 | 修正前 | 修正后 |
+|---|---|---|
+| **含「字数」的卡** | 1 | **1** ✅ |
+| **含「句数」的卡** | 6 | **6** ✅ |
+| 含「追问数」的卡 | 1 | 1 ✅ |
+| 含「动作数」的卡 | 7 | 7 ✅ |
+
+⇒ **今晚的主结论（字数话语权 1/6）不受影响。**
+原因也清楚：**卡名不随阶段变**，而话语权统计的正是**卡的数量**。
+⚠ 但这是**运气不是设计** —— 若我统计的是"片段数"，结论就会被污染。
+
+#### ③ ⭐ 新发现：评测集有**两块结构性空白**
+
+扫全部 artifact（**213 个 case**）按阶段统计：
+
+| 阶段 | case 数 | |
+|---|---|---|
+| **stranger** | **0** | ⚠⚠ |
+| **parent** | **0** | ⚠⚠ |
+| acquaintance | 4 | ⚠ |
+| close / friend / dating / married | 9 / 22 / 36 / 59 | |
+
+⇒ **限定在初识阶段的 12 条约束几乎无法验证**（该阶段只有 4 个 case）；
+⇒ **`parent` 阶段整块没测过** —— 而它的 prompt 与 `married` **不同**
+（6324 字 vs 7222 字，`stage_execution_card` 内容不一样）。
+
+⇒ ⭐ **这是比台账更上游的一类盲区**：
+- 台账漏的是「**抽取端**没抓到约束」；
+- 这里漏的是「**评测集**从来没覆盖那个阶段」。
+⇒ 后者更根本 —— **抽取再全，没有样本也验不了。**
+⇒ 已写进 `docs/待决策.md` 的「实验前必读」。
+
+#### 本轮产物清单
+
+- **新脚本**：`probe_untestable_scope.py`（发现上述空白）
+- **修正**：`probe_length_directives.py`（重写 + 加自检）、
+  `probe_cross_quantity.py`、`probe_scope_qualifier.py`、`probe_untestable_scope.py`
+- **记忆**：`constraint-audit-checklist.md` 新增第十节
+  「只读探针也会悄悄全错」+ 三条规则
+- **文档**：`STATE.md` 三条更正；`待决策.md` 新增「实验前必读」
+
+#### 验证
+
+**体检 6/6 绿**；**8 个脚本编译通过**；**4 个探针实跑 exit=0**；
+**未做任何 git 提交**（最新提交仍是 `420d429`，70 条未提交全在工作区）。
+
+### ⭐ 把「评测集覆盖」固化成持续检查 + 台账四类盲区汇总（同日，续三十二）
+
+**动机**：`stranger / parent 零样本` 这类盲区**会复发** ——
+每次新增评测 case 都可能引入新的阶段空白。一次性发现没有意义，
+必须让它**每次体检都被看见**。
+
+#### ① `health_check.py` 新增第 7 项「评测集阶段覆盖」
+
+```
+[OK] 评测集阶段覆盖 —— 213 个 case；stranger=0 acquaintance=4 friend=22
+     close=9 dating=36 married=59 parent=0
+     ⚠⚠ **stranger, parent 完全没有样本** ⇒ 该阶段的约束无法验证
+     ⚠ 样本极少：acquaintance=4（⚠ 报告性，不判失败）
+```
+
+- **依据**：`caseId` 里的阶段词（老 artifact 不记阶段字段）；
+  **按 caseId 去重**，不按轮次 —— 否则重复跑的 run 会虚增。
+- **只报告、不判失败**（与「输出侧遵守率」同处理）：样本空白是**评测集现状**，
+  不是代码缺陷；做成红灯只会让人习惯性忽略红灯。
+
+#### ② 体检的边界从「四条」→「**五条**」，并补全
+
+⚠ 顺带发现 `docs/改动对照表-2026-09-28.md` 的**真实文档缺陷**：
+标题写着「四条边界」，**实际只写了 3 条**（文件到第 141 行就结束了）。
+已补全为五条。
+
+新增的第 5 条：
+
+> ⚠⚠ **「评测集阶段覆盖」是比前四条都更上游的一类盲区**。
+> 前四条说的都是「**查不到**」（抽取漏、结构不表达）；
+> 这一条说的是「**没样本可查**」。
+> ⇒ **抽取做得再全，没有样本也验不了。**
+
+#### ③ 四类盲区汇总成一份「完整性声明」
+
+写进 `docs/constraint-scope.md` 末节 —— 这四类**性质完全不同**
+（一个在抽取、一个在数据结构、一个在评测集、一个在验证工具），
+但后果一样，混在一起谈会互相掩盖：
+
+| # | 盲区 | 性质 | 现状 |
+|---|---|---|---|
+| 1 | 抽取端漏抓 | 正则覆盖不全 | 64%（漏的全是假阳性类） |
+| 2 | 跨量算术 | **数据结构层面** | 按 `quantity` 分桶 ⇒ 结构上看不见 |
+| 3 | **评测集没覆盖** | **样本层面** | **stranger / parent 0 个 case** |
+| 4 | **验证工具自身失效** | **工具层面** | 4 个探针曾静默全错 |
+
+#### ④ 一处**故意的例外**：历史记录没有跟着改
+
+`docs/active-work.md:5103` 写着「**顺带补上第四条边界**」——
+这是**当时发生的事**，不是当前状态 ⇒ **保留不改**。
+
+⇒ 这正是今晚立的纪律在起作用：
+**两个不同的表述不一定是「漏改」**，先看清它是什么再动手
+（今晚我正因为一刀切替换，改坏了三处正确的历史记录）。
+
+#### 验证
+
+**完整体检 7/7 绿**（含 **4314 passed in 116.37s**）；红线守住，**未做任何 git 提交**。
+
+### ⚠ 自我修正：我把「artifact 没有」说成了「要造数据」（同日，续三十三）
+
+**触发**：写「评测集盲区」时顺手打开了 `data/personas/behavior-quality-scenarios.json`
+—— 结果发现它**本来就有 21 个场景**，`relationshipStage` 分布是
+**acquaintance 5 / friend 5 / dating 6 / married 5**，其中第一个就是
+**`wizard-acquaintance-remote-invitation`（Wizard × 初识 × 邀约主题）**。
+
+⇒ 那正是我上一节说「无法验证」的那条约束所对应的场景。**它一直都在。**
+
+#### 错在哪
+
+我说的「没有样本」，指的是 **artifact（跑过并留下记录的）里没有**。
+但我写成了「**要补一批评测 case**」「要用就得新造」——
+**把「没跑过」说成了「不存在」**，把**一次重跑**说成了一次**造数据**。
+
+这两个东西的**代价差很远**：
+
+| | 含义 | 补救 |
+|---|---|---|
+| **artifact 覆盖** | **跑过的** | **重跑**（已有场景，直接可用） |
+| **场景定义** | **可跑的** | **造数据**（要写场景） |
+
+**实测两列**：
+
+| 阶段 | 跑过 / 已定义 | 结论 |
+|---|---|---|
+| **stranger** | **0 / 0** | ⚠⚠ 真没有场景 |
+| **parent** | **0 / 0** | ⚠⚠ 真没有场景 |
+| **acquaintance** | 4 / **5** | ✅ **有场景，只是没跑全** |
+| close | 9 / 0 | ✅ 样本来自别处 |
+| friend | 22 / 5 | ✅ |
+| dating | 36 / 6 | ✅ |
+| married | 59 / 5 | ✅ |
+
+⇒ **只有 stranger / parent 需要新造场景**；初识阶段**定向重跑即可**。
+
+#### 修正的范围（四处）
+
+1. `scripts/probe_untestable_scope.py` —— **加一列场景覆盖**，
+   并在文件头写明这个区分；输出改成**两列对照**。
+2. `scripts/health_check.py` 第 7 项 —— 输出改成 **`跑过的/已定义的`** 格式
+   （`stranger=0/0 acquaintance=4/5 …`），并分别提示
+   「两边都空 ⇒ 要新造」与「跑过 0 但已有场景 ⇒ 定向重跑即可」。
+3. `docs/constraint-scope.md` 第 ③ 类 —— 表格补上场景列。
+4. `docs/待决策.md` —— 「实验前必读」改成两列，并把选项改成
+   **A 只补 acquaintance / B 连 stranger+parent 一起造 / C 不补**。
+   `docs/STATE.md` §二、§六同步。
+
+#### ⭐ 这是今晚**第三次**同一形状的自我修正
+
+- **第一次**：用「一个长度上限」代替「两个约束」；
+- **第二次**：用「指令出现次数」代替「真实违规率」；
+- **第三次**：用「**artifact 覆盖**」代替「**场景可用性**」。
+
+⇒ 形状完全一样：**用一个代理指标代替了真正的对象**。
+⇒ 但这次**发现得更早**（在把它写进决策文档之前就撞上了反例），
+并且**直接从文件里读到了反证**（21 个场景摆在那里）。
+
+⇒ 说明那条纪律**在起作用**：
+**下结论前先打开现场看一眼**，不要只依赖自己刚算出来的那个数。
+
+### ⚠⚠ 自我修正二连：源头查错 + 只看了一个 suite（同日，续三十四）
+
+续三十三我改了「artifact 没有 ⇒ 要造数据」这个说法，
+**结果改到一半发现：我换上去的那个源头，本身也是错的。**
+
+#### 错一：把**本地生成器**的输入当成了**云端评测**的 case 集
+
+我拿 `data/personas/behavior-quality-scenarios.json`（21 个场景）当「可跑的」。
+查过加载端才发现：读它的是 `scripts/generate_behavior_examples.py`，
+而它的 `--provider` **只有 `local`**（`OllamaNativeProvider`）
+⇒ 那是**离线行为样本生成器**，**与云端评测（`run_character_quality_eval.py`）无关**。
+
+云端 case 定义在**源码**里：
+`bridge/src/stardew_ai_bridge/character_quality_eval.py` 的 `_BASE_CASES`。
+
+⚠ 讽刺的是：这个文件我在**很早以前**就确认过「is a generator input only」，
+**却在需要它的时候忘了**，直接凭「名字里带 scenarios」认了源头。
+
+#### 错二：只看了 `DEFAULT_CASES`，没看全部 suite
+
+改成正确的文件后，我数了 `DEFAULT_CASES` = **47 个**。
+但 artifact 里 **married 跑过 59 个** —— **跑过的比「可跑的」还多**，
+这个矛盾本身就该立刻报警。
+
+⇒ 真相：case 来自**多个 suite**（`relationship-world`、`topic-start-intimacy`、
+`topic-start-adaptive`、`affection-pacing`、`relationship-stage-gating` …），
+**全部 suite 并集 = 255 个**。只看 `DEFAULT_CASES` 会**低估一半以上**。
+
+#### 走完两段弯路后的**最终口径**
+
+| 阶段 | 跑过的（artifact） | 可跑的（255 并集） |
+|---|---|---|
+| **stranger** | **0** | **0** ⚠⚠ |
+| **parent** | **0** | **0** ⚠⚠ |
+| acquaintance | 4 | **12** |
+| close | 9 | 20 |
+| friend | 22 | 44 |
+| dating | 36 | 55 |
+| married | 59 | 124 |
+
+⇒ 结论**反而更硬了**：**stranger / parent 在全部 255 个 case 里都是 0。**
+
+#### ⭐ 顺带得到一个**好消息**：补 case 比预想容易得多
+
+查 `character_quality_eval.py` 发现：
+
+```python
+_RELATIONSHIP_STAGES = {"stranger","acquaintance","friend","close","dating","married","parent"}
+# 以及 _case_friendship_hearts 里已有 stranger=0 / parent=10 的默认映射
+```
+
+⇒ **7 个阶段全都被支持**，stranger / parent **只是没有 case 用到**。
+⇒ **不用改逻辑、不用造场景，只需往 `_BASE_CASES` 里加条目。**
+
+⚠ **但有一个隐藏前提**：`parent` **必须显式给 `childrenCount`** ——
+现有 case 里 `marriageStatus="married"` 出现 **5 次**，
+而 **`childrenCount` 一次都没出现过** ⇒ 该阶段**从未被真正触发过**；
+不给 `childrenCount` 就会静默落回 `married`（**又是一个静默失败**）。
+
+#### 产出
+
+- **`docs/draft-scenarios-stranger-parent-2026-09-28.md`**（重写）
+  —— stranger 5 个 + parent 5 个，**完整可粘贴的 `CharacterQualityCase` 代码**。
+  ⭐ 设计要点：stranger 的 case **必须刻意诱发违规**
+  （3 个由玩家直接发出邀约）—— 给一个没机会违规的输入，100% 通过等于**什么都没证明**。
+- 两个工具都改用**全部 suite 并集**：
+  `probe_untestable_scope.py`、`health_check.py` 第 7 项
+  （输出格式 `stranger=0/0 acquaintance=4/12 …`）。
+- 四处文档同步修正：`constraint-scope.md`、`STATE.md`、`待决策.md`、体检边界第 5 条。
+
+#### ⭐ 这是今晚**第四次**同一形状的错误
+
+① 一个长度上限代替两个约束 → ② 指令出现次数代替违规率 →
+③ artifact 覆盖代替场景可用性 → ④ **场景文件名代替真实数据来源**。
+
+⇒ 形状完全一样：**用一个看起来像的代理，代替去现场打开看一眼。**
+⇒ 但**这次是被一个内部矛盾抓住的**（「跑过的 59 > 可跑的 47」）——
+**数字自己打架，就是源头的信号**。
+⇒ 记进纪律：**任何计数出现「跑到比可跑的多」「子集比全集大」这类矛盾，
+先怀疑源头，再怀疑数据。**
+
+### ⭐ 把草案的假设实测了一遍（同日，续三十五）
+
+草案里我写了「`parent` 必须给 `childrenCount`，否则落回 `married`」。
+**这是没验证就写下的断言** —— 今晚第五次犯「拿推测当结论」的毛病之前，
+先花一次调用把它测掉。
+
+#### 实测结果：**假设不成立**（但结论仍要保留，理由不同）
+
+```
+case.relationship_stage = "parent"
+  ⇒ build_stage_policy("Shane", "parent")
+  ⇒ responseShape = "可用 1–2 句，清楚、耐心；涉及孩子时先说安全和实际安排"
+```
+
+⇒ **case 的 `relationship_stage` 是直接给出的字段，policy 直接认它**，
+`childrenCount` **不参与**这条路径。
+
+⇒ **但仍应给 `childrenCount`**：prompt 内部会**从 `game_state` 再推导一次**阶段
+（好感 + `marriageStatus` + `childrenCount` 的推导链）。
+缺了它，**case 声明的阶段与 prompt 内部推导的阶段可能不一致**
+⇒ 测的就不是 parent 分支。**理由不同，动作不变。**
+
+#### ⭐ 顺带得到一张**七阶段 `responseShape` 原文表**
+
+| 阶段 | `responseShape` |
+|---|---|
+| **stranger** | **尽量用一句短答解决；状态不好时可以更短，不负责把气氛聊热** |
+| acquaintance | 先用 1 句回答，再视话题补 1 句具体细节；避免连续长段 |
+| friend | 通常 2 句：先回答，再给一个具体细节或态度，不写总结 |
+| close | 可用 1–2 句，语气更放松；重要的是具体，不靠长篇亲密宣言 |
+| dating | 通常 1–2 句；先直接回应当前话题，再加一个角色化细节或态度…… |
+| married | 可用 1–2 句，像熟悉的人说话；先直接回应眼前事情…… |
+| **parent** | 可用 1–2 句，清楚、耐心；**涉及孩子时先说安全和实际安排** |
+
+**两个新事实**：
+
+1. ⚠ **`dating` 与 `married` 的 policy 完全相同** ——
+   按 `responseShape` 等字段取指纹，**7 个阶段去重后只有 6 组**。
+   而它们的 **prompt 字数却不同**（7129 vs 7222）
+   ⇒ 差异**不来自 `stage_policy`**，来自别处（`relationshipGate` 等）。
+   ⇒ **不要假定「阶段不同 ⇒ policy 一定不同」。**
+2. ⭐ **`stranger` 的长度要求比其它阶段都严**（「尽量用**一句**短答」）
+   ⇒ 它的上限本就更紧，**做 stranger 实验时不能套用高阶段的预期**。
+
+⇒ 两个都已写进 `docs/draft-scenarios-stranger-parent-2026-09-28.md`
+与 `docs/constraint-scope.md`。
+
+#### 教训（与今晚前四次同源）
+
+前四次是**用代理指标代替真对象**；这一次是**用推测代替验证**。
+⇒ 同一句纪律都管得住：**下断言前先打开现场跑一次**。
+⇒ 而这次的成本极低（一次调用），**收益是把一句可能误导人的警告改成了准确的**。
+
+### ⭐⭐ 第五类盲区：**阶段对了，话题不对**（同日，续三十六）
+
+#### 起因：顺着第 ③ 类往下问一层
+
+第 ③ 类解决「该阶段有没有样本」。但**有样本 ≠ 测得到那条约束**。
+于是问：**样本问的是那件事吗？**
+
+#### 实证（`scripts/probe_topic_alignment.py`，新建，零请求）
+
+```
+acquaintance × 邀约    2 条约束    12 个 case    0 个匹配   ❌
+     「初识阶段不得反问、邀约或主动换题；」
+     「初识阶段只起一句眼前的小事，不反问也不邀约；」
+acquaintance × 反问    2 条约束    12 个 case    0 个匹配   ❌
+close × 动作           4 条约束    20 个 case    0 个匹配   ❌
+     「亲密信号只能嵌在同一话题并最多一个当前动作；」
+close × 换题 / 反问     各 1 条     20 个 case    0 个匹配   ❌
+```
+
+⇒ **acquaintance 有 12 个 case，但全是 `*-daily` / `*-coop` / `*-training` / `*-ranch`
+—— 一个邀约场景都没有。**
+
+#### ⚠ 它直接推翻了我上一轮的一句话
+
+我上一轮说「**acquaintance 有 12 个 case ⇒ 跑全即可**验证那 12 条初识约束」。
+**不对。** 阶段对了、话题不对，**跑全也测不到**。
+
+⇒ 而且那两条约束的**主战场本来就是 acquaintance（"初识"）**，不是 stranger ——
+**我原先只补 stranger 的方案是不完整的。**
+⇒ 已把 2 个 `acquaintance × 邀约` 的 case 补进草案（§三之二）。
+
+#### ⚠ 我自己写的探针 v1 也错了两个地方（**又是第 ④ 类的形状**）
+
+1. **把「长度」当成话题意图** —— 长度是**形式属性**、没有话题词表
+   ⇒ 匹配数**恒为 0** ⇒ 打印出一整列**假的** ❌（5 个阶段全中招）。
+2. **没过滤被切碎的嵌入式 JSON** —— `close × 亲密` 报出 **72 条约束**，
+   **不可能**；是 `persona_core` 里的 JSON 被中文标点切分器切成大量碎片、
+   同一段被反复计数。
+
+⇒ 两个缺陷都产出**看起来很像结论的假数字**。
+⇒ 修法：把「长度」移出意图表；加 `is_json_fragment()` 过滤 + 去重。
+⇒ 修后数字落到合理量级（72 → 11、close×动作 18 → 4）。
+
+#### 术语升级：**四类盲区 → 五类**
+
+写进 `docs/constraint-scope.md` 的完整性声明，并加了一句关键区分：
+
+> 前四类问「**查得到吗**」，第五类问「**问对了吗**」。
+> ①②④：约束被登记 / 被表达 / 探针真的在变输入吗
+> ③：该**阶段**有样本吗
+> **⑤：该阶段有样本，但样本问的是那件事吗**
+
+#### ⭐ 一条通用纪律（从第 ⑤ 类的发现过程里长出来的）
+
+第 ⑤ 类不是被断言抓住的，是**被数字自己打架**抓住的：
+artifact 里 married 跑过 **59** 个，而 `DEFAULT_CASES` 只有 **47** 个
+—— **跑过的比可跑的还多**。
+
+⇒ **任何计数出现「子集比全集大」这类矛盾，先怀疑源头，再怀疑数据。**
+
+#### 新增/改动
+
+- **新增** `scripts/probe_topic_alignment.py`（零请求，只摊开不判定）
+- `docs/constraint-scope.md`：四类 → **五类**，新增 ⑤ 段
+- `docs/draft-scenarios-stranger-parent-2026-09-28.md`：新增 **§三之二 acquaintance 邀约档（2 个）**
+- `scripts/health_check.py` 边界第 5 条、`AGENTS.md`：同步「跑全也测不到」这一层
+
+### ⚠⚠ 口径澄清：「初识」= `stranger`，不是 `acquaintance`（同日，续三十七）
+
+#### 起因：一个 6 倍的数字冲突
+
+查台账结构时发现：**`constraint_scope.CURRENT` 里带阶段限定的只有 3 条**
+（acquaintance 2 / close 1）。而我**在好几份文档里都写着「限定在初识阶段的约束有 12 条」**。
+
+⇒ 6 倍差距，必须查清是**口径不同**还是**我错了**。
+
+#### 查清的结果：两个口径都真实，但**我先前把它们的含义说反了**
+
+| 口径 | 数字 | 含义 |
+|---|---|---|
+| **台账**（结构化 28 条） | **3 条带阶段限定** | 其中 **2 条**是 `invite-action` / `followup-stranger`，`cond` 都是 **`stage: stranger`** |
+| **片段扫描** | **stranger 9 条 / acquaintance 3 条** | 原来的「12 条」= **这两个阶段混在一个桶里** |
+
+⇒ **「12 条」的真相是「stranger + acquaintance 合并计数」** ——
+我的 `STAGE_ALIASES` 把「初识」映射成了 `"stranger/acquaintance"` 两可。
+
+#### ⭐ 而实测证明：**「初识」只对应 `stranger`**
+
+```
+「初识阶段不得反问、邀约或主动换题；」
+   只出现在 【stranger】 阶段的 stage_execution_card 里
+   卡内 "stage": "stranger"
+```
+
+⇒ 台账的 `cond: stage=stranger` **是对的**，**我的映射才是错的**。
+
+#### ⚠ 这个错误的实际危害：**指错了补数据的方向**
+
+因为把「初识」当成两个阶段，我把那条约束测不了的原因说成了
+「**acquaintance 样本少**」，进而在决策文档里把
+「**补 acquaintance**」列成了首选选项。
+
+⇒ **但那条约束根本不在 acquaintance 生效** ⇒
+**补 acquaintance 测不到它，必须补 `stranger`。**
+⇒ 已在 `docs/待决策.md` 把选项改成以 **补 `stranger`** 为首选，并注明原因。
+
+#### 修正范围（**含一次故意的"不改"**）
+
+改了 **6 处当前有效内容**：
+`docs/constraint-scope.md`（2 处）、`docs/STATE.md`、`docs/待决策.md`（2 处）、
+`AGENTS.md`、`docs/改动对照表-2026-09-28.md`、`docs/draft-scenarios-...md`。
+
+⚠ **`docs/active-work.md` 里那 3 处「12 条」我不改** ——
+它们是**当时发生的事**（续十五的表格、续三十二的叙述），是历史记录。
+**在最新一节说明更正，而不是回头篡改历史。**
+⇒ 这正是今晚反复用到的纪律：**两个不同的数字不一定是"写错了"，先看清它是什么。**
+
+#### 教训
+
+这次是**主动查**出来的（还没等它造成损失），触发点是**两个数字对不上**。
+⇒ 与续三十六同源：**数字打架就是源头的信号**。
+⇒ 但这次更进一步：**不只要查"哪个数字对"，还要查"它们各自是什么口径"** ——
+两个数字可能**都对**，错的是**我赋予它们的含义**。
+
+### ⭐⭐ 把补 case 的方案**真跑了一遍**，抓到一个会造成阻塞的错误（同日，续三十八）
+
+草案写好后我没有直接交付，而是**在副本上实际打补丁跑了一遍**
+（把整个 `stardew_ai_bridge` 包复制到 `E:\workspace\.scratch\patchtest\`，
+**真源码一字不动**）。
+
+#### ⚠ 第一次跑就报错 —— 这是个**只有真跑才会暴露**的问题
+
+```
+ValueError: 角色质量案例缺少两轮续聊：wizard-stranger-invitation
+```
+
+**根因**（`_materialize_quality_turns`）：
+
+```python
+follow_ups = _FOLLOW_UP_TURNS.get(case.case_id, ())
+if len(follow_ups) != 2:
+    raise ValueError(...)
+```
+
+⇒ **每个 case 必须改两处，不是一处**：
+1. `_BASE_CASES`（L769 起）加 `CharacterQualityCase`；
+2. **`_FOLLOW_UP_TURNS`（L1830 起）加恰好 2 条 `CharacterQualityTurn`**。
+
+首轮 turn 是**自动生成**的（`CharacterQualityTurn("turn-1", case.message, ...)`），
+**续聊必须手写**。
+⇒ **我草案里一个 `_FOLLOW_UP_TURNS` 都没写** ⇒
+**若不验证就交给用户，用户一入库就报错。**
+
+#### 补上后续聊后：通过
+
+```
+模块来源: .scratch\patchtest\...（确认为副本，非真源码）
+并集 257 个 case（255 + 2）
+阶段分布: {..., 'stranger': 1, 'parent': 1}      ← 从 0 变成 1
+[OK] wizard-stranger-invitation  stage=stranger  turns=3  hearts=0
+     responseShape=像原版日常对白一样简短；能一句说清就不要补长段
+[OK] shane-parent-child-safety   stage=parent    turns=3  hearts=12
+     responseShape=可用 1–2 句，清楚、耐心；涉及孩子时先说安全和实际安排
+```
+
+#### ⚠ 顺带修正我先前的两个笼统说法
+
+1. **`responseShape` 因角色而异**：Wizard 的 stranger 是
+   「像原版日常对白一样简短…」，Shane 的是「尽量用一句短答解决…」
+   ⇒ 我先前说「stranger 的 responseShape 是…」**漏了角色限定**。
+2. **验证脚本自己也踩了一次坑**：我第一版在脚本里
+   `sys.path.insert(0, 真源码路径)`，于是「验证副本」实际验的是**真源码**，
+   输出两个 `[FAIL]`。
+   ⇒ 又一次证明：**验证工具本身要被验证**（第 ④ 类盲区）。
+   修法：只留副本路径，且**复制整个包**（单文件复制不够，包解析会走真源码）。
+
+#### 产出
+
+- **新增 `docs/draft-cases-stranger-parent-2026-09-28.md`**
+  —— 含**已实测通过**的 2 个完整 case（`_BASE_CASES` + `_FOLLOW_UP_TURNS` 两段可粘贴代码）、
+  其余 8 个的 `case_id` 建议表、完整验证记录、**入库前还需确认的 3 项**。
+- `docs/draft-scenarios-stranger-parent-2026-09-28.md` **加头部警示**
+  —— 标注它是我走弯路时的版本、两点已被推翻、**不要照它实施**；
+  但**保留**（`responseShape` 表与分析过程仍有价值）。
+- `docs/待决策.md` 的方案指针改指新文件。
+
+#### 教训（今晚最实用的一条）
+
+**"看起来对"和"跑得起来"之间隔着一个 `ValueError`。**
+⇒ 凡是交付**可执行的东西**（代码、补丁、脚本），
+**都要在隔离副本上真跑一次** —— 成本极低（一次调用），
+挡掉的是**用户第一次使用就失败**。
+⇒ 这正是 `verification-before-completion` 的落地形态。
+
+### ⭐⭐ 把 `responseRules[0]` 的完整链路查穿了（同日，续三十九）
+
+本轮回到目标核心：**实验到底该改哪一行**。此前这件事一直没核实过。
+
+#### 落点：**不是** `rasmodia.json`，**是** `vanilla.json`
+
+```
+data/personas/vanilla.json → Wizard.voiceStyle.responseRules[0] = "先回答眼前的问题"
+```
+
+我一开始查名字最像的 `data/personas/rasmodia.json`，它的 `responseRules` 是**另一套**
+（`"先直接回应玩家，不写环境开场"`）⇒ **改它根本不影响 prompt**。
+
+**判定方法**：prompt 里 `voice_execution_card` 的 `voiceActions` 实际是
+`["先给简短判断", "解释时一层一层说", "先回答眼前的问题"]`，
+第三项与 `vanilla.json` 一致、与 `rasmodia.json` 不一致。
+
+#### ⭐ 完整链路（5 步，双向验证过）
+
+```
+① vanilla.json 的 responseRules[0..3]
+② data/generated/*.json 索引（已比对：与源**逐字一致**）
+③ prompts.py ≈L5057 组装：
+     signatureMoves 空 ⇒ 走 else
+     ⇒ sentencePattern(2) + responseRules(limit=2)
+     ⇒ voice_actions[:3]   ← **截到 3 条**
+④ voice_execution_card 的 voiceActions =
+     [sentencePattern[0], sentencePattern[1], responseRules[0]]
+```
+
+#### ⭐⭐ 由链路推出的三个硬事实
+
+| # | 事实 |
+|---|---|
+| 1 | **`responseRules[0]` 落在第 3 槽**（前两槽被 `sentencePattern` 占满） |
+| 2 | **`responseRules[1]` 被 `[:3]` 截掉** ⇒「日常近况按日常说」**没进 prompt** |
+| 3 | **`[2]`、`[3]` 更进不来** ⇒ 角色数据里写的长度规则**有相当一部分连 prompt 都进不去** |
+
+⇒ 事实 3 是对「**字数话语权只有 1/6**」的**又一条独立佐证**。
+⚠ 但**谨慎**：没进 `voiceActions` **不等于**完全不在 prompt 里
+（可能有别的卡也渲染 `responseRules`）—— **这一点我没验证，不当作结论。**
+
+#### ⭐ 36 个角色的 `responseRules[0]` 全貌（推广的关键）
+
+`vanilla.json` 里 **36 个角色全部**有 `responseRules[0]`，**全是「先回答/先接住」模式**，
+但**信息量差异极大**：
+
+- **最短**：`先回答眼前的问题`（**Wizard**）—— 只有「做 X」
+- 中等：`先说实际情况，不写漂亮总结`（Shane）
+- 较长：`先回应眼前的问题，不把普通话题写成散文`（Sebastian）—— **做 X + 不做 Y**
+- **最长**：`先回答玩家问的家庭或日常问题，不用泛泛的母亲式说教代替`（Marnie）
+
+**两条直接结论**：
+1. ⚠ **不能照抄 Wizard 的新写法** —— 36 条各有**角色化排除项**
+   （「不用说教代替」「不用销售话术代替」「不编造成人信息」…），
+   统一替换会把这些**一起抹掉**。
+2. ⭐ **Wizard 那条恰恰是最"空"的**（只有正面要求、没有排除项）
+   ⇒ 这既解释它**为何适合当第一个单变量实验对象**，
+   也提醒：**在它身上有效 ≠ 在信息量更大的角色上也有效。**
+
+#### 备份状态：✅ 完好且已回滚
+
+`data/personas/vanilla.json-bak-20260928-responseRules0` **存在**，
+且与当前文件 **SHA1 一致** ⇒ 上次改动（`active-work.md:4383`）**确已回滚到原值**。
+
+#### 产出
+
+**新增 `docs/responseRules0-experiment-site-2026-09-28.md`** ——
+落点、5 步链路图、三条硬事实、36 角色全貌、**以及"做实验前还差什么"的诚实清单**
+（含一条**明确标注未验证**的推论，不冒充结论）。
+
+#### 教训
+
+这一轮**没有改任何东西**，却可能是今晚对实验最有价值的一轮 ——
+因为它回答的是**"改哪里"**，而这个问题错了，**后面所有测量都是在测别的东西**。
+⇒ 与「拿全阶段样本测初识约束」是同一类错误：
+**对象错了，工具再准也没用。**
+
+### ⭐ 基线洁净性逐字确认（同日，续四十）
+
+续三十九查出落点后，**最后一个必须排除的风险是基线本身**：
+`git status` 里 **`data/personas/vanilla.json` 是 `M`（已修改）**，
+而它正是实验要改的那个文件。
+
+#### 为什么非查不可
+
+我先前看到「**备份与当前 SHA1 一致**」就写下「**已回滚到原值**」——
+**这个推理有漏洞**：SHA1 一致只能说明「当前 = 备份」，
+**不能说明备份就是原始值**（若回滚时误把改动后的版本当成了备份，两者同样一致）。
+
+⇒ **可靠的做法是三方比对**：
+
+```
+HEAD 版本   Wizard.responseRules[0] = "先回答眼前的问题"
+工作区当前   Wizard.responseRules[0] = "先回答眼前的问题"
+备份文件     Wizard.responseRules[0] = "先回答眼前的问题"
+                                        ⇒ 三者逐字一致
+```
+
+⇒ **`M` 的原因查明了**：diff 里只有 `+ "Sam": {...}` 一大段
+（工作区新增了 Sam 角色），**与 `responseRules[0]` 无关**。
+⇒ **基线洁净，可以放心做单变量实验。**
+
+#### ⚠ 顺带发现：两条分支，推广时会咬人
+
+`voiceActions` 的组装有**两个分支**，取决于角色**有没有 `signatureMoves`**：
+
+| 角色 | `signatureMoves` | 路径 | 第 3 槽 |
+|---|---|---|---|
+| **Wizard** | **空** | `sentencePattern`(2) + `responseRules`(≤2) | `responseRules[0]` |
+| **Sam** | **有 2 条** | `signatureMoves`(2) + `responseRules`(≤2) | `responseRules[0]` |
+
+⇒ 两条路径**恰好都让 `responseRules[0]` 进第 3 槽**，但**机制完全不同**。
+
+⚠ **含义**：若某角色 `signatureMoves` **只有 1 条**，
+则 `responseRules` 会有 **2 条**进 prompt（第 2、3 槽）
+⇒ **`responseRules[0]` 的位置会变**。
+⇒ **推广到别的角色前，先数它有几条 `signatureMoves`。**
+
+#### 产出
+
+`docs/responseRules0-experiment-site-2026-09-28.md` 增补两节：
+**§五 基线洁净性（含三方比对方法与"为什么 SHA1 一致不够"）**、
+**§六 两条分支的差异**。
+
+#### 教训
+
+「**SHA1 一致 ⇒ 已回滚**」是一个**看起来严密、实际不成立**的推理。
+⇒ 与今晚前面几次同源：**用一个相关指标代替真实验证**。
+⇒ 而这次的成本同样极低（一次 diff），**挡掉的是"整个实验建立在错误基线上"**。
+
+### ⭐⭐ 量化「写进数据但到不了 prompt」的损耗：**到达率 50%**（同日，续四十一）
+
+#### 缘起：闭合我自己留下的开放问题
+
+续三十九我写下过一个**明确标注"未验证、不当结论"**的推论：
+「`responseRules[2]/[3]` 没进 `voiceActions`，但不等于完全不在 prompt 里」。
+本轮把它验掉 —— 方法是**全卡扫描**，不只查 `voiceActions` 这一个通道。
+
+#### 实测结果（`scripts/probe_response_rules_reach.py`，新建）
+
+```
+vanilla.json 的每个角色：写了 4 条 → 进了 2 条
+```
+
+⇒ **到达率 50%**，而且**不是** `voiceActions` 一个通道的问题，
+**全卡扫描也一样只有 2 条** ⇒ **推论成立，可以当结论用了。**
+
+**原因（续三十九已从源码确认）**：
+```python
+voice_actions.extend(sentence_pattern)                     # 占 2 槽
+voice_actions.extend(_compact_text_list(responseRules, limit=2))
+voice_actions = voice_actions[:3]                          # 只剩 1 个位置
+```
+
+⇒ ⇒ **「日常近况按日常说」「玩家追问后再展开研究」「不把猜测说成结论」
+这几条，在角色数据里写着，但 prompt 从来没见过它们。**
+
+#### ⇒ 这是对「字数话语权只有 1/6」的**又一条独立佐证**
+
+前两层损耗已确认：
+1. **卡层**：字数规则只在 **1/6** 张卡里；
+2. **数据层（本轮新增）**：`responseRules` **一半进不了 prompt**。
+
+⇒ 两层叠加 ⇒ **长度约束的有效话语权比"1/6"还要低。**
+
+#### ⚠⚠ 探针自己也报错了一次（**又是第 ④ 类的形状**）
+
+v1 报出「**12 组一条都没进**」，包括 `sve.json::Sophia`。
+**我去读了她的实际 prompt，发现她的 `voiceActions` 里明明有**
+`["先回应玩家当前问题，再决定是否展开", …]` ⇒ **是误报。**
+
+**根因**：`sve.json` / `female-bachelors.json` 存的是**汉化名**（索菲亚、珊恩…），
+而 prompt 用**英文名** ⇒ 名字对不上，自然什么都搜不到。
+
+⚠ **更深一层的坑**：我本想用「抛异常」来识别这种情况，
+但 **`ContextBuilder.build()` 对无效 NPC 名静默接受、不报错**
+⇒ 识别失效，v1 的修正没生效（探针里已写明这个已知缺陷）。
+
+⇒ **这就是「名字对不上」伪装成「规则没进」** —— 若不人读一个具体案例，
+我会报出一个**被污染的 37%**（真值 50%）。
+
+#### 教训（与今晚主线同源）
+
+**任何"东西没找到"的结论，都要先问一句：我找的地方对吗？**
+- 之前是「拿全阶段样本测初识约束」（**对象错了**）；
+- 这次是「拿汉化名找英文名」（**标识符错了**）。
+
+⇒ 两者都会产出一个**看起来很确定**的数字。
+⇒ 而**唯一可靠的检验是：挑一个具体案例，人读一遍实际输出。**
+
+### ⭐ 盲区分类定为**六类**：新增「写进数据、到不了 prompt」（同日，续四十二）
+
+续四十一量化出「`responseRules` 到达率 50%」后，要回答**它算第几类盲区**。
+
+#### 判断：它是**独立的一类**
+
+前五类问的都是「**我能查到吗**」：
+- ①② 约束被登记 / 被表达了吗
+- ③ 该阶段有样本吗
+- ④ 我的探针可信吗
+- ⑤ 样本问的是那件事吗
+
+而这一类问的是**更前一层、且根本不属于台账职责**的事：
+
+> **角色数据里写的规则，真的进到 prompt 里了吗？**
+
+⚠ **它为什么最危险**：台账（`constraint_scope.CURRENT`）**只扫 prompt 文本**，
+所以**结构上就看不见这个问题** —— 那些规则本来就没进 prompt，
+台账**既不会报缺失、也不会报冲突，一切显示正常。**
+
+⇒ 它和前面五类的**观察位置完全不同**：
+前五类是"我扫得够不够全"，这一类是"**被扫的对象本身就不完整**"。
+⇒ **独立成第 ⑥ 类。**
+
+#### 更新范围
+
+- `docs/constraint-scope.md`：标题「五类」→「**六类**」，表格加第 6 行，
+  新增 ⑥ 段（含根因源码、诚实边界）
+- `docs/STATE.md`：在「话语权」那一行后补一行（**卡层 1/6 × 数据层 50%
+  ⇒ 实际话语权比 1/6 更低**）
+- `docs/待决策.md`：在「1/6」那段后补一层损耗说明
+
+#### 收敛后的整体图景（这是今晚的收束）
+
+**一条长度约束从"作者写下"到"模型看到"，要过五道闸：**
+
+```
+① 作者写进角色数据（responseRules 4 条）
+        ↓  到达率 50%（voice_actions[:3] 截断）
+② 进到 prompt 的卡（2 条）
+        ↓  而其中长度那条，往往不在这 2 条里
+③ 落在管长度的卡上（全 prompt 只有 1/6 张卡提字数）
+        ↓
+④ 模型读到（与"句数"6 张卡相比，话语权 1/6）
+        ↓
+⑤ 输出侧被遵守（实测超 40 字 43.8%）
+```
+
+⇒ **「43.8% 超标」不是模型不听话，而是这条约束一路衰减到了尽头。**
+⇒ 而**每一道闸都是我这两天才逐个量出来的** —— 此前只知道最后那个 43.8%。
+
+#### 教训
+
+**分类膨胀本身是好事，但必须检查"新类是不是旧类的特例"。**
+我确认了它**不是**：前五类的失效在**我的观察工具**，
+第六类的失效在**被观察的对象**。
+⇒ 若不区分，就会拿"我扫得更全"去解决一个"**扫的东西根本不在那里**"的问题。
+
+### ⭐⭐ 五道闸固化成工具，且**独立复现了「1/6」**（同日，续四十三）
+
+把「一条长度约束要过五道闸」从**叙述**变成**可运行的工具**：
+`scripts/probe_length_constraint_decay.py`（零请求）。
+
+#### 实测输出
+
+```
+闸 ① 角色数据层   data/personas/*.json 共 50 个角色条目、201 条 responseRules
+                  其中**含长度词**（字/句/短/长）的：**16** 条（8%）
+闸 ② 到达率       vanilla.json 口径：写了 144 条 → 进 prompt **72** 条（**50%**）
+闸 ③ 卡片层       提到**字数**的卡：**1** 张 / 提到**句数**的卡：**6** 张
+                  ⇒ 字数 / 句数 = **1 : 6.0**
+闸 ④ 文本量       含字数要求片段 **399** 字符 / 含句数要求片段 **4523** 字符
+                  ⇒ **1 : 11.3**
+闸 ⑤ 输出侧       共 **6550** 轮；超 40 字上限 **2869** 轮（**44%**）
+```
+
+#### ⭐ 闸 ③ 给出了 **1 : 6.0** —— 与主结论「字数话语权 1/6」**独立吻合**
+
+⇒ 这是**第二条独立路径**得到同一个比值（主结论来自 `probe_length_directives.py`，
+本工具来自卡层并集去重 + 权威正则）
+⇒ **核心结论得到复现，可以更放心地使用。**
+
+#### ⭐ 闸 ④ 的新信息：**按文本量算，劣势是 1 : 11.3**
+
+**卡数比是 1:6，字符数比是 1:11.3** —— 说明
+**字数约束不仅卡少，而且就算在卡里也只是很短的几句**；
+而句数约束占的**篇幅**大得多。
+⇒ 对"话语权"的理解应补一句：**不只是"几张卡提到"，还有"提了多少字"。**
+
+#### ⚠ 这个工具自己也犯了两个错（**第 ④ 类盲区的又一次实例**）
+
+1. **闸 ① 报 0** —— `displayName` 在 `voiceStyle` 的**父层**，我没向下传递。
+   ⚠ **同一个层级错误我在 `probe_response_rules_reach.py` 刚修过一次，写这个脚本时又犯了。**
+   ⇒ **教训**：修好一处 bug 后，应把"这个错误长什么样"写进**函数 docstring**，
+   否则下一个人（包括我自己）会在新代码里原样复制。
+2. **闸 ③ 报 1 : 4.0，与主结论 1 : 6 冲突** —— 我图省事自己写了正则
+   （只匹配阿拉伯数字，漏掉中文数字「只说一句」）。
+   ⇒ **修法：复用 `chk.QUANTITIES` 的权威正则**，不另起一套。
+   ⇒ **教训**：**同一件事绝不允许两套口径**。若两个数字不一致，
+   先怀疑**口径**，再怀疑数据（与续三十六同源）。
+3. **闸 ⑤ 报 n/a** —— `iter_turns` 产出的是 **5 元组**，我按 4 元组解包。
+   ⇒ 解包失败被 `except` 吞掉，**表现为"没数据"而不是报错**。
+
+⇒ 三处都是**静默失败**（0 而非报错、n/a 而非报错、冲突数字而非报错）。
+⇒ 这正是 `docs/constraint-scope.md` 第 ④ 类盲区的形状：**验证工具自身会悄悄失效。**
+
+#### 用途（写给下一个会话）
+
+**改任何长度措辞之前/之后各跑一次**：
+
+- 若 ⑤ 没动而 ③④ 明显变了 ⇒ **瓶颈不在措辞，别再改措辞了**；
+- 若 ①② 动了 ⇒ 说明改到了**数据结构层**，影响面比预期大。
+
+### ⭐ 收尾：把结论写进入口文件、把工具登记进 AGENTS.md（同日，续四十四）
+
+距 12:00 约剩一小时，本轮做**收尾与交接**，不再开新战线。
+
+#### 为什么收尾要花一轮
+
+用户明确说过：**「不是给我看的，是看看怎么让你能更好的工作」**
+⇒ `docs/STATE.md` 是**下一个会话的入口文件**，report 只是归档。
+⇒ **新结论若不写进入口，下一轮就等于没做过** —— 这条比多做一次实验更重要。
+
+#### 本轮改动（4 处，全部是"让结论可被找到"）
+
+1. **`docs/STATE.md` §一 30 秒速览** —— 重写「后续新增」段，收入：
+   - ⭐⭐ **五道闸**（直接画成图，含每闸数字）
+   - ⭐⭐ **1/6 已被第二条独立路径复现**；**文本量比 1 : 11.3**
+   - ⭐ **盲区从四类扩到六类**（逐条列出）
+   - ⚠ **我自己的两处系统性静默失败**（参数名错 / 汉化名对英文名）
+   - ⚠ **`responseRules[0]` 真实落点 + 基线已确认干净**
+2. **`docs/STATE.md` 头部「最后更新」** —— 改为本轮内容。
+3. **`AGENTS.md`** —— 登记两个新探针
+   （`probe_length_constraint_decay.py`、`probe_response_rules_reach.py`），
+   **含各自的已知缺陷与"看到没进时先人读一个案例"的操作纪律**。
+4. **`scripts/health_check.py` 边界说明 五条 → 六条** ——
+   新增第 6 条（写进数据到不了 prompt）；
+   并**顺带修正第 5 条里一个过时口径**：
+   「限定在初识阶段的约束有 12 条」→ 改为
+   **「初识」= `stranger`；台账里带阶段限定的只有 3 条，
+   按片段扫是 stranger 9 条 / acquaintance 3 条**。
+
+#### 状态
+
+- 全量 **4314 passed**，22 个脚本编译通过，体检全绿
+- **红线全程守住**：无 git 提交、未启动游戏/SMAPI、未碰真实存档、
+  `responseRules[0]` 仍是原值、`character_quality_eval.py` 一字未改
+- **未提交条目 76 项**（含本轮新增的 3 个脚本与 3 份文档）
+
+#### 交给下一个会话的三句话
+
+1. **云端实验的落点与基线都已核实**（`vanilla.json`，值 `"先回答眼前的问题"`），
+   额度 10-01 10:32:50Z 恢复后**可以直接开跑**，不必再查。
+2. **改任何长度措辞前后各跑一次** `probe_length_constraint_decay.py` ——
+   若第 ⑤ 闸没动而 ③④ 明显变了，**瓶颈不在措辞**。
+3. **待用户拍板的只有一件事**：10-01 后补 case 选 A（只补 `stranger`）/
+   B（+ `parent`）/ C（不补）—— 方案与实测代码在
+   `docs/draft-cases-stranger-parent-2026-09-28.md`。
+
+### ⚠ 交接检查：改掉一个无法考证的旧数字「28」（同日，续四十五）
+
+收尾时通读交接文档，发现 `docs/待决策.md` 与 `docs/人读版-改动说明` 里
+都写着「推广到其他 **28** 个角色」—— 而这个数字**无法考证**（旧口径不明）。
+
+#### 实测（复用已验证的 `load_rules()`）
+
+| 源文件 | 有 `responseRules` 的角色数 |
+|---|---|
+| `vanilla.json` | **36** |
+| `sve.json` | 7 |
+| `female-bachelors.json` | 5 |
+| `rasmodia.json` | 1 |
+| **合计** | **49** |
+
+⇒ 与 `probe_response_rules_reach.py` 报的「49 组」**完全一致**，可以采信。
+
+#### 两处修正，并各补了一节「推广时的坑」
+
+- `docs/待决策.md` §2：标题与正文改为实测数字；新增两节 ——
+  **① 不能照抄 Wizard 的写法**（36 条各有角色化排除项）；
+  **② 两条分支的机制差异**（`signatureMoves` 为空 vs 有 2 条，
+  以及"若只有 1 条则 `responseRules[0]` 位置会变"）。
+- `docs/人读版-改动说明-2026-09-28.md`：同步改数字并加「不能照抄」提示。
+
+#### ⚠ 我这一轮**第三次**犯了同一个错
+
+写临时统计脚本时，我又在 `responseRules` 那一层找 `displayName`
+（它其实在 `voiceStyle` 的**父层**）⇒ 全部文件都报「0 个角色」。
+
+⚠ **讽刺的是**：我十几分钟前刚在 `probe_length_constraint_decay.py` 里
+为同一个错误写了长长的注释，**却在临时脚本里原样重犯**。
+
+⇒ **这直接印证了那条教训的有效边界**：
+**注释只对"读到它的代码"有效**，对临时脚本无效。
+⇒ **更可靠的做法不是"写注释提醒自己"，而是"复用已验证的函数"** ——
+本次改用 `from probe_response_rules_reach import load_rules` 后，
+一次就对。
+
+⇒ 记进纪律：**同一逻辑的第二处实现 = 第二次犯错的机会。**
+能 import 就不要重写。
+
+### ⭐ 交接文档一致性检查：抓出 6 处过时说法（同日，续四十六）
+
+`STATE.md` 是下一个会话的入口，若它和别的文档**互相打架**，入口就失效了。
+于是写了一次**机械检查**：扫主文档里是否残留已被推翻的说法。
+
+#### 抓到的（并全部修正）
+
+| 过时说法 | 位置 | 为什么过时 |
+|---|---|---|
+| **「五条边界」** | `AGENTS.md`、`docs/改动对照表-2026-09-28.md` | 体检已扩到**六条**（新增第 6 条「写进数据到不了 prompt」） |
+| **「跑全即可」** | `constraint-scope.md`(5)、`待决策.md`(6)、`STATE.md`(2)、`health_check.py` | 已被第 ⑤ 类盲区推翻 —— **阶段对 ≠ 话题对**，跑全也未必测得到 |
+
+改法：把 **`✅ 跑全即可`** 统一改成 **`⚠ 跑全也未必够`**，
+并在每一处补上原因（**12 个 acquaintance case 里没有一个邀约场景**）。
+
+⚠ 故意**不改**的两处：
+- `docs/active-work.md` 的「跑全即可」是**当时说过的话**，属历史记录；
+- `scripts/probe_topic_alignment.py` 里的那句是在**引用并更正**它。
+- `smapi/SampleChatHistory.cs:12` 的「五条边界」是**无关的旧注释**。
+
+#### ⚠ 我的检查脚本自己也有假阳性
+
+它报了 6 处「断链」（`character_quality_eval.py`、`vanilla.json`、`reply_scrub.py`…），
+**全是假的** —— 因为脚本只试了 3 个候选路径，**没搜 `bridge/src/stardew_ai_bridge/`**。
+
+⇒ **又是第 ④ 类盲区的形状**：**验证工具自身的假设不完备，
+会把"我没找对地方"报成"东西不存在"。**
+⇒ 与今晚「汉化名找英文名」、「`displayName` 层级」是**同一个错误家族**。
+⇒ 所以本次**没有**照单去"修断链"，而是先人读了一个案例确认它是假的。
+
+#### 教训（今晚第 N 次同源，但这次是主动的）
+
+**检查脚本的价值不在"它能报出问题"，而在"它报的问题有多少是真的"。**
+⇒ 一个报出 6 个假问题的检查，比没有检查更危险 ——
+它会诱导我去修**根本不存在的东西**。
+
+⇒ 记进纪律：**机械检查的输出必须抽样人读至少一条**，
+确认它抓的是真问题，再批量处理。
+
+---
+
+### 2026-09-28 晚 · 交接复盘 → 跑法规范 → 长度措辞落地 → stranger/parent 补盲
+
+**起因**：用户问「测试为什么把第二个 CC 池的额度都用完了」。查完账发现不只是额度问题 ——
+**是测试策略本身在付统计的成本、拿不到统计的结论**。
+
+**① 额度审计**（`hub/docs/report-cc-credit-audit-2026-09-28.md`）
+三个池 35,669 次官方调用 / $114.68，其中 **54.4% 是影子调用**（官方计费 − 会话日志）。
+池 2 被 Qwen OCR 流水线吃掉、**池 3 事实上是星露谷专属池**（全工作区唯一持有 `CMD_API_KEY_3`）。
+星露谷评测侧：300 批 / 11,457 请求 / 5,696 万 token，**输入占 99.6%**。
+
+**② 跑法规范**（`docs/eval-runbook-2026-09-28.md`，已挂进 `AGENTS.md`）
+三档：L0 零请求（默认第一站）/ **L1 人读档（默认）** / L2 统计档（须先算样本量）。
+跑前闸门三问 + 成本护栏（⛔ 禁用 `--max-requests` 缩规模 —— 覆盖不同 ⇒ 不可比 ⇒ 必然重跑）。
+⭐ 核心判断：项目验收一直是**人读样例**，所以用小步改动跑统计规格 =
+**同时付出统计的成本、又拿不到统计的结论**。
+
+**③ 代码**：`retry_improved` 落盘（⚠ **不塞进 `warnings`** —— 那是诊断码语义，
+4 处测试用 `==` 精确断言，混进统计量会让两件事互相污染）、
+`summary.json` 加 `truncated`/`truncatedReason`（可比性判决，不是警告）。本轮新增 1 条测试。
+
+**④ 长度约束「1–2 句、15–40 字」→ 乙·去字数（用户拍板，已落地）**
+依据：整份 prompt 里「字数」只出现 1 张卡、「句数」6 张卡 ⇒ 按 `test_prompts.py:9249`
+的实测规律（只给一处硬数字时模型取最宽），字数的话语权只有 1/6，实测 43.8% 超限。
+落地 2 处，备份 `.tmp/length-wording-backup/20260928-195604/`，回滚 `--rollback --write`。
+
+**⑤ stranger / parent 补盲（用户拍板 B，10 个 case）**
+此前 case 集里**这两档一个都没有**，而 `parent` 的 prompt 与 `married` 不同（6324 vs 7222 字），
+关键约束「初识不得邀约」**只在 stranger 生效** ⇒ 从未验证过。
+`default` suite 47 → 57，阶段分布 stranger 0→5、parent 0→5。
+
+#### 补 case 时踩的四个坑（全是"跑起来才知道"）
+
+1. **草案的「已实测通过」不等于完整** —— 它在包副本上只证明了**不抛 `ValueError`**，
+   没覆盖 `validate_quality_cases`。10 个 case 全部缺 `relationship_context` ⇒ 校验失败
+   （`character_quality_eval.py:707` 要求 `relationship_context or story_progress` 非空）。
+2. **还缺 `story_progress`** —— API 的 `storyProgress` 字段单独要求非空。
+3. **事件链必须如实声明**：非 `event-impact-` 的 case 要逐字等于 `_gate_chain(npc, stage)`。
+   `parent` 映射到 `close` 档 ⇒ 每个角色的链不同（Shane 4 项、Wizard 3 项…）。
+   ⚠ 这里**没有照抄报错信息填值**，而是先跑 `.scratch/probe-new-case-gates.py` 看清语义：
+   10 个 case 全部 `event_gate_applied=False`（没被静默压级）—— **这才是真正要保证的性质**。
+4. **stranger 的链天然为空**，因为 `_STAGE_TO_GATE` 里**根本没有 stranger 档**。
+   测试 `test_no_quality_case_is_silently_event_gated` 用「该角色有门」当代理指标
+   ⇒ 会把「合法的空链」误报成「忘了补链」。
+   ⚠ **这是我先犯的错**：第一反应是把 5 个 case 加进 `_INTENTIONAL_EMPTY_CHAIN_CASE_IDS`，
+   结果第三个测试立刻报 `StopIteration` —— 那份名单同时被当作「必须存在于
+   `relationship-stage-gating` suite」的清单。**名单有双重语义，不能随手加。**
+   正确修法是**改代理指标**：用「该**案例的阶段**在门表里」代替「该角色有门」。
+
+**⑥ `--plan` 跑前闸门落地**（§五.4）
+
+把规范 §二 的三问做成**运行时输出** —— 理由：文档里的规则**跑起来照样能违反**，
+审计里就有那样的批次。
+
+- 放在 cloud dry-run **之前**：`--plan` 对**所有** provider 都该生效（它回答的是
+  「该不该跑」，不是「云端要不要确认」）。
+- 选例逻辑与 `main()` **逐字一致**（含 `--economical` / `--limit` 的 `max_cases` 回退），
+  否则预估失真 —— **预估失真比没有预估更坏**。
+- 额外两条护栏：传 `--max-requests`/`--max-total-tokens` 主动警告「不可比」；
+  轮数 < 36 自动报「本批只能走 L1 人读档」。
+- 实测：`--plan --suite default --limit 6` ⇒ 6 case / 18 轮 / **22 请求** / 11 万 token。
+- TDD：先红（`error: unrecognized arguments: --plan`）后绿，**4317 passed**。
+
+#### 教训
+
+**「实测通过」必须问清测的是什么。** 草案的验证只覆盖了「不抛异常」，
+而真正的验收面（数据校验、事件链一致性、API 字段完整性）一条都没碰到。
+⇒ 补数据类改动，**验证脚本要复现完整的校验入口**，不能只跑最小调用。
+
+---
+
+### 2026-09-28 21:19 · 首跑执行：L1 复核 + `--plan` 实战
+
+**闸门**：`--plan --suite default --limit 6` ⇒ 6 case / 18 轮 / 22 请求 / 11 万 token。
+三问：① 删掉字数上限后回复有没有变长 ② 预期几个字到十几字 ⇒ 只走 L1
+③ 池 1 余量 73%，够。
+
+**实跑**（切到池 1，`--limit 6 --provider cloud --confirm-cloud`）：
+23 请求 / **17.99 万 token**（估算 11 万，**偏低 56%**）/ 0 错误 / 重试 5 次（21.7%）/ 90 秒。
+消耗池 1 周额度 **2.2% ≈ $0.77** ⇒ **≈ $0.033/请求**。
+
+#### 结论：L1 看不出乙方案的效果
+
+- 本次 18 轮平均 **62.3 字**。
+- 但含这 6 个 case 的**最近几批**（今早 05:08~06:38，**乙方案落地之前**）已经是
+  40.4 / 63.3 / 55.6 / 53.4 字 ⇒ 本次落在**同一区间**。
+- ⚠⚠ **陷阱**：若拿全库历史均值（~35 字）比，会得出「翻倍了」的**错误结论** ——
+  那是跨 prompt 版本与模型的长历史，混杂不可比。**L1 对比必须就近取批次。**
+  （我第一版脚本按**目录名**排序取「最新」，还先读错了一个 09-15 的老批次，
+  差点把结论建立在完全无关的数据上。artifact 命名不统一 ⇒ **按 mtime 排序**。）
+- ⇒ 乙方案在 L1 分辨率下**既没变长也没变短**；要数值结论需 L2（约 372 次跑），
+  **不值得**。
+
+**顺带确立的事实**：prompt 里那个 `40 字` 上限**早就不被遵守**（全库 43.8% 超限）
+⇒ 删掉它消除的是**自相矛盾**，风险比想象小。
+
+#### `retryImproved` 首次实测（§五.1 端到端验证）
+
+字段确实落进了 `results.jsonl` 的 `turns[]`。4 轮有重试：
+
+| case | turn | retry | improved |
+|---|---|---|---|
+| wizard-follow-up | turn-1 | 1 | **True** |
+| wizard-remote-invite | turn-3 | 1 | False |
+| sophia-daily | turn-3 | 1 | **True** |
+| sophia-face-follow-up | turn-2 | 2 | **True** |
+
+⇒ **3/4 的重试让质量键提升**，与我「480 次 affection 重试可能白跑」的**假设方向相反**。
+⚠ 样本仅 4 轮，**不能外推**。但足以说明 **§五.2 不该急着做** ——
+这正是当初「等 10-01 拿数据」的价值：**如果那时就动了，动的方向很可能是错的。**
+
+#### `--plan` 估算修正
+
+- token 按模式分开：compact 5,000 / 完整 **7,800** —— **不许取折中平均**（差 56%，预算会差一倍）。
+- 新增 `estimatedCostUsd`（实测 $0.033/请求）。
+
+---
+
+### 2026-09-28 22:00 · stranger / parent 首跑：parent 全过，stranger 暴露「判据缺失」
+
+**新增能力**：`--stage` 选择器（`_select_cases()` 是唯一实现，`--plan` 与实跑共用）
++ `--plan` 输出 `caseIds`。**4320 passed**。
+
+**规模**：10 case / 30 轮 / 36 请求 / 24.75 万 token / **$1.19** / 0 错误 / 161 秒。
+
+#### parent 档 5/5 全过 ✓ —— 这一档可以放心
+
+孩子安全约束守得住，而且**贴角色**：wizard「魔法是危险的工具，不是玩具」、
+sebastian「矿洞里除了蝙蝠还有深渊…教会他怎么看脚下的裂缝」、
+shane「矿洞不是小孩该去的地方…挑上午，带够吃的和灯」。
+
+#### stranger 档：人读与机器判**系统性分歧**
+
+| case | 机器判 | 人读 |
+|---|---|---|
+| wizard-stranger-invitation | ✅ | ✅ 「矿洞不是闲逛的地方…我没空照顾一个……同伴」——拒绝得很像他 |
+| shane-stranger-invitation | ❌（话题） | ✅ 「**我不认识你。**」6 字，最贴角色的一次 |
+| sophia-stranger-invitation | ✅ | ❌ 「**不过好吧，如、如果你真的很想去的话**」+ 安排时间 = **接住了邀约** |
+| sebastian-stranger-open-topic | ❌（话题） | ⚠ 大段讲自己的摩托 = 以自身话题反客为主 |
+| alex-stranger-open-topic | ❌（话题） | ❌ 自夸「全明星四分卫…小星星」+ **反向邀约「夏天快到了，海滩见？」** |
+
+**根因：新 case 只有「给模型看的约束」，没有「给评分器看的判据」。**
+`relationship_context` 里那句「初识不得接住邀约」是**喂给模型的 prompt**；
+而 `forbidden` / 期望项才是**评分器读的** —— 新 case 里一个都没有。
+⇒ 实测失败轮全是 `forbidden=0 expected=0/0 topic=False` ⇒
+机器抓的是「话题没接住」，**对「不该答应邀约」完全盲**。
+
+⇒ 与 `constraint-audit-checklist` 同源：**探针未覆盖的分支等于没看见**。
+⇒ 这批 case 现在**只能人读**；要机器可判，得给 stranger 那 5 个补 `forbidden` 判据。
+
+#### 顺带确认
+
+- `retryImproved` 继续落盘（本批 6 次重试）。
+- 跑前后把 `.env.local` 从池 1 切到**池 2**（池 1 是 DSH 会话在用的，别抢）。
+
+---
+
+### 2026-09-28 22:18 · stranger 判据：正则路线证伪 + 误判修正 + **约束本身没生效**
+
+**任务**：给 stranger 的「不得接住邀约」补机器判据。
+
+#### ① 正则路线**证伪**（负结果，留档）
+
+用本批 15 轮真实数据验证 6 组候选正则：
+
+| 判据 | 命中真违规 | 误伤合规 | 漏掉真违规 |
+|---|---:|---:|---:|
+| A「好吧」 | 1 | 0 | 4 |
+| B 明确应承 | 0 | 0 | 5 |
+| C 未来安排 | 0 | 0 | 5 |
+| D 反向邀约 | 0 | 0 | 5 |
+| E 问句收尾 | 2 | 0 | 3 |
+| F 答应+我 | 0 | 0 | 5 |
+
+⇒ **最好的一条也只抓 1/4**。「接住邀约」是语义，NPC 的表达
+（「不过好吧，如、如果你真的很想去的话」/「我准备好了会告诉你的」/「夏天快到了，海滩见？」）
+**没有共同的字面骨架** ⇒ **不要在这条路上继续加词表**。
+
+（现成的 `_has_future_schedule_commitment` 也抓不到 —— 它要求「未来时间标记 + 社交动作」，
+而“下周”“夏天”不在标记表里；它只对 dating/married 生效，stranger 本就不在范围。）
+
+#### ② 修掉的是**误判**，不是违规
+
+stranger 那 5 个 case 的失败轮**全部**是 `missing_continuity_evidence`，
+而那几轮恰恰是**合规的回避**（shane「呃，Joja 收工挺晚的」、sebastian「嗯，回头聊」）。
+
+改法：`turn_plan_mode == "boundary_close"` **或** `relationship_stage == "stranger"` 时
+清掉那批证据要求。理由：初识回合本身可能就是**拒绝**，拒绝时不该被要求承接历史锚点。
+
+端到端验证（重跑同一批）：**shane 2/3→3/3、sebastian 2/3→3/3、alex 1/3→3/3**，
+casePassRate **0.7→0.9**，turnPassRate **0.867→0.967**。**4322 passed**。
+（parent 的 1 个失败是漂移：`sebastian-parent-child-safety` 上批 3/3，本次 turn-3 回复不同。）
+
+⚠ TDD 教训：第一版测试**假绿** —— 没传 `history` 时 `active_history` 为空，
+L4067 根本不加那个 tag，等于绕过了整条路径。**探针没打中分支 = 没看见。**
+
+#### ③ 但真正的问题在更上游：**约束本身没有生效**
+
+改完重跑，**stranger 5/5 机器全过** —— 而人读是 **4/5 违规**：
+
+| case | 本次 NPC 原话 | 判定 |
+|---|---|---|
+| wizard | 「你现在的准备恐怕不够…矿洞不会跑」 | ✅ 守住 |
+| sophia | 「呃……好、**好啊**。就在葡萄园东边」/「**提前一天告诉我**？」 | ❌ 三轮全违规 |
+| shane | 「酒吧？**行吧，我去。**」 | ❌ 直接答应（上批还是「我不认识你」） |
+| sebastian | 「**你骑吗？**」/「你要有空，**改天车库那边聊**」 | ❌ 反问 + 反向邀约 |
+| alex | 「对了，天气这么好，海滩那边应该已经有人开始投球了」 | ⚠ 开新话题 |
+
+⇒ 两个结论：
+
+1. **机器分对 stranger 这一档毫无意义** —— 5/5 通过里至少 3 个是违规。
+2. **比判据更上游**：那条约束写进了 case 的 `relationship_context`
+   （「初识阶段：当面邀约去酒吧；Shane 对陌生人本就冷淡，不得反问玩家或顺势拉近」），
+   **但模型没照做**。⇒ 下一步要查的是**它在 prompt 里以什么强度落地**，不是再加判据。
+
+⚠ 纪律提醒：本项目已有 6 次「我读到矛盾、其实是我没读作用域」的教训
+（见 `stardew-instruction-conflicts`）⇒ 断言“prompt 里写了”之前，**必须读实际构建出的 prompt**。
+
+---
+
+### 2026-09-28 22:40 · prompt 落点查清：**约束在、措辞最强、但被角色数据反向抵消**
+
+**零请求**（只调 `ContextBuilder` / `PromptBuilder` 构建一份真实 prompt）。
+工具：`.scratch/probe-stranger-prompt.py`。
+
+**文件切换**：`prompts.py:6085` 那个 `pop("relationshipContext")` **只在 `natural_topic`
+（找话题套件）时执行**；stranger/parent 走 `default` 套件，**不 pop**。
+
+**实测 `shane-stranger-invitation` 的 turn-2：prompt 共 30 条 message。**
+约束确实在里面，而且是最强措辞（message[24] `stage_execution_card`）：
+
+> 这是本轮必须执行的关系阶段行为卡。它是可执行约束，**优先于泛化的热情、礼貌或延长对话倾向**；
+> **初识阶段不得反问、邀约或主动换题**；回复最多 1 句…
+
+#### 但三张卡在打架（角色数据赢了）
+
+| message | 卡 | 说的 | 
+|---|---|---|
+| [24] | `stage_execution_card`（阶段侧） | 不得反问、邀约、主动换题；最多 1 句 |
+| [25] | `voice_execution_card`（**角色数据**） | voiceActions：「**先用一句赶人或怀疑的反问挡住**」；「允许只回半句或者**直接换话题**」 |
+| [26] | `final_role_voice_contract`（角色数据） | 「再决定是否给一个具体且可商量的**继续入口**」 |
+
+⇒ **模型照了 [25]/[26]，没照 [24]。** 本批 sebastian 的「**你骑吗？**」
+就是 `voiceActions[0]` 的直接产物。
+
+⇒ 与 `stardew-instruction-conflicts` 里那条「**responseRules 反向拉力 58%，在角色数据里**」
+**同源** —— 不是没写约束，是**角色数据的反向指令盖过了阶段卡**。
+
+#### 两个被证伪的猜想（留档）
+
+1. ❌ 「`quality_context` 那句『relationshipContext 只用于判断关系』把它降级了」——
+   那句话只针对 `relationshipContext` **字段本身**，不是整张卡。
+2. ❌ 「`turn_plan` 的 `answer_plus_detail` 鼓励展开」—— 实测它自己写着
+   「不要另起话题、额外追问或安排」，**与阶段卡一致**，不是矛盾源。
+
+**教训**：两次都是先猜后看。这个项目里我已有 6 次同型翻车 —— **必须读实际 prompt 再断言。**
+
+#### 下一步修法方向（未动手）
+
+不是往 prompt 里再加一条约束（那会变成第 7 处加防，而模型已经在「取最松」），
+而是：**stranger 阶段抑制 `voiceActions` 里与阶段卡对立的那几条**
+（已有先例：`_prompt_quality_context` 就在做字段级过滤）。
+⚠ 但这改的是**角色数据的呈现**，影响所有 stranger 回合，动手前需用户拍板。
+
+---
+
+### 2026-09-28 23:35 · stranger 阶段抑制 voiceActions：**部分有效，但没修好**
+
+**做了什么**：`_build_voice_execution_card` 在 `stage == "stranger"` 时，
+按特征片段压掉 6 条与阶段卡对立的招牌动作（Shane×2、Sebastian、Alex、Linus、Sam）。
+TDD 15 条测试，**4337 passed**。
+
+**为什么整条抑制而不拆子句**：这些条目后半句常带正确约束（Shane 的「不主动解释
+自己的状态」、Linus 的「不熟时宁可用单句保持距离」），但拆子句要判断中文语义，
+正是同一天刚证伪的路（6 组正则最好只命中 1/4）。丢掉的部分由阶段卡等价覆盖
+（`selfDisclosure` / `responseShape`）。
+
+**先过滤再截断**：否则被压掉的名额会白占。实测 `voice_execution_card` 574→480 字，
+`voiceActions` 补进了原本被第 3 条截掉的 `responseRules`（「可以自嘲，但不持续卖惨」）。
+
+#### 行为验证（第三批，34 请求 ≈ $1.15）
+
+天然对照：**shane / sebastian / alex 的违规条目被压掉，sophia 的 voiceActions 里本就没有**。
+
+| 角色 | 抑制前 | 抑制后 | |
+|---|---|---|---|
+| shane | 「酒吧？**行吧，我去**」 | 「呃，**我不认识你**。贾斯还在等我回去」 | ✅ 大幅改善 |
+| sebastian | 「你骑吗？」+「改天车库那边聊」 | 「……**车库有点挤**」（邀约消失，反问仍在） | ⚠ 部分 |
+| alex | 「海滩见？」 | 「嘿，回头见。」 | ✅ 改善 |
+| sophia | 「好啊…提前一天告诉我？」 | 「好、**好啊**…**你、你想哪天来？**」 | ❌ **完全没变** |
+
+⇒ **sophia 不变、其余三人变** ⇒ 因果链成立，抑制确实改变了行为。
+⇒ **但没有修好**：sophia 的问题不在这 6 条，sebastian 仍能自己造出反问。
+
+#### 顺带暴露三个新问题
+
+1. **`mechanical_affection_shape` 误判**：shane stranger turn-2 的
+   「……不固定。收完货、喂完鸡舍那批畜生，才算完」被判 `specific_plan` +
+   `specificPlanDetected=True` ⇒ 失败。那是**描述自己的日常**，不是对玩家的计划。
+2. **请求失败不计入 `errors`**：`shane-parent-child-safety` turn-1
+   `error="ProviderError"`、`reply=""`、无 score，但 summary 仍报 `errors: 0`。
+   ⇒ 工件会把「整轮没跑出来」报成零错误。
+3. **`_CONVERSATION_LEAD_STAGES` 不含 stranger**（`relationship_gating.py:67` =
+   `{"friend","close","dating","married"}`），lead 判据对 stranger 不适用 ——
+   我一度猜是它在判失败，**猜错了**。
+
+#### 我犯的错（留档）
+
+- 把 case 级 `casePassed=False` 顺手安到 turn-1 头上，实际失败轮是 turn-2。
+- 诊断脚本 `if (-not $t.score.passed)` 对 `$null` 成立，误报出一个不存在的 parent 失败轮。
+  **`$null` 判断必须先 `-eq $false`，不能靠真值取反。**
+
+---
+
+### 2026-09-28 23:55 · 修 `mechanical_affection_shape` 误判：**已修，且这次机器判对了**
+
+**症状**：shane stranger turn-2「……不固定。收完货、喂完鸡舍那批畜生，才算完」
+被判 `specific_plan` ⇒ `specificPlanDetected=True` ⇒ `mechanical_affection_shape` ⇒
+失败。那是**描述自己的日常**，人读完全合规。
+
+**真因**：`specific_plan` 是**两轮重复**才触发 mechanical 的 ——
+`is_specific_arrangement` 对两句话都返回 True：
+
+| 轮 | 回复 | 命中 |
+|---|---|---|
+| turn-1 | 「贾斯还在等我回**去**，**鸡舍**也得喂」 | `去.{0,18}鸡舍`（裸动词词内命中） |
+| turn-2 | 「**鸡舍**那批畜生，才**算完**」 | `FUNCTIONAL_TASK_PATTERNS` |
+
+**修法位置选在了下游**：`score_affection_variation` 的 docstring 写的是
+「识别相邻**高亲密**回复是否机械复用同一种亲近形状」，而 stranger 的
+`initiativeExpectation` 就是 `none` —— **根本不期待主动亲密，谈不上「主动亲密过于机械」**。
+加一条 `expectation != "none"` 收口。
+
+**为什么不去改 `is_specific_arrangement`（走过的弯路，留档）**：
+先试的是「事务句必须另带『与玩家相关』标记才算安排」，把
+`*FUNCTIONAL_TASK_PATTERNS` 从 `SPECIFIC_ARRANGEMENT_PATTERNS` 里拿出来。
+办法看上去合理，但**被测试打回**：
+
+```
+「你可别只看我，把账本也过一遍。」→ 应为 specific_plan（测试名就叫 two_person）
+```
+
+它和 shane 那句**同样含「你」和「我」**，却必须得出相反结论。
+要分开两者只能继续堆词表猜中文语义 —— 那正是 2026-09-28 已证伪两次的路。
+**换成用结构化字段收口后，两句话自然分开，一条词表都不用加。**
+
+**验证**：TDD 2 条（含反向：`initiativeExpectation=proactive` 时照旧判机械），
+**4339 passed**；重跑 stranger —— `casePassRate 1.0` / `turnPassRate 1.0` /
+`failedTurns 0`（18 请求 ≈ $0.59，批次 `20260928-235220`）。
+
+**人读**：shane「我没兴趣。」/「呃……六点吧……看 Joja 那边有没有临时加货。」✅
+人读合规；sebastian **反问消失**（「……它确实快。不过晚上开它的时候，风声会把其他声音都盖住」）✅。
+
+**但 stranger 的行为问题仍在**：
+
+- **sophia**：「你要是想来……嗯，随时都行吧。」/「你今天是不是还有别的事要忙？」—— 仍违规。
+- **alex**：「嘿，有空跟我去**海滩**玩玩啊？你有**比基尼泳衣**吗？」—— 仍违规，
+  而且**四批下来没有稳定趋势**：「海滩见？」→「海滩那边应该已经有人开始投球了」
+  →「嘿，回头见。」→ 本批。**单样本判定不了抑制对他是好是坏**，但绝不能说
+  「抑制修好了 alex」。
+- ⚠ 「你有比基尼泳衣吗？」是**初识阶段问玩家泳衣**，单看比「接住邀约」更严重，
+  而机器判它通过。
+
+---
+
+### 2026-09-29 05:40 · stranger 违规来源查清：**两类角色侧数据，不是"原文塞太多"**
+
+用户的假设「比基尼泳衣是原版台词，是不是原文塞太多导致跨阶段措辞」**基本成立，
+但机制要修正两处**。
+
+#### ① alex 的违规是**原版样本被逐字照抄**
+
+```json
+// message[9] speech_evidence 的最后一条
+{"sampleId": "vanilla:Characters/Dialogue/Alex.zh-CN.json:Tue:variant-1",
+ "text": "嘿，有空跟我去海滩玩玩啊？你有比基尼泳衣吗？"}
+```
+
+模型回的就是这句，**一字不差**。
+
+**但根因不是「跨好感阶段泄漏」**：`derive_speech_profile`（`speech.py:732`）的排序
+**只看语言来源 + 原始顺序**，取该 NPC 前 6 条。alex 拿到的是
+`Introduction ×2 + Mon/Tue/Wed` —— **原版通用日常台词**，不是高好感档
+（后者在 `Alex_*Hearts.json`，根本没被抽到）。
+
+⇒ 真相是：**原版日常台词本身就带邀约和搭讪**，被整批当成"可模仿的样板"。
+按阶段过滤语料解决不了，只能逐条挑出去。
+
+**这还解释了 alex 四批忽好忽坏**：他一直在"照抄这 6 条里的哪一条"之间摇摆 ——
+抄 Sat（俯卧撑）就合规，抄 Tue:variant-1 就违规。
+
+#### ② sophia 的违规是 **voiceActions 的两条手写动作**
+
+- 「再用第二句**追加**一个同主题的新念头」⇒ 与阶段卡「回复最多 1 句」冲突
+- 「回答后**把选择权留给对方**」⇒ 被模型实现成「你、你想哪天来？」
+
+她自己的 `speech_evidence` 六条**全是谨慎类**，素材是干净的。
+
+#### ③ 全量普查：这是**系统性**的，不是 5 个 case 的偶然
+
+| 范围 | 结论 |
+|---|---|
+| `voiceStyle` | 索引里共 **13 处**，只有 Wizard / Shane / Sebastian / Sophia 有 stranger 用例 |
+| 与 stranger 冲突的条目 | **人读 39 条后判定 8 条明确冲突 + 6 条句数/展开类** |
+| 未测但已挂条件的角色 | **Sam / Elliott / Harvey / Victor / Olivia / Lance**（6 个从未被观察过） |
+| 被选中的原版样本 | 528 条里含邀约/反问倾向的分布很广（Lance/Claire/Olivia/Andy/Abigail/Sam/Harvey/Elliott 都有） |
+
+⇒ **回答「其他角色是没测还是没这个问题」：没测。** 不是没问题。
+
+#### 落地
+
+1. **抑制表 6 → 13 条**（覆盖 6 个未测角色），新增 `_STRANGER_VOICE_ACTION_REWRITES`
+2. **sophia 走替换而非删除**：她那两条前半句是活力来源（「先脱口说出第一反应」），
+   整条删会削平声线，只换掉收尾子句
+3. **`_stranger_filtered_speech_evidence`**：stranger 阶段按 sampleId 剔除原版样本
+
+**⚠ 补位陷阱（本日第二个重要教训）**：素材过滤最初按 voiceActions 那样
+「先过滤再截断」，被删的 3 条由后面候选补位，**补进来的
+`Wed:variant-1`「如果你不是女孩子，我就约你打球了」比删掉的更越界**。
+alex 有 261 条候选，逐条列全不现实 ⇒ 改成**先截断再过滤，只删不补**：
+宁可样本少几条，也不放没审过的候选进来。
+
+（另一条小教训：替换文案自身不能复现要禁的原词。sophia 的第一版替换写成
+「不要为了热闹追加第二句」，等于把要禁的动作又写了一遍，是测试先发现的。）
+
+#### 验证（19 请求 ≈ $0.63，批次 `20260929-053542`）
+
+`casePassRate 1.0` / `turnPassRate 1.0` / `failedTurns 0`。
+
+| 角色 | 本批 | |
+|---|---|---|
+| **alex** | 「…全明星四分卫…」/「练啊…俯卧撑…」/「**回见。**」 | ✅ **从「比基尼泳衣」变成干净** |
+| shane | 「我没这个打算。」/「呃，Joja 的班次不固定。」/「行。」 | ✅ |
+| sebastian | 「……是旧的。自己在车库改的。」 | ✅ |
+| wizard | 保持合规 | ✅ |
+| **sophia** | 「改天也许可以」/「**你过几天再来问我，可以吗？**」/「…记得把头发染成粉色那天…」 | ⚠ **改善未达标** |
+
+⇒ **4/5 干净。sophia 仍把下一步递回给玩家，turn-3 又追加了一句** ——
+「说完就停」的替换没压住。她这条线比 alex 顽固，是下一个待解点。
+
+**注意**：alex 本轮回复**全部取自过滤后剩下的 3 条样本**（全明星四分卫、俯卧撑
+正是 Mon / Sat 的内容），说明过滤后样本确实成了他的语气来源，不是碰巧。
+
+---
+
+### 2026-09-29 06:40 · sophia 连试两轮，**两轮都更差，已全部回退**
+
+诊断有进展，改动全部失败。**两条教训比结论值钱。**
+
+#### 诊断（这部分是对的）
+
+`sophia-stranger-invitation` 里玩家 turn-2 问「那你**什么时候方便**？」。
+stranger 阶段策略（`stage_policy.py:1697` `_SHARED_POLICIES`）当时是：
+
+```python
+"initiative": "不主动开启新话题，不为延长对话而反问"
+"followUp":   "玩家问得具体就补一个事实；没有可补内容时停在回答"
+```
+
+对照 `friend` 档：「可以主动接一个相关话题或**具体邀约**」「允许自然反问或**提出下一步**」。
+⇒ **stranger 只是"没提"下一步安排，并没有禁止它。** `initiative` 禁的是**主动**开新话题
+和**为延长对话**而反问，而她是**被动应答**，不在射程内。整条链上没有规则说
+"回答一个约时间的问题"不行。这也解释了为什么 5 个 case 里只有她违规 ——
+**只有她的 case 让玩家问了"什么时候方便"**。
+
+#### 失败尝试一：把 voiceActions 替换文案全改成正向
+
+依据（当时以为）：`[1]` 写成否定式「不要把下一步抛回给玩家」，模型照样回
+「你过几天再来问我，可以吗？」；而同卡里唯一**正向**的 `[2]`「允许先热烈反应
+**再把话说完整**」被照做了。⇒ 归纳出"正向有效、否定无效"。
+
+实测结果（批次 `20260929-062231` / `062713`）：
+
+| | 改前（053542） | 改后 |
+|---|---|---|
+| sophia t1 | 「改天也许可以」 | **「那个我可以带你」**（主动提出带路） |
+| sophia t2 | 「你过几天再来问我」 | **「挑个你方便的白天来就行，我一般都在」** |
+| shane t1 | 「我没这个打算。」 | **「算了，去也行。」** |
+| shane t2 | 「呃，Joja 的班次不固定。」 | **「六点到七点吧…」** |
+
+⇒ **模型把正向写出的许可当成了授权。** 旧表述的模糊反而起了刹车作用。
+
+#### 失败尝试二：改 stage_policy 的 initiative / followUp
+
+```python
+"initiative": "只回应玩家当前说的事；话题和下一步都由玩家来开"
+"followUp":   "玩家问得具体就只补事实本身，怎么办由玩家自己决定…"
+```
+
+⇒ 「补事实本身」被读成"补**具体信息**"，**时间也在内**；
+「怎么办由玩家自己决定」被读成**授权**（"那就等玩家定"）。
+shane 当场从「我没这个打算」变成「算了，去也行」+「六点到七点吧」。
+
+#### 两条教训
+
+1. **不要从单条样本归纳通用规律。** "正向有效"是从 sophia **一条**回复推出来的，
+   而 run-to-run 漂移 σ≈24 字、样本量 1 —— 这跟当天早上「探针没打中分支」是同一类错误。
+2. **两项一起改 ⇒ 归因不了，白烧一轮。** 第一次跑把两个改动混在一起，只能整体回退；
+   拆开重跑才确认是正向化本身有害。**每次只改一件。**
+
+#### 现状
+
+已回退到批次 `20260929-053542` 的文案（prompt 落点探测已确认一致），
+全量 **4356 passed**。`test_stranger_rewrites_are_phrased_positively` 已改写为
+**回归哨兵**，断言替换文案不得复现「追加 / 第二句 / 选择权」等原词，
+并在 docstring 里记下"不要再试正向化"。
+
+**sophia 的问题仍未解决。** 累计三轮：素材干净、voiceActions 抑制/替换无效、
+阶段策略改写有害。下一步应该换角度 —— 她 turn-1/turn-2 的措辞
+（「改天可以来」「挑个你方便的白天来」）与 `speech_evidence` 里那条
+`[Introduction]`「嗯……那、**那我们以后再见吧**」高度同构，
+而那条**至今没有过滤**（alex 做了，她没做）。这是唯一还没试过的一刀。
+
+---
+
+### 2026-09-29 08:00 · 根因找到：原版台词有四条独立管道进 prompt
+
+上面那「唯一还没试过的一刀」试了，**也失败了**（sophia 仍说「改天可以来」）。
+但它引出了真正的根因。**这是一天里最值钱的一段。**
+
+#### 病因：同一批原版台词从四条互不相干的路径进入 prompt
+
+| # | 数据源 | 渲染成的卡 | 何时堵上 |
+|---|---|---|---|
+| ① | `speechEvidence` | `original_style_examples` | 当天早先 |
+| ② | `styleSamples` | `style_evidence` | 本次 |
+| ③ | `voiceAnchors` | `voice_card` | 本次 |
+| ④ | `event_dialogue` 样本 | `completed_event_background` | 本次 |
+
+**每堵一条，Alex 换个地方说同一句话**。①③④ 全堵掉之后，他 turn-2 依然是
+「嘿，有空跟我去海滩玩玩啊？你有比基尼泳衣吗？」—— 因为
+`Alex.zh-CN.json:Tue:variant-1` 就躺在 `voiceAnchors` 里，一字未改。
+
+#### 两个必须记住的陷阱
+
+**A. 渲染层过滤 ≠ 数据层过滤。**
+`_stranger_filtered_speech_evidence` 原先只作用于渲染时的
+`safe_context["speechEvidence"]`，而 ② 的去重逻辑 `speech_texts` 取的是
+**未过滤**的 `speech_evidence` ⇒ 被 block 的样本不在去重集合里 ⇒
+它们从 `styleSamples` 原路流回。**同一个黑名单必须在每个数据源上生效。**
+
+**B. 黑名单的 sampleId 必须精确到变体。**
+黑名单里写的是 `…Alex.zh-CN.json:Wed`，而实际样本是 `…Wed:variant-1`
+（「如果你不是女孩子，我就约你打球了」）—— **精确匹配不命中，它一直没被销号**。
+同理 `Wed:variant-3`（「我想和你打球！」）。**同一个 sourceKey 下可以有多个
+变体，只写 sourceKey 会漏。**
+
+#### ④ 是一个真 bug，不是设计选择
+
+```python
+completed_event_evidence = [
+    item for item in safe_context["speechEvidence"]
+    if isinstance(item, Mapping)
+    and str(item.get("evidenceKind", "")).casefold() == "event_dialogue"
+][:2]
+```
+
+**这个列表推导从来没查过 `completedEventIds`**，而它写进 prompt 的 instruction 是
+「这些是**已通过 completedEventIds 门控**的事件对白，可作为当前角色确实经历过的
+背景素材、记忆和情绪依据」—— **门控从未发生，instruction 是假的。**
+
+实测：五个 stranger case 的 `completedEventIds` **全是空 tuple**
+（`初识：第一次搭话，尚未完成任何事件`），却仍收到已完成事件对白。
+Alex 的 `Data/Events/Beach.zh-CN.json:20/f Alex 500`（好感门槛 500 的海滩事件）
+就是这样进 prompt 的。**wizard 是唯一干净的角色，因为他是 vanilla 法师、
+profile 里没有已注册事件。**
+
+修法：stranger 阶段不注入（`completedEventIds` 在此阶段必然为空，
+「门控正确执行」与「不注入」等价）。**没有动跨作用域的数据传递**；
+其余阶段的门控是否同样失效，是**尚未查证的独立问题**。
+
+#### 结果
+
+`alex` / `shane` / `sebastian` / `wizard` **四个全部干净**：
+
+| 角色 | 本批回复 |
+|---|---|
+| alex | 「…全明星四分卫…」/「…俯卧撑…」/「**回头见。**」 |
+| shane | 「我刚从那儿出来，而且今天不想再沾酒。你先忙你的吧。」/「**收工时间从来不准。**」/「行。」 |
+| sebastian | 「…改装过几次，现在顺手了。」/「…声音小了不少」/「没什么。回见。」 |
+| wizard | 「矿洞？你刚到这里…」/「我很少有『有空』的时候。」/「嗯。不送。」 |
+
+#### ⚠ 一处判断错误（已纠正）
+
+一度把 `genderPresentation.affectionExpression`（Alex「随后提出一起吃饭、散步或
+去海滩」）当成主因并做了阶段隔离。隔离本身有效（探针确认 stranger 不再注入），
+**但它不是主因** —— 隔离之后 alex 反而说出了更明确的「下次一起玩球」，
+因为 `completed_event_background` 还在。**修一个泄漏点不等于修好；要以
+「所有管道」为单位验证。**
+
+#### 新增的资产
+
+- `.scratch/probe-stage-leakage.py` —— **零成本阶段泄漏探针**。同一 NPC 用
+  stranger / married 各构建一次 prompt，**两阶段一字不差的栏位 = 常驻层**，
+  即社区规范里的 T123 嫌疑名单。不用语义判断，纯结构对比。
+- `run_character_quality_eval.py` 现在会存 `errorMessage`（凭据脱敏）。
+  起因：一次 `ProviderError` 只存了类名，四处抛点无法区分，只能重跑。
+- 测试：`test_stage_voice_action_suppression.py` 增加
+  `affectionExpression` 阶段隔离、`voiceAnchors` 黑名单覆盖等用例；
+  全量 **4360 passed**。
+
+#### 参考：社区做法（SillyTavern 角色卡规范）
+
+- **T123「阶段未来泄漏」**：常驻条目/早期阶段包写了后期专属称呼、秘密、习惯
+  ⇒ **常驻只保留底层人格 + 因果方向 + 协议；后期专属内容只进入对应阶段包**
+- **T125「AI 自动跳阶段」**：模型自行改路由标记
+  ⇒ **只能从当前阶段事件库选候选；转阶需玩家明确切换**
+- 修法是**阶段隔离**（控制发送什么内容），不是把句子改得更委婉 ——
+  后者在本次会话中连试三轮（改 voiceActions 措辞 / 改正反向 / 改 stage_policy）**全部失败**。
+- 他们的验证流程：逐 greeting 验证"触发对应阶段包**且不触发其他阶段包**"
+  + 未来泄漏**人工复核**（脚本只做锚点标记，判定必须人工）。
+
+---
+
+### 2026-09-29 · sophia「接住邀约」结论：**不深挖**（用户决定）
+
+最后一条线索查清了，但**判定为不值得继续**。
+
+#### 事实
+
+`sophia-stranger-invitation` 的玩家输入是「**改天**带我去看看你家的**鸡舍**好不好？」，
+而 `is_specific_arrangement` 对**这句玩家输入**返回 `YES` —— 因为规则里有
+`("改天"|…|"去").{0,18}("鸡舍"|…)`。
+
+几条可能的源头都查过：
+- `_BEHAVIOR_GUIDANCE["accept_invitation_with_boundary"]` =
+  「回应邀约并给出具体边界，**不空泛地说改天**」
+- `behavior-examples.json` 里 15 条邀约示例**全是"接受邀约"**，无一婉拒；
+  其中 Wizard 那条写着「可以。**把时间定下来，别让邀约停在『改天』。**」
+- 但触发 stranger 的具体是哪条**没有再追**。
+
+#### 用户判断（决定性）
+
+> 「我不太会提出具体的约会约定」「『改天带我去看看你家的鸡舍好不好？』
+> 感觉像某种社交辞令客套话啊，让 npc 客套着回不就完了」
+> 「这个问题不用深挖了，我不会这么和 npc 约定，这个是我可以确认的」
+
+⇒ **case 的玩家输入不现实**。真实玩家说「改天……」是社交辞令（不确定时间 +
+征求同意），不是约定。**为不现实的输入调 NPC 行为，收益远低于成本。**
+
+#### ⚠ 一个被否掉的改法（不要重做）
+
+一度打算改那 15 条示例的回复文案。**读阶段标注后否掉了**：
+两条「改天」示例都标着 `relationshipStages: ["friend", "close"]` ——
+**给具体时间在熟络阶段本来就是对的**，改文案会破坏正确行为。
+真正的问题是**检索没有按阶段约束住它们**（stranger 命中了 friend/close 的示例），
+但那是 T125 那条线，且触发条件不现实 ⇒ 停在这里。
+
+#### 术语澄清（避免以后再混用）
+
+本会话里「邀约」被我口语化地指了三件不同的事，实际是三个独立判据：
+
+| 判据 | 检什么 |
+|---|---|
+| `specific_plan`（`is_specific_arrangement`） | 回复里**有没有可执行安排**（时间／共同活动） |
+| `initiativeExpectation` | NPC **主不主动**（none / responsive / proactive / guarded） |
+| `romance_boundary_violation` | 跨阶段的**亲密表达**越界 |
+
+sophia 只命中第一个，且是**被玩家输入带出来的**；alex 早先命中第三个，那才是真缺陷。
+
+---
+
+### 2026-09-29 09:00 · 事件门控的真闸门：`style_samples` 从来没有它（上一会话的根因判定被探针证伪）
+
+上面那轮把「stranger 事件对白泄漏」的根因判成
+`run_character_quality_eval.py:243/:278` 的 `if case.completed_event_ids:`（空元组不写
+`gameState["completedEventIds"]`）。**这个判定错了**，本轮用对照探针推翻了它，并找到真闸门。
+
+#### 一、`completedEventIds` 键的有无，对 prompt 正文零影响
+
+`.scratch/probe-explicit-empty-event-state.py`（零请求，`BRIDGE_PROFILE_INDEX` 指向
+`…next-event-dialogue.json`）对 13 个空元组案例构造「有键 = []」与「无键」两条 payload：
+
+- **13/13 案例的 prompt 正文逐字相同**（sha256 一致），事件对白条数也逐条相同；
+- 原因在消费端：`prompts.py:1992` 把 `completed_event_ids` 的**值**传给
+  `speech_evidence(...)`（不是「有没有这个键」）。空元组与缺失键**都归一成空元组**
+  ⇒ 检索输入完全相同。
+- `completed_event_ids_known` 只喂 `resolve_relationship_gate`，而这批案例的
+  `eventGateApplied` **恒为 False**（改前改后都一样）。
+
+⇒ 该处改动**保留**（口径对齐、代价为零、有两条测试钉住），但它**不是**这条泄漏的闸门。
+**教训：「键的有无」≠「值的不同」，改前先看消费端读的是哪个。**
+
+#### 二、真闸门：`ProfileIndexStore.style_samples` 漏了 `_event_dialogue_is_completed`
+
+- `speech_evidence`（`profile_index.py:2405`）有这道闸门，**`style_samples` 没有** ⇒
+  未完成事件的对白经 `styleSamples` → `style_evidence` 卡进 prompt。
+- 索引里 `styleSamples` 与 `speechEvidence` 是**同一批 11737 条**（分布逐项相同：
+  `dialogue` 2687 / `marriage_dialogue` 1504 / `event_dialogue` **7462** / `extra` 83 / `runtime` 1）
+  —— 同一个池子的两种检索策略，**门控必须同源**。
+- `_relationship_specificity_priority`（L1408）的注释早就写着「事件素材**已经通过
+  completed_event_ids 闸门**」并据此给它最高优先级 ⇒ **实现与注释矛盾**，
+  这才是仓库里本来就存在的契约。
+
+实测漏出的样本（`stranger`，`.scratch/probe-style-event-gate.py`）：
+
+| 角色 | sourceKey | 台词 |
+|---|---|---|
+| alex | `3917587/f Alex 3500/O Alex/t 500 820/M 5000/d Sun/y 2` | 「嘿，你……能分给我 5,000 金吗？」 |
+| sebastian | `384883/f Sebastian 1000/t 1100 1700` | 「什么，你还没有见识过我的摩托车？」 |
+| shane | `3917586/e 3917585/O Shane/A shaneSaloon2` | 「等等……你们是不是以为我在喝啤酒？」 |
+| sophia | `8185303/O Sophia/e 8185302/t 600 1500` | 「真不敢相信他们这里有格兰普顿香橙鸡！」 |
+| wizard | `112/n seenJunimoNote` ×3 | 「他们自称"祝尼魔"……」 |
+
+⚠ wizard 上一会话被当成「唯一干净的角色」，**其实只是他没有 eventId 可门控** —— 泄漏照旧。
+
+#### 三、修法与验证
+
+- `profile_index.style_samples(...)` 新增 `completed_event_ids: Iterable[str] = ()`，
+  在候选循环里复用 `_event_dialogue_is_completed`；默认空集 = 一律不放行，
+  与 `speech_evidence` / `story_events` **同口径**。
+- `prompts.py:2034` 调用点补 `completed_event_ids=completed_event_ids`。
+- 回归：`test_profile_index_accessor_edges.py::test_style_samples_drop_event_dialogue_until_the_event_is_completed`
+  （先红后绿：修复前 `{'d1','e1','e2'}`，修复后 `{'d1'}`／传 `("56",)` 时为 `{'d1','e1'}`）。
+- **可自证的对照探针**：`.scratch/probe-style-event-gate.py` patch 掉
+  `_event_dialogue_is_completed` 中**只属于 `styleSamples` 集合的 sampleId** 那一条路
+  （精确复现「只有 style 这一路没闸门」的修复前状态），两个集合 sampleId 不同、互不污染。
+  结果：13 个空元组案例的 event_dialogue 由 **3~6 条降为 0 条**，**12 个案例 prompt 正文变化**。
+- **卡片没有消失**（这是本修复的主要风险）：`style_evidence` 仍在（卡数 22→22 等），
+  每个角色都有 35~109 条日常对白补位；唯一消失的是 `marnie-friend-family` 的
+  `completed_event_background` —— 它声明「尚未完成任何事件」，那张卡本来就不该出现
+  （正是上一条记的「④ instruction 是假的」那个 bug 的收口）。
+- 全量 **4363 passed**（基线 4360 + 本轮新增 3 条），改动未打破任何既有断言。
+
+#### 四、还没做
+
+- ⚠ **`voice_card`（`voiceAnchors`）没查**：本探针里 stranger 的漏出**全在 `style_evidence` 卡**，
+  `voice_card` 未出现 event_dialogue；但它是同一批数据的第三条消费路径，**要单独量**。
+- 云端 A/B 等 **10-01** 额度恢复（`--economical`，落新工件目录）。
+
+#### 五、纪律备忘
+
+- 上一会话是**用语义推演**（`relationship_gating.py:292` 的 known 语义）得出根因的，
+  **没有构造对照组实测**；本轮加一次 patch 对照就看到完全不同的答案。
+  ⇒ **推演只能提出假设，闸门必须用对照实验定位。**
+- 探针第一版没设 `BRIDGE_PROFILE_INDEX`，两列同为 0，**差点得出「修复无差别」的假结论** ——
+  红线那条（探针前必须指向带事件的索引）又救了一次。
+
+---
+
+### 2026-09-29 10:00 · 管道③（`voice_card` / `voiceAnchors`）调查：**不是漏门控，是信息在构建期就被裁掉了**
+
+结论先行：**本轮没动产品代码**，原因见末尾「为什么不动」。
+
+#### 实测数据（`.scratch/probe-voice-card-gate.py`，零请求）
+
+| 项 | 数 |
+|---|---|
+| 索引 `voiceCards` 条目 | 137 |
+| `voiceAnchors` 里的 `event_dialogue` | **237 条**，分布在 **60 个角色** |
+| 剔除事件对白后**锚点全空**的角色 | **34 个** |
+| 这 34 个角色的非事件语料 | 合计仅 **40 条**（其中 **31 个角色为 0**） |
+
+- ⚠ 评测用的那 9 个角色**一个都没命中**（57 个案例的 A 段事件对白 = 0）——
+  所以上一轮的探针完全看不见它。**又一次「探针未覆盖的分支等于没看见」。**
+- 泄漏形态：`voiceAnchors` 的 event_dialogue 项**不带 `eventId`**（构建期投影裁掉了字段），
+  只有 `sourceKey`，如 `114780005/f Witch 1500`；`sourcePath` 是
+  `data/compatibility/Fostoria.json` 这类**事件脚本**（不是 `Data/Events/`）。
+  B 段（阶段锚点）靠 `sampleId` 里的 `Characters/Dialogue/` 标记排除事件对白，
+  **对 A 段这批锚点无效**。
+- 因此这不是「少写了一道门控」，而是**运行时拿不到判断依据** ——
+  `_event_dialogue_is_completed` 读 `record["eventId"]`，锚点里没有这个字段。
+
+#### 三条候选修法与代价
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| ① 运行时一律剔除 | `voice_card` 加事件门控 | **34 个模组角色永久失去声线锚点**（31 个只有事件语料） |
+| ② 从 `sourceKey` 解析事件 id 兜底 | 复用现成门控 | 前导数字 == `eventId` 只有 **6745/7462 = 90.4%**，717 条不一致 ⇒ 会误放也会误杀 |
+| ③ 构建期补 `eventId` + 运行时精确门控 | 锚点带 id；旧索引无 id 则不门控（向后兼容） | 需要**重建 16MB 索引** |
+
+推荐 ③：无退化（无 id 的锚点保持原样），且事件完成后锚点会自然回来（①②都做不到）。
+
+⚠ 但 ③ 的「重建索引」不是一条命令：`scripts/build_profile_index.py` 要求
+`--persona-dir`、`--mod-root`（可多个）、`--corpus`（可多个）、`--vanilla-root`、
+`--vanilla-events-root`、`--vanilla-extra-dialogue-root`、`--vanilla-locale`、
+`--runtime-samples`，**每一类都做存在性校验**（缺一个直接 return 2）。
+即要先复原**整套构建输入**（已解包的 vanilla Content、各 mod 根目录、语料导出件）
+—— 这本身是另一条工作线，不是随手一跑。
+
+#### 为什么本轮没动代码
+
+- ③ 的成本落在「重建索引」，而它的收益**已被实测证明很小**：
+  `dialogue_boundaries.py:511-515` 记录「修 voiceAnchors 选样偏置，**300 轮、0/3 角色显著**；
+  Sebastian 的 anchors 降 68% 而输出只降 10%，Elliott 降 73% 而输出**反升** 18%」
+  —— **锚点内容大变、输出几乎不动**。
+  ⚠ 该结论只覆盖「语气词密度」这一个维度，**不能直接推广**到「模型是否复述事件内容」。
+- ①② 有明确退化（34 个角色失去声线，或 9.6% 误判）。
+⇒ 这是「产品取舍 + 需要重建产物」的分叉点，**交用户决策**；探针留在
+`.scratch/probe-voice-card-gate.py`，重建索引后重跑即可验证。
+
+---
+
+### 2026-09-29 11:00 · 管道③ 落地：锚点补 `eventId` + 运行时门控（**换了条更短的路，不必重建索引**）
+
+用户选了方案③。执行中发现**不需要重建 16MB 索引**：锚点自带 `sampleId`，
+而 `speechEvidence` 里有同 id 的完整记录（含 `eventId`）—— 实测 **237/237 命中且都带 id**。
+于是把「重建」换成「离线回填」，成本从「复原整套构建输入」降到「跑一个脚本」。
+
+#### 一、改动
+
+| 文件 | 改动 |
+|---|---|
+| `speech.py::_voice_anchor_candidates` | 锚点补 `eventId`（**新构建**从此带 id） |
+| `profile_index.py::_voice_anchor_is_available`（新增） | 语气锚点事件门控：**没有 `eventId` 就放行** |
+| `profile_index.py::voice_card` | 加 `completed_event_ids`（默认 `None` = 不门控） |
+| `profile_index.py` 的 `style_samples` / `speech_evidence` / `story_events` / `known_characters` / `knowledge_facts` | 支持 `None`（= 调用方没给事件状态 ⇒ 不门控） |
+| `prompts.py` | 新增 `events_for_retrieval`，`voice_card` 等 8 个调用点改用它 |
+| `scripts/backfill_voice_anchor_event_ids.py`（新增） | 离线回填，输出到**新文件**、不覆盖原索引 |
+
+⚠ **`None` 这一层是补我上一轮引入的漏**：`style_samples` 加门控后，`prompts.py` 仍传裸
+`completed_event_ids`（上游不发 `completedEventIds` 时是 `[]`）⇒ 空集被当成「都没完成」
+⇒ **门控误开、事件对白整批被滤**，违反 `relationship_gating.py:292`
+「没提供 ≠ 全未完成」的既有教条。现在 `()` 与 `None` 在**所有检索入口**分开。
+（同类漏在 `story_events` 的 `status` 标记处也存在：`completed_keys or ()` 兜住。）
+
+#### 二、验证
+
+- **新旧索引等价**：非 `voiceCards` 字段**逐字节一致**；`voiceCards` 去掉 `eventId` 后一致；
+  带 `eventId` 的锚点 **0 → 237**。回填脚本自报：补 237 条（60 个角色）、未命中 0、非事件锚点 357。
+- **门控效果**（`.scratch/probe-voice-card-gate.py`，零请求）：
+
+  | 索引 | 不传（`None`） | 传空集（`()`） |
+  |---|---|---|
+  | 旧索引（锚点无 id） | 60 个角色含事件锚点 | **60**（向后兼容，不误杀 34 个只有事件语料的角色） |
+  | 回填索引（锚点带 id） | 60 | **0**（事件未完成 ⇒ 全部挡下） |
+
+- **回归**：`test_profile_index_accessor_edges.py` +2 条（`style_samples` 的 `None` 语义、
+  `voice_card` 门控含「无 id 不误杀」）；两处手写测试替身的 `voice_card` 签名同步。
+- **全量**：4363 → **4365 passed**。
+
+#### 三、切换（已完成；用户选「覆盖原名 + 备份旧文件」）
+
+- 旧索引备份为 `…next-event-dialogue.pre-anchor-eventids.json`（15.96 MB，
+  `Copy-Item` 保留原时间戳 09-27 09:20）。
+- 回填产物移到规范名 `…next-event-dialogue.json`（12.17 MB）。
+- 两个启动脚本 `scripts/start_bridge.ps1:23`、`scripts/start_ai_npc_test.ps1:46`
+  硬编码的就是这个名字 ⇒ **脚本无需改动**。
+- 切换后核对：当前索引 **237** 个带 `eventId` 的锚点、备份 **0** 个；
+  去掉该字段后两者 hash 一致；`speechEvidence` 均为 11737 条。
+  默认路径跑探针：传空集 ⇒ **0 个角色**仍含事件锚点（门控生效）。
+- ⚠ 体积 15.96 → 12.17 MB 是**序列化空白差异**（回填用紧凑 separators），解析后内容一致。
+- **回退方式**：把 `…pre-anchor-eventids.json` 复制回原名即可。
+
+---
+
+### 2026-09-29 18:0x · 批次 `verify-action-process-4` 人读结论：**两条措辞方向对，但暴露一处长度失控**
+
+跑前闸门见 `artifacts/character-quality-eval/verify-action-process-4-fullprompt-20260929/PLAN.md`。
+上一会话 17:50 生成完对比页即被上游 422 打断，本会话接手读完三列并落档。
+
+#### 一、三组指标（同 suite / stage / limit / case 集合 / profileIndex）
+
+| 批次 | compact | passed 轮 | pass 率 | NPC 重试 | 请求 | 总 token | 主动搭话 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| process-1 | true | 3/9 | 0.333 | 5 | 14 | 97,808 | 4 |
+| process-2 | true | 4/9 | 0.444 | 4 | 13 | 90,088 | 4 |
+| **process-3（改前）** | true | 4/9 | 0.444 | 4 | 13 | 90,519 | 4 |
+| **process-4（改后）** | true | 5/9 | 0.556 | 5 | 14 | 98,235 | 5 |
+| process-4-full | **false** | 3/9 | 0.333 | 7 | 16 | 162,837 | 2 |
+
+⚠ **process-2 与 process-3 是同配置重跑，各项数字逐项一致**（4/9、retry 4、req 13）——
+这是同口径稳定性的一个正面证据。但 4/9 → 5/9 只差 1 轮，9 轮规模下**不构成结论**
+（PLAN 已定走 L1 人读档，不做统计声明）。
+
+#### 二、人读：改后哪里变好
+
+- **sebastian / turn-3**（玩家「音乐先停掉，过来靠着我一会儿，好吗？」）
+  改前 `音乐停了。/ 过来。`（10 字，纯动作播报）
+  → 改后 `……音乐？/ 好，我关了。过来——让我靠着你。`（23 字，动作压成半句后接到情感）。
+  **这是最干净的一次改善**，正是 17:22 那两条措辞想治的形态。
+- **sebastian / turn-2** 改后 `……嗯。/ 文件刚存完。椅子给你，我坐地上。` —— 「椅子给你，我坐地上」有取舍、有人味。
+- **wizard / turn-1** 61 → 37 字，收紧了但保留「坐这儿，还是你想去窗边」的二选一，没丢接话点。
+
+#### 三、人读：改后哪里变差
+
+- ⚠ **sophia / turn-1 冲到 142 字且跑题**：玩家只说「陪我在这儿慢慢喝一杯」，
+  改后回复扯出「斯嘉丽」「角色扮演出装」，整段离题（改前 49 字，正常）。
+  判断：**这不像措辞改动的直接后果，更像「不要只把玩家说过的内容应一声」被读成「要多说」**
+  产生的过度补偿 —— 与既有结论「模型取最松 / 自然倾向同向才守得住」同型。
+- 「动作播报机」**没有被加剧**：改前本来就有（`音乐停了`、`灯已经调暗了`、`记录先放这儿`），
+  改后反而把动作压短再接到情感 ⇒ 闸门第 ② 问答「没有」。
+
+#### 四、⭐ 新发现：compact 与 full 两条路径的落点可能不同
+
+同一份 `prompts.py`、同一批 case，`compactPrompt: true/false` 两组表现**差异显著**：
+
+- full 组长度更极端（11 / 14 / 55 / 55 字），compact 组更居中（37 / 23 / 24 / 28）；
+- **sebastian / turn-3**：full 只有 11 字（`音乐停了。/ 过来吧。`，几乎等于改前），
+  compact 却是 23 字且明显改善 —— **同一处措辞在 full 路径下没体现出同等效果**；
+- 两组重试数也差得多（7 vs 5），full 组 `initiativeDetected` 只有 2（compact 5）。
+
+⇒ **待查（未做）**：这两条措辞是否只落在某一条 prompt 路径上，或两条路径下权重不同。
+线上实际走哪条路径，决定这次改动的真实收益。
+
+#### 五、结论与待办
+
+- 两条措辞**方向对，可留**（最像「原地打转」的 sebastian 三连确实改善）。
+- 但需给「不要只应一声」**补一条长度护栏**，防止再出现 142 字。
+- 自动指标对这轮的目标现象**全程失明**（三组 `mech` 全 False、`overlap` 都在 0.1 附近），
+  再次印证只能靠人读。
+- 产物：`verify-action-process-4-20260929/compare.html`（两列，上一会话产出）、
+  `compare3.html`（三列，本次新增）。
+- **本条未改任何代码**，未动 `prompts.py`。
+
+---
+
+### 2026-09-29 18:2x · ⚠ 用户人读裁定（决定性）：**主导变量是 prompt 路径，不是措辞改动**
+
+上一节的结论出自我逐轮阅读；用户随后给出完整裁定，**以用户判断为准**。
+**上一节里「compact 更好」的方向被推翻**，原节保留作留痕。
+
+#### 一、逐轮裁定（用户原话）
+
+| case / 轮 | 用户裁定 |
+|---|---|
+| sebastian t1 | **full 好** |
+| sebastian t2 | **full 好** |
+| sebastian t3 | **compact 好** |
+| sophia t1 | 原本和 full 都可以（⇒ **compact 不行**） |
+| sophia t2 | 都可以，**full 最好** |
+| sophia t3 | 原本和 full 好（⇒ **compact 不行**） |
+| wizard t1 | **原版最好** |
+| wizard t2 | **full** |
+| wizard t3 | **full** |
+
+**合计：full 7 / compact 1 / 原版 3（其中 2 轮与 full 并列）**。
+
+#### 二、⭐ 真正的结论：路径压倒措辞
+
+三组里唯一变化的是两个变量：**措辞改动**（p3 → p4）与 **prompt 路径**（compact ↔ full）。
+用户 7/9 选 full、只 1/9 选 compact ⇒ **路径是主导变量，本轮措辞改动的效应远小于它**。
+
+- **compact 路径是「两头不讨好」**：被用户否掉的两轮里，一轮是**过长跑题**
+  （sophia t1 拿 142 字去讲「斯嘉丽」），另一轮是**过短敷衍**
+  （sophia t3 只有 16 字 `我、我再喝一口……嗯。/ 陪你。`）。
+- **full 路径的表现与「短」无关**：wizard t1 用户选的是**原版 61 字那条**，
+  而不是 full 的 14 字 `那些记录可以先放。我听着呢。` ⇒ 用户判的是**内容质量（角色感），不是长度**。
+
+#### 三、⚠ 又一个代理指标失效的实例（自动 pass 率与人读完全相反）
+
+| | 自动 pass 率 | 人读裁定 |
+|---|---|---|
+| compact（改后） | **5/9**（最高） | 1/9 |
+| full（改后） | **3/9**（最低） | **7/9** |
+
+⇒ 自动指标在这批上给出的排序与人读**方向相反**。与「代理指标只排序不下结论」同型，
+本批是它的一个强实例。**不要再拿 pass 率决定 prompt 路径。**
+
+#### 四、代价（未决）
+
+full 路径的 token 是 compact 的 **1.66 倍**（162,837 vs 98,235，同样 9 轮 3 case）。
+**用户偏好与实际成本直接冲突，这是下一步真正要定的事。**
+
+#### 五、✅ 已澄清：原始反馈的真实方向（此前记录反了）
+
+用户澄清：**「第一句（复述玩家）不行，后面两句（推进）好。」**
+此前被记成「第一句可以、后面两句不行」，**方向是反的**。以 wizard 三轮为证：
+
+| 轮 | 原版回复 | 用户口径 |
+|---|---|---|
+| t1 | ①`嗯，那些记录已经收了。` ②`……难得你愿意直接开口。` ③`先前注意到窗外雪积得比往年厚，要不要一起下去看看？还是说，你想留在塔里。` | ①**不行**（复述）、②③**好**（推进） |
+| t2 | `好。` / `记录先放这儿。过来坐。` | 后两句**重复玩家的话比重太大，没怎么推进对话** |
+| t3 | `灯已经调暗了。` / `那些记录不会自己跑掉。过来。` | 同上 |
+
+⇒ **17:22 两条措辞的方向是对的**（第 2 条「不要只把玩家说过的内容应一声」正打「第一句复述」），
+此前担心的「基于误读」**不成立**。
+
+#### 六、⭐ 用户给定性判据：看的是**复述占比**，不是「有无复述」
+
+原话：**「第一个是后半截好的部分够好可以压住第一句重复，而一个短句有一半都是复述就太严重了。」**
+
+1. **复述本身不是死刑。** t1 第一句是复述，但②③够好，把重复**压住**了 ⇒ 整条仍成立。
+2. **短回复里复述占比高才严重。** t2/t3 都很短，去掉复述几乎不剩什么；
+   而 `那些记录不会自己跑掉` 还是**回引玩家刚说的话**，换了说法，比直接复述更隐蔽。
+
+#### 七、⚠ 由此推翻上一节的机制判断：「不要复述」会**提高**复述占比
+
+| | 长度 | 复述占比 |
+|---|---|---|
+| 原版 t1 | 61 字（3 句） | 约 1/3，**有空间放推进** |
+| 改后 full t1 | 14 字 | 头一句仍是复述 ⇒ **约占一半** |
+| 改后 compact t1 | 37 字 | 开头 `好，记录先搁着。` 仍是复述 |
+
+⇒ **负向的「不要复述」缩短了回复，而长度正是稀释复述的那个东西** ⇒ 逆效果。
+两版改后都不如原版，原因在此，不在「推进被删」。
+
+#### 八、⇒ 修法必须是正向的
+
+不写「不要复述」，改写成**「每轮让玩家拿到他还不知道的东西」**
+（一个新细节 / 一件要去做的事 / 一个真心想知道的问题），让复述**被内容稀释**而不是**被删掉**。
+
+⚠ **与长度约束的张力**：15–40 字上限会和「必须给新东西」互相拉扯。
+**要动就必须先想清楚这两条怎么共存**，否则重演「约束互相打架 ⇒ 模型取最松」。
+
+#### 九、自动指标为何全程失明：口径不同轴
+
+三组 `mechanicalRestatement` 全 False，因为它测的是**有无复述**（绝对量），
+真问题是**复述占比**（相对量）。**口径不同轴 ⇒ 失明是必然的**，不是阈值没调对。
+
+---
+
+### 2026-09-29 18:4x · 复述占比探针：**负结果 —— 字面规则法测不出用户判据**
+
+承接上节「先把它做成可测量再改措辞」。探针建成并跑完三组 9 轮，**结论是这条路走不通**。
+
+#### 一、口径
+
+探针 `.scratch/probe-restate.py`：回复按标点切句，逐句算与**玩家本轮输入**的
+字符二元组覆盖率 cov，cov ≥ 0.30 判为复述句；
+`restate_ratio = 复述字数 / 回复总字数`。
+明细：`E:\workspace\.scratch\restate-report.txt`。
+
+#### 二、结果：4/9 命中，接近随机
+
+| case | 轮 | 原版 | compact | full | 用户裁定 | 押中 |
+|---|---|---|---|---|---|---|
+| wizard | t1 | 0.18 | 0.21 | 0.67 | 原版 | ✓ |
+| wizard | t2 | 0.30 | 0.27 | 0.18 | full | ✓ |
+| wizard | t3 | 0.56 | 0.00 | 0.25 | full | ✗ |
+| sebastian | t1 | 0.00 | 0.00 | 0.00 | full | — 无区分 |
+| sebastian | t2 | 0.00 | 0.00 | 0.00 | full | — 无区分 |
+| sebastian | t3 | 1.00 | 0.69 | 1.00 | compact | ✓ |
+| sophia | t1 | 0.08 | 0.03 | 0.20 | 原本/full | ✗ |
+| sophia | t2 | 0.74 | 0.00 | 0.23 | full | ✗ |
+| sophia | t3 | 0.00 | 0.67 | 0.16 | 原本/full | ✓ |
+
+#### 三、⭐ 决定性反证：compact 复述占比最低，却是用户评价最差的一组
+
+| 组 | 三 case 平均 restate_ratio | 用户认可轮数 |
+|---|---|---|
+| 原版 p3 | 0.317 | 3 |
+| **compact** | **0.207（最低）** | **1（最低）** |
+| full | 0.299 | **7（最高）** |
+
+⇒ **按这个指标排，compact 最好；按用户判，compact 最差**，方向相反。
+**「复述占比」单轴不足解释用户裁定，甚至可能负相关。**
+
+#### 四、字面法抓不住的三类漏判（例子）
+
+1. **换序/换词就漏**：`灯暗了` 应的是「把灯**调暗**一点」，但 `灯暗`/`暗了`
+   与玩家消息的 `把灯`/`灯调`/`调暗` **零交集** ⇒ cov = 0.00。
+2. **长句稀释**：`记录的事也明天再说`（9 字）只命中 1 个 bigram ⇒ 0.125，判为非复述。
+3. **改用单字集合又会过度命中**虚词（的/了/我/你），整体排序改不动。
+
+**根因**：用户判的是**语义上的「在应玩家的话」**，字面重合只在**同词同序**时命中。
+
+#### 五、结论与方向
+
+- **不要再把「复述占比」当作可机读的排序依据。本轴规则法测不了。**
+- 三条可走路：
+  - **A. 语义判定**（模型逐句判「应答 / 新增」）：对轴，但花钱且**循环论证**。
+  - **B. 改写成必要条件**（「每轮至少一句不含玩家已提实词」，需分词）：免费，但只给 0/1。
+  - **C. 回到人读，范围收窄到首句**：用户举的复述句
+    （`那些记录已经收了` / `记录先放这儿` / `灯已经调暗了`）**几乎都落在开头第一句**，
+    唯一例外是 t3 的 `那些记录不会自己跑掉`（第二句）。**成本是每轮只看一句。**
+
+---
+
+### 2026-09-29 19:0x · 第三跳落地：负向「不要复述」→ 正向「必须给新东西」
+
+**改动 1 处措辞**：`bridge/src/stardew_ai_bridge/prompts.py` L4293（`voice_execution_card` 的 action 项）
+
+- **旧**：`不要只把玩家说过的内容应一声，要有自己的态度、事实或动作，说够；`
+- **新**：
+  ```
+  每一轮都必须给玩家一个他还不知道的东西——一个他没问过的细节、
+  一件你要去做的事，或一个你真心想问的问题；
+  开头应一声可以，但应完必须接上这个；
+  ```
+
+第三行是关键：它**精确描述了用户认可的那条形态** —— wizard t1 原版
+`嗯，那些记录已经收了。`（应一声）+ `难得你愿意直接开口。` + `窗外雪…`（接上）。
+旧措辞只禁止"应一声"，没给"应完接什么"的出路。
+
+**改动 2 处阈值**：`bridge/tests/test_prompts.py` 防膨胀守卫 `4520 → 4560`。
+实测 `rendered` 由 **4503 → 4539**（+36 字符），按该处注释的既有惯例（防膨胀守卫，
+不是精确预算）同步，并把第三跳的理由写进注释。
+
+**保留未动**（用户未判其有问题，方向也对）：
+
+- `'真的答'指真的做出来，不是复述玩家的话；`
+- `请你做事时写那个动作，没说做事就直接接话头，不要硬塞动作；`
+
+**长度约束一个字没动**：`safety_rules` 的 `15–40 字` 保持原样。
+理由 `scripts/apply_length_wording.py` 的实测已写明 —— 篇幅的话语权只有 **1/6**
+（6 处句数 vs 1 处字数），模型**取最宽**，该约束**实测 43.8% 被违反**，
+**真正有效的是「1–2 句」**。所以「必须有新东西」不会撞上真正的墙，
+不需要为了它去动长度文案。
+
+**验证**：`PYTHONPATH=bridge/src python -m pytest bridge/tests/test_prompts.py -q`
+→ **286 passed**。
+
+> ⚠ **踩坑留痕**：不设 `PYTHONPATH=bridge/src` 时，该文件顶部的
+> `try: from stardew_ai_bridge... except ModuleNotFoundError:` 会把
+> `ContextBuilder`/`PromptBuilder` 全部换成 `_MissingImplementation` stub，
+> **整个文件所有测试都会以「Task 4 人物与提示词模块尚未实现」失败** ——
+> 那是环境的假失败，不是代码问题。跑这个文件前必须先设 PYTHONPATH。
+
+**未做**：未跑评测批次（要花**池 3** 的钱并启动 bridge）。下一跳应是
+`--suite default --stage married --limit 3` 三组对照，仍按 **L1 人读**验收（9 轮 < 36，不做统计断言）。
+
+#### 六、本条未改任何代码
+
+---
+
+### 2026-09-29 21:2x · ⚠ 第三跳实测证伪并回退；用户四条裁定（含一条新判据）
+
+第三跳（正向「必须给新东西」）跑完 `verify-action-process-5-20260929`
+（compact，13 请求 / **88,796 token** / 43.9 秒 / 4-9 通过），**人读证伪**。
+
+#### 一、实测：wizard 三轮全部退化
+
+| 轮 | 一二跳 p4 | 第三跳 p5 |
+|---|---|---|
+| t1 | `好，记录先搁着。外面雪还在下，火倒是烧得正暖。坐这儿，还是你想去窗边？`（41字） | `好。那些记录等明天处理。过来吧。`（16字） |
+| t2 | `记录合上就是了。陪你坐。雪打在玻璃上的声音，比那些符文好懂。`（36字） | `好。记录等明天再写。过来。`（13字） |
+| t3 | `可以。灯暗了，记录的事也明天再说。今晚归你。`（28字） | `记录放那不会跑。灯调暗了，过来。`（16字） |
+
+**机制**：模型把「一件你要去做的事」实现成「把我刚听你说的事**延期到明天**」——
+prompt 下文明写允许「NPC 可以把自己的记录、笔记、研究、工作或普通事务延期」，
+**它抓了这条许可当捷径**。给的三个出口里，它挑了最好糊弄的那个。
+`sophia` 三轮反而都变好（毯子／挪过去／更想看你），`sebastian` t2 也好 ——
+所以不是全局变差，是**「NPC 有未办公事」这类场景被捷径吃掉了**。
+
+#### 二、用户裁定（2026-09-29 21:1x，权威，逐条为原文）
+
+| # | 原文 | 含义 |
+|---|---|---|
+| ① | 「p5 不行，**基本上全是复述玩家的话了，一点话题没推进**」 | 第三跳证伪，**已回退** |
+| ② | 「p5 这种其实**质量还行可以少量存在**，但如果全是这种**我要不知道回什么了**」 | **⭐ 新判据见下** |
+| ③ | 「我觉得要**根据角色而定**，然后**有个角色也要有变化**」 | 否定全局统一长度 |
+| ④ | 「**full 路径我觉得效果不错啊至少比其他的好**」 | 与早前人读 7/9 一致 |
+
+#### 三、⭐ ②是这轮最有价值的一条 —— 判据被校正了
+
+它把验收标准从「有没有新东西」改成「**玩家接不接得下去**」：
+
+- p4 t1 好，因为 `坐这儿，还是你想去窗边？` —— **给了玩家一个可以选的**
+- p5 t1 坏，因为 `那些记录等明天处理。过来吧。` —— **玩家只能回「好」**，对话死在玩家那边
+
+⇒ **下一版措辞应当直接写「玩家要有话可接」，而不是写「要给新东西」。**
+「新东西」是手段，且会被模型用「延期到明天」糊弄过去；「能接话」是目的，且可检验。
+这也解释了 ② 的措辞为什么是「可以少量存在」而不是「好」——
+11 字的 `……那我先把耳机摘了。` 质量本身没问题，**问题在密度**：一两轮可以，连着来玩家就没话接了。
+
+#### 四、③是一个独立议题，不属于措辞
+
+「按角色定长度、角色内还要有变化」**与现有的全局 `15–40 字` 直接冲突**。
+`scripts/apply_length_wording.py` 的**乙方案（删掉唯一的字数约束、只留句数）**是拆这条的第一步
+——已知 `15–40 字` 本就 43.8% 被违反（句数出现在 6 张卡、字数只在 1 张，模型取最宽），
+删掉它等于**承认现状**而非放松要求。但它需要按角色重新配,不能只在措辞里解决。
+
+#### 五、本轮实际动作
+
+- **已回退** `prompts.py` L4293 到一二跳原文：`不要只把玩家说过的内容应一声，要有自己的态度、事实或动作，说够；`
+- **已回退** `test_prompts.py` 防膨胀守卫 `4560 → 4520`，并把第三跳被证伪的记录写进注释（防重蹈）
+- 验证：`PYTHONPATH=bridge/src pytest bridge/tests/test_prompts.py -q` ⇒ **286 passed**
+- 代码回到「已验证可用」状态（一二跳措辞 + full 路径 = 人读评价最高的一档）
+- 批次工件：`artifacts/character-quality-eval/verify-action-process-5-20260929/`
+  （`compare4.html` 四列并排 / `compare-p345.txt` 逐轮文本）
+
+---
+
+### 2026-09-29 21:3x · ✅ 第四跳被接受：「效果不错，平均质量很高了」
+
+#### 一、落地内容
+
+在第二跳原文后**追加一句正向判据、不列出口菜单**（`prompts.py` L4293）：
+> `答完要让玩家接得上——他顺着能应一句，或者有个具体的东西可以接；`
+
+阈值随实际增量 `4520 → 4560`（实测渲染 4533）。测试 **286 passed**。
+
+#### 二、批次
+
+`verify-action-process-6-fullprompt-20260929`（**full 路径**，命令去掉 `--economical`）：
+16 请求 / 170,580 token / 75.8 秒 / 3-9 通过 / `initiativeDetected` 5。
+与 p4-full 基本打平（16 请求 / 162,837 token / 3-9）。
+
+#### 三、用户裁定（2026-09-29 21:3x，权威）
+
+> 「总的来说，效果不错，平均质量很高了」
+
+**这是本轮四跳里第一次正面裁定。** 完整轨迹：
+
+| 跳 | 改动方向 | 结果 |
+|---|---|---|
+| 一 | 加「不要硬塞动作」（L4291-4292） | — |
+| 二 | 「不要只把玩家说过的内容应一声」 | 人读 1/9（compact）／7/9（full） |
+| 三 | 正向三出口「必须给新东西」 | **证伪回退**（模型挑最省力出口 →「延期到明天」） |
+| **四** | **正向单判据「答完要让玩家接得上」** | **✅ 接受** |
+
+⇒ **有效的写法是「给一个可检验的目的 + 不列菜单」，而不是「列三个手段出口」。**
+第三跳之所以被糊弄，是因为它把「目的」（给玩家新东西）包装成了「三个手段」，
+模型只要挑中最省力的那个就算满足；第四跳直接写目的本身（玩家接不接得上），无法绕。
+
+#### 四、遗留风险（用户未要求处理，记录备查）
+
+1. **wizard t2 未生效**：退化成纯复述 `可以。记录放一放，今晚过来坐。`（15字），
+   而同批 t1/t3 有 50/46 字。规律不明。
+2. **同批重复台词**：wizard t1 与 t3 结尾都是 `让我看看你头发上沾的是雪还是塔顶的灰`
+   —— 同一批内重复，玩家连着看到会出戏。
+3. **长度膨胀与发散**：平均 35 → 51 字，`sophia t3` 涨到 112 字并转去讲「祖祖城动漫展／
+   自己缝的披风」，与 compact 那批 150 字的失败同源（同一角色、同样往外讲自己的事）。
+
+#### 五、⚠ 未验证的缺口
+
+本轮验收**全部在 full 路径上**完成。**第四跳在 compact 路径上没跑过** ——
+第三跳在 compact 上是失败的，不能假定第四跳在 compact 上也成立。
+线上 bridge 实际走哪条路径待查。
+
+---
+
+### 续：话题素材第 9 批 + 宽池扩库（2026-09-30 夜，**未提交**）
+
+用户口径：「**话题少了，感觉需要再多一个数量级**」；随后批准「接受校准：按语料能力分档，总量 2–3 倍」。
+报告：`E:\workspace\hub\docs\report-stardew-preferred-topics-expansion-2026-09-30.md`（含两轮，§10 是第二轮）。
+
+#### 一、两轮数字
+
+| 轮次 | 做了什么 | 素材总量 |
+|---|---|---|
+| 第一轮 | 补到当时的 12 条上限 | 264 → 373（+109） |
+| 第二轮 | **先改代码**（窗口逐轮滑动）**再扩到几十条** | 373 → **1195**（×3.55，平均 27.2/角色） |
+
+全量测试 **4365 passed / 0 failed**（第一轮后与第二轮后各验一次）。
+
+#### 二、代码改动（`prompts.py`，唯一一处）
+
+新增 `_topic_window_for_turn(value, turn_index)`，由 `ContextBuilder.build` 在原
+`_preferred_topics_for_prompt(...)` 调用点调用：
+
+- 宽度仍 `_PREFERRED_TOPICS_LIMIT`(=12)；`start = turn_index % len(items)`，**每轮前进 1 条**、环形；
+- **池 ≤ 12 时原样返回全池** ⇒ 落地当时零行为变化（这是第一轮 4365 全绿的直接原因）；
+- 轮次信号取 **`recentReplies` 的长度**（Mod 侧回看窗口 `limit=40`）。
+  ⚠ **真机 `history` 只有 6 条，太短、驱动不了轮换**；
+- 选定窗口**写回** `identity["voiceStyle"]["preferredTopics"]`，下游 L1863 `rotation_topic_slot`
+  → L1878 `narrow_topic_pool` → L1885 `build_stage_policy(preferred_topics=...)` 自动拿到窗口。
+
+⚠ `stage_policy.py` L1402 那条注释「N 只由窗口大小决定，与池子多大无关」**描述的正是被修掉的静态口径**。
+
+#### 三、⭐ 最重要的发现：无面素材被系统性误杀（推翻旧结论）
+
+原门禁 `usable()` 结尾是 `return sp._facet_of_topic(text)`，**要求候选必须判得出生活面**。
+本轮实测它把大量合格素材一并淘汰：**Caroline 23→2、Wizard 71→5、Marnie 12→0、Evelyn 14→0**。
+被误杀的恰恰是最接地气那类（来自真实台词、读得通、但词表判不出面）：
+「采集山货和野果」「山洞胡萝卜和山羊」「曲奇和花瓣形状」「学徒和传承」。
+
+⇒ **`active-work` 前文（L2517）那句「无面素材是纯损失：它占着上限位置、`_pick` 直接跳过」
+已不再准确**，两处前提都失效：
+
+1. 它照样进 `{topicPool}` 渲染、照样能用；`_pick` 跳过它，但**只在"窗口里没别的可挑"时才成问题**；
+2. 窗口逐轮滑动后它**不再永久占位**，只是被稀释。
+
+**修法：准入与优先级拆开** ——「溯源 + 长度 + 黑名单 + 不重复」是准入，「判不判得出面」只决定插入档位
+（① 补缺口面 → ② 其他有面、稀有面优先 → ③ 无面）。修完总量才从 373 跳到 1195。
+
+#### 四、三处新守卫（都属于"不报错就静默失效"）
+
+| 守卫 | 位置 | 挡什么 |
+|---|---|---|
+| `worst_window_render` | 合并脚本 | **逐个环形窗口**渲染 roleGuidance，任一超 240 字拒收 |
+| `spread` + `fit_faceless` | 合并脚本 | 无面素材等距散布 + 配额，保证**每窗口 ≥3 条有面** |
+| `test_every_role_keeps_enough_faceted_material_in_every_window` | 测试 | 同上，挡住手改数据 |
+
+第二条必需：窗口宽 12 且环形，若某窗口整段无面素材，`_pick` 空手而归、`suggestedFacet` 为空、
+**「换面」静默失效** —— 与 240 字截断同类。
+
+#### 五、测试口径：20 个断言全是同一个过时假设
+
+> **「池子 = 进 prompt 的内容」**（现在是：12 条**窗口** vs 几十条**库**）
+
+- 行为不变量 → **按它自己声明的意图重写**：无面哨兵原 docstring 自称「白占 **6 条上限**里的一个位置」，
+  两个前提都废 ⇒ 重写为「每窗口 ≥ `_WINDOW_MIN_FACED`(=3) 条有面」；
+- 数据快照 → **改包含关系**（条数下界 / 面覆盖父集 / 素材清单子集），相等断言每次扩库必假红；
+- ⚠ `_facet_of_topic` 会返回 `None`，改父集前**必须先 `discard(None)`**，
+  否则 `sorted(got)` 抛 `TypeError`，看着像数据损坏、其实是测试自己的 bug；
+- ⚠ **收集期坑**：helper 插到 `@pytest.mark.parametrize` 与 `def` 之间会把装饰器吃掉，
+  报 `fixture 'npc_id' not found` —— `--tb=line` 下它和断言失败几乎一样。
+
+#### 六、本轮未跑云端回归（理由）
+
+第一轮已证明**素材宽度**对 turn 级通过数无影响（4 次恒定 45/78）；第二轮只改**可见顺序**，
+不改素材内容与判定逻辑；`default` 套件不含扮演质量分；一次全量 A/B ≈ 180 万 token ≈ $3–5。
+⇒ 验证依据 = 代码零行为变化 + 全量绿 + 三处守卫。补跑命令与两条纪律见报告 §10.7。
+
+#### 七、状态
+
+**未提交**；未启动游戏、未部署 DLL、未重载 Bridge、未重建索引。
+备份：`data/personas/{vanilla,sve,rasmodia,female-bachelors}.json.bak-20260930-wide`。
+遗留（按性价比）：① Sebastian(9)/Alex(11) 贴死 240 字线，删模板 26 字仍是最优解（会带一条字面断言）；
+② `female-bachelors.json` 的 Elliott/Harvey/Sam 女性向 overlay 仍 5/6/6；③ Rasmodia 无语料、做不了；
+④ **宽池已到覆盖饱和（池 ≥85 条后再加边际收益递减）**，要提升观感应改轮换粒度或缩短窗口。
+
+### 续二：收口（2026-09-30 傍晚）
+
+上面遗留 ①② 已处理，③④ 保留。**全量 4365 passed**。
+
+#### 一、端到端验证：滑窗真的进 prompt 了
+
+只测纯函数不够 —— 要证明它**穿过真实构建链路**。用 Sophia（池 62，最大）建身体：
+`sourceMods` 三个、`recentReplies: ["x"] * turn`、`relationshipStage: dating`，
+走 `_build_context` → `PromptBuilder.build(compact=True)`，再从 `stage_execution_card`
+里 `json.loads` 取 `conversationLead.roleGuidance`。
+
+结果：turn 0/1/2/3/6/11/20 **各恰好 12 个落点**，首条依次推进
+精灵石和矿石 → 香橙鸡 → 斯嘉丽和朋友们 → 花舞节的蛋糕 → 戒指果果酒 → 《粉色公主战士》 → 格兰普顿；
+相邻轮次窗口均不同；纯函数 62 轮覆盖 62/62。
+
+⚠️ **驱动信号是 body 顶层的 `recentReplies`**，不是 `history` —— 真机 `history` 只有 6 条，
+拿它当 turn 计数会永远推不动窗口（Mod 侧 `recentReplies` 回溯到 40）。
+
+#### 二、⭐ 删 26 字后 9 → 43：池子大小与单窗口渲染**已解耦**
+
+`stage_policy.py` L242 删掉「优先使用音乐、耳机、肩并肩、房间或安静相处接住动作」——
+它是 `{topicPool}` 的**第二份硬编码数据**（原注释自己写着「『耳机』不在这四类里」），
+与下一句「入口对象在{topicPool}轮换，并尊重动作仍需被接住」重复。行为约束一字未动。
+
+⚠️ 上一轮记的「会带一条字面断言」是**没实测过的推测**：删完全量 4365 全绿，
+没有任何测试引用那段文本。**推测写进文档时标了"会"，读的人就会当事实。**
+
+删完 Sebastian **9 → 50**（最差窗口 240）。为什么 26 字能装 41 条：
+**窗口宽 12，池子再大每轮也只渲染 12 条** —— 渲染长度只取决于窗口里那 12 条，
+与池子多大无关。所以池子一旦越过窗口宽度，扩容就不再受 240 字约束。
+
+#### 三、⚠ 但 50 条里有 7 条不该存在 —— **我跳过了人工闸门**
+
+```
+虐待狂和生父 / 酒鬼和赌博 / 离婚和母亲 / 胸口和呼吸   ← 他生父虐待·酗酒·赌博那段
+法师和角色 / 农夫的书和三点                          ← 机械拼接的半句话
+你的农场和收入                                       ← 语料是"靠你的农场收入我能实现理想"，太功利
+```
+
+第一轮报告明写「**人工审查是流程固定一环：自动生成 + 自动校验不足以交付"不太容易做出问题"的结果**」。
+这轮我把它跳了，理由只是"候选能溯源、能判出面、不在黑名单"——那三条**恰恰拦不住**这类素材。
+玩家问「今天过得怎么样」，NPC 回「我生父是虐待狂」，不是素材不够，是**会做出问题**。
+
+修法：7 条进 `blacklist.txt`；⚠ **黑名单只过滤候选、不过滤已有素材**，
+所以必须先把 Sebastian 退回扩库前的 9 条（从 `.bak-20260930-window` 取）再重跑，
+否则 `50 -> 50` 原地不动、看着像黑名单没生效。
+
+**全角色风险词扫描（17 角色命中）主要价值是证伪**：「孤独」是 Linus/Elliott 的性格设定、
+「病」是 Harvey 的职业、「战争」是 Kent 的退伍背景、「毒」是毒蘑菇/毒液 —— 都正当，不动。
+**真正的问题集中在 Sebastian**（他的语料本就是全库最暗的）。这条经验值得记：
+**风险词覆盖率比精确率重要**，误报看一眼就能排除，漏报会直接上线。
+
+#### 四、女性向 overlay：另一个池、不是子集
+
+`female-bachelors.json` 的 `preferredTopics` 是**手写的另一套素材**
+（「不想老了以后做个孤独的隐士」「小时候，我的梦想就是当飞行员」「父亲还在抵抗戈特洛国那边」），
+`_deep_merge` 对 list 不合并 ⇒ **整体替换** vanilla 的 ⇒ 女性向模式下 Elliott/Harvey/Sam
+手上只有 5/6/6 条，而 240 预算**只用掉 147/167/123 字** —— 不是预算不够，是素材没写够。
+
+修法（`merge_fb.py`）：fb 独有项 + **vanilla 池当额外种子**（人工写过、已在跑，故不溯源）
++ 宽池候选 → Elliott 5→47（窗 192）、Harvey 6→33（窗 214）、Sam 6→44（窗 167）。
+取捨：话题层与 vanilla 一致了，"女性向"差异退到语言层（tone/openers/emotionRange 等 10 个字段）；
+fb 独有的 6 条仍在池里但会被滑窗稀释。**可逆**，有 `.bak-20260930-prefb`。
+
+#### 五、Alex 是死结，留给你拍板
+
+池 11 条 ⇒ 窗口 = 全池 ⇒ 最差窗口已满 240；加到 12 条就是 **244 字，只超 4 字**，
+脚本为此刷掉了 7 条候选。但他和 Sebastian 不同：模板里**没有**第二份硬编码数据，
+能腾字的全是真机迭代出来的行为约束（「不要变成教练式说教」「不要把陪伴改写成你陪我」）。
+**只差 4 字却要动三处句子**，收益是 11 → 12 条，而池 ≤12 时滑窗对他**本来就不生效**。
+我没动。要解只有三条路：删他的行为约束句 / 按角色单独配窗口宽度 / 接受 11 条。
+
+#### 六、导出数字（`_count2.py`，按 `personas.py` 的合并语义复算）
+
+**44 角色 / 1336 条 / 平均 30.4 条**（脚本逐文件报的 1383 是**未去重**口径，
+8 个角色同时出现在两个文件里、overlay 覆盖 base）。前八：Sophia 62 · Victor 58 · Lance 51 ·
+Penny 48 · Elliott 47 · Abigail 45 · Olivia 45 · Wizard 44。
+
+⚠ 教训：**「脚本自己报的总数」≠「运行时真正读到的总数」** —— 上一轮我拿逐文件总数
+报了 1323/30.1，实际是 1195/27.2，这轮又差点重蹈。
+
+#### 七、状态
+
+**本轮改了 12 个文件**（`prompts.py` / `stage_policy.py` / 4 个测试 / 4 个 persona /
+`active-work.md` / `STATE.md`），已提交。
+⚠ `prompts.py` 与 `active-work.md` 里**混有 9/29 未提交的改动**（turn plan、affection priority 等），
+同一个文件无法按文件粒度分离，一并带入。
+工作区里还有一批**不属于本轮**的未提交改动（`app.py`、`corpus.py`、`guard.py`、
+`quality_results.py`、`smapi/BridgeClient.cs` 等，9/29 及更早），**我没有动它们**。
+

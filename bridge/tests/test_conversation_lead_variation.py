@@ -68,11 +68,25 @@ def _persona_preferred_topics(npc_id: str) -> list[str]:
     raise AssertionError(f"data/personas 里找不到 {npc_id} 的 preferredTopics")
 
 
-def _rendered_guidance(npc_id: str) -> str:
+def _window_topics(npc_id: str, turn_index: int = 0) -> list[str]:
+    """**真正进 prompt 的那一批**落点。
+
+    2026-09-30 起 `preferredTopics` 是素材库（可以几十条），进 prompt 的是
+    `_topic_window_for_turn` 按轮次切出的 12 条窗口，且逐轮前进一条。
+    所以"渲染成什么"这类断言必须按窗口算：直接喂整库渲染出的超长 guidance
+    既不是线上会发生的输入，测出来的红也不是真问题。
+    """
+
+    from stardew_ai_bridge.prompts import _topic_window_for_turn
+
+    return _topic_window_for_turn(_persona_preferred_topics(npc_id), turn_index)
+
+
+def _rendered_guidance(npc_id: str, turn_index: int = 0) -> str:
     return build_stage_policy(
         npc_id,
         "dating",
-        preferred_topics=_persona_preferred_topics(npc_id),
+        preferred_topics=_window_topics(npc_id, turn_index),
     )["conversationLead"]["roleGuidance"]
 
 
@@ -157,13 +171,16 @@ def test_every_conversation_lead_role_uses_the_topic_pool_placeholder() -> None:
 
 @pytest.mark.parametrize("npc_id", sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS))
 def test_rendered_guidance_contains_every_topic_of_its_own_source(npc_id: str) -> None:
-    """渲染结果必须包含**该角色数据源里的全部类别**，一个都不许漏。
+    """渲染结果必须包含**该轮窗口里的全部落点**，一个都不许漏。
 
-    这是同源化的实质承诺：落点池里出现过的类别，在 `persona_core` 里一定看得到。
-    反过来（点名了看不见的类别）就是 b307388 那种「要求落 A，而 A 不在 prompt 里」。
+    这是同源化的实质承诺：进 prompt 的那一批落点，在 `roleGuidance` 里一定看得到。
+    反过来（点名了看不见的落点）就是 b307388 那种「要求落 A，而 A 不在 prompt 里」。
+
+    口径是**窗口**不是整库：素材库可以几十条，而每轮只渲染 12 条（见
+    `_window_topics`）。整库级别的"一个都不许漏"在窗口轮换下不可能成立。
     """
 
-    topics = _persona_preferred_topics(npc_id)
+    topics = _window_topics(npc_id)
     guidance = _rendered_guidance(npc_id)
 
     assert topics, npc_id
@@ -176,19 +193,24 @@ def test_rendered_guidance_contains_every_topic_of_its_own_source(npc_id: str) -
 def test_rendered_guidance_stays_within_the_compact_limit(npc_id: str) -> None:
     """`_compact_stage_policy` 按 240 字截断 roleGuidance；超了就白改。
 
-    同源化会把数据源铺进模板，池子越长越容易越界（Alex 的四条加起来 60+ 字）。
+    逐**窗口**验，而不是整库：2026-09-30 起池子是素材库、进 prompt 的是
+    `_topic_window_for_turn` 切出的 12 条窗口，而且窗口**逐轮滑动**——所以
+    任何一个窗口超了，就有一轮会被静默截断。整库渲染已经不是线上条件。
     """
 
-    guidance = _rendered_guidance(npc_id)
-
-    assert len(guidance) <= 240, f"{npc_id} 的 roleGuidance 有 {len(guidance)} 字，会被截断"
+    topics = _persona_preferred_topics(npc_id)
+    for turn in range(len(topics)):
+        guidance = _rendered_guidance(npc_id, turn)
+        assert len(guidance) <= 240, (
+            f"{npc_id} 第 {turn} 轮窗口的 roleGuidance 有 {len(guidance)} 字，会被截断"
+        )
 
 
 # --- 3. 哈维：落点池改由他自己的素材生成 --------------------------------------
 
 
 def test_harvey_guidance_pool_comes_from_his_own_topics() -> None:
-    topics = _persona_preferred_topics("Harvey")
+    topics = _window_topics("Harvey")
     guidance = _rendered_guidance("Harvey")
 
     assert "照料落点在" in guidance
@@ -254,7 +276,7 @@ def test_compact_stage_card_keeps_both_texts_verbatim(stage: str) -> None:
         policy = build_stage_policy(
             npc_id,
             stage,
-            preferred_topics=_persona_preferred_topics(npc_id),
+            preferred_topics=_window_topics(npc_id),
         )
         compact = _compact_stage_policy(policy, include_response_order=False)
         lead = compact["conversationLead"]

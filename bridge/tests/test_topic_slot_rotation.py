@@ -379,6 +379,19 @@ def _preferred_topics(npc_id: str) -> list[str]:
     raise AssertionError(f"data/personas 里找不到 {npc_id} 的 preferredTopics")
 
 
+def _window_topics(npc_id: str, turn_index: int = 0) -> list[str]:
+    """**真正进 prompt 的那一批**落点（见 `test_preferred_topics_fit_the_prompt_limit`）。
+
+    2026-09-30 起 `preferredTopics` 是素材库，进 prompt 的只有
+    `_topic_window_for_turn` 切出的 12 条窗口。凡"渲染成什么 / 进了什么"的断言
+    都要按窗口算。
+    """
+
+    from stardew_ai_bridge.prompts import _topic_window_for_turn
+
+    return _topic_window_for_turn(_preferred_topics(npc_id), turn_index)
+
+
 # 抽象元类目：模型无法从这类词直接取用物件，只能回退到职业轴的具体名词。
 ABSTRACT_TOPIC_MARKERS = ("日常", "见闻", "烦恼", "计划", "近况", "感受", "过程", "细节", "创作")
 
@@ -431,9 +444,15 @@ def test_试点两人的素材已改写(npc_id: str, expected: list[str]) -> Non
     那是全库唯一一条覆盖"过去的回忆"的素材），埃琳娜 4 面 → 5 面（加"自己的状态"）。
     2026-09-25：索菲亚再提到 **12 条 / 9 面全覆盖**（见 `SOPHIA_TOPICS` 上方说明）；
     埃琳娜维持原样等效果，所以两人不再"停在 6/5 条"。
+
+    2026-09-30 口径改为**子集**：素材库扩到几十条之后，"恰好等于这 12 条"不再
+    是这批素材的用途（它们只是最早的 12 条，现在还有别的）。要守的性质是
+    **这批改写没有回退**——它们仍在库里，一条都没被冲掉。
     """
 
-    assert _preferred_topics(npc_id) == expected
+    assert set(expected) <= set(_preferred_topics(npc_id)), (
+        f"{npc_id} 的试点改写被冲掉了：{sorted(set(expected) - set(_preferred_topics(npc_id)))}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -454,10 +473,17 @@ def test_试点两人的素材覆盖到五个生活面(npc_id: str, expected_fac
 
     2026-09-25 索菲亚到 **9/9 面**：`_LIFE_FACET_PATTERNS` 里每一个面的判定词表
     都有一条能命中它 —— 也就是**禁掉任何一面，都还有别的面可去**。
+
+    2026-09-30 口径改为**父集**：扩库只可能加面、不可能减面，所以"至少覆盖这些"
+    才是要守的性质；相等断言会在每次扩库时假红。判不出面的素材（`None`）不算面，
+    必须先滤掉再比 —— 否则 `sorted()` 会撞 `None` 直接抛 `TypeError`。
     """
 
     got = {_facet_of_topic(topic) for topic in _preferred_topics(npc_id)}
-    assert got == expected_facets, f"{npc_id} 的面覆盖变了：{sorted(got)}"
+    got.discard(None)
+    assert expected_facets <= got, (
+        f"{npc_id} 少了生活面：{sorted(expected_facets - got)}（现有 {sorted(got)}）"
+    )
 
 
 def test_pilot_topics_match_the_data_source() -> None:
@@ -466,9 +492,12 @@ def test_pilot_topics_match_the_data_source() -> None:
     本条防的是"两边各自演化"：素材改了而常量没跟上，`rotation_topic_slot` 那一批
     用例就会在**另一份数据**上跑，测的却不是线上真正喂进去的东西 ——
     与 b307388 那次「要求落 A，而 A 不在 prompt 里」同型。
+
+    2026-09-30 起数据源比常量宽（扩库），所以门是**单向**的：常量里的每一条都
+    必须仍能在数据源里逐字找到；反过来不要求 —— 数据源多出来的那些是扩库新增的。
     """
 
-    assert _preferred_topics("Sophia") == SOPHIA_TOPICS
+    assert set(SOPHIA_TOPICS) <= set(_preferred_topics("Sophia"))
     # 降级用例的素材形状必须仍是"只覆盖两面"，否则那条用例测不到降级分支
     assert {_facet_of_topic(topic) for topic in NARROW_ROLE_TOPICS} == {
         "工作或手艺",
@@ -483,7 +512,11 @@ def test_pilot_topics_match_the_data_source() -> None:
 def test_rewritten_topics_keep_the_guidance_within_the_compact_limit(
     npc_id: str, mods: list[str]
 ) -> None:
-    """同源化的代价：池子变长会把 roleGuidance 推向 240 字上限，超了就白改。"""
+    """同源化的代价：池子变长会把 roleGuidance 推向 240 字上限，超了就白改。
+
+    这是**真实路径**（`_build_context`），所以要看的是它当轮真正渲染的那一批：
+    history 为空 ⇒ 第 0 轮窗口。拿整库去要求"每条都在 guidance 里"已经不成立。
+    """
 
     from stardew_ai_bridge.app import _build_context
 
@@ -491,7 +524,7 @@ def test_rewritten_topics_keep_the_guidance_within_the_compact_limit(
     guidance = _card(messages, "stage_execution_card")["conversationLead"]["roleGuidance"]
 
     assert len(guidance) <= 240, f"{npc_id} 的 roleGuidance 有 {len(guidance)} 字"
-    for topic in _preferred_topics(npc_id):
+    for topic in _window_topics(npc_id):
         assert topic in guidance, topic
 
 
@@ -708,7 +741,11 @@ def test_banned_facet_disappears_from_the_guidance_of_the_same_card() -> None:
 
 
 def test_guidance_keeps_the_whole_pool_when_no_slot_fires() -> None:
-    """未触发的轮次必须原样保留四条 —— 收窄只在触发轮生效，不是常态缩池。"""
+    """未触发的轮次必须原样保留**当轮那一批** —— 收窄只在触发轮生效，不是常态缩池。
+
+    口径是**当轮窗口**而不是整库：2026-09-30 扩库后进 prompt 的只有 12 条窗口
+    （见 `_prompt_topics`），整库级别的"一条都不许少"已不成立。
+    """
 
     from stardew_ai_bridge.app import _build_context
     from stardew_ai_bridge.prompts import PromptBuilder
@@ -726,7 +763,7 @@ def test_guidance_keeps_the_whole_pool_when_no_slot_fires() -> None:
     guidance = card["conversationLead"]["roleGuidance"]
 
     assert "topicSlot" not in card
-    for topic in SOPHIA_TOPICS:
+    for topic in _prompt_topics("Sophia"):
         assert topic in guidance, topic
 
 
@@ -757,10 +794,18 @@ def test_suggested_topic_is_visible_in_the_same_card() -> None:
 # --- 9. 素材覆盖：禁掉任一面之后还剩得下东西吗 --------------------------------
 
 
-def _prompt_topics(npc_id: str) -> list[str]:
-    """`_build_context` 真正喂给 stage policy 的那一份 preferredTopics。"""
+def _prompt_topics(npc_id: str, turn_index: int = 0) -> list[str]:
+    """`_build_context` 真正喂给 stage policy 的那一份 preferredTopics。
 
-    from stardew_ai_bridge.prompts import _preferred_topics_for_prompt
+    2026-09-30 起是 `_topic_window_for_turn` 按已聊轮数切出的 12 条窗口
+    （逐轮滑动），**不再是整库** —— 扩库之后"整库"既不是线上会发生的输入，
+    也会让下游断言假红（本文件原先就有一批这样的断言）。
+    """
+
+    from stardew_ai_bridge.prompts import (
+        _preferred_topics_for_prompt,
+        _topic_window_for_turn,
+    )
 
     wanted = canonical_npc_id(npc_id).casefold()
     for path in sorted((ROOT / "data" / "personas").glob("*.json")):
@@ -778,7 +823,7 @@ def _prompt_topics(npc_id: str) -> list[str]:
             )
             topics = _preferred_topics_for_prompt(raw)
             if topics:
-                return topics
+                return _topic_window_for_turn(topics, turn_index)
     raise AssertionError(f"data/personas 里找不到 {npc_id} 的 preferredTopics")
 
 
@@ -824,28 +869,44 @@ def test_narrow_material_roles_are_recorded() -> None:
     那一行就是这么更新的）。
     """
 
-    assert len(narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")) == 9
+    # 2026-09-30 口径是**当轮窗口**（`_prompt_topics` 已改为窗口）：扩库之后
+    # "禁工作面后还剩几条可去"要按真正进 `_pick` 的那一批算。数额会随池子继续变，
+    # 所以守**下界**（历史最低是 docstring 里记的 6 条），不守精确值。
+    remaining = narrow_topic_pool(_prompt_topics("Sophia"), "工作或手艺")
+    assert len(remaining) >= 6, f"索菲亚禁工作面后只剩 {len(remaining)} 条：{remaining}"
     assert narrow_topic_pool(_prompt_topics("Alex"), "工作或手艺") == _prompt_topics("Alex")
     assert _facet_of_topic("职业选手目标，以及后来发现的微不足道的小事") is None
 
 
 def test_preferred_topics_fit_the_prompt_limit() -> None:
-    """**素材条数上限 = prompt 可见条数上限**（2026-09-23 提到 6 之后的新不变式）。
+    """**一次可见的条数 = `_PREFERRED_TOPICS_LIMIT`**（2026-09-30 语义更新）。
 
-    `persona_core` 只写 `_PREFERRED_TOPICS_LIMIT` 条，而 `{topicPool}` / 槽位的
-    `_pick` 读的是**截断后**的同一份 —— 两边同源。于是条数超上限的**唯一**后果是：
-    第 N+1 条素材永远不会被点名，而它在 json 里看得见、在候选人表里也算"已补"。
-    那是"写了也白写"，且**不会报错**。这条哨兵把它变成一条会红的断言。
+    2026-09-23 这条守的是"素材条数不得超过 12"：当时两端都是
+    `_compact_text_list(limit=12)` 的「取前 12 条」，超出的条目既进不了
+    `persona_core`、也进不了 `_pick` 的池子，是"写了也白写"。
 
-    素材层的口径是"每角色 4~6 条"（够换面即可；池子太长会稀释，也会挤爆
-    `roleGuidance` 的 240 字）。
+    2026-09-30 素材库扩到几十条之后，**那个口径反过来成了瓶颈**：池子宽了，
+    可见的却永远只有前 12 条，于是第 13 条起照样白写。改成
+    `_topic_window_for_turn` 按已聊轮数在完整池上滑动之后：
+
+    * **条数不再是数据约束** —— 池子可以宽（上限见合并脚本的 `MAX_POOL`）；
+    * 不变的是**窗口宽度**：任何一轮发给模型、交给 `_pick` 的都恰好是
+      `_PREFERRED_TOPICS_LIMIT` 条（池子更窄时就是全池）；
+    * 而且窗口**真的会动** —— 否则"扩池"等于没扩。
+
+    这条哨兵现在守的是后两件事。240 字预算则由 `worst_window_render`
+    在合并时逐个窗口验（本文件第 9 节另有 roleGuidance 的长度回归）。
     """
 
-    from stardew_ai_bridge.prompts import _PREFERRED_TOPICS_LIMIT
+    from stardew_ai_bridge.prompts import (
+        _PREFERRED_TOPICS_LIMIT,
+        _topic_window_for_turn,
+    )
 
     assert _PREFERRED_TOPICS_LIMIT == 12
 
-    offenders = {}
+    wrong_width: dict[str, tuple[int, int]] = {}
+    not_rotating: list[str] = []
     for path in sorted((ROOT / "data" / "personas").glob("*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
         for name, profile in (payload.get("personas") or {}).items():
@@ -853,12 +914,25 @@ def test_preferred_topics_fit_the_prompt_limit() -> None:
             topics = (
                 voice_style.get("preferredTopics") if isinstance(voice_style, dict) else None
             )
-            if topics and len(topics) > _PREFERRED_TOPICS_LIMIT:
-                offenders[f"{path.name}:{name}"] = len(topics)
+            if not topics:
+                continue
+            key = f"{path.name}:{name}"
+            clean = [t.strip() for t in topics if isinstance(t, str) and t.strip()]
+            window = _topic_window_for_turn(topics, 0)
+            expect = min(len(clean), _PREFERRED_TOPICS_LIMIT)
+            if len(window) != expect:
+                wrong_width[key] = (len(window), expect)
+            # 池子比窗口宽时，轮次推进必须让窗口真的移动
+            if len(clean) > _PREFERRED_TOPICS_LIMIT and (
+                _topic_window_for_turn(topics, 0) == _topic_window_for_turn(topics, 1)
+            ):
+                not_rotating.append(key)
 
-    assert offenders == {}, (
-        f"这些角色的素材条数超过 prompt 可见上限（第 {_PREFERRED_TOPICS_LIMIT + 1} 条起"
-        f"永远不会被选中）：{offenders}"
+    assert wrong_width == {}, (
+        f"窗口宽度不等于可见上限（前者是实际取到的条数，后者是应有的）：{wrong_width}"
+    )
+    assert not_rotating == [], (
+        f"这些角色的池子宽于窗口、但窗口不随轮次移动（扩池等于没扩）：{not_rotating}"
     )
 
 
@@ -924,14 +998,27 @@ def test_alex_topics_land_on_their_new_facets() -> None:
     仍然没有任何工作面条目（否则 `test_narrow_material_roles_are_recorded` 会红）。
     """
 
-    assert {topic: _facet_of_topic(topic) for topic in _prompt_topics("Alex")} == {
+    got = {topic: _facet_of_topic(topic) for topic in _preferred_topics("Alex")}
+    expected = {
         "全明星四分卫和夹克上的小星星": "爱好或消遣",
         "海滩、投球和镇上的朋友": "镇上或邻里",
         "俯卧撑、酸痛与进步": "爱好或消遣",
         "夏天是一年里最有活力的季节": "天气季节",
         "祖父母把我带大": "家人朋友",
         "小时候那些不太快乐的日子": "过去的回忆",
+        # 2026-09-30 补素材时新增（第 8 批）：三条都是**非工作面**，所以上文那句
+        # "Alex 名下没有任何工作面条目"的前提没被破坏。
+        "烧烤和汉堡包": "吃喝",
+        "音乐盒和母亲": "家人朋友",
+        "读书和学习": "爱好或消遣",
     }
+    # 2026-09-30 口径改为**子集**：素材库扩到几十条之后，"不多不少就这 9 条"不再
+    # 是这条用例要守的东西（新补的素材会一直加进来）。要守的是**这 9 条的归属
+    # 没有漂移**，以及 Alex 名下仍然没有工作面素材。
+    assert got.items() >= expected.items(), (
+        f"Alex 的素材归属漂了：{ {k: (expected[k], got.get(k)) for k in expected if got.get(k) != expected[k]} }"
+    )
+    assert "工作或手艺" not in got.values(), "Alex 名下出现了工作面素材"
 
 
 def test_alex_gets_a_concrete_suggestion_after_the_sports_split() -> None:
@@ -939,14 +1026,20 @@ def test_alex_gets_a_concrete_suggestion_after_the_sports_split() -> None:
 
     改前面貌：4 条里 3 条被"工作或手艺"收编 ⇒ 禁工作面后只剩一条无面素材 ⇒
     `suggestedTopic` 恒为空，instruction 退化成"换到另一个生活面（吃喝、天气季节…）"。
-    改后：素材里没有工作面条目，候选落到"爱好或消遣"这一面上。
+    改后：素材里没有工作面条目，候选落到他名下的某一面上。
+
+    2026-09-30：素材补到 7 条后，`_pick` 返回的落点不再是"爱好或消遣"那一条 ——
+    但**验收意图**是"给出具体建议而非泛化降级"，与落点具体落在哪一面无关，
+    故改钉不变量（非空、是他自己的素材、不与禁令同面）。核心那行"泛化降级一个字
+    都不许出现"保持不变。
     """
 
     slot = rotation_topic_slot(_prompt_topics("Alex"), recent_replies=ALEX_FARM_REPLIES)
 
     assert slot["bannedFacet"] == "工作或手艺"
-    assert slot["suggestedFacet"] == "爱好或消遣"
-    assert slot["suggestedTopic"] == "全明星四分卫和夹克上的小星星"
+    assert slot["suggestedTopic"], "具体建议退化成空 —— 这正是改前的表现"
+    assert slot["suggestedTopic"] in _prompt_topics("Alex")
+    assert slot["suggestedFacet"] and slot["suggestedFacet"] != slot["bannedFacet"]
     # 泛化降级的那句"换到另一个生活面（…）"一个字都不许出现 —— 它正是改前的表现。
     assert "换到另一个生活面（" not in slot["instruction"]
 
@@ -966,8 +1059,8 @@ def test_alex_suggestion_reaches_the_live_card() -> None:
     slot = card["topicSlot"]
     guidance = card["conversationLead"]["roleGuidance"]
 
-    assert slot["suggestedFacet"] == "爱好或消遣"
-    assert slot["suggestedTopic"] == "全明星四分卫和夹克上的小星星"
+    # 同 `test_alex_gets_a_concrete_suggestion_after_the_sports_split`：钉不变量。
+    assert slot["suggestedTopic"] in _prompt_topics("Alex")
     assert slot["suggestedTopic"] in guidance
     # 工作面素材：Alex 本来就没有，所以禁令摘不掉任何一条他名下的素材。
     for topic in _prompt_topics("Alex"):
@@ -984,6 +1077,10 @@ def test_sports_talk_now_reads_as_hobbies_repeat() -> None:
     2026-09-25：`_pick` 的遍历起点改成按内容哈希偏移后，建议从"镇上或邻里"变成
     "天气季节"。两者都是"另一个面"，所以这里断言的不变量是**"不与禁令同面、
     且素材是他自己的"**，不是具体哪一个面。
+
+    2026-09-30：哈希偏移再次漂移（素材从 6 条补到 7 条，偏移量随之改变），落点
+    又变成"过去的回忆"。docstring 早就写明**不变量不是具体哪一个面**，而上一行
+    断言违背了它 —— 故删掉，保留下方两条真正的不变量。
     """
 
     slot = rotation_topic_slot(_prompt_topics("Alex"), recent_replies=ALEX_PUSHUPS_REPLIES)
@@ -991,7 +1088,6 @@ def test_sports_talk_now_reads_as_hobbies_repeat() -> None:
     assert slot["bannedFacet"] == "爱好或消遣"
     assert slot["suggestedTopic"] in _prompt_topics("Alex")
     assert slot["suggestedFacet"] != slot["bannedFacet"]
-    assert slot["suggestedFacet"] == "天气季节"
 
 
 def test_alex_cross_facet_topic_penetration_is_recorded() -> None:
@@ -1052,6 +1148,9 @@ FIVE_FACET_ROLES = frozenset(
         # 第 7 批：Pam 从 4 面到 5 面 —— 词表补上「爱好」之后，她原话里
         # 「要是自己有个什么爱好就好了」终于判得出爱好面（此前"探不动"）。
         "Pam",
+        # 第 9 批（2026-09-30 横向补素材）：Gunther 从 4 面到 5 面
+        # （补上「图书馆的炉火」「社区花园」后爱好面有了具体落点）。
+        "Gunther",
     }
 )
 
@@ -1062,6 +1161,13 @@ FIVE_FACET_ROLES = frozenset(
 # 后来已删除）、Haley／Jodi／Shane／Vincent 都已补到 5 面且各自只剩 1 条无面核心。
 # 删掉它们让这条哨兵**对它们生效**——否则回退到 2 条无面也不会有人报警。
 UNFILLED_NO_FACET_ROLES = frozenset({"Marlon"})
+
+# 每个 12 条窗口里至少要有这么多条"判得出生活面"的素材（2026-09-30）。
+# `_pick` 会 `continue` 掉判不出面的素材，所以窗口里无面素材太密时它会空手而归、
+# `suggestedFacet` 为空、"换面"静默失效 —— 而且不报错。宽池合并脚本的
+# `fit_faceless` 在写入前保证这个数，
+# `test_every_role_keeps_enough_faceted_material_in_every_window` 在数据被手改时挡住。
+_WINDOW_MIN_FACED = 3
 
 
 def _personas_topics():
@@ -1077,35 +1183,42 @@ def _personas_topics():
             yield path.name, name, list(topics or ())
 
 
-def test_no_lifted_role_carries_more_than_one_no_facet_topic() -> None:
-    """② 已补角色的无面素材预算：每角色至多一条。
+def test_every_role_keeps_enough_faceted_material_in_every_window() -> None:
+    """② 无面素材预算（2026-09-30 语义更新）：每个角色的**每个窗口**都要留下够多有面素材。
 
-    口径是**子集**，不是相等：
+    旧口径是"每角色至多一条无面素材"，理由是原 docstring 里那句
+    「每一条无面素材都**白占 6 条上限**里的一个位置，而且 `_pick` 会直接跳过它」。
+    这两条前提**都不再成立**：
 
-    * `UNFILLED_NO_FACET_ROLES` 是**还没补素材**的角色 —— 它们手里那 2~4 条无面
-      抽象条目是历史遗留，第 4 批不动（下一批横向推广时处理）。补掉一个不会让这条
-      哨兵变红，所以它不会变成"每补一个角色就要改一次测试"的负担；
-    * 真正会红的是**回退**：某个已经补过素材的角色又被写出 2 条以上判不出面的条目。
-      那正是这条哨兵要拦的事 —— 每一条无面素材都白占 6 条上限里的一个位置，而且
-      `_pick` 会直接跳过它，**不会报错**。
+    * 上限从 6 条变成 `_PREFERRED_TOPICS_LIMIT`(=12)，而且窗口**逐轮滑动**——
+      无面素材不再永久占位，只是被轮换稀释；
+    * "`_pick` 跳过无面素材"仍然为真（`stage_policy._pick` 里
+      `if not facet or facet == banned: continue`），但**跳过本身不再是问题**：
+      只要窗口里还有够多有面素材，换面照样有得挑。
+
+    所以真正要守的性质变成了后者：**任何一轮的窗口里都必须有足量有面素材**，
+    否则那一轮 `_pick` 空手而归、`suggestedFacet` 为空、"换面"静默失效 ——
+    失败方式依旧是"不报错"。宽池合并脚本用 `fit_faceless` 在写入前保证这一点，
+    这条哨兵负责在数据被手改时把它挡住。
     """
 
-    offenders: dict[str, list[str]] = {}
-    all_roles: set[str] = set()
+    from stardew_ai_bridge.prompts import _topic_window_for_turn
+
+    thin: dict[str, int] = {}
     for _fname, name, topics in _personas_topics():
         cid = canonical_npc_id(name)
-        all_roles.add(cid)
-        no_facet = [topic for topic in topics if _facet_of_topic(topic) is None]
-        if len(no_facet) > 1:
-            offenders.setdefault(cid, []).extend(no_facet)
+        clean = [str(topic) for topic in topics if str(topic).strip()]
+        if len(clean) <= _WINDOW_MIN_FACED:  # 池子本来就窄，轮换不生效，跳过
+            continue
+        worst = min(
+            sum(1 for topic in _topic_window_for_turn(clean, turn) if _facet_of_topic(topic))
+            for turn in range(len(clean))
+        )
+        if worst < _WINDOW_MIN_FACED:
+            thin[cid] = worst
 
-    unknown = UNFILLED_NO_FACET_ROLES - all_roles
-    assert unknown == frozenset(), f"这份清单里有已经不存在的角色（改名或删除了？）：{sorted(unknown)}"
-
-    regressions = sorted(set(offenders) - UNFILLED_NO_FACET_ROLES)
-    assert regressions == [], (
-        f"这些角色已经补过素材，却又保留了 2 条以上判不出生活面的条目（回退）："
-        f"{ {cid: offenders[cid] for cid in regressions} }"
+    assert thin == {}, (
+        f"这些角色有窗口留不下 {_WINDOW_MIN_FACED} 条有面素材（换面会静默失效）：{thin}"
     )
 
 
@@ -1208,8 +1321,12 @@ def test_shane_redemption_line_is_back_without_losing_a_facet() -> None:
         assert _facet_of_topic("值得信任的人") is None
 
         facets = {_facet_of_topic(topic) for topic in topics} - {None}
-        assert facets == {"工作或手艺", "吃喝", "家人朋友", "天气季节", "自己的状态或烦恼"}
-        assert len(topics) == 6, f"{fname} 的素材条数越过了上限：{topics}"
+        # 2026-09-30 第 9 批（宽池）：面覆盖改**父集** —— 扩库只可能加面，不会再
+        # 精确等于这 5 面；"救赎线所在的这 5 面一个都没丢"才是这条要守的性质。
+        assert {"工作或手艺", "吃喝", "家人朋友", "天气季节", "自己的状态或烦恼"} <= facets, (
+            f"{fname} 丢了生活面：{sorted(facets)}"
+        )
+        assert len(topics) >= 7, f"{fname} 的素材条数变少了：{topics}"
 
 
 def test_shane_material_is_identical_across_both_persona_files() -> None:
@@ -1335,11 +1452,13 @@ def test_pam_finally_has_a_hobby_facet() -> None:
 
     topics = _preferred_topics("Pam")
     assert "要是自己有个什么爱好就好了" in topics
-    assert len(topics) == 6, f"Pam 的素材条数越过了 6 条上限：{topics}"
+    # 2026-09-30 第 9 批（宽池）：条数与面覆盖都改成**下界 / 父集** ——
+    # 扩库让"恰好 9 条、恰好这 5 面"不再成立，但"爱好面没丢、素材没变少"仍要守。
+    assert len(topics) >= 9, f"Pam 的素材条数变少了：{topics}"
 
     facets = {_facet_of_topic(topic) for topic in topics} - {None}
-    assert facets == {"工作或手艺", "吃喝", "家人朋友", "过去的回忆", "爱好或消遣"}, (
-        f"Pam 的面覆盖变了：{sorted(facets)}"
+    assert {"工作或手艺", "吃喝", "家人朋友", "过去的回忆", "爱好或消遣"} <= facets, (
+        f"Pam 的面覆盖少了：{sorted(facets)}"
     )
     # 那条无面人设核心仍在（"每角色至多一条"，不许为了凑面数删掉）
     assert "如何在麻烦里保留选择" in topics

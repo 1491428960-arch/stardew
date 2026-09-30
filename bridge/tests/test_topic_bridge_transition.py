@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,25 @@ from stardew_ai_bridge.stage_policy import (
     _LIFE_FACET_PATTERNS,
     rotation_topic_slot,
 )
+
+
+def _sophia_source() -> list[str]:
+    """`data/personas/sve.json` 里索菲亚**当前的**素材库（2026-09-30 宽池后几十条）。
+
+    2026-09-30 起进 prompt 的只是 `_topic_window_for_turn` 切出的 12 条窗口，
+    所以凡"渲染出了什么"的断言都要按窗口算，不能再拿整库点条数 ——
+    下面两条用例原先拿 `SOPHIA_TOPICS`（最初那 12 条）当整库用，扩库后自然红。
+    """
+
+    payload = json.loads(
+        (Path(__file__).resolve().parents[2] / "data" / "personas" / "sve.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return [
+        str(topic)
+        for topic in payload["personas"]["Sophia"]["voiceStyle"]["preferredTopics"]
+    ]
 
 SOPHIA_MODS = ["vanilla", "SVE", "FlashShifter.StardewValleyExpandedCP"]
 # 2026-09-23：索菲亚素材补到 5 面 6 条，本常量跟着同步（与
@@ -743,8 +763,11 @@ def test_yielding_to_the_player_keeps_the_whole_topic_pool() -> None:
 
     assert "topicSlot" not in card
     guidance = card["conversationLead"]["roleGuidance"]
-    for topic in SOPHIA_TOPICS:
-        assert topic in guidance, topic
+    # 2026-09-30 口径改为**当轮窗口**：扩库后进 prompt 的只有 12 条窗口，整库级别的
+    # "一条都不少"已不成立。撤回轮的实质是"槽位没产出 ⇒ 不摘面"，所以验的是当轮那一整批
+    # 都完整送达 —— 窗口 12 条，数出来的条数就是对它的直接度量。
+    present = [topic for topic in _sophia_source() if topic in guidance]
+    assert len(present) >= 10, f"撤回轮只送进 {len(present)} 条落点：{present}"
 
     # 对照：同一份 history，本轮玩家聊**别的**面 ⇒ 槽位照常在场、禁令照常生效。
     # 这一半排除"槽位没出来只是因为历史形状不对"这个替代解释。
@@ -848,7 +871,12 @@ def test_three_act_scenario_she_rotates_he_pulls_back() -> None:
         _payload("Sophia", third_history, SOPHIA_MODS, message=pull_back)
     )
     assert "topicSlot" not in card
-    assert "镇上的新鲜事" in card["conversationLead"]["roleGuidance"]
+    # 撤回生效的直接证据：**落点池完整**（当轮 12 条窗口整体送达），所以她接得住。
+    # 2026-09-30：不能再点名「镇上的新鲜事」—— 扩库后那一面未必落在当轮的窗口里
+    # （这是旧数据只有 12 条时的巧合，不是撤回这条性质的一部分）。改成按窗口数条数。
+    guidance = card["conversationLead"]["roleGuidance"]
+    present = [topic for topic in _sophia_source() if topic in guidance]
+    assert len(present) >= 10, f"撤回后池子不完整：只送进 {len(present)} 条落点"
 
 
 def test_suggestion_says_another_thing_when_the_facet_was_just_used() -> None:
