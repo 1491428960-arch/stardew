@@ -420,6 +420,11 @@ _ITEM_CONTEXT_FIELDS = (
     "friendshipAwarded",
     "specialInteraction",
 )
+# ⚠ 不要因为"看起来像日常词"就删这里的词（2026-09-30 试过，被测试打回）：
+# 「命运」「未来」「未知」「报应」在**预测性魔法语义**里是必要的 ——
+# `test_plain_dialogue_filters_predictive_magic_voice_semantics` 钉着
+# 「未来和未知总会给人报应。」这类句子必须被拦下。
+# 词表宽**不是**误伤来源：真正的误伤面只有 Wizard/Rasmodia 两个角色（全量扫描过）。
 _EXPLICIT_MAGIC_MARKERS = (
     "魔法",
     "魔导",
@@ -442,6 +447,8 @@ _EXPLICIT_MAGIC_MARKERS = (
     "未来",
     "未知",
 )
+# 非日常轮次里，落点池最多保留几条魔法主题（详见 `_preferred_topics_for_prompt`）。
+_MAGIC_TOPIC_KEEP = 2
 _PLAIN_VOICE_LORE_MARKERS = (
     "魔法",
     "魔导",
@@ -1754,7 +1761,16 @@ class ContextBuilder:
             len(_window_signal) if isinstance(_window_signal, (list, tuple)) else 0
         )
         _topic_window = _topic_window_for_turn(_raw_preferred_topics, _turn_index)
-        pool_preferred_topics = _preferred_topics_for_prompt(_topic_window)
+        # 2026-09-30：落点池对魔法主题的取舍**必须跟随这一轮的对话类型**。
+        # `plain_dialogue` 决定 `persona_core` 有没有魔法类别，池子要与之同源；
+        # `player_input` 在这里尚未定义（L1990），所以就地按同一处取值口径算。
+        _pool_plain_dialogue = _is_plain_dialogue_input(
+            _text(_first_value(values, "message", "playerInput"), limit=2000)
+        )
+        pool_preferred_topics = _preferred_topics_for_prompt(
+            _topic_window,
+            plain_dialogue=_pool_plain_dialogue,
+        )
         if _topic_window:
             _identity_voice_style = identity.get("voiceStyle")
             if isinstance(_identity_voice_style, dict):
@@ -3199,30 +3215,54 @@ def _topic_window_for_turn(value: object, turn_index: int) -> list[str]:
     return [items[(start + step) % len(items)] for step in range(size)]
 
 
-def _preferred_topics_for_prompt(value: object) -> list[str]:
+def _preferred_topics_for_prompt(
+    value: object,
+    *,
+    plain_dialogue: bool = True,
+) -> list[str]:
     """该角色**将要写进 prompt** 的那一份 preferredTopics。
 
     与 `_compact_voice_style` 走同一个 `_compact_text_list(limit=...)`，
     所以落点池里出现过的类别，在 `persona_core` 里一定看得到。
 
-    2026-09-21 二次：**魔法证据文本一律排除**。`_compact_voice_style` 在
-    `plain_dialogue=True`（日常寒暄、也就是 `{topicPool}` 最常登场的那类输入）时
-    会滤掉 `_is_magic_evidence_text` 命中的 preferredTopics，而这里原先不过滤 ——
-    Wizard 的 `["魔法研究","星界与自然征兆","塔内日常","对承诺和边界的理解"]`
-    在 `persona_core` 里只剩后两条，落点池却点名四条，又是一次「要求落 A，
-    而 A 不在 prompt 里」。这里**无条件**排除：错位方向因此变成"落点池更窄"，
-    也就是**要求落的永远可见**；玩家主动问魔法时 `persona_core` 会多出两条，
-    那只是有素材没被点名，不是错位。反过来（池子点名了看不见的类别）才是 bug。
+    2026-09-21 五轮：**一律排除**，基准取 `_compact_voice_style(plain_dialogue=True)`
+    的**最窄可见性** —— `{topicPool}` 最常登场的正是日常寒暄，池子不能点名
+    persona_core 里看不见的类别（`test_topic_pool_stays_in_sync_with_persona_core_preferred_topics`
+    全量扫描 44 个角色守着这条）。**这一段不要改回放行**。
+
+    2026-09-30 补：上面那条只对**日常**成立。玩家**主动问魔法**时
+    `_compact_voice_style` 走 `plain_dialogue=False`，persona_core 里本来就
+    有「魔法研究」「星界与自然征兆」—— 那个分支下池子却仍被无条件剔空，
+    于是 Wizard 的招牌话题**在任何一轮都进不了落点池**，人就没味道了。
+    现在按 `plain_dialogue` 分流：
+
+    - `plain_dialogue=True`（日常寒暄）：**照旧一律排除**，与 persona_core 同步。
+    - `plain_dialogue=False`（点名了魔法）：保留最多 `_MAGIC_TOPIC_KEEP` 条，
+      让招牌话题**低频出席**而不是永不出现。需求原话是「降低频率就行」，
+      不是"完全规避"，也不是"日常也提"。
+
+    默认值是 `True`（最窄口径）：不传参的调用方看到的仍是从前的行为。
     """
 
+    items = _compact_text_list(
+        value,
+        limit=_PREFERRED_TOPICS_LIMIT,
+        item_limit=80,
+    )
+    if plain_dialogue:
+        return [item for item in items if not _is_magic_evidence_text(item)]
+    magic_indexes = [
+        index
+        for index, item in enumerate(items)
+        if _is_magic_evidence_text(item)
+    ]
+    if not magic_indexes:
+        return items
+    keep = set(magic_indexes[:_MAGIC_TOPIC_KEEP])
     return [
         item
-        for item in _compact_text_list(
-            value,
-            limit=_PREFERRED_TOPICS_LIMIT,
-            item_limit=80,
-        )
-        if not _is_magic_evidence_text(item)
+        for index, item in enumerate(items)
+        if index in keep or not _is_magic_evidence_text(item)
     ]
 
 

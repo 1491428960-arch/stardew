@@ -17,7 +17,7 @@
 > NPC 话题素材扩充 —— `preferredTopics` 264 → **1336 条**（44 角色，平均 30.4），
 > 并改了 `prompts.py` 一处：新增 `_topic_window_for_turn`，让进 prompt 的 12 条窗口**逐轮滑动**
 > （池 ≤ 12 时返回全池，故落地时**零行为变化**）；另删了 `stage_policy.py` 里 Sebastian 模板
-> 的一段重复硬编码（26 字），把他的素材从 9 条放到 43 条。全量 **4365 passed**，**已提交 `d8a848e`**。
+> 的一段重复硬编码（26 字），把他的素材从 9 条放到 43 条。全量 **4365 passed**，**已提交 `d14545a`**。
 > 详情：`docs/active-work.md` 末尾「续：话题素材第 9 批 + 宽池扩库」与「续二：收口」；
 > 完整报告在 hub：`E:\workspace\hub\docs\report-stardew-preferred-topics-expansion-2026-09-30.md`。
 > ⚠ 这条线**不改变本文档的任何结论**，两者的测试基线各自独立验证过。

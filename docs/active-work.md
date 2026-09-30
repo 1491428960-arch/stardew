@@ -8254,3 +8254,40 @@ Penny 48 · Elliott 47 · Abigail 45 · Olivia 45 · Wizard 44。
 工作区里还有一批**不属于本轮**的未提交改动（`app.py`、`corpus.py`、`guard.py`、
 `quality_results.py`、`smapi/BridgeClient.cs` 等，9/29 及更早），**我没有动它们**。
 
+
+### 八、魔法话题按对话类型分流（2026-09-30 夜）
+
+用户原话：「倒也没必要完全规避吧，完全没有魔法词这人感觉缺点味道，**降低频率就行**」。
+
+**先纠错档**：此前报告 §10.9 与记忆都写着「魔法词规避做不了 —— Rasmodia 无语料行」，
+它把「候选被魔法黑名单剔掉」与「Rasmodia 语料零行」混成了一件事。已有语料、有候选，
+只是被过滤；实际影响面全量扫描后**只有 2 个角色**（Wizard / Rasmodia）。
+
+**机制**：过滤在三层 —— 落点池 `_preferred_topics_for_prompt`、日常 persona_core
+`_compact_voice_style(plain_dialogue=True)`、证据排序 `profile_index._unrelated_magic_priority`。
+只有**落点池**该改；日常不提魔法是**有意设计**；排序那层本来就对。
+
+**⚠ 我第一次改错了**：判断「无条件排除是过度设计」，改成一律保留少量，
+并删了 20 词表里 8 个"像日常词"的。全量测试打回 3 条，其中
+`test_plain_dialogue_filters_predictive_magic_voice_semantics` 直接证明**我删词删错了**
+（「未来和未知总会给人报应。」该被拦）。另两条守着「落点池与 persona_core 必须同源」，
+测试 docstring 明写「取最窄可见性做基准之后，必须**无条件**滤掉同一批文本才能相等」——
+理由充分，`{topicPool}` 最常登场的正是日常寒暄。
+
+> ⭐ **教训**：改一个"看着像疏漏"的逻辑之前，**先读守着它的测试 docstring**。
+
+**正确修法**：原设计自洽，只漏了一半 —— 问魔法那轮 persona_core 有魔法、池子却被剔空，
+Wizard 招牌话题在任何一轮都进不了池。加 `plain_dialogue: bool = True`
+（默认最窄口径，不传参行为不变），调用点就地按 `values` 的 `message`/`playerInput` 算
+（`player_input` 在 L1990 才定义，早于 L1751）。`_MAGIC_TOPIC_KEEP = 2`，
+两个词表**全部还原**并加防删注释。
+
+**验证 4365 passed**：日常 11/10 条、魔法 0 且池==core；问魔法 12/12 条、魔法 1/2 且池==core。
+rasmodia 分支下「魔法研究」「星界与自然征兆」两张招牌回池，44 轮轮换中会出现。
+附带好处：池子不再从 12 缩到 11，`_pick` 少了一处找不到落点的原因。
+
+**边界**：日常寒暄仍不提魔法（有意设计；用户要的是降低频率，不是日常也提）。
+若仍觉不够，下一个可调的是日常口径是否也放 1 条 —— 但那要动测试①②的不变量，
+须与 persona_core 的过滤口径**同时**调整。
+
+改动文件：`bridge/src/stardew_ai_bridge/prompts.py`（词表还原 + 分流参数 + 调用点）。
