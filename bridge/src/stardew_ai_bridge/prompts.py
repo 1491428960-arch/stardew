@@ -447,8 +447,41 @@ _EXPLICIT_MAGIC_MARKERS = (
     "未来",
     "未知",
 )
-# 非日常轮次里，落点池最多保留几条魔法主题（详见 `_preferred_topics_for_prompt`）。
+# 落点池 / persona_core 里最多保留几条魔法主题。
+#
+# 日常口径留 1 条：用户 2026-09-30「日常闲聊时也该偶尔冒一点魔法味」。
+# 窗口是 12 条，占 1 条即约 8%，天然低频；**具体哪一条随滑窗轮换**，
+# 所以是"偶尔冒一点"而不是"每轮都在说同一件事"。
+_MAGIC_TOPIC_KEEP_PLAIN = 1
+# 非日常（玩家点名了魔法）留 2 条：那一轮话题本身就是魔法，一条不够用。
 _MAGIC_TOPIC_KEEP = 2
+
+
+def _keep_magic_topics(items: list[str], keep: int) -> list[str]:
+    """保留最多 `keep` 条魔法主题，按原索引插回原位；`keep <= 0` 表示全剔。
+
+    **单点实现**：落点池（`_preferred_topics_for_prompt`）与 persona_core
+    （`_compact_voice_style`）必须走同一个函数 ——
+    `test_topic_pool_stays_in_sync_with_persona_core_preferred_topics`
+    扫 44 个角色守着"池子点名的，persona 里必须看得见"。两处各写一份必然漂移。
+
+    插回原位（而非追加到末尾）是为了不打乱滑窗的轮换语义。
+    """
+    magic_indexes = [
+        index
+        for index, item in enumerate(items)
+        if _is_magic_evidence_text(item)
+    ]
+    if not magic_indexes:
+        return items
+    if keep <= 0:
+        return [item for item in items if not _is_magic_evidence_text(item)]
+    kept = set(magic_indexes[:keep])
+    return [
+        item
+        for index, item in enumerate(items)
+        if index in kept or not _is_magic_evidence_text(item)
+    ]
 _PLAIN_VOICE_LORE_MARKERS = (
     "魔法",
     "魔导",
@@ -3236,34 +3269,24 @@ def _preferred_topics_for_prompt(
     于是 Wizard 的招牌话题**在任何一轮都进不了落点池**，人就没味道了。
     现在按 `plain_dialogue` 分流：
 
-    - `plain_dialogue=True`（日常寒暄）：**照旧一律排除**，与 persona_core 同步。
-    - `plain_dialogue=False`（点名了魔法）：保留最多 `_MAGIC_TOPIC_KEEP` 条，
-      让招牌话题**低频出席**而不是永不出现。需求原话是「降低频率就行」，
-      不是"完全规避"，也不是"日常也提"。
+    - `plain_dialogue=True`（日常寒暄）：保留 `_MAGIC_TOPIC_KEEP_PLAIN`（=1）条。
+      用户 2026-09-30 二次：「日常闲聊时也该偶尔冒一点魔法味才对」。
+      窗口 12 条里占 1 条 ⇒ 低频；且与 `_compact_voice_style` 取同一函数，
+      "池子点名的 persona 里必须看得见"这条不变量继续成立。
+    - `plain_dialogue=False`（点名了魔法）：保留 `_MAGIC_TOPIC_KEEP`（=2）条 ——
+      那一轮话题本身就是魔法，一条不够。
 
-    默认值是 `True`（最窄口径）：不传参的调用方看到的仍是从前的行为。
+    默认值是 `True`：不传参的调用方拿到的是日常口径。
     """
 
-    items = _compact_text_list(
-        value,
-        limit=_PREFERRED_TOPICS_LIMIT,
-        item_limit=80,
+    return _keep_magic_topics(
+        _compact_text_list(
+            value,
+            limit=_PREFERRED_TOPICS_LIMIT,
+            item_limit=80,
+        ),
+        _MAGIC_TOPIC_KEEP_PLAIN if plain_dialogue else _MAGIC_TOPIC_KEEP,
     )
-    if plain_dialogue:
-        return [item for item in items if not _is_magic_evidence_text(item)]
-    magic_indexes = [
-        index
-        for index, item in enumerate(items)
-        if _is_magic_evidence_text(item)
-    ]
-    if not magic_indexes:
-        return items
-    keep = set(magic_indexes[:_MAGIC_TOPIC_KEEP])
-    return [
-        item
-        for index, item in enumerate(items)
-        if index in keep or not _is_magic_evidence_text(item)
-    ]
 
 
 def _compact_voice_style(
@@ -3300,12 +3323,15 @@ def _compact_voice_style(
                 limit=limit,
                 item_limit=item_limit,
             )
-            if plain_dialogue and key in {"sentencePattern", "preferredTopics"}:
-                # 日常问题仍需保留角色的句式和生活感，但不把“魔法研究”、
-                # “星界”等偏好主题作为当前回答的内容提示。
-                items = [
-                    item for item in items if not _is_magic_evidence_text(item)
-                ]
+            if plain_dialogue and key == "sentencePattern":
+                # 日常问题仍需保留角色的句式**形态**，但「谈魔法时使用准确术语」
+                # 这类只对魔法场景成立的规范不该进日常回答 —— 这里照旧全剔。
+                items = _keep_magic_topics(items, 0)
+            elif plain_dialogue and key == "preferredTopics":
+                # 2026-09-30：日常也留 `_MAGIC_TOPIC_KEEP_PLAIN` 条魔法主题。
+                # 原先一律剔除，代价是 Wizard 的招牌在**任何一轮**都进不了
+                # 落点池与 persona_core，人物没了味道。现在改成"低频出席"。
+                items = _keep_magic_topics(items, _MAGIC_TOPIC_KEEP_PLAIN)
             if items:
                 result[key] = items
     emotion_texture = _compact_emotion_texture(value.get("emotionTexture"))

@@ -841,7 +841,22 @@ def test_plain_dialogue_does_not_promote_location_or_evidence_to_a_topic() -> No
     assert "不是玩家问题" in safety_message["content"]
 
 
-def test_plain_dialogue_removes_magic_topic_hints_from_persona_prompt() -> None:
+def test_plain_dialogue_keeps_at_most_one_magic_topic_in_persona_prompt() -> None:
+    """日常寒暄里魔法主题**低频出席**，不再一律清零（2026-09-30 二次）。
+
+    用户原话：「日常闲聊时也该偶尔冒一点魔法味才对」。
+
+    要守的是**两条**约束，而不是"一条都不许有"：
+
+    1. `preferredTopics` 最多留 `_MAGIC_TOPIC_KEEP_PLAIN` 条魔法 ——
+       12 条里占 1 条是低频，放宽到整池都是魔法是另一个极端；
+    2. `sentencePattern` 里的「谈魔法时使用准确术语」**仍要剔除** ——
+       它是只对魔法场景成立的**句式规范**，与"聊什么"不是一回事。
+       注意 `responseRules` 不在过滤集合内，「未提及魔法时不主动引入」
+       这条**规则**因此始终在场：话题池给了一条，但姿态仍是不主动引入。
+
+    原名 `..._removes_magic_topic_hints_...`，行为已变故改名。
+    """
     context = {
         "npcIdentity": {
             "npcId": "Wizard",
@@ -863,9 +878,16 @@ def test_plain_dialogue_removes_magic_topic_hints_from_persona_prompt() -> None:
     messages = PromptBuilder().build(context, "最近过得怎么样？")
     persona = next(message for message in messages if message["name"] == "persona_core")
 
-    assert "魔法研究" not in persona["content"]
-    assert "星界与自然征兆" not in persona["content"]
-    assert "塔内日常" in persona["content"]
+    # 入参是 ["魔法研究", "星界与自然征兆", "塔内日常"]。
+    # 日常口径只保留**最前**的一条魔法主题，所以第二条应当被剔掉。
+    assert "魔法研究" in persona["content"], "日常也要留 1 条魔法主题（低频出席）"
+    assert "星界与自然征兆" not in persona["content"], "超过约定条数的魔法主题仍要剔除"
+    assert "塔内日常" in persona["content"], "非魔法主题不受影响"
+
+    # 句式规范仍然按日常口径剔除：它是魔法场景专用的写作要求，不是话题。
+    assert "谈魔法时使用准确术语" not in persona["content"]
+    # 而 `responseRules` 不在过滤集合内 —— 姿态仍是"不主动引入"。
+    assert "未提及魔法时不主动引入" in persona["content"]
 
 
 def test_prompt_treats_current_scene_facts_as_hard_without_forcing_them_into_reply() -> None:
@@ -1684,15 +1706,23 @@ def test_topic_pool_stays_in_sync_with_persona_core_preferred_topics() -> None:
     assert mismatches == []
 
 
-def test_topic_pool_never_names_a_magic_topic_hidden_from_persona_core() -> None:
-    """Wizard 是唯一带魔法 preferredTopics 的角色，单独钉一次。
+def test_wizard_topic_pool_matches_persona_core_and_stays_low_frequency() -> None:
+    """Wizard 是唯一带魔法 preferredTopics 的角色，单独钉一次日常口径。
 
-    `persona_core` 在寒暄轮次里看不到「魔法研究」「星界与自然征兆」，
-    而 Wizard 的 roleGuidance 是**唯一**会渲染落点池的谈话入口之一 ——
-    如果池子点名它们，模型就被要求落在一个看不见的类别上。
+    2026-09-30 二次：日常不再"一律剔除"，改为保留 `_MAGIC_TOPIC_KEEP_PLAIN` 条
+    （用户要"偶尔冒一点魔法味"）。因此这条测试要守的不变量**换了两条**：
+
+    1. 落点池与 `persona_core` **仍然同源** —— 池子点名的类别，persona 里必须
+       看得见。这与 `test_topic_pool_stays_in_sync_with_persona_core_preferred_topics`
+       是同一条，这里单独钉 Wizard，因为它是**唯一**会被魔法过滤命中的角色；
+    2. 日常保留的魔法主题**不超过约定条数**，且不能把整池都变成魔法。
+
+    原断言是「池子里一个魔法主题都没有」，前提（persona 里看不见）已不成立，
+    故重写而非放宽。
     """
 
     from stardew_ai_bridge.prompts import (
+        _MAGIC_TOPIC_KEEP_PLAIN,
         _compact_voice_style,
         _is_magic_evidence_text,
         _preferred_topics_for_prompt,
@@ -1708,12 +1738,22 @@ def test_topic_pool_never_names_a_magic_topic_hidden_from_persona_core() -> None
 
     pool = _preferred_topics_for_prompt(source)
     assert pool, "过滤后不该为空（还剩「塔内日常」等非魔法类别）"
-    for topic in hidden:
-        assert topic not in pool, topic
+
     in_core = _compact_voice_style(wizard_style, plain_dialogue=True)[
         "preferredTopics"
     ]
-    assert in_core == pool
+    # 不变量 1：同源。池子点名的，persona_core 里必须看得见。
+    assert in_core == pool, (in_core, pool)
+
+    # 不变量 2：日常低频。留了，但不超过约定条数，也不是只剩魔法。
+    kept_magic = [topic for topic in pool if _is_magic_evidence_text(topic)]
+    assert 0 < len(kept_magic) <= _MAGIC_TOPIC_KEEP_PLAIN, kept_magic
+    assert len(pool) > len(kept_magic), pool
+
+    # 非日常（玩家点名魔法）应当比日常留得更多，否则分流就没意义。
+    explicit = _preferred_topics_for_prompt(source, plain_dialogue=False)
+    explicit_magic = [topic for topic in explicit if _is_magic_evidence_text(topic)]
+    assert len(explicit_magic) >= len(kept_magic), (explicit_magic, kept_magic)
 
 
 def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:

@@ -8291,3 +8291,40 @@ rasmodia 分支下「魔法研究」「星界与自然征兆」两张招牌回�
 须与 persona_core 的过滤口径**同时**调整。
 
 改动文件：`bridge/src/stardew_ai_bridge/prompts.py`（词表还原 + 分流参数 + 调用点）。
+
+### 九、日常口径也放 1 条魔法主题（2026-09-30 深夜）
+
+§12 留的边界问题，用户答复：「我觉得是日常闲聊时也该偶尔冒一点魔法味才对，改吧」。
+
+**要点**：
+
+- **两边必须同时改**。落点池与 persona_core 只改一边就破
+  `test_topic_pool_stays_in_sync_with_persona_core_preferred_topics` 守的同源不变量。
+  为此抽了**单点 helper** `_keep_magic_topics(items, keep)`，杜绝两处漂移。
+- 两档常量：`_MAGIC_TOPIC_KEEP_PLAIN = 1`（日常）/ `_MAGIC_TOPIC_KEEP = 2`（点名魔法）。
+- 「偶尔」靠**窗口占比**自然实现：12 条里占 1 条 ≈ 8%，且具体哪一条随滑窗轮换。
+- **只放开 `preferredTopics`**；`sentencePattern` 里的「谈魔法时使用准确术语」
+  是魔法场景专用的**句式规范**，日常仍全剔。`responseRules` 不在过滤集合内，
+  「未提及魔法时不主动引入」始终在场 —— 话题池给一条、姿态仍不主动，两者不矛盾。
+
+**验证 4365 passed**：vanilla 日常池 12 条魔法 1；rasmodia 日常池 11 条魔法 1、
+问魔法 12 条魔法 2。**两档 `池 == core` 均为 True**。
+
+**⚠ 副作用（顺带修旧误伤）**：全量扫 44 角色，日常池含魔法的角色 **2 → 4**：
+Demetrius「实验记录」、Maru「实验与天文观测」—— 「实验」在词表里，两位科学家的
+正常话题一直被误剔。§12.3 里"删掉实验"的直觉方向对但手段错（会破
+`_PLAIN_VOICE_LORE_MARKERS` 的预测性语义过滤）；"保留 1 条"绕开了这个矛盾。
+
+**测试改动 2 条**，均属"断言违背自己 docstring"，**不是放宽**：
+
+| 原测试 | 改为 |
+|---|---|
+| `..._removes_magic_topic_hints_from_persona_prompt` | `..._keeps_at_most_one_magic_topic_in_persona_prompt` |
+| `..._never_names_a_magic_topic_hidden_from_persona_core` | `..._matches_persona_core_and_stays_low_frequency` |
+
+`test_plain_dialogue_filters_predictive_magic_voice_semantics` **未动** ——
+它测的是 `voiceAnchors` 证据层，与本次改的 `preferredTopics` 不是同一层
+（动手前先读测试确认的）。
+
+**可调性**：只动 `_MAGIC_TOPIC_KEEP_PLAIN` 一个数即可（设 0 回到 §12 行为），
+它同时驱动两边，不会破同源。
