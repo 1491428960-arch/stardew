@@ -285,7 +285,18 @@
      **每条超长只重试一次**（`retry_limit` 落 `else` 分支 —— 开发时曾误放进 `limit=2` 集合，实测 `calls=2`，请求量直接翻倍，已改回来）。
    - **阈值用实测定，不是拍脑袋**：回放 `artifacts/character-quality-eval/` 下 348 个 run / **2799 条对白**，超 40 字 **46.16%**（与台账 44% 吻合，口径一致）、超 64 字 **8.43%**、超 68 字 **5.79%** ⇐ 取 1.7。
    - 残余三条仍未动：**A1** 全量重试（阈值 40，+29% 请求）/ **B** 后处理截断（零请求，但实测长度不可控）/ **C** 维持现状。
-   - **待云端验证**：修完之后遵守率能改善多少（要先固定 case 集合，否则不可比）。
+   - ✅ **云端验证已完成**（2026-09-30，`--provider cloud --suite default --confirm-cloud`，66 case / 198 轮 / 15.6 分钟）。errors 0、tokens 277 万 ⇒ 非 void，数据可用。
+   - ⚠️ **同源对照组未能完成（void，不可用）**：为精确量化而临时把 `_LENGTH_RETRY_RATIO` 改成 999（等价关闭 A2）跑了对照组，结果 `errors=60`、66 行里 **60 行 reply 为空**、`usage.totalTokens=165161` ⇒ 按规则 void。
+     **根因已查清：云端额度耗尽**（`HTTP 400 insufficient credits，please purchase more credits`）—— 不是代码问题，也不是 Cloudflare。
+     ⚠️ 该 run 已从 `artifacts/character-quality-eval/` **移出到 `E:\workspace\.scratch\stardew-night\CONTROL-noA2-VOID`** —— 它的 60 行空 reply 会把后续基线统计的长度中位数拉低。
+   - **因此上面那个「30% → 7.6%」是推断，不是对照实测**：推断依据是「重试成功的 15 条在无 A2 时会维持超长」。核心结论（**19 命中 / 15 成功 / 重试后长度 14–67 字**）是直接读到的事实，不依赖推断；严格量化待充值后补跑。
+   - ⚠️ **当前云端额度已耗尽**，任何 `--provider cloud` 跑都会 void；`--provider fake` 不受影响（本轮已用它验证过评测链路：66 case / 198 轮 / errors 0）。
+   - **A2 的净效果**：19 个 case 命中 length 重试，**15 个重试后降到 ≤68 字**（`elliott-daily` 14 / `elliott-close-studio` 18 / `sophia-married-cellar` 32 / `wizard-parent-child-disclosure` 67 …）。
+     没有 A2 时这 15 条会维持超长，则「超 68 字」约为 **20/66 ≈ 30%**；现为 **5/66 = 7.6%**。最大长度 **161 → 125**。成本 +19 请求 / 198 轮 = **+9.6%**。
+   - **两个已知边界，都是为了控成本有意为之，已验证**：
+     1. **`over_length` 在 elif 链上、条件是 `issue is None`** ⇒ 每轮只治一个问题，已有别的问题时**长度直接被跳过**。实例：`sam-follow-up` 长 88 字，却只有 `response_schedule_retry` —— 它根本没被治。并列处理会破掉 2~6% 承诺。
+     2. **每条只重试一次** ⇒ 顽固超长治不好。实例：`alex-training` 82 / `sophia-parent-child-safety` 77 / `sophia-close-background` 125 / `alex-close-background` 125。回复内容自然、不是废话（结尾都是完整句子，非截断），只是想说的多。
+   - ⚠️ **发现（不自作主张，仅记录）**：**40 字上限与现实严重脱节** —— 66 case 中位长度 **48 字**、66.7% 超 40。该上限只存在于 prompt 的自然语言，模型不一定遵守；另一律参考：本轮任务默认 suite（**66** case、acquaintance 11 / friend 13 / close 10 / dating 8 / married 8 / parent 8 / stranger 8）。
    - **⚠ 别重查**：括号动作**不是**盲区（§三）、Sophia 话长**不是** prompt 差异（§二）。
    **五条**边界写在 §七 之后 / 见 `改动对照表` §五。继续挖只会产出噪音。
    ⚠ 第 5 条是 **2026-09-28 晚新增**的「**评测集阶段覆盖**」：
