@@ -8337,3 +8337,28 @@ Demetrius「实验记录」、Maru「实验与天文观测」—— 「实验」
 - 改动：6 → 44 条对齐 Wizard；「前妻和诅咒」→「前夫和诅咒」。
 - 验证：全量 4365 passed。
 - 教训：凭印象划 mod 边界不可靠，sourceMods / overlays 才是权威。
+
+## 十一、话题窗口步长 1 → 4（B，commit 772e449）
+
+- 根因：`_topic_window_for_turn` 每轮只前进 1 条 ⇒ 邻轮共享 11/12。而 `_pick` 第一级
+  要求「面没用过 **且** 条目没说过」，窗口里那 11 条早已被标记，第一级实际只剩刚滑
+  进来的 1 条；它一旦跟当前话口对不上就直接降级到「说过的」——玩家侧读到的"话题
+  重复"由此而来，而池子并不小（47 个活跃池，长度 17~62，中位 29）。
+- 改动：`prompts.py` 新增模块级 `_TOPIC_WINDOW_STEP = 4`，
+  `start = (int(turn_index) * _TOPIC_WINDOW_STEP) % len(items)`，docstring 重写。
+  窗口写回 identity（L1796/L1810）与落点池（L1803）**同源**，步长自动贯穿两处，
+  无需改其他代码。
+- 效果：邻轮共享 11/12 → **8/12**，单轮新进 1 → **4** 条，单条素材驻留 12 → 3 轮，
+  全池扫完一圈 29 → 8 轮。单轮可见条数恒为 12（不变）。
+- 验证：全量 **4390 passed**（与改动前基线一致）；端到端实测邻轮共享 8/12、30 轮对
+  30 条池覆盖率 100%；**240 字截断零越线**（8 个 conversationLead 角色 × 所有轮次
+  × 4 个 stage，Sebastian 峰值仍 240、Sophia 234、Harvey 214，与 K=1 几乎重合）。
+  池 ≤ 12 条的角色走「原样返回全池」分支（Alex 池 11 条属此类，步长对它无影响）。
+- 回退：`_TOPIC_WINDOW_STEP` 改回 1 即可。
+- 教训：
+  1. 「话题少了」不等于池子小，也可能是窗口滑得太慢导致 `_pick` 第一级空转；
+  2. 改窗口步长前**必须先验 240 字预算** —— `_compact_stage_policy` 对 `roleGuidance`
+     的 `_text(limit=240)` 是静默截断，越线就是"改了白改"
+     （`test_conversation_lead_variation.py` 的 docstring 自己就写着这条）；
+  3. 别凭记忆找约束：本次一度把截断位置记成 `stage_policy.py` 的 `GUIDANCE_LIMIT`，
+     而该常量在本库**根本不存在**，真实位置在 `prompts.py:3596`。先 grep 再断言。
