@@ -113,6 +113,145 @@ def test_eval_cli_uses_selected_profile_index_and_temp_output(
     assert all(path.parent == tmp_path for path in tmp_path.iterdir())
 
 
+def test_eval_summary_records_max_requests_truncation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """`--max-requests` 截断必须落进 summary —— 它是**可比性判决**，不是警告。
+
+    规范 `docs/eval-runbook-2026-09-28.md` §四.1：被截断的批次覆盖的问题集
+    与完整跑不同，放进同一张表比较会得出错误结论。所以默认值是 `False`
+    而不是 `None` —— 「跑完了、没截断」是一个确定的事实。
+    """
+    module = _load_eval_module()
+    index_path = tmp_path / "selected-index.json"
+    _write_test_index(index_path)
+
+    class QuietProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            del request, messages
+            return ProviderResult(
+                reply="整理完了。第三组稳定，第二组还得重测。",
+                provider="local",
+                fallback=False,
+                latencyMs=12,
+            )
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", QuietProvider)
+    truncated = module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case_by_id("wizard-follow-up"),),
+        truncated=True,
+    )
+    assert truncated["truncated"] is True
+    assert truncated["truncatedReason"] == "max_requests"
+
+    plain = module.run_evaluation(
+        profile_index=ProfileIndexStore(index_path),
+        output_dir=tmp_path,
+        cases=(case_by_id("wizard-follow-up"),),
+    )
+    assert plain["truncated"] is False
+    assert plain["truncatedReason"] is None
+
+
+def test_eval_plan_mode_prints_the_pre_run_gate_without_any_request(
+    capsys,
+    monkeypatch,
+) -> None:
+    """`--plan` 是跑前闸门：零请求地把「该不该跑」摊在屏幕上。
+
+    规范 `docs/eval-runbook-2026-09-28.md` §二 要求每次开跑前先回答三问，
+    §四.1 禁止用 `--max-requests` 缩规模。这两条以前**只写在文档里** ——
+    跑起来照样能违反。做成 `--plan` 之后，它们变成运行时的输出。
+    """
+    module = _load_eval_module()
+    calls: list[object] = []
+
+    class NeverCalledProvider:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def generate(self, request, *, messages):
+            calls.append((request, messages))
+            raise AssertionError("--plan 不得发起任何生成请求")
+
+    monkeypatch.setattr(module, "OllamaNativeProvider", NeverCalledProvider)
+
+    assert module.main(["--plan", "--suite", "default", "--limit", "6"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert calls == []
+    assert payload["plan"] is True
+    assert payload["suite"] == "default"
+    assert payload["caseCount"] == 6
+    assert payload["turnCount"] >= payload["caseCount"]
+    # 请求预估含重试余量 ⇒ 必然不少于轮数。
+    assert payload["estimatedRequests"] >= payload["turnCount"]
+    # 完整 Prompt 模式（未传 --economical）按实测 7,820/请求 估。
+    assert payload["estimatedTokens"] == payload["estimatedRequests"] * 7800
+    # 美元按实测单价 $0.033/请求 估（2026-09-28 池 1 实测）。
+    assert payload["estimatedCostUsd"] == round(payload["estimatedRequests"] * 0.033, 2)
+    # 三问必须在输出里，且是「待人工回答」的形态。
+    assert set(payload["gate"]) == {"question", "expectedEffect", "budget"}
+
+
+def test_eval_plan_mode_warns_that_max_requests_makes_runs_incomparable(
+    capsys,
+) -> None:
+    """压规模只能用 `--limit`；`--max-requests` 会让两批覆盖不同 ⇒ 不可比。"""
+    module = _load_eval_module()
+
+    assert module.main(["--plan", "--max-requests", "50"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert any("不可比" in warning for warning in payload["warnings"])
+
+
+def test_eval_stage_filter_selects_only_that_stage(capsys) -> None:
+    """`--stage` 解决的是「新 case 加在末尾，而 --limit 只能取前 N 个」。
+
+    2026-09-28 补的 stranger / parent 两档从没跑过（`health_check` 把它标为
+    「没样本可查」的上游盲区），而 `--limit` 根本够不到它们。
+    """
+    module = _load_eval_module()
+
+    assert module.main(["--plan", "--stage", "stranger"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stages"] == ["stranger"]
+    # 2026-09-30 给 Elliott / Harvey / Sam 补齐 stranger 后从 5 升到 8；
+    # 这里是数据快照，随案例增减同步更新。
+    assert payload["caseCount"] == 8
+    # caseIds 是给人核对「到底会跑哪些」的，必须与 caseCount 一致。
+    assert len(payload["caseIds"]) == payload["caseCount"]
+    assert all("stranger" in cid for cid in payload["caseIds"])
+
+
+def test_eval_stage_filter_accepts_multiple_and_dedupes(capsys) -> None:
+    module = _load_eval_module()
+
+    assert module.main(["--plan", "--stage", "stranger,parent,stranger"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    # 去重且保持输入顺序。
+    assert payload["stages"] == ["stranger", "parent"]
+    # stranger 8 + parent 8（同上，2026-09-30 补齐后的快照）。
+    assert payload["caseCount"] == 16
+
+
+def test_eval_stage_filter_rejects_unknown_stage(capsys) -> None:
+    """写错档名必须报错 —— 静默跑 0 个 case 是最坏的结果。"""
+    module = _load_eval_module()
+
+    assert module.main(["--plan", "--stage", "stranger,nonsense"]) == 2
+    assert "nonsense" in capsys.readouterr().err
+
+
 def test_eval_records_safe_style_quality_for_each_generated_turn(
     monkeypatch,
     tmp_path: Path,
@@ -1851,3 +1990,56 @@ def test_eval_deep_flirt_fake_provider_carries_three_turn_history_for_dating_and
         for record in records
         for turn in record["turns"]
     )
+
+
+def test_empty_event_state_is_declared_not_omitted_in_requests() -> None:
+    """空元组是「确认尚未完成任何事件」这个**状态**，不是「未提供状态」。
+
+    省略 `completedEventIds` 会让 `prompts.py` 判 `completed_event_ids_known=False`，
+    把显式空集与「调用方没给事件状态」混为一谈 ⇒ `relationship_gating.py:292`
+    按「不能推断为没有完成事件」跳过事件锁 ⇒ 已完成事件的对白漏进初识阶段。
+    """
+    module = _load_eval_module()
+    empty_cases = [
+        item
+        for item in module.quality_cases_for_suite("default")
+        if item.completed_event_ids == ()
+    ]
+    assert empty_cases, "默认套件里应有声明「尚未完成任何事件」的案例"
+
+    for case in empty_cases:
+        state = module._case_game_state(case)
+        assert state["completedEventIds"] == [], case.case_id
+        # 请求对象那侧由 pydantic 的 `default_factory=list` 兜底，
+        # 这里确认它拿到的是案例声明的显式空集，而不是被反向塞成 `None`。
+        assert (
+            module._build_request(case).game_state.completed_event_ids == []
+        ), case.case_id
+
+
+def test_empty_event_state_is_declared_in_prompt_payload() -> None:
+    """与上一条同源，覆盖另一条构建路径（`_build_context` → `ContextBuilder`）。"""
+    module = _load_eval_module()
+    case = next(
+        item
+        for item in module.quality_cases_for_suite("default")
+        if item.completed_event_ids == ()
+    )
+    builder_class = module.ContextBuilder
+
+    class _CapturingBuilder(builder_class):  # type: ignore[misc, valid-type]
+        def __init__(self) -> None:
+            super().__init__()
+            self.payloads: list[dict[str, object]] = []
+
+        def build(self, payload, **kwargs):  # type: ignore[no-untyped-def]
+            self.payloads.append(payload)
+            return super().build(payload, **kwargs)
+
+    builder = _CapturingBuilder()
+    module._build_context(builder, case)
+
+    assert builder.payloads, "构建路径应当把 payload 交给 ContextBuilder"
+    header = builder.payloads[0]["gameState"]
+    assert isinstance(header, dict)
+    assert header["completedEventIds"] == []

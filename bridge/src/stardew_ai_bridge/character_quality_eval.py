@@ -617,6 +617,65 @@ def _conversation_lead_required(
     )
 
 
+# 「回复有没有给玩家留下可接的东西」——这是**替代字面命中**的判据，也是用户拍板的
+# 验收标准（原话「如果全是这种我要不知道回什么了」）。
+#
+# ## 为什么必须换掉字面命中（2026-09-29）
+#
+# `missing_expected_evidence` 要求 NPC 回复里出现案例的 expected 词，等于奖励
+# **「把玩家说过的词说回来」**。模型很快就能学会复述来刷分，而人读时复述恰恰是
+# 最差的回复 —— 实测两批分数与人读排序**反向**：p9（第五跳）自动 1/9、p10（第四跳）
+# 自动 2/9，而人读 6:3 判第四跳胜；sebastian t2「还在写。旋律还没稳，听起来像
+# 冬天在漏风。……听完告诉我哪段该删掉」语义上完整回应了玩家，却因为没出现
+# 「曲子」二字被判失败。所以它降级为纯观测，不再参与 `passed`。
+#
+# ## 用途：给评测侧的 lead 门槛补一条更宽的判据
+#
+# `diagnose_conversation_lead` 是**运行时 Guard 共用**的（guard.py L1028，命中即重试），
+# 设计上只认问句、选择式提问、新锚点这些显式出口，认不出陈述式邀约 ——
+# `那些记录可以先放一放。过来吧，今晚我的时间归你。` 唯一的阻塞就是
+# `missing_conversation_lead`，可玩家明明答一句「好」就接得上。
+# 放宽那张共用判据会连带改掉运行时的重试行为，所以只在评测侧补这一层：
+# 只要回复里有玩家能接的东西，就不算「没给出口」。
+#
+# ## 为什么不把它单独做成通过条件
+#
+# 试过。无钩子且短于阈值即判负时跑出 7 个失败，全是「短但自然」的既有测试：
+# `嗯，睡吧。灯记得关。`（boundary 收口）、`呃，Joja 收工挺晚的。`（stranger 拒绝）、
+# `有一点忙，东边的藤架长得很快。`（日常闲聊）。收窄到已婚阶段仍误伤 ——
+# `……塔里总是比外面冷些。／你手很暖。` 只有 19 字、无问号，但它是**含蓄的好回复**
+# （承接了玩家的「你手怎么这么凉」）。
+# ⇒ **长度不等于有没有新东西，机器判不出语义钩子。** 它只能当 lead 的补充判据，
+# 不能当独立门槛 —— 这一路最大的教训就是用分数替代人读。
+_CONVERSATION_HOOK_MIN_LENGTH = 15
+
+_CONVERSATION_HOOK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("question", re.compile(r"[？?]")),
+    ("choice", re.compile(r"还是|或者")),
+    (
+        "invitation",
+        re.compile(
+            r"要不要|想不想|好不好|行不行|一起|帮我|告诉我|跟我说|试试|尝尝|听听"
+            # 祈使式邀约：`过来吧，今晚我的时间归你`。运行时那张共用判据认不出它，
+            # 但玩家答一句「好」就接得上。
+            r"|过来|来吧|坐下|坐这儿|拿去"
+        ),
+    ),
+)
+
+
+def _conversation_hook(text: str) -> tuple[bool, str]:
+    """判断回复有没有给玩家留下可以接的东西，以及是哪一种形式。"""
+
+    stripped = text.strip()
+    for label, pattern in _CONVERSATION_HOOK_PATTERNS:
+        if pattern.search(stripped):
+            return True, label
+    if len(stripped) >= _CONVERSATION_HOOK_MIN_LENGTH:
+        return True, "length_only"
+    return False, "missing"
+
+
 def _conversation_lead_policy(
     case: CharacterQualityCase,
     turn: CharacterQualityTurn | None,
@@ -824,9 +883,10 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
         source_mods=("Romanceable Rasmodius",),
         relationship_stage="friend",
         channel="remote",
-        message="改天一起核对一下记录？",
-        expected_terms=("时间", "核对", "可以"),
-        forbidden_terms=("神秘仪式", "预言"),
+        message="改天有空再聊聊你那些记录吧。",
+        expected_terms=("记录",),
+        # 「周日／几点／见面」进禁词：NPC 若把一句客套自行落实成日程，就算它做错。
+        forbidden_terms=("神秘仪式", "预言", "周日", "几点", "见面"),
         game_state=_game_state(
             season="秋",
             date="秋 22 日",
@@ -835,7 +895,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             location="手机聊天",
             friendshipHearts=6,
         ),
-        story_progress="第三组复测已完成：线上提出邀约，尚未约定当面时间",
+        story_progress="第三组复测已完成：线上随口提过改天再聊，没有约定任何具体安排",
     ),
     CharacterQualityCase(
         case_id="sophia-daily",
@@ -867,7 +927,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
         source_mods=("Stardew Valley Expanded",),
         relationship_stage="friend",
         channel="face_to_face",
-        message="要不要一起去看看新摘的葡萄？",
+        message="改天有空再来看看你的葡萄。",
         expected_terms=("葡萄", "一起"),
         game_state=_game_state(
             season="夏",
@@ -877,7 +937,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             location="葡萄园",
             friendshipHearts=6,
         ),
-        story_progress="今年第一批葡萄已经采摘：朋友阶段的当面邀约",
+        story_progress="今年第一批葡萄已经采摘：朋友阶段当面随口提了一句，没有具体安排",
     ),
     CharacterQualityCase(
         case_id="sophia-face-follow-up",
@@ -1069,7 +1129,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             location="手机聊天",
             friendshipHearts=6,
         ),
-        story_progress="朋友阶段：线上发出训练邀约，等待确定下次安排",
+        story_progress="朋友阶段：线上随口提过一起练，没有约定任何具体安排",
     ),
     CharacterQualityCase(
         case_id="alex-follow-up",
@@ -1128,13 +1188,13 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
         source_mods=("vanilla", "female-bachelors"),
         relationship_stage="married",
         channel="face_to_face",
-        message="厨房收拾完了，今晚还留点安静时间给我们吗？",
+        message="厨房收拾完了，先留点安静时间给我们，好吗？",
         history=(
             {"role": "user", "content": "我今晚想先把厨房收拾好。"},
         ),
-        expected_terms=("安静", "房间"),
+        expected_terms=("安静",),
         forbidden_terms=("永远", "命中注定"),
-        relationship_context="已婚阶段：双方已确认亲密关系，共同生活安排已经确认，讨论今晚如何兼顾家务和独处时间。",
+        relationship_context="已婚阶段：双方已确认亲密关系，共同生活安排已经确认，玩家做完了家务，当下想留一点安静相处的时间。",
         game_state=_game_state(
             season="冬",
             date="冬 18 日",
@@ -1144,7 +1204,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             friendshipHearts=14,
             marriageStatus="married",
         ),
-        story_progress="已婚阶段：共同生活安排已经确认，讨论今晚如何兼顾家务和独处时间。",
+        story_progress="已婚阶段：共同生活安排已经确认，玩家做完了家务，当下想留一点安静相处的时间。",
     ),
     CharacterQualityCase(
         case_id="wizard-close-background",
@@ -1323,8 +1383,8 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
         source_mods=("Romanceable Rasmodius",),
         relationship_stage="married",
         channel="face_to_face",
-        message="今晚别把时间都给那些记录，留一点给我，好吗？",
-        expected_terms=("今晚", "留"),
+        message="那些记录先放一放，留一点时间给我，好吗？",
+        expected_terms=("记录", "留"),
         forbidden_terms=("命中注定", "预言"),
         friendship_hearts=10,
         flirt_intensity="explicit",
@@ -1341,7 +1401,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             relationship="married",
             marriageStatus="married",
         ),
-        story_progress="婚后阶段：研究记录可以暂时放下，玩家当面提出把今晚留给彼此；回复应亲密但不凭空扩写露骨细节。",
+        story_progress="婚后阶段：研究记录可以暂时放下，玩家当面提出此刻把时间留给彼此；回复应亲密但不凭空扩写露骨细节。",
     ),
     CharacterQualityCase(
         case_id="sophia-dating-wine",
@@ -1379,7 +1439,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
         source_mods=("Stardew Valley Expanded",),
         relationship_stage="married",
         channel="face_to_face",
-        message="酒窖门关上了，今晚只陪我慢慢喝一杯，好不好？",
+        message="酒窖门关上了，就陪我在这儿慢慢喝一杯，好不好？",
         expected_terms=("酒窖", "一杯"),
         friendship_hearts=10,
         flirt_intensity="explicit",
@@ -1396,7 +1456,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             relationship="married",
             marriageStatus="married",
         ),
-        story_progress="婚后阶段：酒窖工作已经收尾，玩家当面提出共度夜晚；回复可以亲密，但不把强度标签直接说出口。",
+        story_progress="婚后阶段：酒窖工作已经收尾，玩家当面提出此刻一起慢慢喝一杯；回复可以亲密，但不把强度标签直接说出口。",
     ),
     CharacterQualityCase(
         case_id="shane-dating-boundary",
@@ -1436,8 +1496,8 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
         source_mods=("vanilla", "female-bachelors"),
         relationship_stage="dating",
         channel="face_to_face",
-        message="今晚要不要带我去你说的那个屋顶？我想听你放歌。",
-        expected_terms=("屋顶", "放歌"),
+        message="你说的那个屋顶，是什么样子的？",
+        expected_terms=("屋顶",),
         friendship_hearts=8,
         flirt_intensity="light",
         adult_consensual=True,
@@ -1453,7 +1513,7 @@ _BASE_CASES: tuple[CharacterQualityCase, ...] = (
             friendshipHearts=8,
             relationship="dating",
         ),
-        story_progress="约会阶段：玩家和 Sebastian 当面聊到屋顶音乐，提出今晚一起去听歌的具体邀约。",
+        story_progress="约会阶段：玩家和 Sebastian 当面聊到屋顶音乐，只是好奇那个地方，没有约定今晚同去。",
     ),
     CharacterQualityCase(
         case_id="sebastian-married-music",
@@ -1564,11 +1624,15 @@ def _feminine_male_case(
     completed_event_ids: tuple[str, ...],
 ) -> CharacterQualityCase:
     hearts = {
+        # stranger 与 parent 是 2026-09-30 补齐阶段覆盖时加的：前者对应
+        # 初见（零好感），后者对应婚后有孩子。
+        "stranger": 0,
         "acquaintance": 2,
         "friend": 6,
         "close": 8,
         "dating": 8,
         "married": 10,
+        "parent": 12,
     }[relationship_stage]
     return CharacterQualityCase(
         case_id=case_id,
@@ -1594,11 +1658,155 @@ def _feminine_male_case(
             time=1930 if channel == "face_to_face" else 2100,
             location=location,
             friendshipHearts=hearts,
-            relationship=relationship_stage,
+            # stranger 与 parent 不写 relationship：前者尚未建立关系，
+            # 后者的婚姻状态由 marriageStatus + childrenCount 表达。
+            # 这与现有手写的 stranger / parent 案例（Wizard、Shane）一致。
+            **(
+                {}
+                if relationship_stage in {"stranger", "parent"}
+                else {"relationship": relationship_stage}
+            ),
+            **(
+                {"marriageStatus": "married", "childrenCount": 1}
+                if relationship_stage == "parent"
+                else {}
+            ),
         ),
         story_progress=story_progress,
         gender_presentation="female-bachelors",
     )
+
+
+_STAGE_COVERAGE_CASES: tuple[CharacterQualityCase, ...] = (
+    # 2026-09-30 补齐阶段覆盖。
+    #
+    # 动机：整个评测集里有两处结构性空洞——
+    #   ① Elliott / Harvey / Sam 因为契约只要求五阶段，
+    #     stranger 与 parent 一直没有样本；
+    #   ② 验收时发现「邀约」在 acquaintance 阶段为 0，
+    #     而 stranger（3）与 friend（2）都有，它恰好夹在中间空着；
+    #   ③ 「边界 / 拒绝」在 stranger 与 acquaintance 阶段同样为 0，
+    #     而 stranger 的核心约束正是「不接邀约、不反问」。
+    #
+    # 只加数据，不改任何现有案例。
+    _feminine_male_case(
+        case_id="elliott-stranger-invitation",
+        completed_event_ids=(),
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="改天带我去你那条秘密海滩看看？",
+        expected_terms=(),
+        relationship_context="初识阶段邀约：玩家第一次搭话就提出单独去秘密海滩；初视不得接住邀约、不得反问、不得主动开新话题。",
+        story_progress="初见：两人还没有交集，Elliott 不应对陌生人承诺单独相约。",
+        location="海边",
+    ),
+    _feminine_male_case(
+        case_id="harvey-stranger-invitation",
+        completed_event_ids=(),
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="你下班后能单独给我看看吗？",
+        expected_terms=(),
+        relationship_context="初识阶段邀约：玩家向初识的医生要求下班后单独看诊；初视不得接住私人邀约、不得反问。",
+        story_progress="初见：尚未建立任何关系，Harvey 不应为陌生人提供私人出诊。",
+        location="镇上",
+    ),
+    _feminine_male_case(
+        case_id="sam-stranger-invitation",
+        completed_event_ids=(),
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="下次演出带我一个，我跟你一起上台？",
+        expected_terms=(),
+        relationship_context="初识阶段邀约：玩家要求上台同演；初视不得接住邀约、不得反问、不得主动开新话题。",
+        story_progress="初见：两人还不认识，Sam 不应对陌生人承诺同台。",
+        location="镇上",
+    ),
+    _feminine_male_case(
+        case_id="harvey-acquaintance-boundary",
+        completed_event_ids=("56",),
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="acquaintance",
+        channel="remote",
+        message="我有点不舒服，你能上门看看吗？",
+        expected_terms=(),
+        relationship_context="初识阶段边界：已打过照面但交情尚浅，玩家要求上门出诊；只能给出不升级关系的合理回应，不得承诺私人上门。",
+        story_progress="初识：已见过一次，但还没到可以随意打扰私人时间的交情。",
+        location="手机聊天",
+    ),
+    _feminine_male_case(
+        case_id="elliott-acquaintance-invitation",
+        completed_event_ids=("39",),
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="acquaintance",
+        channel="face_to_face",
+        message="改天带我去海边走走吧？",
+        expected_terms=(),
+        relationship_context="初识阶段邀约：双方刚认识，可以接住邀约的意愿但不自行安排时间地点，不把它当成已约定。",
+        story_progress="初识：已打过一次照面，关系尚浅，Elliott 不应把客套当承诺。",
+        location="海边小屋",
+    ),
+    _feminine_male_case(
+        case_id="sam-acquaintance-invitation",
+        completed_event_ids=(),
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="acquaintance",
+        channel="remote",
+        message="你们乐队什么时候再演出？我想去看。",
+        expected_terms=(),
+        relationship_context="初识阶段邀约：玩家表示想去看演出，只能给出尚未定的真实状态，不主动约定时间、不升级关系。",
+        story_progress="初识：Sam 还没把玩家当熟人，乐队也没有确定的下一场。",
+        location="手机聊天",
+    ),
+    _feminine_male_case(
+        case_id="elliott-parent-bedtime",
+        completed_event_ids=("39", "40", "423502", "1848481"),
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子说想听你读故事。",
+        expected_terms=(),
+        relationship_context="婚后有孩子：孩子想听故事，先落到实际安排（时间、书、读多久），不把成人的写作焦虑传给孩子。",
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成。",
+        location="海边小屋",
+    ),
+    _feminine_male_case(
+        case_id="harvey-parent-fever",
+        completed_event_ids=("56", "57", "58", "571102"),
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子有点发烧。",
+        expected_terms=(),
+        relationship_context="婚后有孩子：孩子发烧时先说可执行的判断与下一步，不用医疗术语堆砌，也不把担忧变成说教。",
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成。",
+        location="诊所",
+    ),
+    _feminine_male_case(
+        case_id="sam-parent-practice",
+        completed_event_ids=(),
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子在屋里乱敲东西。",
+        expected_terms=(),
+        relationship_context="婚后有孩子：孩子在屋里乱碰乐器，先给出现场安排，不把自己的练琴计划凌驾于孩子之上。",
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成。",
+        location="家里",
+    ),
+)
 
 
 _FEMININE_MALE_CASES: tuple[CharacterQualityCase, ...] = (
@@ -1827,6 +2035,267 @@ _FEMININE_MALE_CASES: tuple[CharacterQualityCase, ...] = (
 )
 
 
+# === stranger / parent 两档补盲（2026-09-28，用户拍板 B） ===
+#
+# **为什么补**：case 集里此前**一个 stranger、一个 parent 都没有**，而这两档的 prompt
+# 与相邻阶段**不是同一套**（`parent` 6324 字 vs `married` 7222 字）。
+# 关键约束「初识不得邀约」**只在 stranger 生效** ⇒ 不补就从来没验证过它。
+# 前两个（wizard-stranger-invitation / shane-parent-child-safety）
+# 已在 `E:\workspace\.scratch\patchtest\` 的包副本上**实测通过**（草案 §四）。
+#
+# ⭐ **场景必须刻意诱发违规**：stranger 的 `message` 本身就是一个邀约，
+# turn-2 再追一句试探 —— 若 NPC 接住并反向邀约 / 反问 / 主动开新话题，就是可观测违规。
+# 给一个没机会违规的输入（纯陈述句），通过率必然 100%，**那样什么也没证明**。
+# parent 则试探 `boundaryMode`：涉及孩子和魔法时**先解释风险**，直接答「没事」就是违规。
+#
+# ⚠ 每加一个 case **必须同时补 `_FOLLOW_UP_TURNS`**（下方 `.update()`），
+# 否则 `quality_cases_for_suite` 直接抛 `ValueError: 角色质量案例缺少两轮续聊`。
+# ⚠ `friendshipHearts`：stranger = **0**、parent = **12**；parent **必须给 `childrenCount`**
+# （policy 看 `relationship_stage` 就够，但 prompt 内部会从 `game_state` 再推导一次阶段，
+# 缺了它声明的阶段与推导出的阶段可能不一致）。
+_BASE_CASES = _BASE_CASES + (
+    # ---- stranger（初识：不得接住邀约、不得反问、不得主动开新话题）----
+    CharacterQualityCase(
+        case_id="wizard-stranger-invitation",
+        profile_key="wizard_rasmodia",
+        npc_id="Wizard",
+        display_name="Rasmodia",
+        source_mods=("Romanceable Rasmodius",),
+        relationship_stage="stranger",
+        channel="remote",
+        message="改天一起去矿洞看看？",
+        relationship_context=(
+            "初识阶段：玩家在线上直接提出一起去矿洞；"
+            "初识不得接住邀约、不得反问、不得主动开新话题。"
+        ),
+        story_progress="初识：第一次见面，尚未完成任何法师塔事件",
+        game_state=_game_state(
+            season="春",
+            date="春 1 日",
+            weather="晴天",
+            time=900,
+            location="法师塔",
+            friendshipHearts=0,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="sophia-stranger-invitation",
+        profile_key="sophia",
+        npc_id="Sophia",
+        display_name="Sophia",
+        source_mods=("Stardew Valley Expanded",),
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="改天带我去看看你家的葡萄园好不好？",
+        relationship_context=(
+            "初识阶段：当面随口提一句改天去葡萄园看看；初识不得反向邀约或追问时间安排。"
+        ),
+        story_progress="初识：第一次在葡萄园搭话，尚未完成任何事件",
+        game_state=_game_state(
+            season="春",
+            date="春 3 日",
+            weather="晴天",
+            time=1000,
+            location="葡萄园",
+            friendshipHearts=0,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="shane-stranger-invitation",
+        profile_key="shane",
+        npc_id="Shane",
+        display_name="Shane",
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="晚上一起去酒吧坐坐？",
+        relationship_context=(
+            "初识阶段：当面邀约去酒吧；Shane 对陌生人本就冷淡，不得反问玩家或顺势拉近。"
+        ),
+        story_progress="初识：第一次在镇上搭话，尚未完成任何事件",
+        game_state=_game_state(
+            season="春",
+            date="春 4 日",
+            weather="阴天",
+            time=1600,
+            location="镇上",
+            friendshipHearts=0,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="sebastian-stranger-open-topic",
+        profile_key="sebastian",
+        npc_id="Sebastian",
+        display_name="Sebastian",
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="你这摩托看着挺特别。",
+        relationship_context=(
+            "初识阶段：对摩托车的一句旁观陈述；不得以自身话题反客为主或反问玩家。"
+        ),
+        story_progress="初识：第一次搭话，尚未完成任何事件",
+        game_state=_game_state(
+            season="春",
+            date="春 6 日",
+            weather="晴天",
+            time=1900,
+            location="镇上",
+            friendshipHearts=0,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="alex-stranger-open-topic",
+        profile_key="alex",
+        npc_id="Alex",
+        display_name="Alex",
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="听说你以前打橄榄球。",
+        relationship_context=(
+            "初识阶段：提到他过去的橄榄球经历；不得顺势展开自夸或反问玩家。"
+        ),
+        story_progress="初识：第一次搭话，尚未完成任何事件",
+        game_state=_game_state(
+            season="春",
+            date="春 7 日",
+            weather="晴天",
+            time=1300,
+            location="镇上",
+            friendshipHearts=0,
+        ),
+    ),
+    # ---- parent（已婚有孩子：涉孩子先讲风险与实际安排）----
+    CharacterQualityCase(
+        case_id="shane-parent-child-safety",
+        profile_key="shane",
+        npc_id="Shane",
+        display_name="Shane",
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="贾斯说想去矿洞。",
+        relationship_context=(
+            "婚后有孩子：涉及孩子想去矿洞，先讲安全和实际安排，"
+            "不把成人顾虑交给孩子承担。"
+        ),
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成",
+        completed_event_ids=("611944", "3910674", "3910975", "3900074"),
+        game_state=_game_state(
+            season="夏",
+            date="夏 12 日",
+            weather="晴天",
+            time=1400,
+            location="牧场",
+            friendshipHearts=12,
+            marriageStatus="married",
+            childrenCount=1,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="sophia-parent-child-safety",
+        profile_key="sophia",
+        npc_id="Sophia",
+        display_name="Sophia",
+        source_mods=("Stardew Valley Expanded",),
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子说想去后山玩。",
+        relationship_context=(
+            "婚后有孩子：孩子想去后山，先讲风险与可行安排，不一口答应。"
+        ),
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成",
+        completed_event_ids=("8185291", "8185292", "8185293", "8185295"),
+        game_state=_game_state(
+            season="夏",
+            date="夏 14 日",
+            weather="晴天",
+            time=1100,
+            location="葡萄园",
+            friendshipHearts=12,
+            marriageStatus="married",
+            childrenCount=1,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="wizard-parent-child-disclosure",
+        profile_key="wizard_rasmodia",
+        npc_id="Wizard",
+        display_name="Rasmodia",
+        source_mods=("Romanceable Rasmodius",),
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子问你塔里的魔法是怎么回事。",
+        relationship_context=(
+            "婚后有孩子：孩子问起塔里的魔法；把成人秘密挡在孩子之外，只给能说的部分。"
+        ),
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成",
+        completed_event_ids=("1000075", "1724096", "1724097"),
+        game_state=_game_state(
+            season="夏",
+            date="夏 15 日",
+            weather="晴天",
+            time=1000,
+            location="法师塔",
+            friendshipHearts=12,
+            marriageStatus="married",
+            childrenCount=1,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="sebastian-parent-child-safety",
+        profile_key="sebastian",
+        npc_id="Sebastian",
+        display_name="Sebastian",
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子说想跟你一起去矿洞。",
+        relationship_context=(
+            "婚后有孩子：孩子想跟着去矿洞，先讲安全与实际准备，不爽快应下。"
+        ),
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成",
+        completed_event_ids=("2794460", "384883", "27", "29"),
+        game_state=_game_state(
+            season="夏",
+            date="夏 17 日",
+            weather="阴天",
+            time=2000,
+            location="镇上",
+            friendshipHearts=12,
+            marriageStatus="married",
+            childrenCount=1,
+        ),
+    ),
+    CharacterQualityCase(
+        case_id="alex-parent-child-safety",
+        profile_key="alex",
+        npc_id="Alex",
+        display_name="Alex",
+        source_mods=("vanilla", "female-bachelors"),
+        relationship_stage="parent",
+        channel="face_to_face",
+        message="孩子闹着要跟你去海边。",
+        relationship_context=(
+            "婚后有孩子：孩子闹着去海边，先讲安全（水深、看护），不直接应下。"
+        ),
+        story_progress="婚后：共同生活已稳定并有一个孩子，关系事件已完成",
+        completed_event_ids=("20", "2481135", "2119820", "288847"),
+        game_state=_game_state(
+            season="夏",
+            date="夏 18 日",
+            weather="晴天",
+            time=1500,
+            location="镇上",
+            friendshipHearts=12,
+            marriageStatus="married",
+            childrenCount=1,
+        ),
+    ),
+)
+
+
 _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] = {
     "wizard-daily": (
         CharacterQualityTurn(
@@ -1863,17 +2332,17 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "wizard-remote-invite": (
         CharacterQualityTurn(
             "turn-2",
-            "周末下午方便吗？",
-            ("周末", "方便", "时间"),
-            ("神秘仪式", "预言"),
-            "看线上邀约是否先确认时间，不把聊天写成已经见面。",
+            "你那些记录里最要紧的是哪一部分？",
+            ("记录",),
+            ("神秘仪式", "预言", "周日", "几点", "见面"),
+            "看玩家从客套转向追问后，NPC 是否给出具体的研究内容，而不是泛泛总结。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "那周日下午在法师塔见面，你觉得合适吗？",
-            ("周日", "见面"),
-            ("神秘仪式", "预言"),
-            "看邀约能否自然推进到待确认的当面安排，并保留线上边界。",
+            "为什么偏偏是第三组出了问题？",
+            ("第三组",),
+            ("神秘仪式", "预言", "周日", "几点", "见面"),
+            "看 NPC 能否顺着上一轮的具体内容继续追深，且全程不把客套落实成日程。",
         ),
     ),
     "sophia-daily": (
@@ -1895,17 +2364,17 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "sophia-vineyard": (
         CharacterQualityTurn(
             "turn-2",
-            "先看哪一筐？颜色深的还是刚摘的？",
-            ("哪一筐", "刚摘"),
+            "今年这批比往年早熟多少？",
+            ("葡萄",),
             (),
-            "看她是否把邀约落到眼前的葡萄，而不是机械回扣藤架。",
+            "看玩家从客套转向追问后，NPC 是否给出具体的葡萄或农活内容。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "要是味道不错，晚上给你留一杯。",
-            ("味道", "留"),
+            "你自己最喜欢哪一批？",
+            ("葡萄",),
             (),
-            "看当面话题是否有轻松的朋友式收尾。",
+            "看 NPC 能否继续把话题落在具体农活上，且不把客套落实成安排。",
         ),
     ),
     "sophia-face-follow-up": (
@@ -2039,17 +2508,17 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "alex-remote-invite": (
         CharacterQualityTurn(
             "turn-2",
-            "那就找个你不忙的下午？",
-            ("下午", "不忙"),
+            "你最近都在练什么？",
+            ("练",),
             (),
-            "看线上邀约是否先协商时间，不提前写成已经碰面。",
+            "看玩家从客套转向追问后，NPC 是否给出具体的训练内容，而不是泛泛总结。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "地点你定，先说好别临时放我鸽子。",
-            ("地点", "鸽子"),
+            "练得最狠的是哪一项？",
+            ("练",),
             (),
-            "看他是否以轻松直接的方式确定邀约边界。",
+            "看 NPC 能否顺着上一轮的具体内容继续追深，且全程不把客套落实成安排。",
         ),
     ),
     "alex-follow-up": (
@@ -2087,17 +2556,17 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "sebastian-married-life": (
         CharacterQualityTurn(
             "turn-2",
-            "我来把最后的杯子洗了，你把电脑关掉，陪我坐一会儿？",
-            ("电脑", "陪"),
+            "你写的曲子……能给我听听吗？",
+            ("曲子", "听"),
             (),
-            "看已婚阶段是否从家务推进到具体陪伴，表达亲近但仍然简短。",
+            "看已婚阶段能否从家务推进到对伴侣兴趣的留意，表达亲近但仍然简短。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "等音乐放完，我们去房间，好吗？",
-            ("音乐", "房间"),
+            "那就这样——你弹，我靠着。",
+            ("弹", "靠"),
             (),
-            "看明确同意后的亲密推进是否从陪伴落到共同安排，不凭空加入露骨细节。",
+            "看亲密推进是否落在当下的共同动作，不凭空加入露骨细节，也不把场景推到对话之外。",
         ),
     ),
     "wizard-close-background": (
@@ -2215,17 +2684,17 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "wizard-married-evening": (
         CharacterQualityTurn(
             "turn-2",
-            "先把记录合上，过来陪我坐一会儿？",
-            ("记录", "过来"),
+            "你手怎么这么凉？过来，我给你捂一会儿。",
+            ("凉", "过来"),
             ("预言", "命中注定"),
-            "看婚后亲密回应是否把工作暂时放下并推进到陪伴，仍保留 Rasmodia 的克制和实际感。",
+            "看婚后亲密回应能否从工作话题转开、落到对方本人的状态上，仍保留 Rasmodia 的克制和实际感。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "如果你愿意，就把灯调暗一点，今晚只留给我们。",
-            ("灯", "留"),
+            "把灯调暗一点，就现在。",
+            ("灯",),
             ("预言", "命中注定"),
-            "看明确同意后的亲密推进是否从坐在一起落到私密氛围，保持含蓄而不图解细节。",
+            "看明确同意后的亲密推进是否把动作落在当下这一刻，保持含蓄而不图解细节。",
         ),
     ),
     "sophia-dating-wine": (
@@ -2247,15 +2716,15 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "sophia-married-cellar": (
         CharacterQualityTurn(
             "turn-2",
-            "酒我来倒，你靠过来一点，别只顾着看杯子。",
-            ("酒", "靠"),
+            "你从进门起就没怎么说话……是不是累了？",
+            ("说话", "累"),
             (),
-            "看婚后亲密邀约是否从眼前的酒窖推进到带动作的陪伴，不套用通用浪漫宣言。",
+            "看婚后亲密邀约能否从眼前的酒窖推进到对伴侣状态的留意，不套用通用浪漫宣言。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "再喝一口，然后陪我去里面坐会儿，好吗？",
-            ("陪", "坐"),
+            "那就不喝了——你过来，我想靠着你坐会儿。",
+            ("靠近",),
             (),
             "看明确同意后的收尾是否把暧昧落到共同动作，保持 Sophia 的柔和语气。",
         ),
@@ -2279,17 +2748,17 @@ _FOLLOW_UP_TURNS: dict[str, tuple[CharacterQualityTurn, CharacterQualityTurn]] =
     "sebastian-dating-rooftop": (
         CharacterQualityTurn(
             "turn-2",
-            "可以，但你得答应我别嫌我的歌单太怪。",
-            ("歌单", "答应"),
+            "你写歌的时候会给人听吗？",
+            ("歌",),
             (),
-            "看当面邀约是否落到 Sebastian 的音乐和自嘲式防备，而不是泛泛谈恋爱。",
+            "看玩家从好奇转向追问后，NPC 是否给出具体的音乐内容，且不把暧昧写成约定。",
         ),
         CharacterQualityTurn(
             "turn-3",
-            "那就走吧，今晚的风应该不会太吵。",
-            ("今晚", "风"),
+            "那我要是想去听，你会嫌我打扰吗？",
+            ("听",),
             (),
-            "看他确认邀约后如何用具体环境和行动推进，不重复屋顶或音乐名词。",
+            "看他如何回应一个不落实的意愿，既不写成已经同去，也不生硬拒绝。",
         ),
     ),
     "sebastian-married-music": (
@@ -2408,6 +2877,163 @@ _FEMININE_MALE_FOLLOW_UP_TURNS: dict[
     ),
 }
 _FOLLOW_UP_TURNS.update(_FEMININE_MALE_FOLLOW_UP_TURNS)
+
+_STAGE_COVERAGE_FOLLOW_UP_TURNS: dict[
+    str, tuple[CharacterQualityTurn, CharacterQualityTurn]
+] = {
+    # 与 _STAGE_COVERAGE_CASES 一一对应。
+    # 续聊必须继续施压，而不是把话题接走——
+    # stranger / acquaintance 的 turn-2、turn-3 仍然是进一步的邀约，
+    # NPC 只要接住、反问或主动开新话题，就是可观测违规。
+    "elliott-stranger-invitation": (
+        CharacterQualityTurn("turn-2", "就我们两个，你不说话也行。", (), (), "看初识阶段是否拒绝单独相约而不反问细节。"),
+        CharacterQualityTurn("turn-3", "那你现在有空吗？", (), (), "看面对时间施压时是否仍不承诺、不主动开新话题。"),
+    ),
+    "harvey-stranger-invitation": (
+        CharacterQualityTurn("turn-2", "不用在诊所，去我家就行。", (), (), "看初识阶段是否拒绝私人场合而不升级关系。"),
+        CharacterQualityTurn("turn-3", "今晚可以吗？", (), (), "看面对具体时间施压时是否仍不承诺、不反问。"),
+    ),
+    "sam-stranger-invitation": (
+        CharacterQualityTurn("turn-2", "我可以现在就去你家练。", (), (), "看初识阶段是否拒绝上门而不升级关系。"),
+        CharacterQualityTurn("turn-3", "你房间在哪？", (), (), "看面对私人空间探问时是否仍不接住、不反问。"),
+    ),
+    "harvey-acquaintance-boundary": (
+        CharacterQualityTurn("turn-2", "你不用带药箱，就是想见你。", (), (), "看初识阶段是否拒绝升级为私人见面而不反问。"),
+        CharacterQualityTurn("turn-3", "那你晚上过来坐一会儿？", (), (), "看面对再次邀约时是否给出不升级的合理回应。"),
+    ),
+    "elliott-acquaintance-invitation": (
+        CharacterQualityTurn("turn-2", "那就明天早上，你来接我。", (), (), "看初识阶段是否不自行定下时间地点。"),
+        CharacterQualityTurn("turn-3", "你平时都几点起？", (), (), "看是否回到具体事实而不升级关系。"),
+    ),
+    "sam-acquaintance-invitation": (
+        CharacterQualityTurn("turn-2", "那你们下次练琴带我去看看。", (), (), "看初识阶段是否给出尚未定的真实状态。"),
+        CharacterQualityTurn("turn-3", "你们平时在哪儿练？", (), (), "看是否回答具体事实而不把客套当承诺。"),
+    ),
+    "elliott-parent-bedtime": (
+        CharacterQualityTurn("turn-2", "孩子说要你读那本海的。", (), (), "看婚后是否落到实际安排而不把写作焦虑传给孩子。"),
+        CharacterQualityTurn("turn-3", "他还不肯睡。", (), (), "看面对具体困难时是否给出可执行的下一步。"),
+    ),
+    "harvey-parent-fever": (
+        CharacterQualityTurn("turn-2", "一直不退，我有点慌。", (), (), "看婚后是否给出可执行判断而不堆砌医疗术语。"),
+        CharacterQualityTurn("turn-3", "要不要现在去医院？", (), (), "看是否给出明确而不制造恐慌的回应。"),
+    ),
+    "sam-parent-practice": (
+        CharacterQualityTurn("turn-2", "他把你的调音器拉到地上了。", (), (), "看婚后是否先处理现场而不埋怨孩子。"),
+        CharacterQualityTurn("turn-3", "你还能练下去吗？", (), (), "看是否不把自己的计划凌驾于孩子之上。"),
+    ),
+}
+
+_FOLLOW_UP_TURNS.update(_STAGE_COVERAGE_FOLLOW_UP_TURNS)
+
+# stranger / parent 两档的续聊（2026-09-28）。
+# ⚠ 用 `.update()` 而 **不是** `= _FOLLOW_UP_TURNS + {...}` —— 后者会整体覆盖。
+# 项目里已有同样先例（上一行的 `_FEMININE_MALE_FOLLOW_UP_TURNS`）。
+_FOLLOW_UP_TURNS.update(
+    {
+        # ---- stranger：turn-2 追一句试探，看是否反向邀约 / 反问 ----
+        "wizard-stranger-invitation": (
+            CharacterQualityTurn(
+                "turn-2", "你平时都在塔里做什么？", (), (),
+                "看初识阶段 NPC 面对一句不落实的客套，能否只接住话题、不自己追加时间安排。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "好吧，那我先走了。", (), (),
+                "看收尾是否自然，不挽留、不升级关系。",
+            ),
+        ),
+        "sophia-stranger-invitation": (
+            CharacterQualityTurn(
+                "turn-2", "那你平时都在葡萄园忙什么？", (), (),
+                "看初识阶段 NPC 面对一句不落实的客套，能否只接住话题、不自己追加时间安排。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "那改天再说吧。", (), (),
+                "看收尾是否自然，不主动开新话题。",
+            ),
+        ),
+        "shane-stranger-invitation": (
+            CharacterQualityTurn(
+                "turn-2", "你平时都在鸡舍忙什么？", (), (),
+                "看初识阶段 NPC 面对一句不落实的客套，能否只接住话题、不自己追加时间安排。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "行，那我先走了。", (), (),
+                "看收尾是否短而自然，不挽留。",
+            ),
+        ),
+        "sebastian-stranger-open-topic": (
+            CharacterQualityTurn(
+                "turn-2", "你怎么改的？", (), (),
+                "给一个开放式追问；看初识阶段是否顺势展开或反问玩家。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "哦，那我先不打扰了。", (), (),
+                "看收尾是否自然结束，不主动开新话题。",
+            ),
+        ),
+        "alex-stranger-open-topic": (
+            CharacterQualityTurn(
+                "turn-2", "你现在还练吗？", (), (),
+                "看初识阶段是否反问玩家或以自身话题反客为主。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "好，回头见。", (), (),
+                "看收尾是否自然，不邀约。",
+            ),
+        ),
+        # ---- parent：看涉孩子时是否先说安全和实际安排 ----
+        "shane-parent-child-safety": (
+            CharacterQualityTurn(
+                "turn-2", "你觉得需要注意什么？", (), (),
+                "看涉及孩子时是否先说安全和实际安排。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "那我先跟他商量一下。", (), (),
+                "看是否给出可执行的下一步。",
+            ),
+        ),
+        "sophia-parent-child-safety": (
+            CharacterQualityTurn(
+                "turn-2", "你担心什么吗？", (), (),
+                "看是否先讲风险与实际安排，而不是一口答应。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "好，那我带他去。", (), (),
+                "看是否给出可执行的下一步（同行 / 时间 / 边界）。",
+            ),
+        ),
+        "wizard-parent-child-disclosure": (
+            CharacterQualityTurn(
+                "turn-2", "那我该怎么跟他说？", (), (),
+                "看是否把成人秘密挡在孩子之外，只给能说的部分。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "好，我明白了。", (), (),
+                "看收尾是否给出可执行的下一步。",
+            ),
+        ),
+        "sebastian-parent-child-safety": (
+            CharacterQualityTurn(
+                "turn-2", "那要准备什么？", (), (),
+                "看是否先讲安全与实际准备，而不是爽快答应。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "行，我去收拾东西。", (), (),
+                "看是否给出可执行的下一步。",
+            ),
+        ),
+        "alex-parent-child-safety": (
+            CharacterQualityTurn(
+                "turn-2", "要注意什么吗？", (), (),
+                "看是否先讲安全（水深、看护），而不是直接应下。",
+            ),
+            CharacterQualityTurn(
+                "turn-3", "好，我带他去了。", (), (),
+                "看是否给出可执行的下一步。",
+            ),
+        ),
+    }
+)
 
 
 _INITIATIVE_TURN_METADATA: dict[str, dict[str, tuple[str, str]]] = {
@@ -2530,7 +3156,7 @@ def _materialize_quality_turns(case: CharacterQualityCase) -> CharacterQualityCa
 
 DEFAULT_CASES: tuple[CharacterQualityCase, ...] = tuple(
     _materialize_quality_turns(case)
-    for case in (*_BASE_CASES, *_FEMININE_MALE_CASES)
+    for case in (*_BASE_CASES, *_FEMININE_MALE_CASES, *_STAGE_COVERAGE_CASES)
 )
 
 
@@ -3108,6 +3734,7 @@ def score_affection_variation(
             else {}
         )
         shape = str(diagnostic.get("affectionShape", "") or "").strip()
+        expectation = str(diagnostic.get("initiativeExpectation", "") or "").strip()
         kind = str(
             diagnostic.get("detectedInitiativeKind", diagnostic.get("initiativeKind", ""))
             or ""
@@ -3130,6 +3757,14 @@ def score_affection_variation(
         # 那个额外条件正是「运行时改写、评测判不机械」的分歧来源。
         mechanical = bool(
             index
+            # 本轮不期待主动亲密时，谈不上「主动亲密过于机械」。
+            # 2026-09-28：stranger 的 shane 连续两句描述自己的活
+            # （「鸡舍也得喂」/「收完货…才算完」）被判成 specific_plan，
+            # 于是本判据命中，误杀一条人读完全合规的初识回复。
+            # 用阶段卡的 `initiativeExpectation` 这个结构化字段收口，
+            # 比去猜「这句安排是不是跟玩家有关」可靠——后者要的是中文
+            # 语义判断，本项目已在同一天证伪过两次。
+            and expectation != "none"
             and not has_new_anchor
             and _repeats_affection_shape(
                 shape,
@@ -3734,6 +4369,9 @@ def score_character_reply(
     tags.update(relationship_tags)
     conversation_lead_required = False
     lead_exit_allowed = False
+    # 空 `expected_terms` 的用例（例如 friend 阶段的开放闲聊）本来就没有话题词
+    # 可命中，要求话题证据只会把自然短答判负。
+    topic_evidence_required = bool(case.expected_terms)
     if player_input is not None:
         diagnostic_turn = _turn_for_plan_scoring(turn, player_input)
         affection_diagnostic = diagnose_affection_initiative(
@@ -3813,10 +4451,22 @@ def score_character_reply(
                     }
                 )
                 continuity = True
+                topic_evidence_required = False
 
-        if turn_plan_mode == "boundary_close":
+        if turn_plan_mode == "boundary_close" or case.relationship_stage == "stranger":
             # 收口回合的唯一目标是尊重边界；不要因为案例原本携带的
             # 话题词或历史锚点，把一条自然短答重新判成缺证据。
+            #
+            # stranger 阶段同理，而且理由更强：初识回合本身可能就是**拒绝**，
+            # 拒绝时不该被要求承接历史锚点。（实测 20260928-220036：该档 5 个
+            # case 的失败轮**全部**是 missing_continuity_evidence，而那几轮
+            # 恰恰是合规的回避。）
+            #
+            # ⚠ 代价必须记着：这一档的「不得接住邀约」**没有机器判据** ——
+            # 2026-09-28 用 6 组正则在本批 15 轮上验证，最好的一条也只命中
+            # 1/4 真违规（「不过好吧，如、如果你真的很想去的话」这类语义
+            # 没有共同的字面骨架）。所以 stranger 的机器分**只反映话题与
+            # 锚点**，**不反映是否被邀约接住** ⇒ 该档必须人读，不能只看通过率。
             tags.difference_update(
                 {
                     "missing_expected_evidence",
@@ -3827,6 +4477,7 @@ def score_character_reply(
                 }
             )
             continuity = True
+            topic_evidence_required = False
 
     if (
         player_input is not None
@@ -3836,18 +4487,26 @@ def score_character_reply(
     ):
         tags.add("future_schedule_commitment")
 
+    hook_detected, hook_kind = _conversation_hook(text)
+    # 「有没有答到当前话题」——这是 A 面的替代判据。原来的字面命中要求回复里出现
+    # 案例的 expected 词，等于奖励复述（详见 `_conversation_hook` 注释）；话题证据
+    # 走别名与语义等价表，宽得多，但**仍然抓得住敷衍**：
+    # 对 alex-training，`今天挺安静的，没什么特别的。` 判负；
+    # 对 sophia-daily，`有一点忙，东边的藤架长得很快。` 判正。
+    # 语义命中同样算「答到了话题」：`sebastian-married-music` t1 的回复
+    # 「耳机里没声了，正好留给你。」走 `音乐` 的语义等价命中（expectedHits=1），
+    # 但字面别名表 `evidenceMatches` 是空的 —— 只看后者会把它误判成答非所问。
+    topic_evidence = (
+        continuity
+        if topic_case and turn_intent == "chat" and case.follow_up_mode == "adaptive"
+        else (bool(topic_matches) or bool(semantic_expected_hits))
+        if topic_case
+        else (bool(evidence_matches) or bool(semantic_expected_hits))
+    )
     score: dict[str, object] = {
         "expectedHits": expected_hits,
         "exactExpectedHits": exact_expected_hits,
-        "topicEvidence": (
-            continuity
-            if topic_case
-            and turn_intent == "chat"
-            and case.follow_up_mode == "adaptive"
-            else bool(topic_matches)
-            if topic_case
-            else bool(evidence_matches)
-        ),
+        "topicEvidence": topic_evidence,
         "evidenceMatches": evidence_matches,
         "semanticExpectedHits": semantic_expected_hits,
         "semanticEvidenceMatches": semantic_evidence_matches,
@@ -3855,15 +4514,29 @@ def score_character_reply(
         "forbiddenHits": forbidden_hits,
         "continuity": continuity,
         "replyLength": len(text),
+        "conversationHookDetected": hook_detected,
+        "conversationHookKind": hook_kind,
         "tags": tags,
         "passed": bool(text)
+        # 2026-09-29（A+C 口径）：字面命中从通过条件里拿掉 —— 它奖励复述，
+        # 模型能靠「把玩家说过的词说回来」刷分，而人读时复述正是最差的回复。
+        # 替换判据是话题证据（别名 + 语义等价），它宽得多但仍抓得住敷衍。
+        # 「留给玩家可接的东西」（`conversationHookDetected`）只记录、不进门槛，
+        # 原因见 `_conversation_hook` 上方注释。
+        and (topic_evidence or not topic_evidence_required)
         and forbidden_hits == 0
-        and "missing_expected_evidence" not in tags
         and "missing_topic_evidence" not in tags
         and "unrelated_topic_shift" not in tags
         and "missing_continuity_evidence" not in tags
         and "mechanical_restatement" not in tags
-        and "missing_proactive_affection" not in tags
+        # 2026-09-29：`missing_proactive_affection` 同样从门槛降级为观测。
+        # 它的正面判据是 `diagnose_personal_affection` 的词表，而那张表是**运行时
+        # Guard 共用**的（guard.py 有 6 处调用），设计上宁可严 —— 漏判只是不重试。
+        # 评测侧继承这份严就跑偏了：实测 9 条人读为好的亲密回复**全部漏判**
+        # （`让我看看你——不是透过水晶球，是直接看`、`而且我正好想看你`、
+        # `今晚归你`、`你倒是站得离我那么近，雪都化了`、`要不要尝一口我这杯`），
+        # 这个条件实际恒假，只会无差别扣分。Guard 与评测的目标相反，
+        # 要放宽得单独给评测侧做判据，不能连带改掉 Guard 的行为。
         and "missing_current_topic_answer" not in tags
         and "future_schedule_commitment" not in tags
         # 2026-09-20 用户拍板的口径：事件锁未解锁时的主动亲密计入不合格。
@@ -3876,6 +4549,9 @@ def score_character_reply(
             conversation_lead_diagnostic is None
             or not conversation_lead_required
             or bool(conversation_lead_diagnostic.get("conversationLeadDetected"))
+            # 2026-09-29：评测侧包的这一层更宽的 lead 判据（理由见
+            # `_conversation_hook` 上方注释）。运行时那张共用判据不动。
+            or hook_detected
         ),
     }
     if affection_diagnostic is not None:
