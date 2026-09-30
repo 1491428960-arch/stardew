@@ -8328,3 +8328,12 @@ Demetrius「实验记录」、Maru「实验与天文观测」—— 「实验」
 
 **可调性**：只动 `_MAGIC_TOPIC_KEEP_PLAIN` 一个数即可（设 0 回到 §12 行为），
 它同时驱动两边，不会破同源。
+
+## 十、Rasmodia 话题池补齐（C，commit a7ca447）
+
+- 根因：Wizard 是同一 profile 带两个 overlay（Romanceable Rasmodius → Rasmodia，
+  SVE → Magnus），与 Rasmodia 共享语料；但 rasmodia.json 里 Rasmodia 的
+  preferredTopics 只有 6 条，少于窗口宽度 12，导致轮换机制对她失效。
+- 改动：6 → 44 条对齐 Wizard；「前妻和诅咒」→「前夫和诅咒」。
+- 验证：全量 4365 passed。
+- 教训：凭印象划 mod 边界不可靠，sourceMods / overlays 才是权威。
