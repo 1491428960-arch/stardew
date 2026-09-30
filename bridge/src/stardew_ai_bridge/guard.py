@@ -35,6 +35,7 @@ from .dialogue_boundaries import (
 )
 from .evaluation_budget import EvaluationBudgetExceeded
 from .models import ProviderResult
+from .npc_names import ALLOWED_LATIN
 from .relationship_gating import CONVERSATION_LEAD_STAGE_ORDER
 
 
@@ -77,6 +78,46 @@ VOICE_PARTICLE_DENSITY_RETRY_CONTENT = (
     "只重新回答最后一条玩家消息：整条最多留一个颗粒，其余照常自然表达，"
     "不要为了少用语气词而把话说得生硬；保留当前角色、当前话题和历史对象。"
 )
+
+# 对白长度上限（字）。取自「输出侧超 40 字上限 44%」那笔账，
+# 与 prompt 里的自然语言约束同源 —— 代码层此前**没有**这个概念，
+# 所以探针才会自己硬编码一个 40 。
+_DIALOGUE_MAX_CHARS = 40
+# 分级重试阈值：**超过上限 70%（即 68 字）才重试**。
+# 40~68 字之间不重试，交给既有的截断兜底 —— 那一档本来就
+# 卡在边界上，重试收益抵不过成本。这是 A2 方案与
+# A1（阈值 40、全量重试、+29% 请求）的唯一区别。
+#
+# ❗ **1.7 是实测出来的，不是拍脑袋**。回放 `artifacts/character-quality-eval/`
+# 下 348 个 run、2799 条对白的长度分布：
+#     超 40 字 46.16%（与台账的 44% 吻合 —— 口径一致，所以这份回放可信）
+#     超 64 字（比例 1.6）8.43%   ← 超出 A2 承诺的 2~6%
+#     超 68 字（比例 1.7）5.79%   ← 落在区间内，且留有余量
+# 所以此处**不要调回 1.6**：那会把请求增量抬到 8.4%。
+_LENGTH_RETRY_RATIO = 1.7
+
+LENGTH_RETRY_CONTENT = (
+    "上一条回复明显超过了当前场景允许的长度。"
+    "请重新回答同一个输入，把它压到角色卡要求的字数以内："
+    "只保留最关键的一个意思，删掉铺垫、例举和重复的修饰，"
+    "不要把句子截断，也不要因此改变说话人的语气和关系边界。"
+)
+
+def reply_exceeds_dialogue_length(reply: object) -> bool:
+    """对白是否**明显**超过长度上限 —— 这是**重试的判据**，
+    不是截断的判据。
+
+    截断在 `ResponseGuard.check` 里按 `max_chars`（1000）走，那是防爆兜底；
+    这里问的是「值不值得花一次请求重写」。两个量不同源，
+    不要合并。
+    """
+
+    if not isinstance(reply, str):
+        return False
+    text = reply.strip()
+    if not text:
+        return False
+    return len(text) > _DIALOGUE_MAX_CHARS * _LENGTH_RETRY_RATIO
 
 OPENING_RETRY_CONTENT = (
     "上一条回复重复了历史开场。只重新回答最后一条玩家消息；"
@@ -205,6 +246,10 @@ _NATURAL_RETRY_CONTENT = {
     "format": (
         "把上一条收成一两句自然中文对白，直接回应玩家；保持角色语气和当前话题，"
         "只输出对白文字。"
+    ),
+    "length": (
+        "把上一条收短：只保留最关键的一个意思，直接回应玩家；"
+        "保持角色语气和当前话题，不要把句子截断。"
     ),
     "topic_leakage": (
         "从当前话题写一小段角色对白，直接回应玩家；保持角色语气和自然口语。"
@@ -339,52 +384,17 @@ class ResponseGuard:
     # 兜底剥离用：同一个字符集，但**连续剥离**并连带吃掉中间的空格。
     # 两个模式必须一起改——`check` 剥完还会再跑一次 `format_issue` 自查。
     _leading_punctuation_strip = re.compile(r"^[\s，,、；;：:]+")
-    _allowed_english = frozenset(
-        {
-            "ai",
-            "alex",
-            "abigail",
-            "andy",
-            "caroline",
-            "claire",
-            "clint",
-            "demetrius",
-            "elliott",
-            "emily",
-            "evelyn",
-            "gus",
-            "haley",
-            "harvey",
-            "jas",
-            "jodi",
-            "joja",
-            "jojamart",
-            "kent",
-            "krobus",
-            "lance",
-            "leah",
-            "linus",
-            "maru",
-            "marnie",
-            "morris",
-            "npc",
-            "olivia",
-            "pam",
-            "penny",
-            "pierre",
-            "rasmodia",
-            "robin",
-            "sam",
-            "sebastian",
-            "shane",
-            "sophia",
-            "sve",
-            "victor",
-            "vincent",
-            "willy",
-            "wizard",
-        }
-    )
+    # 名单见 npc_names.ALLOWED_LATIN。
+    #
+    # ⚠ **不要再把它内联回这个类**：reply_scrub._KEEP_LATIN 要用同一份 ——
+    # 2026-09-27 之前两边各写各的（这里有 42 项，那边只有 AI 一项），结果是
+    # 「NPC 提到别的角色」在 guard 这边不会重试、却在 scrub 那边被**静默删掉**。
+    # 垫成独立模块而不是互相 import，是因为 reply_scrub -> guard ->
+    # evaluation_budget -> models -> reply_scrub 是一条现成的循环链。
+    #
+    # 原先「42 项 vs 语料 142 个纯字母 npcId」那笔账、以及判据必须取自语料
+    # 不靠手写的理由，都记在 npc_names 的模块 docstring 里。
+    _allowed_english = ALLOWED_LATIN
 
     def __init__(self, max_chars: int = 1000) -> None:
         self.max_chars = max(1, int(max_chars))
@@ -1189,6 +1199,10 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
             reply,
             _prompt_assistant_replies(prompt),
         )
+        # 同理**必须进来**：否则重试生成的短回复与超长回复打平，
+        # `best` 会保留超长的那条，重试就白做了（与 2026-09-24
+        # 粒度那次同形）。
+        and not reply_exceeds_dialogue_length(reply)
     )
     variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     event_gate_clean = int(not _violates_event_gate(prompt, reply))
@@ -1223,7 +1237,12 @@ def _best_retry_result(
 
     if best.reply == current.reply and best.provider == current.provider:
         return current
-    return best.model_copy(update={"warnings": list(current.warnings)})
+    return best.model_copy(
+        update={
+            "warnings": list(current.warnings),
+            "retry_improved": current.retry_improved,
+        }
+    )
 
 
 def _dedupe_warnings(values: list[str]) -> list[str]:
@@ -1257,6 +1276,10 @@ def retry_for_format_noise(
     best = result
     retry_counts: dict[str, int] = {}
     total_retries = 0
+    # 本次调用中「是否有任何一次重试被采纳」。`None` = 从未比较过
+    # （没触发重试、重试抛异常、或预算跳闸）—— 必须与 `False`（比较过但没赢）分开，
+    # 否则「没跑」会被算成「跑了没用」。
+    any_retry_improved: bool | None = None
     natural_mode = _natural_mode(prompt)
     # 不同问题可能交替出现（例如格式噪声修掉后又变回冷回复）；
     # 总预算要足够让各自的有限重试完成，但每类问题仍受 retry_limit 限制。
@@ -1360,6 +1383,12 @@ def retry_for_format_noise(
             issue = "too_many_speech_particles"
             retry_kind = "voice_particle_density"
             retry_content = VOICE_PARTICLE_DENSITY_RETRY_CONTENT
+        # 排在语气粒度之后：两者都是「这一轮自己就带得太多」，
+        # 但粒度只影响语气，长度会直接让玩家看到一大段。
+        elif issue is None and reply_exceeds_dialogue_length(current.reply):
+            issue = "over_length"
+            retry_kind = "length"
+            retry_content = LENGTH_RETRY_CONTENT
         elif issue is None and _repeats_history_speech_particle(
             prompt,
             current.reply,
@@ -1384,6 +1413,10 @@ def retry_for_format_noise(
             1
             if retry_kind == "affection" and _turn_plan_mode(prompt)
             else 2
+            # "length" 故意**不在**这个集合里：它落到下面的 `else`，
+            # 每条超长回复**只重试一次**。这是 A2 与 A1 的关键差别
+            # —— 放进这个集合会变成每条重试两次（实测 calls=2），
+            # 请求量直接翻倍，超出预算。
             if retry_kind in {
                 "format",
                 "continuity",
@@ -1487,11 +1520,17 @@ def retry_for_format_noise(
                 )
             }
         )
-        if _retry_quality_key(prompt, current.reply) > _retry_quality_key(
-            prompt,
-            best.reply,
-        ):
+        improved_this_round = _retry_quality_key(
+            prompt, current.reply
+        ) > _retry_quality_key(prompt, best.reply)
+        if improved_this_round:
             best = current
+        any_retry_improved = bool(any_retry_improved) or improved_this_round
+        # 落盘择优结果：`warnings` 只记「触发过重试」，不记「重试有没有用」。
+        # 没有这个字段，就答不了「480 次 affection 重试里多少是白跑的」。
+        current = current.model_copy(
+            update={"retry_improved": any_retry_improved}
+        )
         if retry_kind == "schedule":
             # 未来社交安排是硬边界；只做一次短纠偏，避免修掉排期后又
             # 叠加 affection/conversation_lead 长指令，把回复再次带偏。
