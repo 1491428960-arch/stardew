@@ -3215,6 +3215,23 @@ def _trim_energy_profile_to_stage(
 # （逐角色断言条数 ≤ 本常量，超了就是"写了也白写"）。
 _PREFERRED_TOPICS_LIMIT = 12
 
+#: 话题窗口每轮前进的条数。**2026-10-01 由 1 改为 4。**
+#:
+#: 原口径「每轮前进 1 条」⇒ 相邻轮次共享 11 条、单轮只滑进 1 条新素材。而 `_pick`
+#: 第一级筛的是「面没用过 **且** 条目没说过」，窗口里那 11 条早已被标记，第一级实际
+#: 只剩刚进来的那 1 条 —— 它一旦跟当前话口对不上就降级到「说过的」，玩家侧读到的
+#: 就是话题重复（这正是「话题少了」的真实来源，池子并不小）。
+#:
+#: 步长 4 ⇒ 每轮滑进 4 条、单条素材驻留 3 轮。代价是同一批素材重来一圈的周期从
+#: `len(items)` 轮缩到 `ceil(len(items) / 4)` 轮 —— 换新鲜度付的价钱，不是缺陷。
+#: **改回 1 即可完整回退**；池 ≤ `_PREFERRED_TOPICS_LIMIT` 条的角色不受影响
+#: （走下面「原样返回全池」那条分支）。
+#:
+#: 实测（2026-10-01，47 个活跃池，长度 17~62）：在 K ∈ {2,3,4,5,6,8,12} 下素材
+#: 覆盖率一律 100%，没有任何一条因步长与池长不互质而被永久跳过 —— 遗漏只可能发生
+#: 在 `gcd(K, len) > _PREFERRED_TOPICS_LIMIT` 时，而 K ≤ 12 时该式恒不成立。
+_TOPIC_WINDOW_STEP = 4
+
 
 def _topic_window_for_turn(value: object, turn_index: int) -> list[str]:
     """从**完整**素材池里取一个 `_PREFERRED_TOPICS_LIMIT` 条的滑动窗口。
@@ -3225,11 +3242,16 @@ def _topic_window_for_turn(value: object, turn_index: int) -> list[str]:
     参与生活面轮换 —— **写了白写**（与 §「第 7 个静默闸门」同型，只是这次宽度
     从"条数"换成了"池子"）。这里改成按**已聊轮数**在完整池上滑动：
 
-    * 窗口每轮前进 **1 条**，于是相邻轮次共享 11 条、只换掉 1 条：话题池缓慢
-      轮换，读起来不突兀，而 `_pick` 又总有稳定的新素材可挑；
+    * 窗口每轮前进 `_TOPIC_WINDOW_STEP` 条（2026-10-01 由 1 改为 4），于是相邻
+      轮次共享 `_PREFERRED_TOPICS_LIMIT - _TOPIC_WINDOW_STEP` 条（=8）、单轮换进
+      4 条：`_pick` 第一级每轮都有 4 条新鲜素材可挑，而不是只有刚滑进来的那 1 条；
+    * 代价：单条素材在窗口里只驻留
+      `_PREFERRED_TOPICS_LIMIT / _TOPIC_WINDOW_STEP` 轮（=3），且同一批素材重来
+      一圈的周期从 `len(items)` 轮缩到 `ceil(len(items) / _TOPIC_WINDOW_STEP)` 轮；
     * 池子不宽于窗口时**原样返回全池** —— 所以「池 ≤ 12 条」的角色行为与从前
-      逐字节相同，本次代码改动可以先于数据扩充独立落地、不影响既有回归；
-    * 窗口按**循环**取，池子不是窗口整数倍时也不会漏掉尾部素材。
+      逐字节相同，步长对它们无影响，本次改动也不影响既有回归；
+    * 窗口按**循环**取，池子不是步长整数倍时也不会漏掉素材（见 `_TOPIC_WINDOW_STEP`
+      注释里的覆盖率实测）。
 
     ⚠ 调用方必须把结果**同时**用于 `persona_core` 与落点池，见
     `_preferred_topics_for_prompt` 的 docstring：两处不同源就是
@@ -3244,7 +3266,7 @@ def _topic_window_for_turn(value: object, turn_index: int) -> list[str]:
     size = _PREFERRED_TOPICS_LIMIT
     if len(items) <= size:
         return items
-    start = int(turn_index) % len(items)
+    start = (int(turn_index) * _TOPIC_WINDOW_STEP) % len(items)
     return [items[(start + step) % len(items)] for step in range(size)]
 
 

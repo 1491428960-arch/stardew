@@ -72,7 +72,9 @@ def _window_topics(npc_id: str, turn_index: int = 0) -> list[str]:
     """**真正进 prompt 的那一批**落点。
 
     2026-09-30 起 `preferredTopics` 是素材库（可以几十条），进 prompt 的是
-    `_topic_window_for_turn` 按轮次切出的 12 条窗口，且逐轮前进一条。
+    `_topic_window_for_turn` 按轮次切出的 12 条窗口。窗口每轮前进
+    `prompts._TOPIC_WINDOW_STEP` 条 —— 2026-10-01 由 1 改为 **4**，于是相邻轮次
+    共享 8 条、单轮换进 4 条（旧口径是共享 11 条、换进 1 条）。
     所以"渲染成什么"这类断言必须按窗口算：直接喂整库渲染出的超长 guidance
     既不是线上会发生的输入，测出来的红也不是真问题。
     """
