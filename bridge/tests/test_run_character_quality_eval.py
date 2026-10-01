@@ -671,6 +671,106 @@ def test_compact_prompt_switch_is_independent_of_economical() -> None:
     assert module.EvaluationBudget().compact_prompt is False
 
 
+def test_build_context_forwards_recent_replies_from_history() -> None:
+    """`_build_context` 必须把 history 里的 assistant 项转成 `recentReplies`。
+
+    背景（2026-10-01）：`prompts.py` 拿 `recentReplies` 的**长度**算话题窗口轮次
+    `_turn_index`（真机 `history` 被 `MaxHistoryItems = 6` 封顶，用它的长度当轮次
+    信号会让窗口几乎不滑动）。评测脚本此前只发 `history`，于是 `_turn_index` 恒 0、
+    窗口永远停在池首 —— `_TOPIC_WINDOW_STEP`（K）完全不起作用，K=1 与 K=4 两臂的
+    prompt 逐字节相同。那次对照的 null 因此是**必然**的，与采样噪音无关。
+    """
+    module = _load_eval_module()
+    store = module._resolve_index(ROOT / "data" / "personas")
+    builder = module.ContextBuilder(profile_index=store)
+
+    captured: dict[str, object] = {}
+    real_build = builder.build
+
+    def _spy(payload, *args, **kwargs):
+        captured.update(payload)
+        return real_build(payload, *args, **kwargs)
+
+    builder.build = _spy  # type: ignore[method-assign]
+
+    case = case_by_id("sophia-daily")
+    history = [
+        {"role": "user", "content": "你好呀。"},
+        {"role": "assistant", "content": "谢谢你来。"},
+        {"role": "user", "content": "今天怎么样？"},
+        {"role": "assistant", "content": "我在手工房里酿酒。"},
+    ]
+    module._build_context(builder, case, history=history, turn=case.dialogue_turns()[0])
+
+    assert captured["recentReplies"] == ["谢谢你来。", "我在手工房里酿酒。"]
+
+
+def test_build_context_sends_empty_recent_replies_without_assistant_turns() -> None:
+    """没有 assistant 项时发空列表，而不是缺键。
+
+    `prompts.py` 对缺键和空列表都落到 `_turn_index = 0`，行为相同；但显式空列表
+    让「这条路径接上了」在 payload 层可断言，避免将来重构又把它整个丢掉。
+    """
+    module = _load_eval_module()
+    store = module._resolve_index(ROOT / "data" / "personas")
+    builder = module.ContextBuilder(profile_index=store)
+
+    captured: dict[str, object] = {}
+    real_build = builder.build
+
+    def _spy(payload, *args, **kwargs):
+        captured.update(payload)
+        return real_build(payload, *args, **kwargs)
+
+    builder.build = _spy  # type: ignore[method-assign]
+
+    case = case_by_id("sophia-daily")
+    module._build_context(
+        builder,
+        case,
+        history=[{"role": "user", "content": "你好呀。"}],
+        turn=case.dialogue_turns()[0],
+    )
+
+    assert captured["recentReplies"] == []
+
+
+def test_recent_replies_are_capped_like_the_request_model() -> None:
+    """`recentReplies` 跟随 `models.DialogueTestRequest.recent_replies` 的 40 条上限。
+
+    超限在真机上会被 `extra="forbid"` 的模型拒成 422，评测里虽然不经过 pydantic，
+    但两侧口径要一致，否则评测会喂出线上不可能出现的超长窗口。
+    """
+    module = _load_eval_module()
+    assert module._RECENT_REPLIES_LIMIT == 40
+
+    store = module._resolve_index(ROOT / "data" / "personas")
+    builder = module.ContextBuilder(profile_index=store)
+
+    captured: dict[str, object] = {}
+    real_build = builder.build
+
+    def _spy(payload, *args, **kwargs):
+        captured.update(payload)
+        return real_build(payload, *args, **kwargs)
+
+    builder.build = _spy  # type: ignore[method-assign]
+
+    case = case_by_id("sophia-daily")
+    history = []
+    for index in range(50):
+        history.append({"role": "user", "content": f"问题 {index}"})
+        history.append({"role": "assistant", "content": f"回复 {index}"})
+    module._build_context(builder, case, history=history, turn=case.dialogue_turns()[0])
+
+    replies = captured["recentReplies"]
+    assert isinstance(replies, list)
+    assert len(replies) == 40
+    # 保留的是**最近** 40 条，不是最早 40 条。
+    assert replies[-1] == "回复 49"
+    assert replies[0] == "回复 10"
+
+
 def test_eval_stops_before_next_request_when_budget_is_reached(
     monkeypatch,
     tmp_path: Path,

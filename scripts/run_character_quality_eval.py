@@ -277,6 +277,11 @@ def _build_request(
     )
 
 
+#: 跨窗口回复条数上限，与 `models.DialogueTestRequest.recent_replies` 的
+#: `max_length=40` 同源（真机由 Mod 端回看档案提供，比发送窗口长）。
+_RECENT_REPLIES_LIMIT = 40
+
+
 def _build_context(
     builder: ContextBuilder,
     case: CharacterQualityCase,
@@ -340,6 +345,18 @@ def _build_context(
         message=case.message if message is None else message,
         intent=case.intent if intent is None else intent,
     )
+    history_items = [dict(item) for item in (case.history if history is None else history)]
+    # 跨窗口回复：`prompts.py:1792` 用它算窗口轮次 `_turn_index`，那是话题窗口
+    # 滑动的**唯一**信号源。本脚本此前只发 `history`，而真机 `history` 被
+    # `BridgeClient.MaxHistoryItems = 6` 封顶，于是评测路径恒 `_turn_index = 0`、
+    # 窗口永远停在池首 —— `_TOPIC_WINDOW_STEP`（K）完全不起作用，任何 K 的
+    # A/B 两臂 prompt 逐字节相同，测出来的差异只可能是采样噪音。
+    # 取 assistant 项即可：`recentReplies` 的语义就是「NPC 已经说过的回复」。
+    recent_replies = [
+        str(item["content"])
+        for item in history_items
+        if item.get("role") == "assistant" and item.get("content")
+    ][-_RECENT_REPLIES_LIMIT:]
     payload: dict[str, object] = {
             "npcId": _canonical_case_npc_id(case),
             "displayName": quality_case_display_name(case),
@@ -349,7 +366,8 @@ def _build_context(
             "intent": case.intent if intent is None else intent,
             "channel": case.channel,
             "qualityContext": quality_context,
-            "history": [dict(item) for item in (case.history if history is None else history)],
+            "history": history_items,
+            "recentReplies": recent_replies,
             "gameState": game_state,
         }
     if case.relationship_world is not None:
