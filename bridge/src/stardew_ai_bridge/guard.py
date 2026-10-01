@@ -113,6 +113,82 @@ LENGTH_RETRY_CONTENT = (
     "不要把句子截断，也不要因此改变说话人的语气和关系边界。"
 )
 
+# 元叙述：模型把**任务说明**当成台词说了出来。
+#
+# 实测来源（2026-10-01，`_length_retry_probe.py`，Sebastian hearts=12 第 1 轮）：
+#     「没有玩家输入，需要主动聊起一个话题。根据角色设定，喜欢独处、摩托车、
+#       音乐、编程，当前关系……」                                 —— 417 字
+# 这一轮先命中 `response_format_retry: markdown`，重试又撞上 `provider_error`，
+# 于是按 `except Exception` 分支**原样放行**，模型的自言自语直接进了玩家可见的
+# 台词。`_topic_prompt_echo` 只匹配「请主动找一个自然的话题」这类措辞，拦不到它。
+#
+# ⚠ 词条要挑「角色绝不可能说出口」的，宁可少而准：误报的代价是白花一次请求，
+# 而 `_blocks_meta_narration_release` 会据此**丢弃整段文本**，误报代价更高。
+_META_NARRATION_MARKERS = (
+    "没有玩家输入",
+    "玩家输入",
+    "根据角色设定",
+    "根据人物设定",
+    "角色设定要求",
+    "需要主动聊起",
+    "需要主动找",
+    "主动找一个话题",
+    "主动聊起一个话题",
+    "当前关系阶段",
+    "作为语言模型",
+    "语言模型",
+)
+
+#: 判为元叙述且重试失败时的兜底。取沉默而非改写：这一轮的文本已经不可信
+#: （无法判断哪些是台词、哪些是任务复述），与其猜，不如让 NPC 不开口。
+META_NARRATION_FALLBACK = "……"
+META_NARRATION_RETRY_CONTENT = (
+    "上一条回复把任务说明写了出来（例如「没有玩家输入」「根据角色设定」"
+    "「需要主动聊起一个话题」），那不是角色会说的话。"
+    "请只输出这个角色此刻真正说出口的台词本身，不要解释你在做什么、"
+    "不要复述设定或规则、不要写旁白。"
+)
+
+
+def is_meta_narration(reply: object, *, at_start_only: bool = False) -> bool:
+    """回复是否在复述任务/设定，而不是角色在说话。
+
+    `at_start_only=True` 时只查开头，用于**决定是否丢弃文本**（重试失败放行前）；
+    默认查全文，用于**决定是否触发重试**。两者严格程度不同是刻意的：
+    触发重试多花一次请求，误报可容忍；丢弃文本不可逆，判据必须更紧。
+    """
+
+    if not isinstance(reply, str):
+        return False
+    text = reply.strip()
+    if not text:
+        return False
+    probe = text[:40] if at_start_only else text
+    return any(marker in probe for marker in _META_NARRATION_MARKERS)
+
+
+def _discard_meta_narration(result: "ProviderResult") -> "ProviderResult":
+    """重试失败后，若最终仍要放行一段元叙述，就不放行。
+
+    这条路径此前是**原样返回**（注释写「交给调用方现有兜底链路」），但兜底链路
+    只管格式与长度，不认得「模型把任务说明当成台词」—— 实测那段 417 字的
+    自言自语正是从这里漏进玩家输出的。
+
+    只在**开头**命中时才丢弃：整段都不可信，改写的风险大于沉默。
+    """
+
+    if not is_meta_narration(result.reply, at_start_only=True):
+        return result
+    return result.model_copy(
+        update={
+            "reply": META_NARRATION_FALLBACK,
+            "warnings": _dedupe_warnings(
+                [*result.warnings, "response_meta_narration_discarded"]
+            ),
+        }
+    )
+
+
 def reply_exceeds_dialogue_length(reply: object) -> bool:
     """对白是否**明显**超过长度上限 —— 这是**重试的判据**，
     不是截断的判据。
@@ -1313,6 +1389,12 @@ def retry_for_format_noise(
             retry_kind = "affection"
             retry_content = AFFECTION_RETRY_CONTENT
             retry_needs_conversation_lead = missing_conversation_lead
+        # 排在 prompt_echo 之前：复述任务说明比复述话题措辞严重得多 ——
+        # 后者仍是一句角色台词，前者整段都不是人话。
+        elif issue is None and is_meta_narration(current.reply):
+            issue = "meta_narration"
+            retry_kind = "meta_narration"
+            retry_content = META_NARRATION_RETRY_CONTENT
         elif issue is None and ResponseGuard.is_topic_prompt_echo(current.reply):
             issue = "prompt_echo"
             retry_kind = "topic_leakage"
@@ -1518,7 +1600,8 @@ def retry_for_format_noise(
                     )
                 }
             )
-            return _best_retry_result(best, current)
+            # ⚠ 兜底链路不认得元叙述，所以这里得自己把最后一关。
+            return _discard_meta_narration(_best_retry_result(best, current))
         current = retried.model_copy(
             update={
                 "warnings": _dedupe_warnings(
