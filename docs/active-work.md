@@ -8362,3 +8362,47 @@ Demetrius「实验记录」、Maru「实验与天文观测」—— 「实验」
      （`test_conversation_lead_variation.py` 的 docstring 自己就写着这条）；
   3. 别凭记忆找约束：本次一度把截断位置记成 `stage_policy.py` 的 `GUIDANCE_LIMIT`，
      而该常量在本库**根本不存在**，真实位置在 `prompts.py:3596`。先 grep 再断言。
+
+
+---
+
+## ㊿ roleGuidance 上限 240 → 320（2026-10-01，commit 4e6126d）
+
+**先说偏离**：用户授权的是 (a)「`roleGuidance` 去点名化，解锁扩池空间」。执行时改成了
+**提高它的独立上限**。理由：
+
+`roleGuidance` 里那份逐条点名是**四个测试**（2026-09-21 / 09-25 / 09-30）钉住的机制，
+明示目的是「落点池点名的类别，在 prompt 里必须看得见」—— 它修的是「连着几轮聊同一个
+物件」。改成不点名的说法，会把这层**指令**降级成背景**资料**（`persona_core.voiceStyle.
+preferredTopics` 里同样的 12 条仍在，但显著性完全不同）。而这个行为风险**现有评测
+测不出来**：K=1/K=4 是 null 结果（非配对 `turnPassRate` +2.5pp, z=0.52, p=0.60；配对
+n=196 回复长度 t=+0.79, p=0.431），`scripts/analyze_ab_power.py` 的 MDE 说明 5 字量级
+效果要 ~450 轮/臂。提高上限则**不改任何措辞、不动任何数据**，撤销成本为零、本地可穷举验证。
+
+**改动**：`prompts.py` 新增模块常量 `_ROLE_GUIDANCE_LIMIT = 320`，`_compact_stage_policy`
+对 `roleGuidance` 用它；同组 `minimumExpression` / `variationRule` / `voiceFingerprint` 仍 240。
+
+**⚠ 这不是在修一个正在发生的截断（别记错）**：
+- 改动前**所有** K=4 窗口的渲染长度都 ≤ 240，紧凑那一步从未真正触发过。
+- 但有窗口**恰好卡在 240 整**：Sebastian 8/172、Alex 44/44（100%）。零余量本身不是
+  错误，只是意味着素材库一扩容就必然越界 —— 而扩容正是本来就打算做的事。
+- 模拟 Alex 池 11 → 30 条：最坏窗口渲染 271 字（> 240 改动前会截；< 320 改动后安全）。
+- 954 字素材逼真实路径 `_build_context`：渲染 954 → 上线 320，确认净上限由本常量决定。
+  另两处 360（`_build_conversation_lead_card`、`_build_final_role_voice_contract`）
+  是故意更宽的二次安全网，不是净上限。
+
+**本次最有价值的产出是顺带修掉的一个同义反复测试**：
+
+`test_rendered_guidance_stays_within_the_compact_limit` 断言
+`len(_compact_stage_policy(...)) <= 240` —— 而 `_compact_stage_policy` **自己就用 240
+截断**，输出恒 ≤ 240，于是断言恒真。把上限调回 230 后它**照样全绿**（240 被截成 230 后
+满足 `230 <= 230`）。同一个测量盲区还让我一度把「紧凑后恰好 240」误读成「被截断到 240」。
+
+判据改为「**渲染结果 == 紧凑结果**」（与上限取值无关，截断必然暴露），覆盖全部 4 个
+`conversationLead` 阶段（原先只测 `dating`），更名
+`test_rendered_guidance_survives_the_compact_path`。反向验证：上限 230 → Alex / Sebastian /
+Sophia 三个角色变红，恢复 320 → 全绿。`test_topic_slot_rotation.py` 真实路径断言里硬编码
+的 240 一并改为读常量（它比真实上限还紧，扩池后会假红）。全量 4390 passed。
+
+**扩池余量**：320 下 12 条窗口的素材预算约 186 字（模板固有部分约 134 字），即单条平均
+≤ 15 字即安全；Alex 现有 11 条里最长 14 字。

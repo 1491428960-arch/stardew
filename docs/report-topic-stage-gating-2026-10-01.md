@@ -449,3 +449,57 @@ $env:PYTHONPATH = 'E:\workspace\projects\stardew-ai-npc.worktrees\story-memory\b
 # 低阶段零命中检测
 # （扫描 artifacts/character-quality-eval/<run>/results.jsonl 的 relationshipStage + turns[].reply）
 ```
+
+
+---
+
+## 十二、roleGuidance 上限调整，与一个同义反复的测试（2026-10-01，commit 4e6126d）
+
+§5.1 记的是「门槛不进 persona 数据」。这一节记录随后发现的一个**测量方法错误** ——
+它比上限本身更值得记，因为它同时污染了前面若干条结论。
+
+### 12.1 上限 240 → 320，以及它**不是**什么
+
+`conversationLead.roleGuidance` 是那四个文本字段里唯一长度**由外部数据决定**的一个：
+8 个角色的模板都含 `{topicPool}`，渲染时把当轮窗口的 12 条素材**逐条点名**展开。素材库
+扩容、`_TOPIC_WINDOW_STEP` 改动、或窗口只是滚到了长条目，同一段模板就渲染出不同长度 ——
+所以 240 对它从来不是一个稳定上界。
+
+新增模块常量 `_ROLE_GUIDANCE_LIMIT = 320`（`_compact_stage_policy` 对 `roleGuidance`
+用它；同组 `minimumExpression` / `variationRule` / `voiceFingerprint` 仍 240）。另两处
+360（`_build_conversation_lead_card`、`_build_final_role_voice_contract`）是**故意更宽**
+的二次安全网，净上限由本常量决定 —— 954 字素材逼真实路径 `_build_context`，实测
+渲染 954 → 上线 320。
+
+**必须准确表述**：改动前**没有任何窗口被截断**，所有窗口的渲染长度都 ≤ 240，紧凑那一步
+从未触发。这次做的是把**零余量**变成**有余量**：Sebastian 8/172、Alex 44/44 恰好卡在
+240 整，任何扩容都会立刻越界（模拟 Alex 池 11 → 30 条，最坏窗口渲染到 271 字）。
+把它说成"修了一个正在发生的截断"是错的。
+
+### 12.2 同义反复：`len(紧凑结果) <= 上限` 验不出截断
+
+旧测试断言 `len(_compact_stage_policy(policy)[...]["roleGuidance"]) <= 240`。而
+`_compact_stage_policy` **自己就用 240 截断**，它的输出恒 ≤ 240 —— 断言恒真，是个空转
+测试。把上限改回 230 后它**照样全绿**：240 字被截成 230 之后依然满足 `230 <= 230`。
+
+同一个盲区还制造过一个**假结论**：我最初把「紧凑后恰好等于 240」读成「被截断到 240」，
+并据此声称 Sebastian 有 8/172 个窗口上线时被砍掉 10 字。实际是渲染本来就只有 240。
+
+正确判据是「**渲染结果 == 紧凑结果**」：与上限取值无关，一旦截断两者必然不等。同时把
+覆盖从「只测 `dating`」扩到全部 4 个 `conversationLead` 阶段（各阶段模板不同、渲染长度
+也不同）。反向验证：上限降到 230 → Alex / Sebastian / Sophia 变红，报出
+「渲染 231 字 → 上线 230 字」；恢复 320 → 全绿。
+
+诊断过程中还排除了一个**假嫌疑**：`320 → 230` 的替换**字节长度不变**，而 `__pycache__`
+用 `(mtime, size)` 校验，同秒编辑会留下被接受的陈旧字节码 —— 但删掉缓存后仍然全绿，
+说明缓存不是原因，真正的原因就是上面这条同义反复。（`-B` 只阻止写，不阻止读。）
+
+**教训（可迁移）**：要验「某个上限有没有生效」，不能用**受该上限约束的那个函数**的输出
+去比对上限 —— 那是同义反复。要比对的是「约束前」与「约束后」。
+
+### 12.3 附带修正
+- `test_topic_slot_rotation.py` 真实路径（`_build_context`）断言里硬编码的 240 改为读常量；
+  它比真实上限还紧，素材库一扩容就会假红（那条测试的注释其实早就预告了「超了就白改」）。
+- `test_role_guidance_object_focus.py` 里「240 字截断线仍然卡着」这句现在时注释补上状态更新。
+
+全量 4390 passed。
