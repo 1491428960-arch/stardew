@@ -4,6 +4,7 @@ import json
 import re
 import zlib
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from .behavior_quality import (
@@ -1807,7 +1808,14 @@ class ContextBuilder:
         _turn_index = (
             len(_window_signal) if isinstance(_window_signal, (list, tuple)) else 0
         )
-        _topic_window = _topic_window_for_turn(_raw_preferred_topics, _turn_index)
+        # 2026-10-01：窗口只按轮次滑动、不看关系阶段，于是 stranger 阶段的角色也会
+        # 在 prompt 里读到「前妻和诅咒」这类私事条目，与 `stageProfiles` 的
+        # boundaries（「不主动聊私事」）打架。**先按阶段收敛素材池、再滑窗** ——
+        # 顺序不能反，反过来过滤会把已经切好的窗口打穿。
+        _topic_window = _topic_window_for_turn(
+            _topics_for_stage(_raw_preferred_topics, npc_id, profile_stage),
+            _turn_index,
+        )
         # 2026-09-30：落点池对魔法主题的取舍**必须跟随这一轮的对话类型**。
         # `plain_dialogue` 决定 `persona_core` 有没有魔法类别，池子要与之同源；
         # `player_input` 在这里尚未定义（L1990），所以就地按同一处取值口径算。
@@ -3245,6 +3253,81 @@ _PREFERRED_TOPICS_LIMIT = 12
 #: 覆盖率一律 100%，没有任何一条因步长与池长不互质而被永久跳过 —— 遗漏只可能发生
 #: 在 `gcd(K, len) > _PREFERRED_TOPICS_LIMIT` 时，而 K ≤ 12 时该式恒不成立。
 _TOPIC_WINDOW_STEP = 4
+
+#: 话题条目的**关系阶段标签**数据文件（与 `data/personas` 同级）。
+#:
+#: **2026-10-01 新增。**素材池里混着「刚认识就能聊的天气」和「恋人才能问的前妻和
+#: 诅咒」，而窗口只按**轮次**滑动、完全不看**关系阶段** —— 于是 stranger 阶段的角色
+#: 也会在 prompt 里读到私事条目，与 `stageProfiles[stage].boundaries`（「不主动聊
+#: 私事」）正面打架。标签由模型离线批量标注生成（每条形如 `{"topic": ..., "stage":
+#: ...}`），本文件是 `{npcId: {话题: 档位}}` 的扁平形态。
+#:
+#: **缺失 / 读不动 / 该角色没标注时一律退回原行为**（不过滤），所以删掉这个文件
+#: 不会让 prompt 变空，只会恢复 2026-10-01 之前的口径。
+_TOPIC_STAGE_LABELS_PATH = (
+    Path(__file__).resolve().parents[3] / "data" / "topic-stage-labels.json"
+)
+
+#: 阶段由浅到深，右侧更深。
+_TOPIC_STAGE_ORDER = ("stranger", "acquaintance", "friend", "close")
+
+_topic_stage_label_cache: dict[str, dict[str, str]] | None = None
+
+
+def _topic_stage_labels() -> dict[str, dict[str, str]]:
+    """惰性加载阶段标签；任何异常都退化成「没有标签」而不是抛错。"""
+    global _topic_stage_label_cache
+    if _topic_stage_label_cache is not None:
+        return _topic_stage_label_cache
+    labels: dict[str, dict[str, str]] = {}
+    try:
+        raw = json.loads(_TOPIC_STAGE_LABELS_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        _topic_stage_label_cache = labels
+        return labels
+    if isinstance(raw, Mapping):
+        for npc_id, entries in raw.items():
+            if not isinstance(entries, Mapping):
+                continue
+            mapping = {
+                str(topic): str(stage)
+                for topic, stage in entries.items()
+                if isinstance(topic, str) and stage in _TOPIC_STAGE_ORDER
+            }
+            if mapping:
+                labels[str(npc_id)] = mapping
+    _topic_stage_label_cache = labels
+    return labels
+
+
+def _topics_for_stage(value: object, npc_id: object, stage: object) -> list[str]:
+    """把素材池收敛到「当前关系阶段允许聊的档位」。
+
+    **累积式**：`cutoff` 及更浅的档位都保留 —— 关系越深池子越大，高阶段角色的
+    素材量不会因为过滤而变少（不牺牲「拓宽话题量」已有的收益）。
+
+    * 没有该角色的标签、或阶段不认识 ⇒ 原样返回规范化后的池子；
+    * 单条**没标注** ⇒ 保留（宁可多给，不可凭空丢素材）；
+    * 过滤后为空 ⇒ 退回不过滤的结果，避免角色彻底没话题可说。
+
+    必须在取窗口**之前**调用：反过来会把已经切好的窗口打穿。
+    """
+    topics = [
+        item.strip()
+        for item in (value if isinstance(value, (list, tuple)) else ())
+        if isinstance(item, str) and item.strip()
+    ]
+    mapping = _topic_stage_labels().get(str(npc_id))
+    if not mapping or stage not in _TOPIC_STAGE_ORDER:
+        return topics
+    cutoff = _TOPIC_STAGE_ORDER.index(str(stage))
+    allowed = [
+        topic
+        for topic in topics
+        if mapping.get(topic) is None
+        or _TOPIC_STAGE_ORDER.index(mapping[topic]) <= cutoff
+    ]
+    return allowed or topics
 
 
 def _topic_window_for_turn(value: object, turn_index: int) -> list[str]:

@@ -1828,6 +1828,59 @@ def test_sophia_topic_pool_reaches_the_game_prompt_card() -> None:
         assert topic in guidance, topic
 
 
+def test_topic_pool_is_trimmed_by_relationship_stage() -> None:
+    """阶段过滤：stranger 不该在 prompt 里看到 close 档的私事条目。
+
+    2026-10-01：窗口此前只按**轮次**滑动、完全不看**关系阶段**，于是 stranger 阶段的
+    角色也会拿到「前妻和诅咒」这类私事条目，与 `stageProfiles[stage].boundaries`
+    （「不主动聊私事」）正面打架。这里验四种情形，其中两条是「必须退化」的路径 ——
+    数据缺失时宁可不过滤，也不能把池子清空。
+    """
+    from stardew_ai_bridge.prompts import _topic_stage_labels, _topics_for_stage
+
+    mapping = _topic_stage_labels().get("Wizard")
+    if not mapping:
+        pytest.skip("阶段标签数据缺失，跳过（数据文件是可选的）")
+
+    topics = list(mapping)
+    close_topics = [topic for topic, stage in mapping.items() if stage == "close"]
+    assert close_topics, "Wizard 没有 close 档条目，本用例失去意义"
+
+    # 1) stranger 必须挡掉 close 档
+    stranger_pool = _topics_for_stage(topics, "Wizard", "stranger")
+    leaked = sorted(set(stranger_pool) & set(close_topics))
+    assert not leaked, f"stranger 阶段仍能看到 close 档条目：{leaked}"
+    assert stranger_pool, "stranger 池子被清空了"
+
+    # 2) close 是累积式的上界 —— 不能因为过滤而变少
+    close_pool = _topics_for_stage(topics, "Wizard", "close")
+    assert set(close_pool) == set(topics), "close 阶段不该被砍掉任何条目"
+
+    # 3) 没有该角色的标签 ⇒ 原样返回
+    assert _topics_for_stage(topics, "不存在的NPC", "stranger") == [
+        t.strip() for t in topics
+    ]
+
+    # 4) 阶段不认识 ⇒ 原样返回
+    assert _topics_for_stage(topics, "Wizard", "不认识的阶段") == [
+        t.strip() for t in topics
+    ]
+
+
+def test_stage_filter_never_empties_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全滤空时退回不过滤的结果：不能让角色彻底没话题可说。"""
+    import stardew_ai_bridge.prompts as prompts
+
+    monkeypatch.setattr(
+        prompts,
+        "_topic_stage_label_cache",
+        {"测试角色": {"唯一的一条": "close"}},
+    )
+    assert prompts._topics_for_stage(["唯一的一条"], "测试角色", "stranger") == [
+        "唯一的一条"
+    ]
+
+
 @pytest.mark.parametrize("npc_id", ("Wizard", "Sophia", "Shane", "Sebastian", "Alex"))
 def test_high_stage_prompt_projects_one_role_move_instead_of_a_full_script(
     npc_id: str,
