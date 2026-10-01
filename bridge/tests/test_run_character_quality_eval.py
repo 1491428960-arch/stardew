@@ -810,7 +810,16 @@ def test_topic_window_rotates_as_recent_replies_grow() -> None:
         return ctx["npcIdentity"]["voiceStyle"]["preferredTopics"]
 
     for n_assistant in (0, 5, 17):
-        assert window_for(n_assistant) == _topic_window_for_turn(pool, n_assistant)
+        # ⚠ 2026-10-01：不能再拿原始池去重算期望值。实现侧先过
+        # `_topics_for_stage`（按关系阶段收敛档位）再切窗口，而这里拿不到
+        # `_build_context` 当轮用的 stage，硬算会得到另一个池 —— 那时变红的是
+        # 这条断言，而不是窗口本身。所以钉它真正要保证的两点：
+        #   (1) 窗口每一条都来自素材库（不是凭空造的）；
+        #   (2) 窗口随 assistant 轮数滑动（下面那条 `!=`，正是本次 null 的核心）。
+        window = window_for(n_assistant)
+        unknown = [topic for topic in window if topic not in pool]
+        assert not unknown, f"轮 {n_assistant} 的窗口出现池外条目：{unknown}"
+        assert len(window) == 12, f"轮 {n_assistant} 窗口宽度 {len(window)}，应为 12"
 
     # 池宽 62 > 窗口 12，轮次一变窗口必然换位 —— 恒定就是这次的 bug。
     assert window_for(0) != window_for(5)

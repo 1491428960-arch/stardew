@@ -386,11 +386,18 @@ def _window_topics(npc_id: str, turn_index: int = 0) -> list[str]:
     2026-09-30 起 `preferredTopics` 是素材库，进 prompt 的只有
     `_topic_window_for_turn` 切出的 12 条窗口。凡"渲染成什么 / 进了什么"的断言
     都要按窗口算。
+
+    ⚠ 2026-10-01：必须**先过 `_topics_for_stage`**，否则窗口切的是另一个池。
+    实现侧（`prompts.py`）是 `_topic_window_for_turn(_topics_for_stage(raw, npc, stage), i)`；
+    这里若直接拿原始池去切，切到的 12 条和真实渲染的不是同一批 —— 断言会以
+    「某个 topic 不在 guidance 里」的形式变红，而它其实只是被阶段过滤掉了。
+    `_payload` 的默认值是 `friendshipHearts: 6` → `friend`，故此处传 `"friend"`。
     """
 
-    from stardew_ai_bridge.prompts import _topic_window_for_turn
+    from stardew_ai_bridge.prompts import _topic_window_for_turn, _topics_for_stage
 
-    return _topic_window_for_turn(_preferred_topics(npc_id), turn_index)
+    pool = _topics_for_stage(_preferred_topics(npc_id), npc_id, "friend")
+    return _topic_window_for_turn(pool, turn_index)
 
 
 # 抽象元类目：模型无法从这类词直接取用物件，只能回退到职业轴的具体名词。
