@@ -3271,6 +3271,13 @@ _TOPIC_STAGE_LABELS_PATH = (
 #: 阶段由浅到深，右侧更深。
 _TOPIC_STAGE_ORDER = ("stranger", "acquaintance", "friend", "close")
 
+#: 过滤后至少保留的条目数。**2026-10-01 新增。**
+#:
+#: 阶段标注偏严时，`stranger` 档可能只剩 0~1 条（实测 4 个角色为 0 条、9 个为 1 条），
+#: 那样刚认识的角色就只能反复说同一件事，比不过滤更糟。不足此数时从**后一档**
+#: 按档位由浅到深补齐 —— 让点头之交聊「日常」是略超前，让角色没话可说是失败。
+_TOPIC_STAGE_MIN_POOL = 6
+
 _topic_stage_label_cache: dict[str, dict[str, str]] | None = None
 
 
@@ -3308,7 +3315,9 @@ def _topics_for_stage(value: object, npc_id: object, stage: object) -> list[str]
 
     * 没有该角色的标签、或阶段不认识 ⇒ 原样返回规范化后的池子；
     * 单条**没标注** ⇒ 保留（宁可多给，不可凭空丢素材）；
-    * 过滤后为空 ⇒ 退回不过滤的结果，避免角色彻底没话题可说。
+    * 过滤后为空 ⇒ 退回不过滤的结果，避免角色彻底没话题可说；
+    * 过滤后不足 `_TOPIC_STAGE_MIN_POOL` 条 ⇒ 从后一档由浅到深补齐
+      （`stranger` 档实测可能是 0~1 条，光靠它角色就没话可说了）。
 
     必须在取窗口**之前**调用：反过来会把已经切好的窗口打穿。
     """
@@ -3327,7 +3336,16 @@ def _topics_for_stage(value: object, npc_id: object, stage: object) -> list[str]
         if mapping.get(topic) is None
         or _TOPIC_STAGE_ORDER.index(mapping[topic]) <= cutoff
     ]
-    return allowed or topics
+    if len(allowed) >= _TOPIC_STAGE_MIN_POOL:
+        return allowed
+    beyond = [
+        topic
+        for topic in topics
+        if mapping.get(topic) is not None
+        and _TOPIC_STAGE_ORDER.index(mapping[topic]) > cutoff
+    ]
+    beyond.sort(key=lambda topic: _TOPIC_STAGE_ORDER.index(mapping[topic]))
+    return allowed + beyond[: _TOPIC_STAGE_MIN_POOL - len(allowed)]
 
 
 def _topic_window_for_turn(value: object, turn_index: int) -> list[str]:

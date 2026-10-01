@@ -1836,7 +1836,11 @@ def test_topic_pool_is_trimmed_by_relationship_stage() -> None:
     （「不主动聊私事」）正面打架。这里验四种情形，其中两条是「必须退化」的路径 ——
     数据缺失时宁可不过滤，也不能把池子清空。
     """
-    from stardew_ai_bridge.prompts import _topic_stage_labels, _topics_for_stage
+    from stardew_ai_bridge.prompts import (
+        _TOPIC_STAGE_MIN_POOL,
+        _topic_stage_labels,
+        _topics_for_stage,
+    )
 
     mapping = _topic_stage_labels().get("Wizard")
     if not mapping:
@@ -1846,39 +1850,78 @@ def test_topic_pool_is_trimmed_by_relationship_stage() -> None:
     close_topics = [topic for topic, stage in mapping.items() if stage == "close"]
     assert close_topics, "Wizard 没有 close 档条目，本用例失去意义"
 
-    # 1) stranger 必须挡掉 close 档
+    # 1) stranger 必须挡掉 close 档。**例外**是「更浅的素材凑不满最小池子」时，
+    #    `_topics_for_stage` 会由浅到深往后补 —— 那种情况下它才可能碰到 close。
+    shallow = [
+        topic
+        for topic in topics
+        if mapping.get(topic) in ("stranger", "acquaintance")
+    ]
     stranger_pool = _topics_for_stage(topics, "Wizard", "stranger")
-    leaked = sorted(set(stranger_pool) & set(close_topics))
-    assert not leaked, f"stranger 阶段仍能看到 close 档条目：{leaked}"
-    assert stranger_pool, "stranger 池子被清空了"
+    if len(shallow) >= _TOPIC_STAGE_MIN_POOL:
+        leaked = sorted(set(stranger_pool) & set(close_topics))
+        assert not leaked, f"stranger 阶段仍能看到 close 档条目：{leaked}"
 
-    # 2) close 是累积式的上界 —— 不能因为过滤而变少
+    # 2) 最小池子保护：过滤不能把池子压到没得聊
+    assert len(stranger_pool) >= min(_TOPIC_STAGE_MIN_POOL, len(topics)), (
+        f"stranger 池只剩 {len(stranger_pool)} 条，角色会没话可说"
+    )
+
+    # 3) close 是累积式的上界 —— 不能因为过滤而变少
     close_pool = _topics_for_stage(topics, "Wizard", "close")
     assert set(close_pool) == set(topics), "close 阶段不该被砍掉任何条目"
 
-    # 3) 没有该角色的标签 ⇒ 原样返回
+    # 4) 没有该角色的标签 ⇒ 原样返回
     assert _topics_for_stage(topics, "不存在的NPC", "stranger") == [
         t.strip() for t in topics
     ]
 
-    # 4) 阶段不认识 ⇒ 原样返回
+    # 5) 阶段不认识 ⇒ 原样返回
     assert _topics_for_stage(topics, "Wizard", "不认识的阶段") == [
         t.strip() for t in topics
     ]
 
 
-def test_stage_filter_never_empties_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    """全滤空时退回不过滤的结果：不能让角色彻底没话题可说。"""
+def test_stage_filter_backfills_when_the_shallow_tier_is_too_small(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """浅档素材太少时由浅到深往后补，绝不留下一个空池子。
+
+    实测 `stranger` 档有 4 个角色是 0 条、9 个是 1 条 —— 只按浅档过滤的话，刚认识的
+    角色只能反复说同一件事，比不过滤更糟。
+    """
     import stardew_ai_bridge.prompts as prompts
 
     monkeypatch.setattr(
         prompts,
         "_topic_stage_label_cache",
-        {"测试角色": {"唯一的一条": "close"}},
+        {
+            "测试角色": {
+                "唯一的浅档": "stranger",
+                "近一点的": "acquaintance",
+                "更深的": "close",
+            }
+        },
     )
-    assert prompts._topics_for_stage(["唯一的一条"], "测试角色", "stranger") == [
-        "唯一的一条"
-    ]
+    pool = prompts._topics_for_stage(
+        ["唯一的浅档", "近一点的", "更深的"], "测试角色", "stranger"
+    )
+    assert pool == ["唯一的浅档", "近一点的", "更深的"], pool
+
+    # 浅档够多时，深档不该被补进来
+    monkeypatch.setattr(
+        prompts,
+        "_topic_stage_label_cache",
+        {
+            "测试角色": {
+                **{f"浅{i}": "stranger" for i in range(prompts._TOPIC_STAGE_MIN_POOL)},
+                "更深的": "close",
+            }
+        },
+    )
+    keys = [f"浅{i}" for i in range(prompts._TOPIC_STAGE_MIN_POOL)] + ["更深的"]
+    pool = prompts._topics_for_stage(keys, "测试角色", "stranger")
+    assert "更深的" not in pool, "浅档够用时不该补进更深档"
 
 
 @pytest.mark.parametrize("npc_id", ("Wizard", "Sophia", "Shane", "Sebastian", "Alex"))
