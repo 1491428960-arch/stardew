@@ -1106,7 +1106,7 @@ def test_prompt_teaches_voice_imitation_and_in_game_brevity() -> None:
     assert "模仿" in safety["content"]
     assert "1–2 句" in safety["content"]
     assert "不要用环境描写开头" in safety["content"]
-    assert "不要主动引入玩家未提到的魔法设定" in safety["content"]
+    assert "不要为角色编造资料里没有的魔法设定或现象" in safety["content"]
     assert "只用于模仿" in speech["content"]
     assert "不要照抄" in style["content"]
 
@@ -5169,7 +5169,12 @@ def test_prompt_limits_voice_refs_and_knowledge_facts_in_compact_context() -> No
     # 用例改成人话的递进后重测（verify-action-process-9），wizard t2 从 10 字变成 23 字
     # 且承接得住，要治的问题根本不在措辞。为在同一批新用例上做干净的 A/B，先回到第四跳原文。
     # 阈值 4540 → 4560（实测渲染 4533）。
-    assert len(rendered) < 4560
+    # 2026-10-01（话题池接线）：safety 卡把魔法禁令从「禁止主动引入」精确成
+    # 「禁止编造资料里没有的」，并把落点池（preferredTopics）提为话题的第一来源。
+    # 本用例（`最近怎么样？`，非 topic 请求）实测渲染 4581，净增 21 字 —— 这是
+    # **有意**的净增，买到的是「窗口里换了什么，模型真的会读」（约 0.46% 长度）。
+    # 阈值随实测上调，余量口径与上一次一致（约 20 字）。
+    assert len(rendered) < 4600
 
 
 def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:
@@ -8066,7 +8071,7 @@ def test_topic_opening_may_be_spontaneous_but_must_explain_new_context(
         if message["name"] == "topic_response_contract"
     )["content"]
 
-    assert "允许从角色自己的近况、记忆、兴趣或眼前观察主动开启新话题" in contract
+    assert "从角色资料里列出的落点（preferredTopics）" in contract
     assert "必须在同一条消息给出最小背景" in contract
     assert "不要只说‘那件事、那首歌、最近那个" in contract
     assert "玩家不需要知道此前未说过的前提" in contract
