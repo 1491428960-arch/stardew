@@ -28,7 +28,11 @@ from pathlib import Path
 
 import pytest
 
-from stardew_ai_bridge.prompts import PromptBuilder, _compact_stage_policy
+from stardew_ai_bridge.prompts import (
+    PromptBuilder,
+    _ROLE_GUIDANCE_LIMIT,
+    _compact_stage_policy,
+)
 from stardew_ai_bridge.stage_policy import (
     _CONVERSATION_LEAD_ROLE_GUIDANCE,
     CONVERSATION_LEAD_TRIAL_NPC_IDS,
@@ -192,20 +196,43 @@ def test_rendered_guidance_contains_every_topic_of_its_own_source(npc_id: str) -
 
 
 @pytest.mark.parametrize("npc_id", sorted(CONVERSATION_LEAD_TRIAL_NPC_IDS))
-def test_rendered_guidance_stays_within_the_compact_limit(npc_id: str) -> None:
-    """`_compact_stage_policy` 按 240 字截断 roleGuidance；超了就白改。
+def test_rendered_guidance_survives_the_compact_path(npc_id: str) -> None:
+    """上线紧凑路径不许截掉 roleGuidance 的任何内容。
 
     逐**窗口**验，而不是整库：2026-09-30 起池子是素材库、进 prompt 的是
     `_topic_window_for_turn` 切出的 12 条窗口，而且窗口**逐轮滑动**——所以
     任何一个窗口超了，就有一轮会被静默截断。整库渲染已经不是线上条件。
+
+    2026-10-01 三处加固（此前只测渲染结果、只测 `dating`、且判据写错）：
+
+    1. **改测紧凑路径**（`_compact_stage_policy`）。截断发生在紧凑这一步，而
+       渲染结果永远"列得全"——上一版只测渲染，于是"渲染时列全了、到模型眼前
+       已经被砍"这一整类缺陷都漏过。它与
+       `test_rendered_guidance_contains_every_topic_of_its_own_source` 是一对：
+       那个保证**渲染**列全，这个保证**上线**没被砍，两者缺一不可。
+    2. **四个 `conversationLead` 阶段全测**，不只 `dating`：各阶段模板不同、
+       渲染长度也不同，只测一个阶段等于把另外三个放过。
+    3. **判据换成"渲染结果 == 紧凑结果"**，不是 `len(紧凑) <= 上限`。后者是
+       **同义反复**：`_compact_stage_policy` 自己就用该上限截断，输出恒 ≤ 上限，
+       断言恒真。实测把这个上限从 320 改回 230 后测试**照样全绿**——240 字被
+       截成 230 后依然满足 `230 <= 230`。同一个盲区还让"紧凑后恰好等于旧上限
+       240"被误读成"被截断到 240"。逐字相等与上限取值无关，截断必然暴露。
+
+    上限 `_ROLE_GUIDANCE_LIMIT` 只用于报错信息，判据本身不依赖它的值。
     """
 
     topics = _persona_preferred_topics(npc_id)
     for turn in range(len(topics)):
-        guidance = _rendered_guidance(npc_id, turn)
-        assert len(guidance) <= 240, (
-            f"{npc_id} 第 {turn} 轮窗口的 roleGuidance 有 {len(guidance)} 字，会被截断"
-        )
+        window = _window_topics(npc_id, turn)
+        for stage in STAGES:
+            policy = build_stage_policy(npc_id, stage, preferred_topics=window)
+            rendered = policy["conversationLead"]["roleGuidance"]
+            compacted = _compact_stage_policy(policy)["conversationLead"]["roleGuidance"]
+            assert compacted == rendered, (
+                f"{npc_id}/{stage} 第 {turn} 轮窗口的 roleGuidance 被紧凑路径截断："
+                f"渲染 {len(rendered)} 字 → 上线 {len(compacted)} 字"
+                f"（上限 {_ROLE_GUIDANCE_LIMIT}）"
+            )
 
 
 # --- 3. 哈维：落点池改由他自己的素材生成 --------------------------------------

@@ -148,6 +148,8 @@ def test_rendered_sophia_guidance_spans_semantic_clusters() -> None:
     # 2026-09-25：素材由 7 条补到 12 条 / 9 面全覆盖，写法同时压短（10 字/条 → 约 6 字/条），
     # 渲染 230/240 —— `roleGuidance` 的 240 字截断线仍然卡着，**不压短就装不下 12 条**
     # （不压短是 268 字，超 28 字会被静默截断）。断言跟着换到新词。
+    # 2026-10-01：`roleGuidance` 改用独立上限 `_ROLE_GUIDANCE_LIMIT`（240 → 320）。
+    # 上面那次"压短"是为挤进当时的口径，现在余量够了 —— 素材库扩容不必再靠压字腾空间。
     assert "镇上的新鲜事" in guidance
     assert "海边的咸风" in guidance
 

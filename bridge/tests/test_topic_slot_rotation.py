@@ -45,6 +45,7 @@ from stardew_ai_bridge.stage_policy import (
     narrow_topic_pool,
     rotation_topic_slot,
 )
+from stardew_ai_bridge.prompts import _ROLE_GUIDANCE_LIMIT
 
 ROOT = Path(__file__).resolve().parents[2]
 SOPHIA_MODS = ["vanilla", "SVE", "FlashShifter.StardewValleyExpandedCP"]
@@ -512,10 +513,16 @@ def test_pilot_topics_match_the_data_source() -> None:
 def test_rewritten_topics_keep_the_guidance_within_the_compact_limit(
     npc_id: str, mods: list[str]
 ) -> None:
-    """同源化的代价：池子变长会把 roleGuidance 推向 240 字上限，超了就白改。
+    """同源化的代价：池子变长会把 roleGuidance 推向上限，超了就白改。
 
     这是**真实路径**（`_build_context`），所以要看的是它当轮真正渲染的那一批：
     history 为空 ⇒ 第 0 轮窗口。拿整库去要求"每条都在 guidance 里"已经不成立。
+
+    2026-10-01：断言的数字从硬编码 240 换成 `_ROLE_GUIDANCE_LIMIT`。
+    240 是**过紧**的口径——它比上线紧凑路径真正的上限还小，于是这里绿的
+    同时上线可能已经从另一处被砍；而且素材库一扩容它必然变红（这正是本条
+    注释当初预告的"超了就白改"）。取常量则与产出方同源，上限调整时不会
+    各写一个数字后各自漂移。
     """
 
     from stardew_ai_bridge.app import _build_context
@@ -523,7 +530,9 @@ def test_rewritten_topics_keep_the_guidance_within_the_compact_limit(
     _, messages = _build_context(_payload(npc_id, [], mods))
     guidance = _card(messages, "stage_execution_card")["conversationLead"]["roleGuidance"]
 
-    assert len(guidance) <= 240, f"{npc_id} 的 roleGuidance 有 {len(guidance)} 字"
+    assert len(guidance) <= _ROLE_GUIDANCE_LIMIT, (
+        f"{npc_id} 的 roleGuidance 有 {len(guidance)} 字，超过 {_ROLE_GUIDANCE_LIMIT}"
+    )
     for topic in _window_topics(npc_id):
         assert topic in guidance, topic
 

@@ -3530,6 +3530,28 @@ def _compact_affection_initiative(
     return result
 
 
+#: `conversationLead.roleGuidance` 在上线紧凑路径下的字数上限。
+#:
+#: 它比同组的 `minimumExpression` / `variationRule` / `voiceFingerprint`（240）宽，
+#: 因为只有它的长度**由外部数据决定**：8 个角色的模板都含 `{topicPool}`，渲染时
+#: 会把当轮窗口的 12 条素材**逐条点名**展开。素材库扩容、`_TOPIC_WINDOW_STEP`
+#: 改动、或窗口只是滚到了长条目，同一段模板就会渲染出不同长度 —— 240 因此从来
+#: 不是一个稳定上界。
+#:
+#: 实测（穷举每个角色全部 K=4 窗口 × 4 个 `conversationLead` 阶段）：
+#: 没有任何窗口越界，但有窗口**恰好卡在 240 整**——Sebastian 8/172、Alex 44/44。
+#: 零余量本身不是错误，但任何素材库扩容都会立刻越界，而扩容正是本来就打算做的事
+#: （模拟 Alex 池 11 → 30 条，最坏窗口渲染到 271 字）。
+#:
+#: 取 320 与 `topicSlot.instruction` 的既有口径（300）同量级。
+#:
+#: 另外两处也限 `roleGuidance`：`_build_conversation_lead_card`（拼进 instruction 前）
+#: 与 `_build_final_role_voice_contract`（脱敏），都取 360 —— 它们**故意**比本常量宽，
+#: 是"万一上游没限住"的二次安全网，不该成为净上限。净上限由本常量决定：实测用
+#: 954 字素材逼真实路径（`_build_context`），渲染 954 → 上线 320，正是这里生效。
+_ROLE_GUIDANCE_LIMIT = 320
+
+
 def _compact_stage_policy(
     value: object,
     *,
@@ -3587,13 +3609,18 @@ def _compact_stage_policy(
         )
         if allowed:
             lead["allowedKinds"] = allowed
+        # `roleGuidance` 用独立上限（见 `_ROLE_GUIDANCE_LIMIT` 的定义处）：
+        # 它是这四个字段里唯一长度由素材库决定的，240 对它不是稳定上界。
         for key in (
             "minimumExpression",
             "variationRule",
             "roleGuidance",
             "voiceFingerprint",
         ):
-            text = _text(conversation_lead.get(key), limit=240)
+            text = _text(
+                conversation_lead.get(key),
+                limit=_ROLE_GUIDANCE_LIMIT if key == "roleGuidance" else 240,
+            )
             if text:
                 lead[key] = text
         skip_when = _compact_text_list(
