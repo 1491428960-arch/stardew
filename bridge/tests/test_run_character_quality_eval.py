@@ -648,6 +648,29 @@ def test_economical_budget_has_small_smoke_defaults_and_cli_switch(
     assert module._parse_args(["--economical"]).economical is True
 
 
+def test_compact_prompt_switch_is_independent_of_economical() -> None:
+    """`--compact-prompt` 必须能单独打开线上口径，不受 `--economical` 的限流牵连。
+
+    背景（2026-10-01）：K=1/K=4 的话题窗口对照在评测路径上跑出 null 结果，
+    事后查明那条路径 `compactPrompt=false` —— 比游戏端的 prompt 大约 74% 字符，
+    每条话题素材的出现次数只有线上的一半。于是「离线测不出差异」被读成了
+    「机制没效果」。此前 compact 只能跟着 `--economical` 走，而后者会把 case
+    限制到 3 个，没法用来做正式对照，所以两个开关必须解耦。
+    """
+    module = _load_eval_module()
+
+    assert module._parse_args([]).compact_prompt is None
+    assert module._parse_args(["--compact-prompt"]).compact_prompt is True
+    # 互不牵连：开经济模式不会顺手改 compact，反之亦然。
+    assert module._parse_args(["--economical"]).compact_prompt is None
+    assert (
+        module._parse_args(["--compact-prompt", "--economical"]).compact_prompt is True
+    )
+    # `--economical` 自己的 compact 默认不能被这次解耦改掉。
+    assert module.EvaluationBudget.economical().compact_prompt is True
+    assert module.EvaluationBudget().compact_prompt is False
+
+
 def test_eval_stops_before_next_request_when_budget_is_reached(
     monkeypatch,
     tmp_path: Path,

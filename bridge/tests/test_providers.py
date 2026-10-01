@@ -536,6 +536,51 @@ def test_openai_compatible_provider_uses_async_http_without_exposing_api_key() -
     assert request_payload["max_tokens"] == 240
 
 
+def test_temperature_is_only_sent_when_configured() -> None:
+    """`temperature` 不配就一个字节都不发 —— 既有 A/B 的可比性不能被改变。
+
+    2026-10-01 实测的噪音底噪（同一 prompt 连发 5 次）：默认温度下两两相似度
+    中位数 0.222，而 K=1/K=4 那次 198 轮对照的观测值是 **0.203** —— 比纯噪音
+    还小，所以那个 null 结果零信息量。结论是采样参数必须可设，
+    但默认行为必须与加这个字段之前逐字节一致。
+    """
+    from stardew_ai_bridge.config import ProviderSettings
+
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"choices":[{"delta":{"content":"好"}}]}\n\n'
+                "data: [DONE]\n\n"
+            ).encode("utf-8"),
+        )
+
+    def payload_for(temperature: float | None) -> dict[str, object]:
+        provider = OpenAICompatibleProvider(
+            ProviderSettings(
+                name="cloud",
+                url="https://cloud.invalid/v1/chat/completions",
+                model="cloud-model",
+                api_key="secret-key",
+                timeout=2.0,
+                temperature=temperature,
+            ),
+            transport=httpx.MockTransport(handler),
+        )
+        provider.generate(REQUEST)
+        return seen[-1]
+
+    # 不设 ⇒ 键根本不存在（而不是发了个 null）。
+    assert "temperature" not in payload_for(None)
+    # 0.0 是 falsy，必须能区分「没发」和「发了 0」。
+    assert payload_for(0.0)["temperature"] == 0.0
+    assert payload_for(0.7)["temperature"] == 0.7
+
+
 def test_multi_turn_group_requests_get_a_larger_output_budget() -> None:
     from stardew_ai_bridge import providers as providers_module
 

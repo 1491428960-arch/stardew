@@ -42,6 +42,7 @@ _LOCAL_ENV_KEYS = frozenset(
                 "TIMEOUT",
                 "ENABLED",
                 "API_MODE",
+                "TEMPERATURE",
             )
         },
     }
@@ -113,6 +114,26 @@ def _env_bool(*names: str, default: bool) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _env_optional_float(*names: str) -> float | None:
+    """读一个可选的浮点配置；**未设置返回 None**。
+
+    ⚠ 不能复用 `_env_float` —— 它是 `parsed if parsed > 0 else default`，
+    而 `temperature = 0` 恰恰是这里最有意义的取值（要求确定性采样），
+    走那条路会被静默丢成默认值，配置看起来"设了"，实际等于没设。
+    超出 OpenAI 兼容接口的合法区间 [0, 2] 也一律当未设置处理。
+    """
+    value = _first_env(*names)
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    if parsed < 0 or parsed > 2:
+        return None
+    return parsed
+
+
 @dataclass(frozen=True)
 class ProviderSettings:
     """单个 OpenAI-compatible Provider 的本机配置。"""
@@ -126,6 +147,12 @@ class ProviderSettings:
     api_mode: str = "openai"
     vertex_project: str | None = None
     vertex_location: str | None = None
+    #: 采样温度。**默认 None 表示"压根不发这个字段"**，与加它之前的行为逐字节一致。
+    #: 2026-10-01 实测：同一 prompt 连发 5 次，默认温度下两两相似度中位数只有 0.222，
+    #: 而 K=1/K=4 那次 198 轮对照的观测值是 0.203 —— **比纯噪音还小**，
+    #: 所以那个 null 结果零信息量。设 0 能把一致性提到 0.403（+81%），
+    #: 但仍远不到可复现 ⇒ 真正的降噪要靠多次采样取平均，不是靠这一项。
+    temperature: float | None = None
 
     @property
     def base_url(self) -> str | None:
@@ -166,6 +193,7 @@ class ProviderSettings:
             api_mode=api_mode,
             vertex_project=vertex_project,
             vertex_location=vertex_location,
+            temperature=_env_optional_float(f"{prefix}_TEMPERATURE"),
         )
 
 

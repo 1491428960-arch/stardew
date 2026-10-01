@@ -496,6 +496,11 @@ class OpenAICompatibleProvider:
             "stream": True,
             "max_tokens": _max_tokens_for(request),
         }
+        # 只在显式配置时才发 temperature。不设就走上游默认，与加这个字段之前
+        # 逐字节一致 —— 免得顺手改变了所有既有 A/B 的可比性。
+        # 实测噪音底噪见 `config.ProviderSettings.temperature`。
+        if self.settings.temperature is not None:
+            payload["temperature"] = self.settings.temperature
         started_at = perf_counter()
         try:
             async with httpx.AsyncClient(
@@ -683,6 +688,10 @@ class OllamaNativeProvider:
             raise ProviderError(f"{self.name} provider model is not configured")
 
         headers = {"content-type": "application/json"}
+        # Ollama 把采样参数放在 options 里，而不是顶层。
+        options: dict[str, object] = {"num_predict": _max_tokens_for(request)}
+        if self.settings.temperature is not None:
+            options["temperature"] = self.settings.temperature
         payload = {
             "model": self.settings.model,
             "messages": (
@@ -690,7 +699,7 @@ class OllamaNativeProvider:
             ),
             "stream": False,
             "think": False,
-            "options": {"num_predict": _max_tokens_for(request)},
+            "options": options,
         }
         started_at = perf_counter()
         try:

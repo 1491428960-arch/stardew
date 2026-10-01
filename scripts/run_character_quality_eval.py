@@ -38,6 +38,7 @@ from stardew_ai_bridge.character_quality_eval import (  # noqa: E402
 )
 from stardew_ai_bridge.artifact_paths import stable_artifact_path  # noqa: E402
 from stardew_ai_bridge.config import ProviderSettings, load_local_env  # noqa: E402
+from stardew_ai_bridge.reply_scrub import scrub_reply  # noqa: E402
 from stardew_ai_bridge.models import (  # noqa: E402
     DialogueTestRequest,
     ProviderResult,
@@ -229,6 +230,25 @@ def _resolve_index(value: ProfileIndexStore | Path | str) -> ProfileIndexStore:
     return ProfileIndexStore(Path(value))
 
 
+def _case_game_state(case: CharacterQualityCase) -> dict[str, object]:
+    """案例的 `gameState`，**始终**显式声明事件状态。
+
+    ⚠ `CharacterQualityCase.completed_event_ids` 默认是空元组，它表示
+    「该案例确认尚未完成任何事件」= **显式空集**，而不是「调用方没提供状态」。
+    早先这里是 `if case.completed_event_ids:` —— 空元组时不写这个键，于是
+    `prompts.py:1693` 的 `completed_event_ids_known` 为 `False`，
+    `relationship_gating.py:292` 按「不能推断为没有完成事件」跳过事件锁，
+    已完成事件的对白因此漏进初识阶段的 prompt（Alex 说出海滩事件台词即此）。
+    评分侧 `character_quality_eval._event_gate_payload` 一直按「未完成」处理，
+    两边口径由此一致；运行时 SMAPI 也总是随存档带上这个字段。
+    """
+    game_state = dict(case.game_state)
+    game_state.setdefault("friendshipHearts", _relationship_hearts(case.relationship_stage))
+    game_state["sourceMods"] = list(case.source_mods)
+    game_state["completedEventIds"] = list(case.completed_event_ids)
+    return game_state
+
+
 def _build_request(
     case: CharacterQualityCase,
     *,
@@ -236,11 +256,7 @@ def _build_request(
     history: list[dict[str, object]] | None = None,
     intent: str | None = None,
 ) -> DialogueTestRequest:
-    game_state = dict(case.game_state)
-    game_state.setdefault("friendshipHearts", _relationship_hearts(case.relationship_stage))
-    game_state["sourceMods"] = list(case.source_mods)
-    if case.completed_event_ids:
-        game_state["completedEventIds"] = list(case.completed_event_ids)
+    game_state = _case_game_state(case)
     relationship_world = None
     if case.relationship_world is not None:
         relationship_world = project_relationship_request(
@@ -270,12 +286,7 @@ def _build_context(
     turn: object | None = None,
     intent: str | None = None,
 ) -> dict[str, Any]:
-    game_state = dict(case.game_state)
-    game_state.setdefault("friendshipHearts", _relationship_hearts(case.relationship_stage))
-    game_state["relationshipStage"] = case.relationship_stage
-    game_state["sourceMods"] = list(case.source_mods)
-    if case.completed_event_ids:
-        game_state["completedEventIds"] = list(case.completed_event_ids)
+    game_state = _case_game_state(case)
     game_state["relationshipStage"] = case.relationship_stage
     quality_context: dict[str, object] = {
         "flirtIntensity": case.flirt_intensity,
@@ -348,6 +359,22 @@ def _build_context(
 
 def _safe_record(record: dict[str, object]) -> dict[str, object]:
     return dict(sanitize_quality_artifact(record))  # type: ignore[arg-type]
+
+
+def _safe_error_message(exc: BaseException, *, limit: int = 400) -> str:
+    """把异常 message 收敛成可审计的一行。
+
+    只存类名查不出病根（见 turn_records 里的注释），但 message 可能夹带
+    端点或凭据片段，所以按已加载的密钥做一次精确替换，再截断。
+    """
+
+    text = str(exc)
+    for name in ("BRIDGE_CLOUD_API_KEY", "CMD_API_KEY", "CMD_API_KEY_2", "CMD_API_KEY_3"):
+        secret = os.environ.get(name, "")
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    text = " ".join(text.split())
+    return text[:limit]
 
 
 def _usage_dict(usage: ProviderUsage | None) -> dict[str, int] | None:
@@ -551,8 +578,15 @@ def run_evaluation(
     input_price_per_million: float | None = None,
     output_price_per_million: float | None = None,
     budget: EvaluationBudget | None = None,
+    truncated: bool = False,
 ) -> dict[str, object]:
-    """使用实际 ContextBuilder/PromptBuilder 对固定角色场景做脱敏评测。"""
+    """使用实际 ContextBuilder/PromptBuilder 对固定角色场景做脱敏评测。
+
+    ``truncated`` 标记「本批被 ``--max-requests`` 人为截断」。它必须落进
+    ``summary.json``：截断意味着**覆盖到的问题集与完整跑不同**，
+    两份工件的对比因此无效（规范见 ``docs/eval-runbook-2026-09-28.md`` §四.1）。
+    这不是一条警告，而是**可比性判决** —— 下游按它决定能不能把两批放进同一张表。
+    """
 
     normalized_suite = suite.strip().casefold()
     if normalized_suite not in QUALITY_SUITE_IDS:
@@ -806,6 +840,16 @@ def run_evaluation(
                             else {}
                         ),
                         "error": type(exc).__name__,
+                        # 2026-09-29：原来只存类名，导致一次真实故障查不出来。
+                        # 批次 20260929-070405 里 wizard turn-2 记录为
+                        # `ProviderError`、elapsedMs 5022、正文为空，而
+                        # `providers.py` 里有四处会抛 ProviderError：
+                        #   · provider disabled（482）/ model 未配置（484）
+                        #   · HTTP 非 2xx（512）
+                        #   · 响应不是合法 JSON，通常意味着流被截断（536）
+                        #   · 响应体内嵌 error 对象（542）
+                        # 只凭类名无法区分，只能重跑。存下 message 才能直接判定。
+                        "errorMessage": _safe_error_message(exc),
                         "elapsedMs": int((perf_counter() - turn_started_at) * 1000),
                     }
                 )
@@ -910,10 +954,21 @@ def run_evaluation(
                     "playerInputLatencyMs": player_input_latency_ms,
                     "playerInputUsage": player_input_usage,
                     "reply": result.reply,
+                    # 处方 C（2026-09-28）：`reply` 是 **ProviderResult**，即**模型原始输出**；
+                    # 玩家实际看到的是过 `scrub_reply` 之后的文本（只有对外的 DialogueResponse 才清洗）。
+                    # 这个分层是 models.py 故意设计的，但后果是评测里所有
+                    # 「英文残留 / 格式噪音」类数字都在量一个**玩家看不见**的东西。
+                    # 同一 case 同时记两份，才能分清「模型给了什么」与「玩家看到什么」。
+                    "scrubbedReply": scrub_reply(result.reply),
+                    "scrubChanged": scrub_reply(result.reply) != result.reply,
                     "provider": result.provider,
                     "fallback": result.fallback,
                     "latencyMs": result.latency_ms,
                     "warnings": list(result.warnings),
+                    # 重试择优结果（2026-09-28 加）：`warnings` 只记「触发过重试」，
+                    # **不记「重试有没有用」** ⇒ 全库 480 次 `response_affection_retry`
+                    # （占重试 54%）没法归因。`None` = 本回合没比较过。
+                    "retryImproved": result.retry_improved,
                     "elapsedMs": int((perf_counter() - turn_started_at) * 1000),
                     "usage": usage,
                     "requestCount": turn_request_count,
@@ -1433,6 +1488,9 @@ def run_evaluation(
         "affectionPacing": affection_pacing_summary,
         "budget": evaluation_budget.as_dict(),
         "budgetStopReason": budget_tracker.stop_reason,
+        # `--max-requests` 截断 ⇒ 本批与完整跑覆盖不同，**不可跨批比较**。
+        "truncated": truncated,
+        "truncatedReason": "max_requests" if truncated else None,
         "passed": sum(
             record.get("casePassed") is True
             for record in records
@@ -1580,6 +1638,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="只跑少量案例、使用 compact Prompt，并限制重试与预算",
     )
+    parser.add_argument(
+        "--compact-prompt",
+        action="store_true",
+        default=None,
+        help=(
+            "用线上口径构造 prompt（compactPrompt=true），与 --economical 解耦。"
+            "默认沿历史行为走 false —— 那条评测路径比游戏端大约 74%% 字符，"
+            "每条话题素材的出现次数只有线上的一半，"
+            "所以「离线测不出差异」不能直接推成「线上没差异」"
+        ),
+    )
     parser.add_argument("--max-requests", type=int, default=None)
     parser.add_argument("--max-total-tokens", type=int, default=None)
     parser.add_argument(
@@ -1588,12 +1657,178 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="在经济模式下显式启用模型生成的后续玩家输入",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="跑前闸门：打印三问 + 预算预估并退出，**零请求**（规范 §二/§四）",
+    )
+    parser.add_argument(
+        "--stage",
+        default=None,
+        help=(
+            "按关系阶段筛例（逗号分隔，如 stranger,parent）。"
+            "⚠ --limit 只能取前 N 个，够不到追加在末尾的新 case"
+        ),
+    )
     return parser.parse_args(argv)
+
+
+# 合法关系阶段。与 `character_quality_eval._STAGE_TO_GATE` 的档位一致，
+# 但**多一个 stranger** —— 它在关系门之前，所以不在门表里（见 active-work 2026-09-28）。
+RELATIONSHIP_STAGES: tuple[str, ...] = (
+    "acquaintance",
+    "friend",
+    "close",
+    "dating",
+    "married",
+    "parent",
+    "stranger",
+)
+
+
+def _parse_stages(raw: str | None) -> list[str] | None:
+    """解析 `--stage a,b,a`：去重、保序、校验档名。
+
+    ⚠ 档名写错必须报错：静默跑 0 个 case 会被读成「跑了但没问题」，
+    那比报错坏得多。
+    """
+    if raw is None:
+        return None
+    stages: list[str] = []
+    for part in raw.split(","):
+        name = part.strip()
+        if not name:
+            continue
+        if name not in RELATIONSHIP_STAGES:
+            raise ValueError(
+                f"未知关系阶段 {name!r}；可选：{', '.join(RELATIONSHIP_STAGES)}"
+            )
+        if name not in stages:
+            stages.append(name)
+    return stages or None
+
+
+def _select_cases(
+    suite_cases: list,
+    *,
+    max_cases: int | None,
+    stages: list[str] | None = None,
+) -> list:
+    """选例的**唯一**实现 —— `main()` 与 `_print_plan()` 必须走同一条路。
+
+    顺序要紧：**先按阶段筛，再截断**。反过来的话
+    `--stage stranger --limit 5` 会先取前 5 个（全是别的阶段）再筛成空集。
+    """
+    cases = list(suite_cases)
+    if stages:
+        wanted = set(stages)
+        cases = [case for case in cases if case.relationship_stage in wanted]
+    if max_cases is not None:
+        cases = cases[: max(0, max_cases)]
+    return cases
+
+
+def _print_plan(args: argparse.Namespace, stages: list[str] | None) -> int:
+    """跑前闸门：零请求地把「该不该跑」摊在屏幕上。
+
+    ⭐ 为什么做成代码，而不是只写在 `docs/eval-runbook-2026-09-28.md` 里：
+    文档里的规则**跑起来照样能违反**（审计里就有批次在统计上无法判定）。
+    做成 `--plan` 之后，三问、不可比警告、预算预估是每次开跑前都会被打印的。
+    """
+    default_budget = (
+        EvaluationBudget.economical() if args.economical else EvaluationBudget()
+    )
+    # 选例走 _select_cases() —— 与 main() 同一份实现，不可能漂移。
+    max_cases = args.limit if args.limit is not None else default_budget.max_cases
+    suite_cases = quality_cases_for_suite(args.suite)
+    limit = len(suite_cases) if max_cases is None else max_cases
+    cases = _select_cases(suite_cases, max_cases=limit, stages=stages)
+    turn_count = sum(len(case.dialogue_turns()) for case in cases)
+    # 重试余量取 20%：实测全库 24.7% 的 case 发生过重试，20% 是保守下界。
+    # `(n * 6 + 4) // 5` 就是 ceil(n × 1.2)，避免为一个除法引入新 import。
+    estimated_requests = (turn_count * 6 + 4) // 5
+    # ⚠ 每次请求的 token 量按模式分开，**不要取一个折中平均**：
+    #   · compact Prompt（--economical）：全库均值 ≈ 5,000
+    #   · 完整 Prompt：实测 20260928-211944 批次 = 7,820（23 请求 / 179,867 token）
+    # 两者差 56%，用错模式估出来的预算会差一倍。
+    estimated_tokens = estimated_requests * (5000 if args.economical else 7800)
+    # 美元按**实测单价**估：20260928-211944 批次 23 请求吃掉池 1 周额度的 2.2%
+    #（$35 × 2.2% ≈ $0.77）⇒ ≈ $0.033/请求。
+    # ⚠ economical 那个数按 token 比例折算而来，**没有实测过**，只给量级。
+    estimated_cost_usd = round(
+        estimated_requests * (0.021 if args.economical else 0.033), 2
+    )
+
+    warnings: list[str] = []
+    if args.max_requests is not None:
+        warnings.append(
+            "⛔ 用了 --max-requests：它只让本批覆盖前若干个请求 "
+            "⇒ 与完整跑的问题集不同 ⇒ **不可比**，两批放进同一张表会得出错误结论，"
+            "而且最终往往要重跑一次（更贵）。要压规模请改用 --limit。"
+        )
+    if args.max_total_tokens is not None:
+        warnings.append(
+            "⚠ 用了 --max-total-tokens：预算触顶的批次会被标记为不完整，不参与对比。"
+        )
+    if stages and not cases:
+        warnings.append(
+            f"⛔ --stage {'/'.join(stages)} 在 suite {args.suite} 里一个 case 都没匹配上 —— "
+            "别把它读成「跑了但没问题」。"
+        )
+    if turn_count and turn_count < 36:
+        warnings.append(
+            f"⚠ 本批 {turn_count} 轮 < 36 轮：按实测 σ ≈ 24 字，这个规模 "
+            "**只能走 L1 人读档**（只陈述样例，不做统计声明）。"
+        )
+
+    print(
+        json.dumps(
+            {
+                "plan": True,
+                "suite": args.suite,
+                "stages": stages or [],
+                "caseIds": [case.case_id for case in cases],
+                "caseCount": len(cases),
+                "turnCount": turn_count,
+                "estimatedRequests": estimated_requests,
+                "estimatedTokens": estimated_tokens,
+                "estimatedCostUsd": estimated_cost_usd,
+                "gate": {
+                    "question": "① 这次要回答哪一个问题？（写一句；写不出来就不该跑）",
+                    "expectedEffect": (
+                        "② 预期效应多大？< 17 字 ⇒ 只能走 L1 人读档；"
+                        "要数值结论须先用 scripts/analyze_ab_power.py 算样本量"
+                    ),
+                    "budget": (
+                        "③ 预算是否可接受？见 estimatedRequests / estimatedTokens；"
+                        "开工前查池余量 node E:\\workspace\\hub\\scripts\\_cc_pools.mjs"
+                    ),
+                },
+                "warnings": warnings,
+                "note": (
+                    "未发起任何请求。这是**跑前闸门**，不是许可 —— "
+                    "三问答完再决定跑不跑。"
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     load_local_env()
     args = _parse_args(argv)
+    try:
+        stages = _parse_stages(args.stage)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.plan:
+        # 放在 cloud 的 dry-run **之前**：`--plan` 对**所有** provider 都该生效，
+        # 它回答的是「该不该跑」，而不是「云端要不要确认」。
+        return _print_plan(args, stages)
     if args.provider == "cloud" and not args.confirm_cloud:
         # 成本护栏（与 run_group_dialogue_cloud_batch.py 同一约定）：云端是本项目最贵的入口，
         # 不传 --confirm-cloud 时只输出计划并退出，绝不静默联网消耗 Token。
@@ -1635,7 +1870,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
         max_npc_retries=default_budget.max_npc_retries,
         max_player_retries=default_budget.max_player_retries,
-        compact_prompt=default_budget.compact_prompt,
+        compact_prompt=(
+            default_budget.compact_prompt
+            if args.compact_prompt is None
+            else args.compact_prompt
+        ),
         dynamic_player_input=(
             default_budget.dynamic_player_input
             if args.dynamic_player_input is None
@@ -1644,7 +1883,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     suite_cases = quality_cases_for_suite(args.suite)
     limit = len(suite_cases) if budget.max_cases is None else budget.max_cases
-    cases = suite_cases[: max(0, min(limit, len(suite_cases)))]
+    cases = _select_cases(suite_cases, max_cases=limit, stages=stages)
     summary = run_evaluation(
         profile_index=args.profile_index,
         output_dir=args.output_dir,
@@ -1657,6 +1896,7 @@ def main(argv: list[str] | None = None) -> int:
         input_price_per_million=args.input_price_per_million,
         output_price_per_million=args.output_price_per_million,
         budget=budget,
+        truncated=args.max_requests is not None,
     )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     return 0
