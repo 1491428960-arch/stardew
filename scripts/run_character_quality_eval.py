@@ -806,6 +806,16 @@ def run_evaluation(
                 turn=turn,
                 intent=current_intent,
             )
+            # 话题窗口落盘（2026-10-01）：窗口轮次由 `len(recentReplies)` 决定，而它随
+            # 对话增长 ⇒ 相邻轮的窗口**应当**不同。记下来，批量跑完就能直接从
+            # results.jsonl 判断「窗口到底动没动」。K=1/K=4 那次对照白白跑掉 198 轮
+            # 280 万 token，根因就是没人能一眼看出窗口恒在池首 —— 别再让这种事发生。
+            identity = context.get("npcIdentity") or {}
+            voice_style = identity.get("voiceStyle") or {}
+            topic_window = [
+                str(item) for item in (voice_style.get("preferredTopics") or ())
+            ]
+            topic_window_turn = len(context.get("recentReplies") or ())
             messages = prompt_builder.build(
                 context,
                 actual_message,
@@ -991,6 +1001,10 @@ def run_evaluation(
                     "usage": usage,
                     "requestCount": turn_request_count,
                     "retryCount": turn_retry_count,
+                    # 窗口内容与驱动它的轮次信号。相邻轮 `topicWindowTurn` 应当递增、
+                    # `topicWindow` 应当不同；若两者纹丝不动，说明轮次信号又断了。
+                    "topicWindow": topic_window,
+                    "topicWindowTurn": topic_window_turn,
                     "score": score,
                     "styleQuality": style_quality,
                     "initiativeExpectation": turn.initiative_expectation,

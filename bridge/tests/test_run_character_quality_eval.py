@@ -2153,6 +2153,24 @@ def test_eval_deep_flirt_fake_provider_carries_three_turn_history_for_dating_and
         all(turn["playerInputSource"] == "fixed" for turn in record["turns"])
         for record in records
     )
+
+    # 话题窗口落盘（2026-10-01）：窗口轮次由 `len(recentReplies)` 决定，随对话增长
+    # ⇒ 三轮的 `topicWindowTurn` 必须递增。这个断言的价值不在「窗口实现对不对」
+    # （那是 `test_topic_window_rotates_as_recent_replies_grow` 的活），而在于
+    # **轮次信号有没有被送进评测路径** —— K=1/K=4 那 198 轮对照之所以白跑，就是
+    # 因为没人能一眼看出窗口恒在池首。落盘字段让这件事在 results.jsonl 里直接可见。
+    for record in records:
+        assert [turn["topicWindowTurn"] for turn in record["turns"]] == [0, 1, 2]
+        assert all(
+            isinstance(turn["topicWindow"], list) and turn["topicWindow"]
+            for turn in record["turns"]
+        )
+    # 内容是否真的换过，只要求至少一个 case 满足：池 ≤ 12 条的角色（Alex 11、
+    # Leo 12）走「原样返回全池」分支，本来就不轮换，拿它们断言会假红。
+    assert any(
+        len({tuple(turn["topicWindow"]) for turn in record["turns"]}) > 1
+        for record in records
+    )
     assert all(
         "initiativeExpectation" in turn and "initiativeKind" in turn
         for record in records
