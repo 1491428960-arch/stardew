@@ -771,6 +771,51 @@ def test_recent_replies_are_capped_like_the_request_model() -> None:
     assert replies[0] == "回复 10"
 
 
+def _sophia_topic_pool() -> list[str]:
+    for path in sorted((ROOT / "data" / "personas").glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        profile = (data.get("personas") or {}).get("Sophia")
+        if not isinstance(profile, dict):
+            continue
+        topics = (profile.get("voiceStyle") or {}).get("preferredTopics") or []
+        if topics:
+            return list(topics)
+    raise AssertionError("找不到 Sophia 的 preferredTopics")
+
+
+def test_topic_window_rotates_as_recent_replies_grow() -> None:
+    """窗口必须随 `recentReplies` 增长而滑动，并落在 `_topic_window_for_turn`
+    给出的**确切**位置上。
+
+    这是 2026-10-01 那次 null 的直接回归：`_build_context` 不发 `recentReplies`
+    ⇒ `_turn_index` 恒 0 ⇒ 窗口永远停在池首，K=1 与 K=4 两臂 prompt 逐字节相同。
+    断言精确位置而不只是「两次不同」，是为了让「窗口滑了但滑错格」也能被抓到。
+    """
+    from stardew_ai_bridge.prompts import _topic_window_for_turn
+
+    module = _load_eval_module()
+    store = module._resolve_index(ROOT / "data" / "personas")
+    builder = module.ContextBuilder(profile_index=store)
+    case = case_by_id("sophia-daily")
+    pool = _sophia_topic_pool()
+
+    def window_for(n_assistant: int) -> list[str]:
+        history = []
+        for index in range(n_assistant):
+            history.append({"role": "user", "content": f"问题 {index}"})
+            history.append({"role": "assistant", "content": f"回复 {index}"})
+        ctx = module._build_context(
+            builder, case, history=history, turn=case.dialogue_turns()[0]
+        )
+        return ctx["npcIdentity"]["voiceStyle"]["preferredTopics"]
+
+    for n_assistant in (0, 5, 17):
+        assert window_for(n_assistant) == _topic_window_for_turn(pool, n_assistant)
+
+    # 池宽 62 > 窗口 12，轮次一变窗口必然换位 —— 恒定就是这次的 bug。
+    assert window_for(0) != window_for(5)
+
+
 def test_eval_stops_before_next_request_when_budget_is_reached(
     monkeypatch,
     tmp_path: Path,

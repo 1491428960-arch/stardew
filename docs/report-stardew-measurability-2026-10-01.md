@@ -211,6 +211,22 @@ K=4 为 8 条（新进 4 条）。44 个角色里 **42 个是宽池**（> 12 条
   而非缺键，让「这条路径接上了」在 payload 层可断言
 - `test_recent_replies_are_capped_like_the_request_model` —— 40 条上限，且保留
   **最近** 40 条
+- `test_topic_window_rotates_as_recent_replies_grow` —— 端到端断言窗口落在
+  `_topic_window_for_turn(pool, n)` 的**确切**位置上（不只断言「两次不同」，
+  这样「滑了但滑错格」也能被抓到）
+
+**测试有效性已验证，不是空测试**：用
+`git checkout HEAD~1 -- scripts/run_character_quality_eval.py` 取回修复前的产品
+代码（只回退产品代码、保留测试）后，这 4 个测试**全部失败** —— 其中轮换断言的
+失败信息直接暴露了病征：
+
+```
+At index 0 diff: '精灵石和矿石' != '格兰普顿'
+assert ['精灵石和矿石', '香...', '夏威夷宴会', ...] == ['格兰普顿', '婴儿用...', '格兰普顿海岸', ...]
+```
+
+`精灵石和矿石` 是池首 —— **修复前窗口确实一次都没动过**，这就是 198 轮对照
+两臂 prompt 逐字节相同的直接证据。恢复修复后 4 passed。
 
 ### 7.2 `scripts/run_character_quality_eval.py` — 新增 `--compact-prompt`
 
@@ -241,10 +257,13 @@ compact 此前只能跟着 `--economical` 走，而后者会把 case 限到 3 �
 
 按「能不能真的改变结论」排序，不按工作量：
 
-1. **补话题窗口轮换的直接指标**（第六节）。窗口滑动是**确定性**的：给定
-   `len(recentReplies)` 与 `_TOPIC_WINDOW_STEP`，`start` 唯一确定。所以可以
-   零请求断言「第 N 轮应该看到哪 12 条」「相邻轮新进几条」。
-   **这是本次唯一能立刻拿到的可测性提升**，且不受底噪影响。
+1. ~~**补话题窗口轮换的直接指标**（第六节）~~ —— **本次已完成**，见 7.1 的
+   `test_topic_window_rotates_as_recent_replies_grow`。窗口滑动是**确定性**的：
+   给定 `len(recentReplies)` 与 `_TOPIC_WINDOW_STEP`，`start` 唯一确定，所以
+   可以零请求断言「第 N 轮该看到哪 12 条」。这是本次唯一**不受底噪影响**的
+   可测性提升，已经落到测试里，并在修复前的代码上验证过会失败。
+   仍**未做**的是把它写进 turn record 随 artifact 落盘 —— 那样批量跑完可以直接
+   从 `results.jsonl` 看出窗口有没有动，不必事后重建。
 2. **多次采样取平均**（唯一真正降噪的手段）。同一 `(case, turn)` 跑 N 次取指标均值，
    方差按 1/N 降。先做**小样本标定**：取 5 个 case × 3 轮 × 3 次重复，
    量出「重复内方差」与「case 间方差」各占多少，再决定 N 与样本量。

@@ -8407,13 +8407,38 @@ Sophia 三个角色变红，恢复 320 → 全绿。`test_topic_slot_rotation.py
 **扩池余量**：320 下 12 条窗口的素材预算约 186 字（模板固有部分约 134 字），即单条平均
 ≤ 15 字即安全；Alex 现有 11 条里最长 14 字。
 
-## 五十一、K 实验 null 的真因是采样底噪，不是机制无效（2026-10-01）
+## 五十一、K 实验 null 的真因是评测路径没接上窗口轮次信号（2026-10-01）
 
-**结论**：K=1/K=4 那次 198 轮、280 万 token 的对照**没有测到任何信息**。
-实测同一 prompt 连发 5 次，两两相似度中位数 **0.222**，而跨臂观测值是 **0.203** ——
-差 8.7%，**落在噪音范围内**。
-⇒「话题拓宽没有效果」不成立，「这个实验没有能力回答该问题」才成立。
-两者在报告里长得一样，但后者要求先修测量，而不是回头改机制。
+> **本节已修订。** 初版把真因判为采样底噪，还专门断言「把 null 归因于路径是错的」。
+> 当天后续查明**恰恰相反**：真因就是路径 —— 评测路径没把窗口轮次的信号源
+> `recentReplies` 传给 prompt，两臂 prompt **逐字节相同**。底噪真实存在且已实测
+> （见下），但不是这次 null 的原因；那条「别记错」的断言本身才是记错了。
+
+**结论**：K=1/K=4 那次 198 轮、280 万 token 的对照，**两臂的 prompt 逐字节相同**。
+
+`prompts.py:1792` 用 `recentReplies` 的长度算窗口轮次：
+
+    _window_signal = _first_value(values, "recentReplies", "recent_replies")
+    _turn_index = len(_window_signal) if isinstance(_window_signal, (list, tuple)) else 0
+
+而 `_build_context` 只发 `history`、payload 里没有这个键 ⇒ `_turn_index` 恒 0、
+`start = (0 × K) % 62 = 0` ⇒ **窗口永远停在池首，K 完全不起作用**。
+
+零请求实测（`_k_input_delta.py`）：
+
+| 状态 | K=1 vs K=4 的 prompt 差异 |
+|---|---|
+| 修复前 | **0 字符 / 0.00%，16 条消息逐字节完全相同** |
+| 修复后 | 5–7 字符 / 0.01–0.08%，只动 1 条 system 消息 |
+
+⇒「话题拓宽没有效果」不成立，「这个实验没有能力回答该问题」成立 ——
+但理由是**自变量压根没送达**，不是被底噪淹没。
+
+**而修复之后效应量仍然只有万分之几**：窗口只影响 12 个话题名，K=1 与 K=4 的差别
+约等于 3 个名字的差价，而整个 prompt 有 8,000+ 字符。这是**独立于路径 bug 的第二个
+问题** —— 窗口轮换是「结构性确定、内容上极小」的干预。窗口结构差异本身是真的：
+相邻轮交集 K=1 为 11 条、K=4 为 8 条；44 个角色里 42 个是宽池（> 12 条），
+只有 **Alex（11）/ Leo（12）** 全池 passthrough、不受 K 影响。
 
 **实测**（Wizard 真实 prompt / 13 条消息 5,945 字符 / Kimi-K2.5 / 每条件 5 次）：
 
@@ -8431,38 +8456,58 @@ Sophia 三个角色变红，恢复 320 → 全绿。`test_topic_slot_rotation.py
 实测配对（n=196）后 reply 长度差异仍只有 +1.43 字（t=+0.79, p=0.431），
 几乎没消掉方差。
 
-**顺带查清的两件事（都不是 null 的原因，别记错）**：
+**顺带查清的两件事（现在只剩一件仍与 null 无关，另一件已被推翻）**：
 
 1. **评测路径 ≠ 线上口径**，且两个开关各管一段、互不替代：
    `naturalMode=True` 把 `stage_execution_card` 从 1,431 字压到 507 字、**素材命中归零**
    （`prompts.py:6886` 的 `if not compact and not natural_mode` 决定 `stagePolicy` 发不发；
    `natural_adaptive_light` 另有一层砍卡）；`compact=True` 砍掉 `conversation_lead`。
    素材密度实测：eval 现状 1.2 / 条、线上口径 3.1 / 条、`c=F n=F` 6.1 / 条。
-   **但 K 实验的 66 个 case 多数是 `*-daily` / `*-follow-up`，走 `c=F n=F`（6.1 / 条，
-   比线上还高一倍）** ⇒ 路径差异让 K 的改动**更显眼**而不是更隐形。
-   把 null 归因于路径是错的，这是本次排查中我自己先走错、又被数据纠正的一步。
+   ⚠ **这条归因已被推翻。** 初版在此写「路径差异让 K 的改动更显眼而不是更隐形，
+   所以把 null 归因于路径是错的」。K 实验的 66 个 case 确实多数走 `c=F n=F`、
+   素材密度 6.1 / 条，**但密度高不等于窗口在滑动** —— 窗口轮次由 `recentReplies`
+   决定，与密度无关；密度 6.1 只是把**同一个恒定窗口**渲染了更多遍。
+   路径差异真实存在、值得修（已通过 `--compact-prompt` 修），但它和 null 无关；
+   null 的原因是 `recentReplies` 缺失。两次归因我都走错过，一并留在这里。
 2. **指标覆盖不足**：`conversationLeadKind` 仅 **19.2% / 16.6%** 的轮次带真实值，
    `mechanicalRestatementCount` 两臂恒 0，而 `hasNewAnchor` 测的是 conversationLead
    的锚点、**与话题窗口轮换无关** ⇒ 现有评测量的是「对话引导 / 机械复述」，
    而 K 改的是**话题窗口**，**测的东西和改的东西不是一回事**。
 
-**本次改动**：
+**本次改动**（两个提交：`e016e95`、`0a6c5b1`）：
 
+- **`run_character_quality_eval.py` 接上 `recentReplies`**（`0a6c5b1`，本次核心修复）：
+  从 history 抽 assistant 项填 payload，上限 `_RECENT_REPLIES_LIMIT = 40`（与
+  `models.DialogueTestRequest.recent_replies` 的 `max_length=40` 同源）。
+  **天然保守**：多数 `case.history` 不含 assistant 项 ⇒ 发空列表 ⇒ 行为与改动前
+  逐字节相同；只有多轮 case 走到第 2 轮起窗口才真正开始滑动，既有结果可比性不变。
 - `run_character_quality_eval.py` 加 `--compact-prompt`，与 `--economical` 解耦
-  （后者会把 case 限到 3 个，做不了正式对照）。默认 `None` ⇒ 沿用历史行为，既有结果可比。
+  （后者会把 case 限到 3 个，做不了正式对照）。默认 `None` ⇒ 沿用历史行为。
 - `config.py` + `providers.py` 支持采样温度：`ProviderSettings.temperature`
   （env `BRIDGE_{LOCAL,CLOUD}_TEMPERATURE`），**不设则键根本不存在**，
   两个 payload 各自处理（OpenAI 兼容走顶层，Ollama 风格走 `options`）。
   ⚠ 不能复用 `_env_float` —— 它是 `parsed if parsed > 0 else default`，会把
   `temperature = 0`（这里最有意义的取值）静默丢成默认值；为此单写 `_env_optional_float`。
 
+**测试**：`test_run_character_quality_eval.py` 加 4 个 —— 只取 assistant 项、
+无 assistant 项时发空列表、40 条上限保留最近 N 条、**窗口随 `recentReplies` 滑动并
+落在 `_topic_window_for_turn(pool, n)` 的确切位置**。
+**有效性已验证**：`git checkout HEAD~1 -- scripts/run_character_quality_eval.py`
+回退产品代码后 4 个全失败，轮换断言报
+`At index 0 diff: '精灵石和矿石' != '格兰普顿'` —— `精灵石和矿石` 是池首，
+**证明修复前窗口一次都没动过**。全量 4396 passed。
+
 **下一步（按能否改变结论排序，不按工作量）**：
 
-1. **多次采样取平均** —— 唯一真正降噪的手段（方差按 1/N 降）。
+1. ~~补话题窗口轮换的直接指标~~ **已完成**（见上）。仍未做的是把它写进 turn record
+   随 artifact 落盘，那样批量跑完能直接从 `results.jsonl` 看出窗口有没有动。
+2. **多次采样取平均** —— 唯一真正降噪的手段（方差按 1/N 降）。
    先做小样本标定：5 case × 3 轮 × 3 次重复，量出重复内方差与 case 间方差各占多少。
-2. 补话题窗口轮换的直接指标（第四节那条）。降噪之前单独做它，不会让 K 类实验可判读。
 3. 确认 `temperature=0` 的残余噪音是上游忽略还是中转站不透传。
+4. **放大 K 的可见面**（产品决策，非测量问题）。要让 K 真影响输出，得让它出现在
+   更多卡片或更靠前的指令位；维持现状则应把它当**低风险微调**接受，不追求 A/B 证据。
 
-**不建议**在没有 1 的情况下重跑任何 prompt 级 A/B —— 同样的底噪只会再得一个「两臂差不多」。
+**不建议**在没有 2 的情况下重跑 prompt 级 A/B —— 以 0.01–0.08% 的效应量配 0.222 的
+底噪，再跑 198 轮只会再得一个「两臂差不多」。
 
 报告：`docs/report-stardew-measurability-2026-10-01.md`
