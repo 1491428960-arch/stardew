@@ -1885,10 +1885,11 @@ def test_topic_pool_is_trimmed_by_relationship_stage() -> None:
 def test_stage_filter_backfills_when_the_shallow_tier_is_too_small(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """浅档素材太少时由浅到深往后补，绝不留下一个空池子。
+    """浅档素材太少时只往后**补一档**，绝不往深档伸手。
 
     实测 `stranger` 档有 4 个角色是 0 条、9 个是 1 条 —— 只按浅档过滤的话，刚认识的
-    角色只能反复说同一件事，比不过滤更糟。
+    角色只能反复说同一件事；而池子小于窗口上限时窗口还会永远滑不动。
+    但补齐的代价不能是「让陌生人看到私事」，所以跨度限制在紧邻的下一档。
     """
     import stardew_ai_bridge.prompts as prompts
 
@@ -1906,22 +1907,21 @@ def test_stage_filter_backfills_when_the_shallow_tier_is_too_small(
     pool = prompts._topics_for_stage(
         ["唯一的浅档", "近一点的", "更深的"], "测试角色", "stranger"
     )
-    assert pool == ["唯一的浅档", "近一点的", "更深的"], pool
+    # 补进了紧邻的 acquaintance，但 **close 仍然挡住** —— 这是本用例的重点
+    assert pool == ["唯一的浅档", "近一点的"], pool
+    assert "更深的" not in pool, "补齐不该把 close 档的私事放进来"
 
-    # 浅档够多时，深档不该被补进来
+    # 浅档本身够多时，一条都不该补
+    enough = prompts._TOPIC_STAGE_MIN_POOL
+    keys = [f"浅{i}" for i in range(enough)] + ["更深的"]
     monkeypatch.setattr(
         prompts,
         "_topic_stage_label_cache",
-        {
-            "测试角色": {
-                **{f"浅{i}": "stranger" for i in range(prompts._TOPIC_STAGE_MIN_POOL)},
-                "更深的": "close",
-            }
-        },
+        {"测试角色": {**{k: "stranger" for k in keys[:-1]}, "更深的": "close"}},
     )
-    keys = [f"浅{i}" for i in range(prompts._TOPIC_STAGE_MIN_POOL)] + ["更深的"]
     pool = prompts._topics_for_stage(keys, "测试角色", "stranger")
     assert "更深的" not in pool, "浅档够用时不该补进更深档"
+    assert len(pool) == enough, pool
 
 
 @pytest.mark.parametrize("npc_id", ("Wizard", "Sophia", "Shane", "Sebastian", "Alex"))

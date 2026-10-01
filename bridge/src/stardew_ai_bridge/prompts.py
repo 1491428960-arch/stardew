@@ -3274,9 +3274,27 @@ _TOPIC_STAGE_ORDER = ("stranger", "acquaintance", "friend", "close")
 #: 过滤后至少保留的条目数。**2026-10-01 新增。**
 #:
 #: 阶段标注偏严时，`stranger` 档可能只剩 0~1 条（实测 4 个角色为 0 条、9 个为 1 条），
-#: 那样刚认识的角色就只能反复说同一件事，比不过滤更糟。不足此数时从**后一档**
-#: 按档位由浅到深补齐 —— 让点头之交聊「日常」是略超前，让角色没话可说是失败。
-_TOPIC_STAGE_MIN_POOL = 6
+#: 那样刚认识的角色就只能反复说同一件事，比不过滤更糟。
+#:
+#: 还有个更隐蔽的后果：窗口是「从池子里按轮次滑一段」，**池子小于窗口上限时，
+#: 窗口就等于整个池子、永远滑不动** —— 实测池 6 条时三轮窗口一字不变，池 20 条时
+#: 才轮到 12 条。轮换本身是话题不重复的机制，池子太小等于把它关掉。
+#:
+#: ⚠ 提高到 16 是为了让轮换生效，**不是为了治「NPC 复读开场白」**：那个现象的
+#: 池 6 条 vs 20 条 A/B 各 8 样本均为 0/8，既没支持也没否定（观察到约 8%，
+#: 8 样本下 P(测到 0) ≈ 51%，力量根本不够），根子更可能在模型侧。
+#:
+#: 取值 = `_PREFERRED_TOPICS_LIMIT`(12) + `_TOPIC_WINDOW_STEP`(4)：窗口本身最多
+#: 12 条，**必须再多留一个完整步长**才滑得动。取 12 是错的 —— 池子恰好等于窗口
+#: 上限时窗口恒等于全池，实测 `turn=0..3` 首条一字不变，轮换等于被关掉。
+_TOPIC_STAGE_MIN_POOL = 16
+
+#: 补齐时**允许往后伸手的档位数**。
+#:
+#: 只放行**紧邻的下一档**（`stranger` 最多补到 `acquaintance`）—— 点头之交聊日常
+#: 略超前但可接受，而让陌生人看到 `friend`/`close` 档的私事，正是这套过滤要防的事。
+#: 素材不够时宁可少给几条，也不往深档伸手。
+_TOPIC_STAGE_BACKFILL_SPAN = 1
 
 _topic_stage_label_cache: dict[str, dict[str, str]] | None = None
 
@@ -3316,8 +3334,9 @@ def _topics_for_stage(value: object, npc_id: object, stage: object) -> list[str]
     * 没有该角色的标签、或阶段不认识 ⇒ 原样返回规范化后的池子；
     * 单条**没标注** ⇒ 保留（宁可多给，不可凭空丢素材）；
     * 过滤后为空 ⇒ 退回不过滤的结果，避免角色彻底没话题可说；
-    * 过滤后不足 `_TOPIC_STAGE_MIN_POOL` 条 ⇒ 从后一档由浅到深补齐
-      （`stranger` 档实测可能是 0~1 条，光靠它角色就没话可说了）。
+    * 过滤后不足 `_TOPIC_STAGE_MIN_POOL` 条 ⇒ 只从**紧邻的下一档**补齐
+      （跨度见 `_TOPIC_STAGE_BACKFILL_SPAN`）；下一档也不够就到此为止，
+      **不往更深档伸手** —— 素材少一点可以接受，私事漏出去不行。
 
     必须在取窗口**之前**调用：反过来会把已经切好的窗口打穿。
     """
@@ -3338,12 +3357,11 @@ def _topics_for_stage(value: object, npc_id: object, stage: object) -> list[str]
     ]
     if len(allowed) >= _TOPIC_STAGE_MIN_POOL:
         return allowed
-    beyond = [
-        topic
-        for topic in topics
-        if mapping.get(topic) is not None
-        and _TOPIC_STAGE_ORDER.index(mapping[topic]) > cutoff
+    # 只从紧邻的下一档补；`beyond` 按档位由浅到深排，先补近的。
+    window = _TOPIC_STAGE_ORDER[
+        cutoff + 1 : min(cutoff + 1 + _TOPIC_STAGE_BACKFILL_SPAN, len(_TOPIC_STAGE_ORDER))
     ]
+    beyond = [topic for topic in topics if mapping.get(topic) in window]
     beyond.sort(key=lambda topic: _TOPIC_STAGE_ORDER.index(mapping[topic]))
     return allowed + beyond[: _TOPIC_STAGE_MIN_POOL - len(allowed)]
 
