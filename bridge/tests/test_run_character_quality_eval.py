@@ -461,7 +461,7 @@ def test_eval_carries_turn_intent_and_stage_provenance_into_history(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = CharacterQualityCase(
         case_id="history-provenance",
@@ -1086,7 +1086,7 @@ def test_eval_topic_case_sends_empty_topic_without_polluting_player_history(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = topic_start_intimacy_cases()[0]
     summary = module.run_evaluation(
@@ -1207,7 +1207,7 @@ def test_eval_adaptive_topic_case_generates_player_turns_after_each_npc_reply(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = topic_start_adaptive_cases()[0]
     summary = module.run_evaluation(
@@ -1583,7 +1583,7 @@ def test_adaptive_eval_diagnoses_restatement_from_the_actual_generated_input(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = topic_start_adaptive_cases()[0]
     module.run_evaluation(
@@ -1624,7 +1624,7 @@ def test_eval_marks_repeated_personal_affection_shape_as_failed_quality(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = CharacterQualityCase(
         case_id="variation-sophia-dating",
@@ -1706,7 +1706,7 @@ def test_eval_uses_detected_initiative_kind_for_affection_variation(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = CharacterQualityCase(
         case_id="variation-detected-kind",
@@ -1791,7 +1791,7 @@ def test_eval_marks_repeated_conversation_lead_as_failed_quality(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = CharacterQualityCase(
         case_id="conversation-lead-sophia-dating",
@@ -1869,7 +1869,7 @@ def test_eval_adaptive_player_input_failure_is_reported_without_fake_npc_reply(
     monkeypatch.setattr(
         module,
         "retry_for_format_noise",
-        lambda result, messages, generate: result,
+        lambda result, messages, generate, **kwargs: result,
     )
     case = topic_start_adaptive_cases()[0]
     summary = module.run_evaluation(

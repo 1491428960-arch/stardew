@@ -106,6 +106,40 @@ _DIALOGUE_MAX_CHARS = 60
 # 所以此处**不要下调**：降到 64 会把请求增量抬到 8.4%。
 _LENGTH_RETRY_THRESHOLD = 68
 
+# 按阶段放宽：**目前只有 parent**。
+#
+# parent 是唯一一个 prompt 侧的内容要求明确压过篇幅要求的阶段
+# （`stage_policy.py` 的 responseShape 是「可用 1–2 句…涉及孩子时先说安全和
+# 实际安排」，而 Sebastian / Elliott / Harvey / Sam 的角色覆盖更写成
+# 「先把安全和具体安排说清楚，**再补一句**感受」）—— 「安全 + 实际安排」和
+# 「感受」两个块都要求具体，1–2 句装不下。模型不是没听话，是它优先满足了
+# 内容要求，而那是对的选择。
+#
+# 2026-10-01 实测 `artifacts/character-quality-eval/` 下 parent 阶段 55 轮
+# （已剔除演示模式的固定占位回复，那些不调用模型）：
+#     超 68 字 16 轮（29.1%）
+#     超长组 中位 83 字 / 6 句，每句 15.9 字
+#     达标组 中位 51 字 / 3 句，每句 15.2 字
+# ❗ **每句字数几乎相同（15.9 vs 15.2），字数差全部来自句数翻倍（6 vs 3）**——
+# 是内容块多，不是句子注水。且超长组没有任何 1–3 句的样本
+# （句数分布 4:5 5:3 6:4 7:3 8:1），它天然需要 4 句以上才说得完。
+# 取 90：覆盖自然长度（绝大多数落在 71–90），同时仍拦得住 110 字那类。
+#
+# ❗ 只给 parent 开口。close 的同类数据尚未测；stranger/friend 的超长是真啰嗦。
+# **没有测量依据的阶段不要顺手放宽** —— 那正好是本次改动被否掉的做法。
+_LENGTH_RETRY_THRESHOLD_BY_STAGE: dict[str, int] = {"parent": 90}
+
+
+def _length_retry_threshold(stage: str | None = None) -> int:
+    """取该阶段的重试阈值；未登记的阶段退回全局 68。"""
+
+    if not stage:
+        return _LENGTH_RETRY_THRESHOLD
+    return _LENGTH_RETRY_THRESHOLD_BY_STAGE.get(
+        str(stage).strip().casefold(), _LENGTH_RETRY_THRESHOLD
+    )
+
+
 LENGTH_RETRY_CONTENT = (
     "上一条回复明显超过了当前场景允许的长度。"
     "请重新回答同一个输入，按上面写明的**句数**要求收敛"
@@ -212,13 +246,20 @@ def _discard_meta_narration(result: "ProviderResult") -> "ProviderResult":
     )
 
 
-def reply_exceeds_dialogue_length(reply: object) -> bool:
+def reply_exceeds_dialogue_length(
+    reply: object,
+    *,
+    stage: str | None = None,
+) -> bool:
     """对白是否**明显**超过长度上限 —— 这是**重试的判据**，
     不是截断的判据。
 
     截断在 `ResponseGuard.check` 里按 `max_chars`（1000）走，那是防爆兜底；
     这里问的是「值不值得花一次请求重写」。两个量不同源，
     不要合并。
+
+    ``stage`` 只影响阈值取值（见 `_LENGTH_RETRY_THRESHOLD_BY_STAGE`）。
+    传 None 时行为与加这个参数之前完全一致。
     """
 
     if not isinstance(reply, str):
@@ -226,7 +267,7 @@ def reply_exceeds_dialogue_length(reply: object) -> bool:
     text = reply.strip()
     if not text:
         return False
-    return len(text) > _LENGTH_RETRY_THRESHOLD
+    return len(text) > _length_retry_threshold(stage)
 
 OPENING_RETRY_CONTENT = (
     "上一条回复重复了历史开场。只重新回答最后一条玩家消息；"
@@ -1280,7 +1321,12 @@ def _warmth_score(prompt: list[dict[str, str]], reply: object) -> int:
     return 0
 
 
-def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int, ...]:
+def _retry_quality_key(
+    prompt: list[dict[str, str]],
+    reply: object,
+    *,
+    stage: str | None = None,
+) -> tuple[int, ...]:
     """硬约束优先，爱意强度次之，轻微语气问题最后处理。"""
 
     format_clean = int(
@@ -1310,8 +1356,9 @@ def _retry_quality_key(prompt: list[dict[str, str]], reply: object) -> tuple[int
         )
         # 同理**必须进来**：否则重试生成的短回复与超长回复打平，
         # `best` 会保留超长的那条，重试就白做了（与 2026-09-24
-        # 粒度那次同形）。
-        and not reply_exceeds_dialogue_length(reply)
+        # 粒度那次同形）。阈值必须与触发判据同源，否则按阶段放宽后
+        # 会出现「触发了重试、择优时却仍按旧阈值判长度」的口径分叉。
+        and not reply_exceeds_dialogue_length(reply, stage=stage)
     )
     variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     event_gate_clean = int(not _violates_event_gate(prompt, reply))
@@ -1374,11 +1421,16 @@ def retry_for_format_noise(
     *,
     skip: bool = False,
     max_retries: int | None = None,
+    stage: str | None = None,
 ) -> ProviderResult:
     """对真实上游做有限格式重试，供 Bridge 和评测共用。
 
     ``max_retries`` 只由质量评测的经济模式传入；``None`` 保留 Bridge
     原有的按问题类型限额行为。
+
+    ``stage`` 只用于按阶段取长度阈值（`parent` 放宽到 90，其余仍是 68）。
+    **默认 None ⇒ 不传就是改动前的行为**，所以既有调用方与测试替身
+    无需一起改。
     """
 
     current = result
@@ -1500,7 +1552,9 @@ def retry_for_format_noise(
             retry_content = VOICE_PARTICLE_DENSITY_RETRY_CONTENT
         # 排在语气粒度之后：两者都是「这一轮自己就带得太多」，
         # 但粒度只影响语气，长度会直接让玩家看到一大段。
-        elif issue is None and reply_exceeds_dialogue_length(current.reply):
+        elif issue is None and reply_exceeds_dialogue_length(
+            current.reply, stage=stage
+        ):
             issue = "over_length"
             retry_kind = "length"
             retry_content = LENGTH_RETRY_CONTENT
@@ -1637,8 +1691,8 @@ def retry_for_format_noise(
             }
         )
         improved_this_round = _retry_quality_key(
-            prompt, current.reply
-        ) > _retry_quality_key(prompt, best.reply)
+            prompt, current.reply, stage=stage
+        ) > _retry_quality_key(prompt, best.reply, stage=stage)
         if improved_this_round:
             best = current
         any_retry_improved = bool(any_retry_improved) or improved_this_round

@@ -467,12 +467,28 @@ def _build_context(
     return context, prompt
 
 
+def _stage_from_context(context: object) -> str | None:
+    """取当前轮的关系阶段，供按阶段放宽长度阈值使用。
+
+    取不到就返回 None（退回全局阈值）—— **不要猜**。context 的形状由
+    `prompts.py` 决定，这里只做防御性读取，不复制它的阶段推导逻辑，
+    否则两处会各自漂移。
+    """
+
+    try:
+        stage = context["npcIdentity"]["stageProfile"]["stage"]  # type: ignore[index]
+    except (TypeError, KeyError, IndexError):
+        return None
+    return stage if isinstance(stage, str) and stage.strip() else None
+
+
 def _retry_for_format_noise(
     request: DialogueTestRequest,
     prompt: list[dict[str, str]],
     result: ProviderResult,
     *,
     attempts: list[ProviderResult] | None = None,
+    stage: str | None = None,
 ) -> ProviderResult:
     def generate(retry_messages: list[dict[str, str]]) -> ProviderResult:
         retried = provider_router.generate(
@@ -488,6 +504,7 @@ def _retry_for_format_noise(
         prompt,
         generate,
         skip=result.provider == fake_provider.name,
+        stage=stage,
     )
 
 
@@ -700,7 +717,7 @@ def morning_scenarios() -> MorningScenarioListResponse:
 @app.post("/api/dialogue/test", response_model=DialogueResponse)
 def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     request = _validate_dialogue_request(payload)
-    _, prompt = _build_context(payload, compact_prompt=request.compact_prompt)
+    context, prompt = _build_context(payload, compact_prompt=request.compact_prompt)
     started_at = perf_counter()
     if (
         not provider_router.has_configured_upstream()
@@ -716,6 +733,7 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         prompt,
         result,
         attempts=attempts,
+        stage=_stage_from_context(context),
     )
 
     guarded = response_guard.check(result.reply)

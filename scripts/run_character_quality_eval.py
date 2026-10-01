@@ -890,6 +890,7 @@ def run_evaluation(
                         result,
                         messages,
                         generate_attempt,
+                        stage=case.relationship_stage,
                     )
                 else:
                     result = retry_for_format_noise(
@@ -897,6 +898,7 @@ def run_evaluation(
                         messages,
                         generate_attempt,
                         max_retries=evaluation_budget.max_npc_retries,
+                        stage=case.relationship_stage,
                     )
             turn_request_count = npc_request_count - npc_requests_before
             turn_retry_count = max(0, turn_request_count - 1)
