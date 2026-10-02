@@ -976,3 +976,51 @@ def test_router_builds_ollama_native_provider_from_settings() -> None:
     router = ProviderRouter.from_settings(settings)
 
     assert isinstance(router.local_provider, OllamaNativeProvider)
+
+
+def test_payload_dump_path_follows_the_env_override(tmp_path, monkeypatch) -> None:
+    from stardew_ai_bridge.providers import _payload_dump_path
+
+    monkeypatch.setenv("BRIDGE_PAYLOAD_DUMP_DIR", str(tmp_path))
+
+    target = _payload_dump_path()
+
+    assert target == tmp_path / "_payload_dump.json"
+    assert target.parent.is_dir()
+
+
+def test_payload_dump_path_defaults_into_a_managed_dir(monkeypatch) -> None:
+    """不该再落回源码树或某个一次性工作区目录。"""
+    from stardew_ai_bridge.providers import _payload_dump_path
+
+    monkeypatch.delenv("BRIDGE_PAYLOAD_DUMP_DIR", raising=False)
+
+    target = _payload_dump_path()
+
+    assert target is not None
+    assert target.name == "_payload_dump.json"
+    assert "stardew-ai-bridge" in target.parts
+    assert ".scratch" not in str(target)
+
+
+def test_failed_payload_is_dumped_with_the_authorization_header_redacted(
+    tmp_path, monkeypatch
+) -> None:
+    from stardew_ai_bridge.providers import _dump_failed_payload
+
+    monkeypatch.setenv("BRIDGE_PAYLOAD_DUMP_DIR", str(tmp_path))
+
+    _dump_failed_payload(
+        {"Authorization": "Bearer sk-should-not-be-written", "Content-Type": "application/json"},
+        {"model": "kimi", "messages": [{"role": "user", "content": "你好"}]},
+        400,
+    )
+
+    text = (tmp_path / "_payload_dump.json").read_text(encoding="utf-8")
+    written = json.loads(text)
+
+    assert written["status"] == 400
+    assert written["headers"]["Authorization"] == "<redacted>"
+    assert written["headers"]["Content-Type"] == "application/json"
+    assert written["payload"]["model"] == "kimi"
+    assert "sk-should-not-be-written" not in text

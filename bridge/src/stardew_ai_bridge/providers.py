@@ -5,6 +5,7 @@ from collections.abc import Mapping
 import inspect
 import json
 import logging
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -208,6 +209,33 @@ def _ends_like_a_whole_sentence(text: str) -> bool:
 #: 空 content 的替代文本。只用于**出网请求的最后一步**，不进入 prompt 构造。
 _EMPTY_MESSAGE_PLACEHOLDER = "（无）"
 
+#: 被拒请求的落盘目录。可用环境变量覆盖；不设就用系统临时目录。
+_PAYLOAD_DUMP_DIR_ENV = "BRIDGE_PAYLOAD_DUMP_DIR"
+
+
+def _payload_dump_path() -> "pathlib.Path | None":
+    """被拒请求的落盘路径；目录建不出来时返回 None。
+
+    2026-10-03：原先硬编码成 `E:\\workspace\\.scratch\\stardew-night\\_payload_dump.json`
+    —— 那是当时那次排查用的一次性目录，换机器就失效，而且会把运行数据悄悄
+    写到项目外。改成“环境变量优先、否则落到系统临时目录”，并把实际路径打进日志，
+    否则人根本不知道该去哪里找。
+    """
+    import pathlib
+    import tempfile
+
+    override = os.environ.get(_PAYLOAD_DUMP_DIR_ENV, "").strip()
+    base = (
+        pathlib.Path(override)
+        if override
+        else pathlib.Path(tempfile.gettempdir()) / "stardew-ai-bridge"
+    )
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return base / "_payload_dump.json"
+
 
 def _dump_failed_payload(
     headers: Mapping[str, str],
@@ -219,13 +247,13 @@ def _dump_failed_payload(
     2026-10-02：云端全线兜底，日志里只有「HTTP 400」，而响应体还是空的 ——
     既看不到请求，也看不到响应，只能靠猜。留下 payload 才能拿出去单独复现。
     纯诊断用途，密钥一律脱敏；不参与任何判定，失败也不影响主流程。
+
+    落盘位置见 `_payload_dump_path`；成功落盘时会打一条 warning 报出绝对路径。
     """
     try:
-        import pathlib as _pathlib
-
-        target = _pathlib.Path(
-            r"E:\workspace\.scratch\stardew-night\_payload_dump.json"
-        )
+        target = _payload_dump_path()
+        if target is None:
+            return
         safe_headers = {
             key: ("<redacted>" if key.lower() == "authorization" else value)
             for key, value in headers.items()
@@ -238,6 +266,7 @@ def _dump_failed_payload(
             ),
             encoding="utf-8",
         )
+        log.warning("上游拒收的请求已落盘：%s（可离线复现）", target)
     except Exception:
         pass
 
