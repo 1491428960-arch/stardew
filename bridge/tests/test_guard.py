@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -283,6 +284,74 @@ def test_response_guard_accepts_natural_chinese_without_format_noise() -> None:
     result = ResponseGuard().check("今天先到这里，明天再聊吧。")
 
     assert result.accepted is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Leo 那孩子最近总往山上跑。",
+        "Sandy 的沙漠商店还开着吗？",
+        "Marlon 说矿洞深处不能去。",
+        "Dwarf 又在卖炸弹了。",
+        "Gunther 让我把矿石捐给博物馆。",
+        "Morgan 今天没来店里。",
+        "Scarlett 又在画设计了。",
+        "Susan 昨天烤了面包。",
+        "Apples 那匹马最近怎么样？",
+    ],
+)
+def test_character_names_in_chinese_reply_are_not_english_noise(reply: str) -> None:
+    """角色名出现在中文对白里是正常的，不该被当成「输出英文」而白重试一次。
+
+    判据是 `ResponseGuard._allowed_english`。它漏掉一个角色名，代价不是判错一句
+    话那么简单 —— `retry_for_format_noise` 会**真的向模型重发一次请求**，
+    而这次重试**注定修不好**（名字本来就该在那儿），于是白烧一次调用。
+
+    原版侧漏掉过 Leo / Sandy / Marlon / Dwarf / Gunther，
+    SVE 侧漏掉过 Morgan / Scarlett / Susan / Apples。
+    """
+    assert ResponseGuard.format_issue(reply) is None
+
+
+def test_allowed_english_covers_every_corpus_npc_id() -> None:
+    """`_allowed_english` 必须覆盖语料里出现过的每一个纯字母 npcId。
+
+    **为什么必须是机器守而不是手抄**：2026-09-27 第一次补齐这份名单时，我按脚本
+    打出来的 106 个缺失项手抄进源码，结果**把原本就在名单里的 `claire` 和 `leah`
+    抄丢了** —— 而当时新加的那条用例只覆盖 9 个名字，完全抓不到。手抄漏项这件事
+    在人工复核里是隐形的，只有拿语料求差才看得见。
+
+    ⚠ 漏一个名字的代价不是判错一句话，是 `retry_for_format_noise` 会**真的重发
+    一次请求**，且那次重试注定修不好。
+    """
+    root = Path(__file__).resolve().parents[2]
+    corpus = (
+        root
+        / "artifacts"
+        / "corpus"
+        / "20260927-string-eventid"
+        / "vanilla-sve-rasmodia-dialogue-corpus.json"
+    )
+    if not corpus.exists():  # pragma: no cover - 语料是生成物，缺了不阻断
+        pytest.skip("语料文件不存在")
+    payload = json.loads(corpus.read_text(encoding="utf-8"))
+
+    corpus_ids = {
+        str(record.get("npcId")).casefold()
+        for record in payload["records"]
+        if record.get("npcId")
+        and str(record["npcId"]).isascii()
+        and str(record["npcId"]).isalpha()
+        and len(str(record["npcId"])) >= 3
+    }
+    # `marriagedialogue` 是语料里的已知脏数据（键被当成了说话人），不是 NPC。
+    exempt = {"marriagedialogue"}
+    missing = sorted(corpus_ids - set(ResponseGuard._allowed_english) - exempt)
+
+    assert not missing, (
+        "这些语料里出现过的 npcId 不在 _allowed_english 里，"
+        f"NPC 提到它们会被误判成 english 并白重试一次：{missing}"
+    )
 
 
 @pytest.mark.parametrize(
