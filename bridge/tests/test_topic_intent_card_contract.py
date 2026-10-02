@@ -13,8 +13,8 @@
 |---|---|---|
 | `stage_execution_card` | `initiative` | 不主动开启新话题，不为延长对话而反问 |
 | `stage_execution_card` | `responseShape` | 轻柔地用 1 句**回答**… |
-| `stage_execution_card` | `instruction` | 直接**接住玩家的意思**…表达预算：直接**回答后**最多追加一个动作 |
-| `turn_plan` | `instruction` | 先**回答**，再给一个具体、轻量的继续入口 |
+| `stage_execution_card` | `instruction` | 先**落角色自己的立场或态度**…表达预算：角色化的**态度或反应是主句** |
+| `turn_plan` | `instruction` | 先**落角色自己的态度**，再给一个具体、轻量的继续入口 |
 
 四个"回答/接住"一起否定这次请求本身，而 `topic_response_contract` 又写着
 「允许从角色自己的近况、记忆、兴趣或眼前观察主动开启新话题」——
@@ -114,7 +114,7 @@ def test_topic_stage_card_asks_for_an_opening_not_an_answer(stage: str) -> None:
     assert "起一个话头" in stage_card["responseShape"], stage
     assert "起头" in stage_card["initiative"], stage
     assert "不主动开启新话题" not in stage_card["initiative"], stage
-    assert "接住玩家的意思" not in stage_card["instruction"], stage
+    assert "先让这个角色自己开口表态" not in stage_card["instruction"], stage
     assert "本轮由系统请求 NPC 主动起一个话头" in stage_card["instruction"], stage
 
 
@@ -171,7 +171,7 @@ def test_chat_stage_card_is_untouched(stage: str) -> None:
     # 与阶段策略数据逐字一致（不是"含某个词"这种松断言）。
     assert stage_card["responseShape"] == base["responseShape"]
     assert stage_card["initiative"] == base["initiative"]
-    assert "接住玩家的意思" in stage_card["instruction"]
+    assert "先让这个角色自己开口表态" in stage_card["instruction"]
     # turn_plan 仍是通用模式文案，没有被 topic 的「起头」版替换。
     assert turn_plan["instruction"] == _TURN_PLAN_COMPACT_INSTRUCTIONS[turn_plan["mode"]]
     assert "本轮由 NPC 主动开场" not in turn_plan["instruction"]

@@ -446,7 +446,7 @@ def test_quality_score_uses_semantic_companionship_for_history_continuity() -> N
     turn = case.dialogue_turns()[2]
     score = score_character_reply(
         case,
-        "只要是和你在一起，去里面待多久我都愿意。那就再喝一口，等下坐过去的时候，我们把厚毯子也拉过来，好不好？",
+        "好……那就不喝了。我把毯子拉过来，挨着你坐，慢慢待一会儿。",
         turn=turn,
         history=[
             {"role": "user", "content": case.message},
@@ -455,7 +455,7 @@ def test_quality_score_uses_semantic_companionship_for_history_continuity() -> N
         player_input=turn.message,
     )
 
-    assert score["semanticEvidenceMatches"] == {"陪": ["和你在一起"]}
+    assert score["semanticEvidenceMatches"] == {"靠近": ["挨着你"]}
     assert score["continuity"] is True
     assert "missing_continuity_evidence" not in score["tags"]
 
@@ -696,6 +696,15 @@ def test_quality_score_records_conversation_lead_diagnostics() -> None:
 
 
 def test_quality_score_does_not_let_a_lead_replace_required_personal_affection() -> None:
+    """钩子不能顶替必需的亲密 —— 但 2026-09-29 起这个判据只记录、不再判负。
+
+    这条回复（`我留了一杯。陪你聊一会儿。`）**其实是有亲密的**，只是
+    `diagnose_personal_affection` 的词表要求固定骨架（`给你留`、`陪你…开心`），
+    接不住 `留了一杯` / `陪你聊一会儿` 这种自然说法。同一个漏判让 9 条人读为好的
+    亲密回复全军覆没，所以它从通过条件降级为观测（理由见 `score_character_reply`
+    里那段注释）。这里保留断言，正是把「词表接不住自然表达」钉在测试里 ——
+    哪天词表放宽了这条会红，那时就能顺势把它恢复成硬判据。
+    """
     if case_by_id is None or score_character_reply is None:
         pytest.fail("质量评测模块尚未实现")
 
@@ -708,10 +717,10 @@ def test_quality_score_does_not_let_a_lead_replace_required_personal_affection()
     )
 
     assert score["conversationLeadDetected"] is True
-    assert score["personalAffectionDetected"] is False
+    assert score["personalAffectionDetected"] is False  # ← 词表的漏判，不是回复的问题
     assert score["initiativeDetected"] is False
     assert "missing_proactive_affection" in score["tags"]
-    assert score["passed"] is False
+    assert score["passed"] is True
 
 
 def test_quality_score_keeps_full_lead_diagnostics_for_shane_exit() -> None:
@@ -1110,6 +1119,92 @@ def test_quality_score_keeps_follow_up_strict_when_reply_drops_the_prior_object(
     assert score["continuity"] is False
     assert "missing_continuity_evidence" in score["tags"]
     assert score["passed"] is False
+
+
+def test_stranger_stage_is_not_failed_for_missing_continuity() -> None:
+    """stranger 阶段的短拒绝不应该被判「缺承接」。
+
+    实测依据（20260928-220036）：stranger 那 5 个 case 的失败轮**全部**是
+    `missing_continuity_evidence`，而那几轮恰恰是合规的回避 ——
+    shane「呃，Joja 收工挺晚的」、sebastian「嗯，回头聊」。
+    初识被邀请时选择不去，本来就不该被要求承接历史锚点。
+    """
+    case = case_by_id("shane-stranger-invitation")
+    turn = case.dialogue_turns()[1]
+
+    score = score_character_reply(
+        case,
+        "呃，Joja 收工挺晚的。",
+        turn=turn,
+        # ⚠ history 必须给：`active_history` 为空时 L4067 根本不加这个 tag，
+        # 不传 history 的测试会**假绿** —— 我第一版就是这么写的。
+        history=[
+            {"role": "user", "content": "晚上一起去酒吧坐坐？"},
+            {"role": "assistant", "content": "我不认识你。"},
+        ],
+        player_input=turn.message,
+    )
+
+    assert "missing_continuity_evidence" not in score["tags"]
+    assert score["passed"] is True
+
+
+def test_acquaintance_stage_still_requires_continuity() -> None:
+    """上一条的放宽**只针对 stranger**，其它阶段仍要求承接上文。"""
+    score = score_character_reply(
+        case_by_id("shane-follow-up"),
+        "还没送到。我再问问送货的人什么时候能来。",
+    )
+
+    assert "missing_continuity_evidence" in score["tags"]
+    assert score["passed"] is False
+
+
+def test_mechanical_affection_shape_is_skipped_when_no_initiative_is_expected() -> None:
+    """不期待主动亲密时，不判「主动亲密过于机械」。
+
+    实测（2026-09-28，stranger 第三批）：shane 连续两句描述自己的活
+    （「贾斯还在等我回去，鸡舍也得喂」/「收完货、喂完鸡舍那批畜生，才算完」）
+    都被判成 `specific_plan`，于是 `mechanical_affection_shape` 命中 ⇒
+    人读完全合规的回复被判失败。stranger 的 `initiativeExpectation` 就是
+    `none`，该判据在这类回合没有对象。
+    """
+
+    from stardew_ai_bridge.character_quality_eval import score_affection_variation
+
+    diagnostics = [
+        {
+            "affectionShape": "specific_plan",
+            "initiativeKind": "specific_plan",
+            "initiativeExpectation": "none",
+            "initiativeTags": ["specific_plan_only"],
+        }
+    ] * 2
+
+    scores = score_affection_variation(["鸡舍也得喂。", "收完货才算完。"], [], diagnostics)
+
+    assert [item["mechanical"] for item in scores] == [False, False]
+
+
+def test_mechanical_affection_shape_still_flags_repeats_when_initiative_expected() -> None:
+    """期待主动亲密时，重复的亲近形状照旧判机械——收口不能把这条判据废掉。"""
+
+    from stardew_ai_bridge.character_quality_eval import score_affection_variation
+
+    diagnostics = [
+        {
+            "affectionShape": "specific_plan",
+            "initiativeKind": "specific_plan",
+            "initiativeExpectation": "proactive",
+            "initiativeTags": ["specific_plan_only"],
+        }
+    ] * 2
+
+    scores = score_affection_variation(
+        ["明天一起骑车。", "明天一起去酒窖。"], [], diagnostics
+    )
+
+    assert scores[1]["mechanical"] is True
 
 
 def test_quality_score_accepts_single_character_prior_object_as_continuity() -> None:

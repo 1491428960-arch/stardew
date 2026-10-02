@@ -209,6 +209,39 @@ def _ends_like_a_whole_sentence(text: str) -> bool:
 _EMPTY_MESSAGE_PLACEHOLDER = "（无）"
 
 
+def _dump_failed_payload(
+    headers: Mapping[str, str],
+    payload: Mapping[str, object],
+    status: int,
+) -> None:
+    """把上游拒收的那一次请求原样落盘，用于离线复现。
+
+    2026-10-02：云端全线兜底，日志里只有「HTTP 400」，而响应体还是空的 ——
+    既看不到请求，也看不到响应，只能靠猜。留下 payload 才能拿出去单独复现。
+    纯诊断用途，密钥一律脱敏；不参与任何判定，失败也不影响主流程。
+    """
+    try:
+        import pathlib as _pathlib
+
+        target = _pathlib.Path(
+            r"E:\workspace\.scratch\stardew-night\_payload_dump.json"
+        )
+        safe_headers = {
+            key: ("<redacted>" if key.lower() == "authorization" else value)
+            for key, value in headers.items()
+        }
+        target.write_text(
+            json.dumps(
+                {"status": status, "headers": safe_headers, "payload": payload},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 def _fill_empty_message_content(
     messages: list[dict[str, str]],
 ) -> list[dict[str, str]]:
@@ -514,8 +547,17 @@ class OpenAICompatibleProvider:
                     json=payload,
                 ) as response:
                     if response.is_error:
+                        # 光记状态码等于把病因丢掉：上游 400 的响应体里写着是哪一节
+                        # 不合它的规。读出来截一段带上 —— 2026-10-02 排查云端全线
+                        # 兜底时，日志里只有「HTTP 400」，只能靠猜。
+                        await response.aread()
+                        detail = _redact_secrets(
+                            response.text[:400].replace("\n", " ").strip()
+                        )
+                        _dump_failed_payload(headers, payload, response.status_code)
                         raise ProviderError(
                             f"{self.name} returned HTTP {response.status_code}"
+                            + (f": {detail}" if detail else "")
                         )
 
                     reply_parts: list[str] = []

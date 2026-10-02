@@ -439,13 +439,21 @@ def _copy_safe_conversation_lead_diagnostics(
 ) -> None:
     if not isinstance(value, Mapping):
         return
-    for key in ("answeredCurrentTopic", "conversationLeadDetected"):
+    for key in (
+        "answeredCurrentTopic",
+        "conversationLeadDetected",
+        # 2026-09-29（A+C 口径）：「有没有给玩家留下可接的东西」这个新观测维度。
+        # 目前只记录、不进 passed —— 理由见 character_quality_eval 里
+        # `_conversation_hook` 的注释（机器判不出语义钩子，会误伤含蓄的好回复）。
+        "conversationHookDetected",
+    ):
         detected = value.get(key)
         if isinstance(detected, bool):
             safe[key] = detected
-    kind = _text(value.get("conversationLeadKind"), limit=TAG_TEXT_LIMIT)
-    if kind is not None:
-        safe["conversationLeadKind"] = kind
+    for key in ("conversationLeadKind", "conversationHookKind"):
+        kind = _text(value.get(key), limit=TAG_TEXT_LIMIT)
+        if kind is not None:
+            safe[key] = kind
     for key in ("conversationLeadEvidence", "conversationLeadTags"):
         values = value.get(key)
         if isinstance(values, list):
