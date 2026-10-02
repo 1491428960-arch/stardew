@@ -86,6 +86,16 @@ def test_the_at_sign_becomes_the_player_pronoun() -> None:
     assert clean_dialogue_variants("@你好") == ["你你好"]
 
 
+def test_the_at_sign_is_dropped_before_a_title() -> None:
+    # `@` 黏在称谓前时不能换成「你」——「你先生」不是中文说法。
+    # 实测生成的索引里已经写出 86 处「你先生」、12 处「你小姐」，
+    # 这一条盯住它别再回来。词表见 `_PLAYER_NAME_BEFORE_TITLE`。
+    assert clean_dialogue_variants("@先生，早啊。") == ["先生，早啊。"]
+    assert clean_dialogue_variants("@小姐，今天有空吗？") == ["小姐，今天有空吗？"]
+    # 不接称谓时**仍然**换成「你」：这是既有的、有意为之的替换，别一起改了。
+    assert clean_dialogue_variants("@你好") == ["你你好"]
+
+
 def test_dialogue_markers_are_removed() -> None:
     # `$q`/`$d` 之类是控制标记，不该出现在台词里。
     #

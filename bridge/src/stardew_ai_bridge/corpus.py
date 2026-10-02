@@ -43,6 +43,13 @@ _DIALOGUE_INPUT_SEPARATOR = re.compile(r"\binputSeparator\s*=.*$", re.IGNORECASE
 _DIALOGUE_ACTION = re.compile(r"\*[^*\r\n]*\*")
 _DIALOGUE_NARRATION = re.compile(r"^\s*%")
 _DIALOGUE_LONE_DOLLAR = re.compile(r"(?<![A-Za-z0-9])\$(?![A-Za-z0-9])")
+# `@` 是游戏里的玩家名占位符，替换成「你」在多数场合成立。但它**直接黏在称谓
+# 前**时（`@先生`、`@小姐`）那样换会写出「你先生」这种不通的句子 —— 实测索引
+# 里已经这样写出 86 处。这一种只删掉 `@`、保留称谓；不接称谓的（`@你好`）
+# 仍走整句替换。词表按索引里实测出现过的搭配列，宁少勿多。
+_PLAYER_NAME_BEFORE_TITLE = re.compile(
+    r"@(?=先生|小姐|女士|太太|夫人|老板|老师|小朋友|孩子|小家伙|年轻人|老伙计|亲爱的|朋友)"
+)
 _SINGLE_LETTER_RESIDUE = re.compile(
     r"(?<=[。！？；：，、…])\s*[A-Za-z]\s*(?=[\u4e00-\u9fff])"
 )
@@ -293,6 +300,10 @@ def _clean_dialogue_branch(text: str) -> str:
     value = _DIALOGUE_ACTION.sub(" ", value)
     value = value.replace("*", " ")
     value = _DIALOGUE_LONE_DOLLAR.sub(" ", value)
+    # `@` 是游戏里的玩家名占位符。整句换成「你」在多数场合成立，但它直接黏在
+    # 称谓前时（`@先生`、`@小姐`）会写出「你先生」这种不通的句子 —— 实测索引
+    # 里已经这样写出 86 处。这一种只留称谓，其余仍然换成「你」。
+    value = _PLAYER_NAME_BEFORE_TITLE.sub("", value)
     value = value.replace("@", "你")
     # 个别中文导出会在中文句间混入 OCR/编码残片（例如“…… e 你”）。
     # 只清理夹在中文标点与中文之间的单个拉丁字母，避免误删真正的英文术语。
