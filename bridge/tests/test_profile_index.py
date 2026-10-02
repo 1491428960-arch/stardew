@@ -1664,6 +1664,129 @@ def test_profile_index_speech_topic_can_reach_lower_stage_daily_evidence(
     ]
 
 
+def test_profile_index_speech_evidence_excludes_pure_punctuation(
+    tmp_path: Path,
+) -> None:
+    """纯标点或省略号台词不得进入证据窗口。
+
+    这类文本没有可供模仿的措辞，却会占掉有限配额，并诱导模型用空话收尾。
+    实测正式索引里有 259 条属于这一类（其中 233 条是 event_dialogue）。
+    """
+
+    index_path = tmp_path / "profile-index.json"
+    records = [
+        {
+            "sampleId": "sophia:junk:ellipsis",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "Mon",
+            "text": "……",
+        },
+        {
+            "sampleId": "sophia:junk:ascii",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "Tue",
+            "text": "...",
+        },
+        {
+            "sampleId": "sophia:junk:repeated",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "Wed",
+            "text": "…… ……",
+        },
+        {
+            "sampleId": "sophia:junk:residue",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "Thu",
+            "text": "…… -",
+        },
+        {
+            "sampleId": "sophia:junk:bangs",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "Fri",
+            "text": "!?!?",
+        },
+        {
+            "sampleId": "sophia:good",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "Sat",
+            "text": "我想找个时间去爬山！我们也可以去野餐！",
+        },
+    ]
+    _write_json(
+        index_path,
+        {
+            "schemaVersion": 2,
+            "profiles": {},
+            "styleSamples": records,
+            "speechEvidence": records,
+            "voiceCards": {},
+        },
+    )
+
+    selected = ProfileIndexStore(index_path).speech_evidence(
+        "Sophia",
+        ["vanilla"],
+        limit=6,
+    )
+
+    assert [item["sampleId"] for item in selected] == ["sophia:good"]
+
+
+def test_profile_index_speech_evidence_excludes_pure_punctuation_in_events(
+    tmp_path: Path,
+) -> None:
+    """已完成事件里的纯标点台词同样要挡掉，不能占掉事件配额。"""
+
+    index_path = tmp_path / "profile-index.json"
+    records = [
+        {
+            "sampleId": "sophia:event:junk",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "8185291/t 900 1700",
+            "text": "……",
+            "evidenceKind": "event_dialogue",
+            "eventId": "8185291",
+            "conditions": {"eventId": "8185291"},
+        },
+        {
+            "sampleId": "sophia:event:good",
+            "npcId": "Sophia",
+            "sourceMod": "vanilla",
+            "sourceKey": "8185292/t 900 1700",
+            "text": "嘿，你好！今天早上斯嘉丽开着她爸爸的车来到这里。",
+            "evidenceKind": "event_dialogue",
+            "eventId": "8185292",
+            "conditions": {"eventId": "8185292"},
+        },
+    ]
+    _write_json(
+        index_path,
+        {
+            "schemaVersion": 2,
+            "profiles": {},
+            "styleSamples": records,
+            "speechEvidence": records,
+            "voiceCards": {},
+        },
+    )
+
+    selected = ProfileIndexStore(index_path).speech_evidence(
+        "Sophia",
+        ["vanilla"],
+        limit=2,
+        completed_event_ids=("8185291", "8185292"),
+    )
+
+    assert [item["sampleId"] for item in selected] == ["sophia:event:good"]
+
+
 def test_profile_index_does_not_relax_stage_for_generic_small_talk(
     tmp_path: Path,
 ) -> None:

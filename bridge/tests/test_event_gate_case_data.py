@@ -73,6 +73,11 @@ _INTENTIONAL_EMPTY_CHAIN_CASE_IDS = frozenset(
         "event-impact-elliott-40-before",
         "event-impact-harvey-56-before",
         "event-impact-sophia-8185290-before",
+        # ⚠ 2026-09-28：stranger 的 5 个新 case **不在这里** ——
+        # 本名单同时被 `test_c_class_before_cases_keep_their_empty_chain_and_read_as_unfamiliar`
+        # 当作「必须存在于 relationship-stage-gating suite」的清单使用，
+        # 而新 case 进的是 `default`，且它们**不属于 C 类对照组**。
+        # 它们天然为空的链，改由下面第一条测试的修正代理指标排除。
         # relationship-stage-gating 的 before 侧
         "relationship-gate-wizard-before",
         "relationship-gate-sophia-before",
@@ -139,11 +144,17 @@ def test_no_quality_case_is_silently_event_gated() -> None:
 
     # C 类对照组的空事件链仍然是有意保留的，并且必须与非对照组区分开。
     # 只统计**配置了事件门**的角色：没有门的角色本来就不需要声明事件链。
+    # ⚠ 2026-09-28 修正代理指标。原条件是「该**角色**配置了事件门」，
+    # 但 stranger 是关系门**之前**的状态（`_STAGE_TO_GATE` 里根本没有它），
+    # 它的空链是**如实**的，且实测 `event_gate_applied is False`（未被静默压级）。
+    # 用「该**案例的阶段**在门表里」代替「该角色有门」，才能把
+    # 「处于有门档位却忘了补链」与「本来就在门之前」区分开 ——
+    # 前者必须失败，后者不该被误伤。
     empty_chain = {
         case.case_id
         for case in _all_cases()
         if case.completed_event_ids == ()
-        and relationship_event_gates(case.npc_id)
+        and _gate_chain(case.npc_id, case.relationship_stage) is not None
     }
     assert empty_chain == set(_INTENTIONAL_EMPTY_CHAIN_CASE_IDS)
 

@@ -507,6 +507,43 @@ def test_extract_event_dialogue_keeps_speaker_lines_and_event_provenance() -> No
     assert all("玩家不应进入" not in record["text"] for record in records)
 
 
+def test_extract_event_dialogue_accepts_string_event_ids() -> None:
+    """字符串键事件同样要解析出 eventId。
+
+    原版 `Data/Events` 里有 `mysteryBook` 这类非数字事件键。提取器早期只认
+    数字 ID，这批记录因此缺 `eventId`，在检索层被 `_event_dialogue_is_completed`
+    永久挡下（正式索引里 717 条缺 ID 的事件证据，大多源于此）。
+
+    游戏侧 `player.eventsSeen` 与 Bridge 侧 `game_event_completed` 都按字符串
+    比对，提取器没有理由要求数字；`_` 与 `/` 仍是 ID 与条件的既有分隔符。
+    """
+
+    records, warnings = extract_content_patcher_dialogue(
+        {
+            "Changes": [
+                {
+                    "Action": "EditData",
+                    "Target": "Data/Events/ArchaeologyHouse",
+                    "Entries": {
+                        "mysteryBook": (
+                            "none/-500 -500/farmer 1 1 0 Elliott 2 2 0/"
+                            'speak Elliott "经过无数个小时在书桌前奋斗后……"'
+                        )
+                    },
+                }
+            ]
+        },
+        source_mod="vanilla",
+        source_path="Data/Events/ArchaeologyHouse.zh-CN.json",
+    )
+
+    assert warnings == []
+    assert [record["eventId"] for record in records] == ["mysteryBook"]
+    assert [record["conditions"] for record in records] == [
+        {"eventId": "mysteryBook"}
+    ]
+
+
 def test_build_corpus_extracts_event_dialogue_from_content_patcher_data_events(
     tmp_path: Path,
 ) -> None:

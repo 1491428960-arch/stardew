@@ -82,7 +82,14 @@ public static class EventAuditRules
             ModWouldMutateGameState: false);
     }
 
-    private static IReadOnlyList<string> NormalizeIds(IEnumerable<string>? values)
+    /// <summary>
+    /// 去空白、去重、保序的规范化。**大小写敏感**（`StringComparer.Ordinal`）。
+    ///
+    /// 2026-09-27 从 `private` 放开：<see cref="RecentEventTracker"/> 也要用同一套规则，
+    /// 而「同一件事在两处各自演化」正是这个库反复吃亏的地方 ——
+    /// 两边一旦不一致，就会出现「审计认为新、上报认为旧」这种查不出来的静默错位。
+    /// </summary>
+    public static IReadOnlyList<string> NormalizeIds(IEnumerable<string>? values)
     {
         return (values ?? Array.Empty<string>())
             .Where(value => !string.IsNullOrWhiteSpace(value))

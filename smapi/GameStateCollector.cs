@@ -152,6 +152,23 @@ public static class GameStateCollector
     /// </remarks>
     public const int MaxCompletedEventIds = 512;
 
+    /// <summary>
+    /// 读玩家已完成的事件 id（`player.eventsSeen`），供跨天差异计算用（2026-09-27）。
+    ///
+    /// 与 <see cref="Collect"/> 那条读法共用同一套规则（反射 + 规范化 + 同一个上限），
+    /// 并且**故意只留这一个入口** —— 两处各自读的话，上限或规范化一旦漂移，
+    /// 就会出现「审计认为新、上报认为旧」这种查不出来的静默错位。
+    ///
+    /// ⚠ 必须在主线程调用：它碰了 `Game1`。`DayStarted` 里要在第一个 `await`
+    /// **之前**取好（见 <c>ModEntry.AnnounceMorningMessagesAsync</c>）。
+    /// </summary>
+    public static IReadOnlyList<string> ReadSeenEventIds()
+    {
+        return ReadEnumerableStrings(
+            ReadMember(Game1.player, "eventsSeen"),
+            maxCount: MaxCompletedEventIds);
+    }
+
     private static readonly IModRegistryStatus EmptyModRegistry = new EmptyModRegistryStatus();
     private static IModRegistryStatus modRegistry = EmptyModRegistry;
 
@@ -499,9 +516,7 @@ public static class GameStateCollector
         var childrenCount = livesWithPlayer == true
             ? ReadChildrenCount()
             : null;
-        var completedEventIds = ReadEnumerableStrings(
-            ReadMember(Game1.player, "eventsSeen"),
-            maxCount: MaxCompletedEventIds);
+        var completedEventIds = ReadSeenEventIds();
 
         return new RuntimeStoryState(
             marriageStatus,

@@ -1447,6 +1447,43 @@ def _event_dialogue_is_completed(
     )
 
 
+def _voice_anchor_is_available(
+    anchor: Mapping[str, Any],
+    completed_event_ids: set[str] | None,
+) -> bool:
+    """语气锚点的事件门控（管道③，2026-09-29）。
+
+    与 `_event_dialogue_is_completed` 的关键差别：**没有 `eventId` 就放行**。
+    语气锚点是构建期投影出来的，2026-09-29 之前的索引里事件锚点**不带 id**
+    （`speech._voice_anchor_candidates` 只放 `sampleId`/`sourceMod`/`text`/
+    `sourceKey`/`evidenceKind`）。若照搬「无 id ⇒ 未完成」的判据，会把
+    **60 个角色的锚点整批误杀**（其中 34 个会全空、31 个只有事件语料）
+    —— 实测见 `.scratch/probe-voice-card-gate.py`。
+    新构建（`_voice_anchor_candidates` 已补 id）与回填后的索引才真正门控。
+
+    `completed_event_ids=None` 表示调用方没有提供事件状态（语义同
+    `relationship_gating`：不确定不等于「都没完成」）⇒ 不门控。
+    """
+
+    if completed_event_ids is None:
+        return True
+    if not _is_event_dialogue_record(anchor):
+        return True
+    event_id = str(anchor.get("eventId", "")).strip().casefold()
+    if not event_id:
+        return True
+    if not completed_event_ids:
+        return False
+    source_mod = str(anchor.get("sourceMod", "")).strip().casefold()
+    accepted = {event_id}
+    if source_mod:
+        accepted.add(f"{source_mod}:{event_id}")
+    return any(
+        game_event_completed(candidate, completed_event_ids)
+        for candidate in accepted
+    )
+
+
 def _dialogue_path_priority(record: Mapping[str, Any]) -> int:
     """把日常对白排在事件文案前，避免有限样本窗口被剧情独白占满。"""
 
@@ -1514,6 +1551,20 @@ _RELATION_RESPONSE_KEY = re.compile(
 def _is_model_evidence_record(record: Mapping[str, Any]) -> bool:
     """只把可脱离特殊触发条件的静态对白放入模型证据窗口。"""
     return _shared_is_model_evidence_record(record)
+
+
+def _dialogue_has_substance(text: object) -> bool:
+    """对白是否含可模仿的措辞（至少一个字母、数字或汉字）。
+
+    正式索引里有 259 条只有标点或省略号的文本（其中 233 条是
+    event_dialogue），形如 `……`、`...`、`!?!?`、`…… ……`、`…… -`。
+    它们既没有句式、句长和语气可供模仿，又会占掉有限窗口配额，
+    还会诱导模型用空话收尾，所以在进入证据窗口前就要剔除。
+    注意只判"有没有实义字符"，不设长度下限：`不……`、`什么？`
+    这类短句是真实对白，必须保留。
+    """
+
+    return any(ch.isalnum() for ch in str(text))
 
 
 def _dialogue_key_priority(record: Mapping[str, Any]) -> int:
@@ -2127,6 +2178,7 @@ class ProfileIndexStore:
         relationship_stage: str = "",
         player_input: str = "",
         season: str = "",
+        completed_event_ids: Iterable[str] | None = (),
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
@@ -2136,6 +2188,24 @@ class ProfileIndexStore:
             return []
         source_mod_list = tuple(source_mods)
         requested_season = normalise_season(season)
+        # 与 `speech_evidence` 同一道事件闸门（2026-09-29 补）。
+        # 少了它，未完成事件的对白会经 `styleSamples` 进 `style_evidence` 卡 ——
+        # 初识阶段的 Alex 就是这样说出海滩事件台词的，而
+        # `_relationship_specificity_priority` 的注释早就写着「事件素材已经通过
+        # completed_event_ids 闸门」，实现必须兑现这句。
+        # 默认空集 = 一律不放行事件对白，与 `speech_evidence` / `story_events` 同口径。
+        # 显式传 `None` 才是「调用方没有提供事件状态」⇒ 不门控（见 `prompts.py`
+        # 的 `events_for_retrieval`）：`()` 与 `None` 必须分开，否则上游不发
+        # `completedEventIds` 时会把门控**误开**，事件对白整批被滤掉。
+        completed_keys = (
+            None
+            if completed_event_ids is None
+            else {
+                value.strip().casefold()
+                for value in completed_event_ids
+                if isinstance(value, str) and value.strip()
+            }
+        )
 
         def collect_candidates(
             *, allow_lower_stage: bool = False
@@ -2156,6 +2226,10 @@ class ProfileIndexStore:
                     continue
                 if not _source_matches(raw_sample.get("sourceMod"), source_mod_list):
                     continue
+                if completed_keys is not None and not _event_dialogue_is_completed(
+                    raw_sample, completed_keys
+                ):
+                    continue
                 if not _relationship_stage_matches(
                     raw_sample,
                     relationship_stage,
@@ -2164,6 +2238,8 @@ class ProfileIndexStore:
                     continue
                 text = raw_sample.get("text")
                 if not isinstance(text, str) or not text.strip():
+                    continue
+                if not _dialogue_has_substance(text):
                     continue
                 if has_dialogue_control_residue(text):
                     continue
@@ -2224,7 +2300,7 @@ class ProfileIndexStore:
         npc_id: str,
         source_mods: Iterable[str],
         limit: int = 8,
-        completed_event_ids: Iterable[str] = (),
+        completed_event_ids: Iterable[str] | None = (),
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return []
@@ -2232,11 +2308,16 @@ class ProfileIndexStore:
         capped_limit = max(0, min(int(limit), 8))
         if capped_limit == 0:
             return []
-        completed_keys = {
-            value.strip().casefold()
-            for value in completed_event_ids
-            if isinstance(value, str) and value.strip()
-        }
+        # `None` = 调用方没给事件状态 ⇒ 不门控；`()` = 都没完成 ⇒ 全部挡下。
+        completed_keys = (
+            None
+            if completed_event_ids is None
+            else {
+                value.strip().casefold()
+                for value in completed_event_ids
+                if isinstance(value, str) and value.strip()
+            }
+        )
         result: list[dict[str, Any]] = []
         for raw_event in self._index.get("storyEvents", []):
             if not isinstance(raw_event, Mapping):
@@ -2255,7 +2336,9 @@ class ProfileIndexStore:
             # 的宽口径 —— 命名空间前缀两个方向都认，分隔符差异容忍。
             required_event = raw_event.get("requiredEventId")
             if isinstance(required_event, str) and required_event.strip():
-                if not game_event_completed(required_event, completed_keys):
+                if completed_keys is not None and not game_event_completed(
+                    required_event, completed_keys
+                ):
                     continue
             selected = self._select_fields(raw_event, self._EVENT_FIELDS)
             event_ids = [
@@ -2263,8 +2346,10 @@ class ProfileIndexStore:
                 for field in ("eventId", "sourceKey")
                 if raw_event.get(field)
             ]
+            # 这里只标记完成状态，不做过滤：`completed_keys is None`
+            # （调用方没给事件状态）时按「都还没完成」处理即可，与旧行为一致。
             if any(
-                game_event_completed(event_id, completed_keys)
+                game_event_completed(event_id, completed_keys or ())
                 for event_id in event_ids
             ):
                 selected["status"] = "completed"
@@ -2279,7 +2364,7 @@ class ProfileIndexStore:
         source_mods: Iterable[str],
         *,
         limit: int = 8,
-        completed_event_ids: Iterable[str] = (),
+        completed_event_ids: Iterable[str] | None = (),
         allowed_scopes: Iterable[str] = (
             "canon_confirmed",
             "runtime_confirmed",
@@ -2297,11 +2382,16 @@ class ProfileIndexStore:
             for scope in allowed_scopes
             if str(scope).strip()
         }
-        completed_keys = {
-            value.strip().casefold()
-            for value in completed_event_ids
-            if isinstance(value, str) and value.strip()
-        }
+        # `None` = 调用方没给事件状态 ⇒ 不门控；`()` = 都没完成 ⇒ 全部挡下。
+        completed_keys = (
+            None
+            if completed_event_ids is None
+            else {
+                value.strip().casefold()
+                for value in completed_event_ids
+                if isinstance(value, str) and value.strip()
+            }
+        )
         records = self._index.get("knownCharacters", [])
         if not isinstance(records, list):
             return []
@@ -2321,7 +2411,9 @@ class ProfileIndexStore:
                 continue
             required_event = raw_relation.get("requiredEventId")
             if isinstance(required_event, str) and required_event.strip():
-                if not game_event_completed(required_event, completed_keys):
+                if completed_keys is not None and not game_event_completed(
+                    required_event, completed_keys
+                ):
                     continue
             known_npc_id = str(
                 raw_relation.get("knownNpcId", raw_relation.get("subjectNpcId", ""))
@@ -2344,7 +2436,7 @@ class ProfileIndexStore:
         relationship_stage: str = "",
         player_input: str = "",
         limit: int = 6,
-        completed_event_ids: Iterable[str] = (),
+        completed_event_ids: Iterable[str] | None = (),
         season: str = "",
     ) -> list[dict[str, Any]]:
         if not isinstance(npc_id, str) or not npc_id.strip():
@@ -2363,11 +2455,16 @@ class ProfileIndexStore:
             raw_evidence = self._index.get("styleSamples", [])
         elif not isinstance(raw_evidence, list):
             raw_evidence = []
-        completed_keys = {
-            value.strip().casefold()
-            for value in completed_event_ids
-            if isinstance(value, str) and value.strip()
-        }
+        # `None` = 调用方没给事件状态 ⇒ 不门控；`()` = 都没完成 ⇒ 全部挡下。
+        completed_keys = (
+            None
+            if completed_event_ids is None
+            else {
+                value.strip().casefold()
+                for value in completed_event_ids
+                if isinstance(value, str) and value.strip()
+            }
+        )
 
         def collect_candidates(
             *, allow_lower_stage: bool = False
@@ -2386,7 +2483,9 @@ class ProfileIndexStore:
                     continue
                 if not _source_matches(raw_sample.get("sourceMod"), source_mods):
                     continue
-                if not _event_dialogue_is_completed(raw_sample, completed_keys):
+                if completed_keys is not None and not _event_dialogue_is_completed(
+                    raw_sample, completed_keys
+                ):
                     continue
                 if not _relationship_stage_matches(
                     raw_sample,
@@ -2400,6 +2499,8 @@ class ProfileIndexStore:
                     continue
                 text = raw_sample.get("text")
                 if not isinstance(text, str) or not text.strip():
+                    continue
+                if not _dialogue_has_substance(text):
                     continue
                 if has_dialogue_control_residue(text):
                     continue
@@ -2573,6 +2674,7 @@ class ProfileIndexStore:
         *,
         relationship_stage: str = "",
         season: str = "",
+        completed_event_ids: Iterable[str] | None = None,
     ) -> dict[str, Any]:
         if not isinstance(npc_id, str) or not npc_id.strip():
             return {}
@@ -2581,6 +2683,17 @@ class ProfileIndexStore:
             return {}
         canonical_id = canonical_npc_id(npc_id)
         source_mod_list = tuple(source_mods)
+        # `None` 与空集语义不同：前者是「调用方没给事件状态」，后者是
+        # 「这些事件都还没完成」。见 `_voice_anchor_is_available`。
+        completed_keys = (
+            None
+            if completed_event_ids is None
+            else {
+                value.strip().casefold()
+                for value in completed_event_ids
+                if isinstance(value, str) and value.strip()
+            }
+        )
         matches: list[tuple[int, Mapping[str, Any]]] = []
         for raw_npc_id, raw_card in raw_cards.items():
             if canonical_npc_id(raw_npc_id).casefold() != canonical_id.casefold():
@@ -2602,6 +2715,8 @@ class ProfileIndexStore:
                 vanilla: list[dict[str, Any]] = []
                 for raw_anchor in raw_anchors:
                     if not isinstance(raw_anchor, Mapping):
+                        continue
+                    if not _voice_anchor_is_available(raw_anchor, completed_keys):
                         continue
                     source_mod = raw_anchor.get("sourceMod", "")
                     if requested_sources and not source_matches(
@@ -2747,7 +2862,7 @@ class ProfileIndexStore:
         source_mods: Iterable[str],
         *,
         limit: int = 8,
-        completed_event_ids: Iterable[str] = (),
+        completed_event_ids: Iterable[str] | None = (),
         allowed_scopes: Iterable[str] = (
             "canon_confirmed",
             "runtime_confirmed",
@@ -2765,11 +2880,16 @@ class ProfileIndexStore:
             for scope in allowed_scopes
             if str(scope).strip()
         }
-        completed_keys = {
-            value.strip().casefold()
-            for value in completed_event_ids
-            if isinstance(value, str) and value.strip()
-        }
+        # `None` = 调用方没给事件状态 ⇒ 不门控；`()` = 都没完成 ⇒ 全部挡下。
+        completed_keys = (
+            None
+            if completed_event_ids is None
+            else {
+                value.strip().casefold()
+                for value in completed_event_ids
+                if isinstance(value, str) and value.strip()
+            }
+        )
         candidates: list[tuple[int, int, dict[str, Any]]] = []
         for position, raw_fact in enumerate(self._index.get("knowledgeFacts", [])):
             if not isinstance(raw_fact, Mapping):
@@ -2786,7 +2906,9 @@ class ProfileIndexStore:
                 continue
             required_event = raw_fact.get("requiredEventId")
             if isinstance(required_event, str) and required_event.strip():
-                if not game_event_completed(required_event, completed_keys):
+                if completed_keys is not None and not game_event_completed(
+                    required_event, completed_keys
+                ):
                     continue
             selected = self._canonicalize_selected_npc(
                 self._select_fields(raw_fact, self._FACT_FIELDS)

@@ -642,6 +642,14 @@ def _voice_anchor_candidates(
         evidence_kind = sample.get("evidenceKind")
         if isinstance(evidence_kind, str) and evidence_kind.strip():
             anchor["evidenceKind"] = evidence_kind.strip()
+        # 事件对白锚点必须带上 `eventId`：运行时 `ProfileIndexStore.voice_card`
+        # 靠它判断该事件是否已完成（`_voice_anchor_is_available`）。
+        # 2026-09-29 之前这里漏了这个字段，导致 60 个角色的锚点**无法门控**
+        # —— 未完成事件的台词照样进 `voice_card` 卡。实测见
+        # `.scratch/probe-voice-card-gate.py`。
+        event_id = sample.get("eventId")
+        if isinstance(event_id, str) and event_id.strip():
+            anchor["eventId"] = event_id.strip()
         # 中文本地化优先；随后保证不同来源和不同日常结构都能留下一个样本。
         candidates.append(
             (

@@ -1,0 +1,10 @@
+{
+  "Name": "StardewAI 事件探针（测试用）",
+  "Author": "stardew-ai-npc",
+  "Version": "0.1.0",
+  "Description": "只做一件事：往 Data/Events/Farm 注入一条没有前置条件的事件，用来验证「事件后晨间消息」链路。测完即可整个目录删除。",
+  "UniqueID": "OpenAI.StardewAI.EventProbe",
+  "EntryDll": "StardewAI.EventProbe.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

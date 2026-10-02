@@ -56,7 +56,11 @@ _EVENT_COMMAND = re.compile(
     r'(?P<speaker>[A-Za-z][A-Za-z0-9_]*)\s+"(?P<text>(?:\\.|[^"\\])*)"',
     re.IGNORECASE,
 )
-_EVENT_ID_PREFIX = re.compile(r"^\s*(?P<event_id>\d+)(?:_|/|$)")
+# 事件 ID 不一定是数字：原版 `Data/Events` 里有 `mysteryBook` 这类字符串键。
+# 游戏侧 `player.eventsSeen` 与 Bridge 侧 `game_event_completed` 都按字符串
+# 比对，这里若只认数字，这批记录会缺 `eventId`，被事件门控永久挡下。
+# `_` 与 `/` 仍是 ID 与条件的既有分隔符（`8185290_Medicine/f Sophia 1200`）。
+_EVENT_ID_PREFIX = re.compile(r"^\s*(?P<event_id>[^/\s_]+)(?:_|/|$)")
 # 事件脚本指令（`/pause 500`、`/faceDirection Sophia 3`…）。用来判断
 # `Data/ExtraDialogue` 的某个值是不是"台词 + 整段脚本"的混合体，
 # 见 `_extra_dialogue_texts`。前导字符限定为空白/引号/行首，避免误伤
