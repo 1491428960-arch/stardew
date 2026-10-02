@@ -670,7 +670,30 @@ def morning_plan(request: MorningPlanRequest) -> MorningPlanResponse:
     `prompts.py` 是靠「历史首条 == 某条 opening」来认出「这是晨间对话的后续」的，
     两端一旦不一致，方向约束就会静默失效（这正是 ㉑ 那类「数据写对但永不生效」）。
     """
-    scenario = morning_scenario_store.for_day(request.day_index + _MORNING_DAY_OFFSET)
+    # 测试期诊断（2026-09-27）：`recentEventIds` 是事件型预设的唯一输入，而它从 DLL
+    # 走到这里要经过「跨天差异 → 序列化 → HTTP」三段，任何一段断了**症状都一样**：
+    # 今天早上没人发消息。把它打出来，日志才能指出断在哪一段。
+    #
+    # ⚠ `model_fields_set` 里放的是**字段名**（`recent_event_ids`），不是 alias
+    # （`recentEventIds`）—— 2026-09-27 实测踩到：只查 alias 会让「已送达」永远
+    # 显示成「未送达」，把一条好链路误诊成断的。两个都查，因为这点跨 pydantic 版本不保证。
+    #
+    # 用英文而不是中文：Bridge 的输出常被重定向到文件，那种场景下中文会变成乱码
+    # （实测 `<未送达>` 显示成 `<δ�ʹ�>`），而日志看不懂就等于没有。
+    _field_arrived = bool(
+        {"recentEventIds", "recent_event_ids"} & set(request.model_fields_set)
+    )
+    print(
+        f"[morning] dayIndex={request.day_index}"
+        f" recentEventIds={'<NOT-SENT>' if not _field_arrived else list(request.recent_event_ids)}"
+        f" knownNpcIds={len(request.known_npc_ids)}",
+        flush=True,
+    )
+
+    scenario = morning_scenario_store.for_day(
+        request.day_index + _MORNING_DAY_OFFSET,
+        recent_event_ids=request.recent_event_ids,
+    )
     if scenario is None:
         # 空数组而不是 404：绝大多数日子本来就没有预设消息，
         # 「今天没人发」是正常结果，不是错误。
@@ -739,6 +762,21 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
     guarded = response_guard.check(result.reply)
     if not guarded.accepted:
         fallback = fallback_provider.generate(request)
+        # ⚠ **默认配置下 `fallback_guarded.accepted` 恒为 False**，所以每次都走下面的
+        # `else`，warning 里也必然出现 `fallback_guard: stage_direction`。
+        #
+        # 原因**不是守卫失败**，是形态对撞：`FallbackProvider` 返回的就是
+        # `settings.fallback_reply`（`DEFAULT_FALLBACK_REPLY`），**和 `_SAFE_FALLBACK_REPLY`
+        # 是同一个字符串**，而它用全角括号包裹 —— `ResponseGuard` 的 `_stage_direction`
+        # 判据（括号动作旁白）必然命中它。
+        #
+        # **括号是有意的，不要去改**：2026-09-26 特意从「Rasmodia：暂时没有合适的回复，
+        # 请稍后再试。」改成这个形态，为的是让兜底文案在**形状上**跟角色台词分开
+        # （兜底哪个 NPC 都可能触发，署名或写成台词形状会让玩家以为是某个角色在说话）。
+        # 去掉括号就退回了那次要修的坑。详见 `config.py` 里 `DEFAULT_FALLBACK_REPLY` 的注释。
+        #
+        # 所以：看到这条 warning 不等于「守卫拦下了一条坏回复」，只是**兜底文案的形态**。
+        # 下面这一支检查留着，是为了兜住 `BRIDGE_FALLBACK_REPLY` 被配成别的文案的情况。
         fallback_guarded = response_guard.check(fallback.reply)
         warnings = [
             *result.warnings,

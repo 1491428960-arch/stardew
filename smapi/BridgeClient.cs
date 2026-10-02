@@ -831,6 +831,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
     public async Task<IReadOnlyList<MorningMessagePlan>> RequestMorningPlanAsync(
         int dayIndex,
         IReadOnlyList<string>? knownNpcIds = null,
+        IReadOnlyList<string>? recentEventIds = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -839,6 +840,7 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             {
                 DayIndex = dayIndex,
                 KnownNpcIds = knownNpcIds ?? Array.Empty<string>(),
+                RecentEventIds = recentEventIds ?? Array.Empty<string>(),
             };
             using var response = await httpClient
                 .PostAsJsonAsync(morningPlanEndpoint, request, cancellationToken)

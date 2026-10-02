@@ -740,6 +740,15 @@ class ProviderResult(ApiModel):
     fallback: bool = False
     latency_ms: int = Field(default=0, alias="latencyMs", ge=0)
     warnings: list[str] = Field(default_factory=list, max_length=20)
+    # 重试择优结果：重试版是否被采纳（`guard.retry_for_format_noise` 用
+    # `_retry_quality_key` 比较过后设置）。`None` = 本次调用从未比较过
+    # （没触发重试 / 重试抛异常 / 预算跳闸）。
+    # ⚠ 为什么单独开字段而不塞进 `warnings`：`warnings` 是**诊断码**列表
+    # （`_dedupe_warnings` 契约，且多处测试用 `==` 精确断言），
+    # 混进统计量会让「这轮出了什么问题」与「补救有没有用」互相污染。
+    # 动因：2026-09-28 审计发现全库 480 次 `response_affection_retry`
+    # （占重试 54%）**无法判断是否白跑** —— 因为没有落盘择优结果。
+    retry_improved: bool | None = Field(default=None, alias="retryImproved")
     usage: ProviderUsage | None = None
     open_loop: OpenLoopSignal | None = Field(default=None, alias="openLoop")
 
@@ -785,10 +794,23 @@ class MorningMessagePlan(ApiModel):
 class MorningPlanRequest(ApiModel):
     """游戏端在 `DayStarted` 时问「今天有没有人要主动开口」。
 
-    ⚠ **本模型刻意只有两个字段**：`ApiModel` 是 `extra="forbid"`，
+    ⚠ **本模型刻意保持极窄**：`ApiModel` 是 `extra="forbid"`，
     游戏端多送一个字段就是 422。所以**不要**往这里加「顺便带上
     gameState / 好感度 / 关系阶段」这类看起来很划算的东西——
     需要那些信息时另开端点，别把两个契约挤进一条请求。
+
+    ## 2026-09-27 加 `recentEventIds` 的判据
+
+    上面那条规矩没有变，`recentEventIds` 不是「顺便带上的上下文」：
+    它和 `knownNpcIds` **同类** —— 都是这一个决策的直接输入
+    （一个决定轮转候选池，一个决定今天有没有「事后」预设该发）。
+
+    而且分端点做不到：游戏端得先问 A 拿事件信号、再问 B 拿计划，
+    中间还可能跨天，两边看到的就不是同一个早上了。
+
+    ⇒ 判据是：**只服务「今天该由谁开口」这一个决策的窄信号可以进；
+    需要被 prompt 消费、或用于门控与检索的信息一律不进**（那些走
+    `DialogueTestRequest.gameState`）。
     """
 
     day_index: int = Field(alias="dayIndex", ge=0, le=100000)
@@ -800,6 +822,17 @@ class MorningPlanRequest(ApiModel):
             "玩家已经认识的角色（与 F8 名册同源：存档里有好感度记录的人）。"
             "**当前只用于轮转时的候选池**；节点预设不看它——"
             "节点是写死的调度，就算玩家还没见过那人也该照发。"
+        ),
+    )
+    recent_event_ids: list[str] = Field(
+        default_factory=list,
+        alias="recentEventIds",
+        max_length=32,
+        description=(
+            "**昨天**刚完成的剧情事件 ID，用于「事件后」预设。"
+            "⚠ 游戏端负责只送昨天那一批：Bridge 无从判断新旧，"
+            "`completedEventIds` 是累积全集且不含时间戳。"
+            "事件 ID **大小写敏感**（与 NPC ID 忽略大小写的规则相反）。"
         ),
     )
 

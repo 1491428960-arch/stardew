@@ -22,6 +22,23 @@ public sealed class MorningPlanRequest
     /// </summary>
     [JsonPropertyName("knownNpcIds")]
     public IReadOnlyList<string> KnownNpcIds { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// **昨天**刚完成的剧情事件 id（2026-09-27），用于「事件后」预设。
+    ///
+    /// ⚠ **只送昨天那一批。** Bridge 那边无从判断新旧：`completedEventIds` 是
+    /// 累积全集、不含完成时间，所以「是不是昨天」这个判断只能在游戏端做
+    /// （<see cref="RecentEventTracker"/> + `DayStarted`）。送多了的后果是
+    /// 一件三个月前的事被 NPC 当成刚发生的事来提。
+    ///
+    /// ⚠ 事件 ID **大小写敏感**，与 NPC ID 忽略大小写的规则相反。
+    ///
+    /// 这个字段与本类上面那条「不要顺手加 gameState／好感度」的警告不冲突：
+    /// 那些是**上下文**，而这个和 <see cref="KnownNpcIds"/> 一样，是
+    /// 「今天该由谁开口」这个决策**本身的输入**。
+    /// </summary>
+    [JsonPropertyName("recentEventIds")]
+    public IReadOnlyList<string> RecentEventIds { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>一条「今天该由谁开口、说什么」。</summary>

@@ -39,6 +39,14 @@ public sealed class ModEntry : Mod
     private readonly StoryStateStore storyStateStore = new();
     private readonly ShareFriendshipLedger shareFriendshipLedger = new();
     private readonly EventAuditObserver eventAuditObserver = new();
+
+    /// <summary>
+    /// 「昨天刚完成了哪些事件」（2026-09-27），喂给 <see cref="BridgeClient.RequestMorningPlanAsync"/>。
+    ///
+    /// ⚠ 粒度必须是天，所以**不能**复用 <see cref="eventAuditObserver"/>：
+    /// 那个每次换图都可能被调用，玩家一天进出几次房间就会把同一批事件反复上报。
+    /// </summary>
+    private readonly RecentEventTracker recentEventTracker = new();
     private HouseAccessController? houseAccessController;
     private FaceToFaceConversationCoordinator? faceToFaceCoordinator;
     private VisualTestHarness? visualTestHarness;
@@ -152,6 +160,9 @@ public sealed class ModEntry : Mod
     {
         shareFriendshipLedger.Reset();
         eventAuditObserver.Reset();
+        // 换存档 / 回标题都要丢弃事件基线：留着旧基线会把**新存档里本来就存在**
+        // 的事件算成「昨天刚完成」，于是一读档就收到一堆莫名的后续消息。
+        recentEventTracker.Reset();
         houseAccessController?.ResetMapCache();
         houseAccessController?.Apply();
 
@@ -345,8 +356,13 @@ public sealed class ModEntry : Mod
         try
         {
             var dayIndex = Game1.Date.TotalDays;
+            // ⚠ 这两行必须在 `await` **之前**（见本方法 docstring）：`ObserveDay` 要读
+            // `eventsSeen`，而 await 恢复后不保证还在主线程，碰 `Game1` 会炸。
+            // 顺序也不能反：先读快照再推进基线，反过来会永远拿上一次的去比。
+            var recentEventIds = recentEventTracker.ObserveDay(
+                GameStateCollector.ReadSeenEventIds());
             var plans = await client
-                .RequestMorningPlanAsync(dayIndex)
+                .RequestMorningPlanAsync(dayIndex, recentEventIds: recentEventIds)
                 .ConfigureAwait(false);
             foreach (var plan in plans)
             {
@@ -384,6 +400,9 @@ public sealed class ModEntry : Mod
     {
         shareFriendshipLedger.Reset();
         eventAuditObserver.Reset();
+        // 换存档 / 回标题都要丢弃事件基线：留着旧基线会把**新存档里本来就存在**
+        // 的事件算成「昨天刚完成」，于是一读档就收到一堆莫名的后续消息。
+        recentEventTracker.Reset();
         houseAccessController?.ResetMapCache();
         houseAccessController?.Dispose();
         visualTestHarness?.Dispose();
