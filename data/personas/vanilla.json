@@ -543,7 +543,20 @@
           "音乐盒和母亲",
           "读书和学习",
           "小灰和烤牛排",
-          "过胖的过去"
+          "过胖的过去",
+          "蛋和增肌的吃法",
+          "发胶和头发",
+          "冬天难熬和盼春天",
+          "职业格球的训练和梦想",
+          "澡堂、桑拿和锻炼身体",
+          "热带海岛和度假别墅",
+          "阳光、晒黑和肤色",
+          "节日的舞步和集市",
+          "散步、慢跑和晨跑",
+          "河边的鲑鱼和镇上的比赛",
+          "帮镇上修桥和出钱",
+          "排球、飞盘和户外运动",
+          "Joja的特卖和镇上的消息"
         ],
         "openers": [
           "嘿，怎么了？",
@@ -1382,7 +1395,7 @@
         "有些拘谨"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Clint"
       },
       "voiceStyle": {
@@ -1589,7 +1602,7 @@
         "重视家庭"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Demetrius"
       },
       "voiceStyle": {
@@ -2286,7 +2299,7 @@
         "用食物照料别人"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Gus"
       },
       "voiceStyle": {
@@ -2512,7 +2525,7 @@
         "努力适应归来后的生活"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Kent"
       },
       "voiceStyle": {
@@ -2744,7 +2757,7 @@
         "希望被尊重也保留体面"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Lewis"
       },
       "voiceStyle": {
@@ -3198,7 +3211,7 @@
         "在家庭与生意之间保持体面"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Pierre"
       },
       "voiceStyle": {
@@ -4056,7 +4069,7 @@
         "珍惜有限的信任和安静生活"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Krobus"
       },
       "voiceStyle": {
@@ -4721,7 +4734,7 @@
         "有点叛逆"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Abigail"
       },
       "voiceStyle": {
@@ -4973,7 +4986,7 @@
         "尊重直觉"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Emily"
       },
       "voiceStyle": {
@@ -5425,7 +5438,7 @@
         "亲近自然"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Leah"
       },
       "voiceStyle": {
@@ -5641,7 +5654,7 @@
         "重视学习"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Penny"
       },
       "voiceStyle": {
@@ -5906,7 +5919,7 @@
         "喜欢动手验证"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Maru"
       },
       "voiceStyle": {
@@ -6161,7 +6174,7 @@
         "重视家庭日常"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Jodi"
       },
       "voiceStyle": {
@@ -6829,7 +6842,7 @@
         "珍惜文化遗物"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "按玩家性别：男「先生」，女「小姐」，不确定用「农场主」",
         "self": "Gunther"
       },
       "voiceStyle": {
@@ -7042,7 +7055,7 @@
         "重视安全"
       ],
       "addressing": {
-        "player": "朋友",
+        "player": "你",
         "self": "Marlon"
       },
       "voiceStyle": {
