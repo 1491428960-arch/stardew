@@ -140,7 +140,7 @@ def test_addressing_matches_the_characters_own_lines(
     assert profiles[npc]["addressing"]["player"] == expected, evidence
 
 
-# 性别相关的那 3 条单独钉：它们**不能**写成单一字面，见下方说明。
+# 性别相关的那几条单独钉：它们**不能**写成单一字面，见下方说明。
 GENDER_DEPENDENT = (
     (
         "vanilla.json",
@@ -172,6 +172,36 @@ GENDER_DEPENDENT = (
         "_PlayerFemale「小姐，我为您拿到了…」；SVE Morris.4hearts.15「好的，先生……」、"
         "Morris.2hearts.01「你好，女士！」；中性兜底取自他的 Introduction「啊，是农场主@呀」。",
     ),
+    (
+        "vanilla.json",
+        "Vincent",
+        "先生",
+        "女士",
+        "你",
+        "Vincent.zh-CN.json/Sun（stranger）「你好啊，先生！」；Tue6（friend）"
+        "「你能为我保守个秘密吗，先生？^…女士？」（`^` 是原版的性别分支）；"
+        "中性兜底用他自己的「你」。",
+    ),
+    (
+        "vanilla.json",
+        "Jas",
+        "先生",
+        "小姐",
+        "你",
+        "Jas.zh-CN.json/Mon4（acquaintance）「嗨，@先生。」与 Sat8（close）"
+        "「你总是这么好，@先生。」；原版把玩家名写成 `@`，去掉名字后留下的正是「先生」；"
+        "中性兜底用她自己的「你」。",
+    ),
+    (
+        "vanilla.json",
+        "Marnie",
+        "先生",
+        "小姐",
+        "你",
+        "Marnie.zh-CN.json/Mon（stranger）「我爱动物，@先生。」；"
+        "全库搜「亲爱的」在她**本人文件里 0 处** ⇒ 原值没有依据；"
+        "中性兜底用她自己的「你」。",
+    ),
 )
 
 
@@ -188,7 +218,7 @@ def test_gender_dependent_addressing_states_the_condition_and_a_neutral_fallback
     neutral: str,
     evidence: str,
 ) -> None:
-    """称呼随玩家性别变化的 3 个角色：值里必须**写明条件**并给中性兜底。
+    """称呼随玩家性别变化的 6 个角色：值里必须**写明条件**并给中性兜底。
 
     为什么不写成「小伙子/小姑娘」这种裸并列：
     prompt 里**没有玩家性别事实**（`_STATE_FIELDS` 无 `gender`，SMAPI 也只发 NPC 的
