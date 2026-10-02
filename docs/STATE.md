@@ -3,7 +3,8 @@
 > **本文档的服务对象是「下一个开工会话的 agent」，不是人。**
 > 只放**结论与证据强度**，不放推演过程 —— 过程在
 > `docs/report-instruction-conflicts-2026-09-28.md`（归档）与 `docs/active-work.md`（流水）。
-> 最后更新：2026-09-29 凌晨（本轮把「**一条长度约束要过五道闸**」固化成
+> 最后更新：**2026-10-03**（persona 线收尾，见 §一「并行的另一条线」；本文档主体仍是 2026-09-29 凌晨那一轮）。
+> 主体更新：2026-09-29 凌晨（本轮把「**一条长度约束要过五道闸**」固化成
 > 可运行工具 `scripts/probe_length_constraint_decay.py`，**独立复现了核心结论「1/6」**，
 > 并新增一个比值 **1 : 11.3**（按文本量）；台账盲区从四类扩到**六类**；
 > 另核实了 `responseRules[0]` 实验的**真实落点**与**基线洁净性**）。
@@ -21,6 +22,23 @@
 > 详情：`docs/active-work.md` 末尾「续：话题素材第 9 批 + 宽池扩库」与「续二：收口」；
 > 完整报告在 hub：`E:\workspace\hub\docs\report-stardew-preferred-topics-expansion-2026-09-30.md`。
 > ⚠ 这条线**不改变本文档的任何结论**，两者的测试基线各自独立验证过。
+
+> **并行的另一条线（2026-10-03，persona 一致性审计收尾，同样与本文档主题无关）**：
+> ① §六「禁感叹号」6 条（Evelyn / Pierre / Krobus / Leah / Robin / Gunther）改成**条件式**
+> —— 它们的真实语料感叹号率是 20%–46%，写「不用感叹」是**描述偏保守**，不是档案内部矛盾；
+> ② §五 语料侧 `@` 修复：`corpus.py` 只在**称谓前**删 `@`（`@先生`→「先生」），
+> 其余仍换成「你」—— **既有的 `@你好`→`你你好` 行为不变**（原断言保留）；
+> ③ §4.11 D 组：`Marnie` / `Jas` / `Vincent` 的 `addressing.player` 改成**性别条件式**
+> —— 证据是**本人对话文件**里的 `@先生`（Marnie `Mon`、Jas `Mon4`/`Sat8`、Vincent `Sun`/`Tue6`），
+> 原值「亲爱的」/「你」没有原话依据；`Olivia` 保持「亲爱的」（SVE 有硬证据）。
+> 全量 **4421 passed**。报告在 hub：`E:\workspace\hub\docs\report-stardew-persona-consistency-audit-2026-10-02.md`。
+> ⚠ 本线改动**已落盘、未提交**。
+>
+> ⚠ 另查明（**未处理**）：索引里 216 条含 `@` 的文本**全部是 Wizard（SVE Rasmodius）名下未解析的
+> Content Patcher 模板** —— 那里的 `@@` 是 CP `Random` 的分隔符，**不是玩家名占位符**，
+> 与 `@先生` 是两类东西，修它需要 CP token 解析能力。
+> ⚠ 体检里那 1 组**台账缺口在 HEAD 版下同样存在**（已用 `git checkout` 退掉本轮 persona 改动复跑验证），
+> 是既有状态，不是本轮引入。
 
 - **在做什么**：星露谷 NPC Bridge 的 prompt 指令体检 —— 找「同一约束被反复写、
   模型挑最松那条执行」的问题，并把结论固化成**可复跑的检查工具**。
@@ -73,7 +91,7 @@
   - ⚠ **`responseRules[0]` 实验的落点已核实**（`docs/responseRules0-experiment-site-*.md`）：
     是 **`data/personas/vanilla.json`**，**不是** `rasmodia.json`；
     其值为原值 `"先回答眼前的问题"`（**基线已三方比对确认干净**）。
-- **当前状态**：改动**已全部落盘**，全量 **4314 passed**，**没有半完成的改动**。
+- **当前状态**：改动**已全部落盘**，全量 **4421 passed**（2026-10-03），**没有半完成的改动**。
 - **下一步**：① **当前无待拍板项**（2026-09-29 核对：`docs/待决策.md` 四项**均已定/已关闭** ——
   长度措辞 09-28 已选「乙·去字数」并落地、`responseRules[0]` 已定「等重做」、
   第一跑已执行完、群聊路径已关闭）。早先「四项决策待你拍板」的写法**已过时，勿再引用**；
@@ -338,7 +356,7 @@
 
 - **现场**：`E:\workspace\projects\stardew-ai-npc\.worktrees\story-memory`（`codex/story-memory`）。
 - **全量测试 PYTHONPATH 需三者**：
-  `<worktree>;<worktree>/bridge/src;<worktree>/scripts`。基线 **4314 passed**。
+  `<worktree>;<worktree>/bridge/src;<worktree>/scripts`。基线 **4421 passed**（2026-10-03）。
 - Python：`C:\Users\Lenovo\AppData\Local\Programs\Python\Python310\python.exe`；设 `PYTHONIOENCODING=utf-8`。
 - **云端评测**必须 `--economical`（= compact Prompt，与游戏同路径）；产物落
   `artifacts/character-quality-eval/<ts>/`。
