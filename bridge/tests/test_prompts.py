@@ -7854,7 +7854,10 @@ def test_natural_detail_turn_prefers_plain_facts_over_new_metaphors() -> None:
         message for message in messages if message["name"] == "turn_plan"
     )
 
-    assert "普通续聊直接说事实、动作或短感受" in turn_plan["content"]
+    # 2026-10-03：原断言 pin 的「普通续聊直接说事实、动作或短感受」把动作落到了句首，
+    # 是「动作环境开场 77.7%」的来源之一，已改为断言开场那一拍的位置约束。
+    # 防文艺腔的要求没变，仍在下面第二条断言里。
+    assert "开场那一拍由角色自己的态度或反应占住" in turn_plan["content"]
     assert "不要自行写新比喻" in turn_plan["content"]
     assert not any(
         message["name"] == "natural_detail_override" for message in messages
