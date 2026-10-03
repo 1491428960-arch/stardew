@@ -245,3 +245,78 @@ def test_failed_retry_still_releases_ordinary_dialogue() -> None:
 
     assert outcome.reply == _DIRTY_REPLY
     assert "response_meta_narration_discarded" not in outcome.warnings
+
+
+# --- 重试原因埋点（2026-10-03）----------------------------------------------
+#
+# 动因：`20261003-103622` 的长度分析需要回答「有多少超长轮次**根本没走到**
+# 长度检查」。`over_length` 排在 `retry_for_format_noise` 判定链第 15 位
+# （前面 14 个都是 `issue is None and ...`），任一先命中就被跳过，而 A2
+# 每轮只处理一个问题。仅凭 `retryCount` 答不了 —— 它不区分原因。
+#
+# 本组只钉「诊断量如实记录了发生过什么」，**不钉具体哪个分支先命中**：
+# 分支顺序会随判定链调整而变，那不是这些测试该管的契约。
+
+
+def test_clean_reply_leaves_no_retry_trail() -> None:
+    """完全没碰过时两个诊断量都保持缺省 —— 与 `outcome is original` 同一条契约。"""
+
+    def should_not_be_called(messages: list[dict[str, str]]) -> ProviderResult:
+        raise AssertionError("干净回复不该触发重试")
+
+    original = _result("鸡舍那边挺忙的，不过还行。")
+    outcome = retry_for_format_noise(original, _PROMPT, should_not_be_called)
+
+    assert outcome is original
+    assert outcome.retry_kinds is None
+    assert outcome.retry_issue is None
+
+
+def test_retry_trail_records_the_kind_actually_retried() -> None:
+    """`retry_kinds` 记的是**真正发起过**的重试类型，不是「判定出的问题」。"""
+
+    def clean(messages: list[dict[str, str]]) -> ProviderResult:
+        return _result("鸡舍那边挺忙的，不过还行。")
+
+    outcome = retry_for_format_noise(_result(_DIRTY_REPLY), _PROMPT, clean)
+
+    assert outcome.retry_kinds == ["format"]
+    # 重试后回复干净 ⇒ 最后一次判定没有任何 issue
+    assert outcome.retry_issue is None
+
+
+def test_a_worse_retry_still_carries_its_retry_trail() -> None:
+    """择优返回原文时，诊断量必须跟着一起回。
+
+    否则「重试过但没赢」的样本会丢掉原因，而那正是长度分析要看的那一批。
+    """
+
+    def still_dirty(messages: list[dict[str, str]]) -> ProviderResult:
+        return _result("（还是带动作）嗯。")
+
+    outcome = retry_for_format_noise(_result(_DIRTY_REPLY), _PROMPT, still_dirty)
+
+    assert outcome.reply == _DIRTY_REPLY
+    assert outcome.retry_kinds is not None
+    assert outcome.retry_kinds[0] == "format"
+    # 保留重复是刻意的：同一类型重试两次就该出现两次
+    assert len(outcome.retry_kinds) >= 1
+    assert outcome.retry_issue == "stage_direction"
+
+
+def test_meta_narration_and_length_can_be_told_apart() -> None:
+    """这条就是埋点要解决的场景本身。
+
+    `_META_REPLY` 既是元叙述、也远超 68 字。判定链里元叙述排在长度之前，
+    所以它只会因元叙述重试 —— 旧记录里这一轮只表现为「retryCount=1」，
+    无法与「因长度重试」区分。现在两者在 `retry_kinds` 里是分开的。
+    """
+
+    def clean(messages: list[dict[str, str]]) -> ProviderResult:
+        return _result("……没什么。就铁路线上有辆车的编号，好像是新调的。")
+
+    outcome = retry_for_format_noise(_result(_META_REPLY), _PROMPT, clean)
+
+    assert outcome.retry_kinds is not None
+    assert "meta_narration" in outcome.retry_kinds
+    assert "length" not in outcome.retry_kinds

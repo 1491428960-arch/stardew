@@ -12,6 +12,11 @@ WARNING_LIMIT = 20
 WARNING_TEXT_LIMIT = 500
 TAG_LIMIT = 20
 TAG_TEXT_LIMIT = 80
+# 2026-10-03：`retryKinds` / `retryIssue` 的长度上限。两者都是内部枚举
+# （`format` / `length` / `affection` / `conversation_lead` …），正常远短于 40，
+# 这里只是防脏数据，不是产品约束。
+RETRY_KIND_LIMIT = 40
+RETRY_KIND_COUNT_LIMIT = 16
 SAFE_SUITE_IDS = {
     "default",
     "conversation-lead",
@@ -621,6 +626,17 @@ def _safe_turn(
     retry_count = _non_negative_int(value.get("retryCount"))
     if retry_count is not None:
         safe["retryCount"] = retry_count
+    # 2026-10-03：重试原因。两者都是短字符串，隐含长度上限防脏数据。
+    retry_kinds = value.get("retryKinds")
+    if isinstance(retry_kinds, list):
+        safe["retryKinds"] = [
+            kind[:RETRY_KIND_LIMIT]
+            for kind in retry_kinds[:RETRY_KIND_COUNT_LIMIT]
+            if isinstance(kind, str)
+        ]
+    retry_issue = value.get("retryIssue")
+    if isinstance(retry_issue, str) and retry_issue:
+        safe["retryIssue"] = retry_issue[:RETRY_KIND_LIMIT]
     warnings = value.get("warnings")
     if isinstance(warnings, list):
         safe["warnings"] = [

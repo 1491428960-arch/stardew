@@ -192,10 +192,13 @@ def test_eval_plan_mode_prints_the_pre_run_gate_without_any_request(
     assert payload["turnCount"] >= payload["caseCount"]
     # 请求预估含重试余量 ⇒ 必然不少于轮数。
     assert payload["estimatedRequests"] >= payload["turnCount"]
-    # 完整 Prompt 模式（未传 --economical）按实测 7,820/请求 估。
-    assert payload["estimatedTokens"] == payload["estimatedRequests"] * 7800
-    # 美元按实测单价 $0.033/请求 估（2026-09-28 池 1 实测）。
-    assert payload["estimatedCostUsd"] == round(payload["estimatedRequests"] * 0.033, 2)
+    # 口径默认已是线上（compactPrompt=true），按实测 5,852/请求 估。
+    assert payload["compactPrompt"] is True
+    assert payload["estimatedTokens"] == payload["estimatedRequests"] * 5850
+    # 美元按实测单价 $0.0021/请求 估（2026-10-03 两次全量评测）。
+    assert payload["estimatedCostUsd"] == round(
+        payload["estimatedRequests"] * 0.0021, 2
+    )
     # 三问必须在输出里，且是「待人工回答」的形态。
     assert set(payload["gate"]) == {"question", "expectedEffect", "budget"}
 
@@ -649,24 +652,39 @@ def test_economical_budget_has_small_smoke_defaults_and_cli_switch(
 
 
 def test_compact_prompt_switch_is_independent_of_economical() -> None:
-    """`--compact-prompt` 必须能单独打开线上口径，不受 `--economical` 的限流牵连。
+    """`--compact-prompt` 必须能单独控制线上口径，不受 `--economical` 的限流牵连。
 
     背景（2026-10-01）：K=1/K=4 的话题窗口对照在评测路径上跑出 null 结果，
     事后查明那条路径 `compactPrompt=false` —— 比游戏端的 prompt 大约 74% 字符，
     每条话题素材的出现次数只有线上的一半。于是「离线测不出差异」被读成了
     「机制没效果」。此前 compact 只能跟着 `--economical` 走，而后者会把 case
     限制到 3 个，没法用来做正式对照，所以两个开关必须解耦。
+
+    2026-10-03 更新：默认值由 false **翻成 true**。理由是实测口径本身值 6pt
+    （同一份代码、只换口径：动作/环境开场 74.1% vs 68.0%），而历史 66-case
+    批次全部跑在 false 上 —— 于是「忘了传参数」会让对照两臂口径不同、
+    效应被口径差淹没，本次验证就踩了这个坑。要复现历史批次须显式传
+    `--no-compact-prompt`。
     """
     module = _load_eval_module()
 
-    assert module._parse_args([]).compact_prompt is None
+    # 默认已是线上口径。
+    assert module._parse_args([]).compact_prompt is True
     assert module._parse_args(["--compact-prompt"]).compact_prompt is True
+    # 显式关闭，用于复现 2026-10-03 之前的历史批次。
+    assert module._parse_args(["--no-compact-prompt"]).compact_prompt is False
     # 互不牵连：开经济模式不会顺手改 compact，反之亦然。
-    assert module._parse_args(["--economical"]).compact_prompt is None
+    assert module._parse_args(["--economical"]).compact_prompt is True
     assert (
         module._parse_args(["--compact-prompt", "--economical"]).compact_prompt is True
     )
-    # `--economical` 自己的 compact 默认不能被这次解耦改掉。
+    # 显式关闭优先于 `--economical` 自己的 compact=true。
+    assert (
+        module._parse_args(["--no-compact-prompt", "--economical"]).compact_prompt
+        is False
+    )
+    # `EvaluationBudget` 的底层默认保持不变：它管的是「不传该字段的调用方」，
+    # 与评测脚本的 CLI 默认是两回事（护栏见 test_cross_language_constants.py）。
     assert module.EvaluationBudget.economical().compact_prompt is True
     assert module.EvaluationBudget().compact_prompt is False
 

@@ -999,6 +999,10 @@ def run_evaluation(
                     # **不记「重试有没有用」** ⇒ 全库 480 次 `response_affection_retry`
                     # （占重试 54%）没法归因。`None` = 本回合没比较过。
                     "retryImproved": result.retry_improved,
+                    # 2026-10-03：重试原因。`retryKinds` 是本次实际发起过的类型，
+                    # `retryIssue` 是最后一次判定的 issue（可能因额度用尽而未重试）。
+                    "retryKinds": result.retry_kinds,
+                    "retryIssue": result.retry_issue,
                     "elapsedMs": int((perf_counter() - turn_started_at) * 1000),
                     "usage": usage,
                     "requestCount": turn_request_count,
@@ -1674,13 +1678,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--compact-prompt",
-        action="store_true",
-        default=None,
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
             "用线上口径构造 prompt（compactPrompt=true），与 --economical 解耦。"
-            "默认沿历史行为走 false —— 那条评测路径比游戏端大约 74%% 字符，"
-            "每条话题素材的出现次数只有线上的一半，"
-            "所以「离线测不出差异」不能直接推成「线上没差异」"
+            "2026-10-03 起默认 true —— 历史批次全部是 false，那条评测路径比游戏端"
+            "大约 74%% 字符、每条话题素材的出现次数只有线上的一半，"
+            "既让「离线测不出差异」被误读成「线上没差异」，"
+            "也让左右对照的两臂因口径不同而不可比（实测口径本身值 6pt）。"
+            "要复现 2026-10-03 之前的历史批次，显式传 --no-compact-prompt"
         ),
     )
     parser.add_argument("--max-requests", type=int, default=None)
@@ -1781,17 +1787,19 @@ def _print_plan(args: argparse.Namespace, stages: list[str] | None) -> int:
     # 重试余量取 20%：实测全库 24.7% 的 case 发生过重试，20% 是保守下界。
     # `(n * 6 + 4) // 5` 就是 ceil(n × 1.2)，避免为一个除法引入新 import。
     estimated_requests = (turn_count * 6 + 4) // 5
-    # ⚠ 每次请求的 token 量按模式分开，**不要取一个折中平均**：
-    #   · compact Prompt（--economical）：全库均值 ≈ 5,000
-    #   · 完整 Prompt：实测 20260928-211944 批次 = 7,820（23 请求 / 179,867 token）
-    # 两者差 56%，用错模式估出来的预算会差一倍。
-    estimated_tokens = estimated_requests * (5000 if args.economical else 7800)
-    # 美元按**实测单价**估：20260928-211944 批次 23 请求吃掉池 1 周额度的 2.2%
-    #（$35 × 2.2% ≈ $0.77）⇒ ≈ $0.033/请求。
-    # ⚠ economical 那个数按 token 比例折算而来，**没有实测过**，只给量级。
-    estimated_cost_usd = round(
-        estimated_requests * (0.021 if args.economical else 0.033), 2
-    )
+    # ⚠ 每次请求的 token 量按口径分开，**不要取一个折中平均**，
+    # 也**不要用 args.economical 判断口径** —— 口径由 --compact-prompt 控制：
+    #   · 线上口径（compactPrompt=true）：实测 20261003-083828 = 5,852/请求
+    #     （309 请求 / 1,808,292 token）
+    #   · 完整口径（compactPrompt=false）：实测 20261003-093534 = 8,020/请求
+    #     （336 请求 / 2,694,742 token）
+    # 两者差 37%，用错口径估出来的预算会差近一倍。
+    estimated_tokens = estimated_requests * (5850 if args.compact_prompt else 8000)
+    # 美元按**实测单价** $0.0021/请求：2026-10-03 两次全量评测各 ≈ $0.65–0.70，
+    # 请求数分别是 309 / 336，口径不同而单价一致。
+    # ⚠ 旧值 $0.033/请求（由 2026-09-28 单批 23 请求的池额度反推）高估约 16 倍，
+    # 曾让 --plan 对一次 66-case 全量报出 $7.85 而实际约 $0.7 —— 别再用它做决策。
+    estimated_cost_usd = round(estimated_requests * 0.0021, 2)
 
     warnings: list[str] = []
     if args.max_requests is not None:
@@ -1824,6 +1832,9 @@ def _print_plan(args: argparse.Namespace, stages: list[str] | None) -> int:
                 "caseIds": [case.case_id for case in cases],
                 "caseCount": len(cases),
                 "turnCount": turn_count,
+                # 口径必须在跑前就摊出来：2026-10-03 的教训是「忘了传参数」
+                # 会让对照两臂口径不同，而口径本身值 6pt。
+                "compactPrompt": args.compact_prompt,
                 "estimatedRequests": estimated_requests,
                 "estimatedTokens": estimated_tokens,
                 "estimatedCostUsd": estimated_cost_usd,
@@ -1904,11 +1915,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
         max_npc_retries=default_budget.max_npc_retries,
         max_player_retries=default_budget.max_player_retries,
-        compact_prompt=(
-            default_budget.compact_prompt
-            if args.compact_prompt is None
-            else args.compact_prompt
-        ),
+        # `--compact-prompt` 是带默认值的双态开关（BooleanOptionalAction），
+        # 永不取到 None，所以不再回退 `default_budget.compact_prompt` ——
+        # 显式的 `--no-compact-prompt` 必须能盖过 `--economical` 的 compact=true。
+        compact_prompt=args.compact_prompt,
         dynamic_player_input=(
             default_budget.dynamic_player_input
             if args.dynamic_player_input is None

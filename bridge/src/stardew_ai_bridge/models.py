@@ -749,6 +749,21 @@ class ProviderResult(ApiModel):
     # 动因：2026-09-28 审计发现全库 480 次 `response_affection_retry`
     # （占重试 54%）**无法判断是否白跑** —— 因为没有落盘择优结果。
     retry_improved: bool | None = Field(default=None, alias="retryImproved")
+
+    # 2026-10-03：重试诊断量，与 `retry_improved` 同一动机（「补救有没有用」
+    # 与「这轮出了什么问题」必须分开记），但回答的是另一个问题。
+    #
+    # `retry_kinds` = 本次调用**实际发起过**的重试类型，按时间顺序、保留重复。
+    # `retry_issue`  = **最后一次判定出的** issue —— 它可能因为同类额度已用尽
+    #                 或预算跳闸而**没有**真正发起重试。
+    #
+    # 两者存在的理由：`retry_for_format_noise` 的 `over_length` 分支排在
+    # 判定链第 15 位（前 14 个都是 `issue is None and ...`），任一先命中就会被
+    # 跳过，而 A2 每轮只处理一个问题。所以「这一轮回复超长」与「这一轮因长度重试」
+    # 是两个不同的量，`retryCount` 单独存在时无法区分 —— 2026-10-03 的长度分析
+    # 正是卡在这里。
+    retry_kinds: list[str] | None = Field(default=None, alias="retryKinds")
+    retry_issue: str | None = Field(default=None, alias="retryIssue")
     usage: ProviderUsage | None = None
     open_loop: OpenLoopSignal | None = Field(default=None, alias="openLoop")
 

@@ -1397,6 +1397,10 @@ def _best_retry_result(
         update={
             "warnings": list(current.warnings),
             "retry_improved": current.retry_improved,
+            # 2026-10-03：诊断量必须跟到择优结果上，否则「重试过但没赢」的
+            # 那些轮次会丢掉原因，而这正是长度分析要看的样本。
+            "retry_kinds": current.retry_kinds,
+            "retry_issue": current.retry_issue,
         }
     )
 
@@ -1436,6 +1440,42 @@ def retry_for_format_noise(
     current = result
     best = result
     retry_counts: dict[str, int] = {}
+    # 2026-10-03：本次调用**实际发起过**的重试类型序列（按时间顺序，保留重复），
+    # 以及**最后一次判定出的** issue —— 后者可能因为同类额度已用尽或预算跳闸
+    # 而**没有**真正发起重试。两者配合 `reply` 长度，才能回答
+    # 「有多少超长轮次**根本没走到**长度检查」：`over_length` 排在
+    # `retry_for_format_noise` 判定链第 15 位，前面 14 个 `issue is None and ...`
+    # 任一先命中它就被跳过，而 A2 每轮只处理一个问题。仅凭 `retryCount`
+    # 答不了这个问题（它不区分原因）。
+    # ⚠️ 同样不进 `warnings`：`warnings` 是多处测试用 `==` 精确断言的诊断码列表。
+    retry_kinds: list[str] = []
+    last_issue: str | None = None
+
+    def _finish() -> ProviderResult:
+        """统一出口：把重试诊断量挂到返回的 `ProviderResult` 上。
+
+        ⚠️ **一次重试都没发起时原样返回**，不做 `model_copy`：三条既有测试用
+        `outcome is original` 钉住了「完全没碰过」这个契约（`skip=True`、干净
+        回复、省略号开场各一条），加诊断量不该把它推翻。
+
+        ❗ 判据是 `retry_kinds` 而非 `last_issue`：`skip` / `fallback` 时也会
+        判定出 issue，但那两路根本不是「模型生成的长回复」这个样本空间，
+        记下来只会污染长度分析的分子。真正重试过、因为额度用尽而停下的那类
+        则 `retry_kinds` 非空，能正常记录。
+        """
+
+        if not retry_kinds:
+            return _best_retry_result(best, current)
+        return _best_retry_result(
+            best,
+            current.model_copy(
+                update={
+                    "retry_kinds": list(retry_kinds),
+                    "retry_issue": last_issue,
+                }
+            ),
+        )
+
     total_retries = 0
     # 本次调用中「是否有任何一次重试被采纳」。`None` = 从未比较过
     # （没触发重试、重试抛异常、或预算跳闸）—— 必须与 `False`（比较过但没赢）分开，
@@ -1570,14 +1610,15 @@ def retry_for_format_noise(
             and _conversation_lead_enabled(prompt)
             and not missing_conversation_lead
         )
+        last_issue = issue
         if issue is None or current.fallback or skip:
-            return _best_retry_result(best, current)
+            return _finish()
         retry_needs_personal_affection = (
             retry_kind != "affection"
             and missing_personal_affection
         )
         if max_retries is not None and total_retries >= max_retries:
-            return _best_retry_result(best, current)
+            return _finish()
         retry_limit = (
             1
             if retry_kind == "affection" and _turn_plan_mode(prompt)
@@ -1597,7 +1638,7 @@ def retry_for_format_noise(
             else 1
         )
         if retry_counts.get(retry_kind, 0) >= retry_limit:
-            return _best_retry_result(best, current)
+            return _finish()
         if natural_mode:
             # 自然模式只传递一个正向修复方向；诊断码和详细规则留在 warning，
             # 不再把多层重试要求拼进模型上下文。
@@ -1627,6 +1668,7 @@ def retry_for_format_noise(
             elif retry_preserves_conversation_lead:
                 retry_content += AFFECTION_PRESERVE_CONVERSATION_LEAD_RETRY_SUFFIX
         retry_counts[retry_kind] = retry_counts.get(retry_kind, 0) + 1
+        retry_kinds.append(retry_kind)
         total_retries += 1
 
         retry_messages = [
@@ -1664,7 +1706,7 @@ def retry_for_format_noise(
                     )
                 }
             )
-            return _best_retry_result(best, current)
+            return _finish()
         except Exception:  # noqa: BLE001 - 重试失败交给调用方现有兜底链路
             current = current.model_copy(
                 update={
@@ -1678,7 +1720,7 @@ def retry_for_format_noise(
                 }
             )
             # ⚠ 兜底链路不认得元叙述，所以这里得自己把最后一关。
-            return _discard_meta_narration(_best_retry_result(best, current))
+            return _discard_meta_narration(_finish())
         current = retried.model_copy(
             update={
                 "warnings": _dedupe_warnings(
@@ -1704,8 +1746,8 @@ def retry_for_format_noise(
         if retry_kind == "schedule":
             # 未来社交安排是硬边界；只做一次短纠偏，避免修掉排期后又
             # 叠加 affection/conversation_lead 长指令，把回复再次带偏。
-            return _best_retry_result(best, current)
-    return _best_retry_result(best, current)
+            return _finish()
+    return _finish()
 
 
 def _prompt_payload(prompt: list[dict[str, str]], name: str) -> Mapping[str, object]:
