@@ -1027,3 +1027,110 @@ python -B scripts/run_character_quality_eval.py --plan --suite default --provide
 ⇒ 连带影响：`guard.py` 里 `_DIALOGUE_MAX_CHARS=60` / `_LENGTH_RETRY_THRESHOLD=68`
 这一对**不必再重新论证**；它们现在的角色从「逼近目标的工具」变成「防止极端跑飞的护栏」，
 **阈值本身合理**。
+
+## 七末之十、跨轮维度指标体检：一个是真值，一个是覆盖率问题（2026-10-03，零请求）
+
+起因：单轮质量已多轮打磨，跨轮维度是「像真实对话」的下一层。此前口头判断
+`conversationLeadKind` 与 `mechanicalRestatement` 两个指标「空转」——**这条判断错了一半**。
+实测 batch `20261003-125245`（66 case / 198 轮）后修正如下。
+
+### 一、`mechanicalRestatement` 不是空转，是真实值 —— 关闭
+
+| 口径 | 值 |
+|---|---|
+| turn 级 `mechanicalRestatement` | 198/198 字段存在，True **0** |
+| case 级 `mechanicalRestatementCount` | 66/66 全为 **0** |
+
+判定 `behavior_quality.py:_mechanical_restatement`（L1565）要求：去标点后玩家输入整段被
+回复前缀包含（≥6 字），或首句与玩家输入的最长公共子串 ≥6 且覆盖率 ≥0.6 且起点在句首。
+**人工核验 6 轮 `playerInput` / `reply` 对照，模型确实不复述** —— 回复都是自然回应
+（「最近过得怎么样？」→「还行。塔里的苔藓幼虫又孵了一茬……」）。历史批次亦然：
+`artifacts/.../20260917-topic-start-adaptive-sophia-lively-v17-spoken-intent` 亦记
+`mechanicalRestatementCount=0`。
+
+⇒ **恒 0 是测量正确，不是指标坏掉。此项关闭，不再列为待办。**
+
+### 二、`conversationLeadKind` 是覆盖率问题，且引用时已隐含用错分母
+
+`_conversation_lead_policy`（`character_quality_eval.py:679`）有三重门槛，任一不满足即
+`return {}`，**该轮根本不跑诊断**：
+
+1. `turn_plan_mode` 属五个收口模式之一（`answer_only` / `answer_plus_detail` /
+   `answer_plus_warmth` / `boundary_close` / `explicit_intimacy`）⇒ 否决
+2. `intent == "chat"` 且 `canonical_npc_id(case.npc_id)` ∈ `_CONVERSATION_LEAD_TRIAL_NPCS`
+3. `case.relationship_stage` ∈ `_CONVERSATION_LEAD_STAGES`
+
+**白名单实测规模**：NPC 8 个（Alex / Elliott / Harvey / Sam / Sebastian / Shane / Sophia /
+Wizard）；阶段 4 个（friend / close / dating / married）。
+
+对 suite=default 全部 66 case、198 轮逐轮归因：
+
+| 门槛 | 砍掉 | 占 198 |
+|---|---|---|
+| ① `turn_plan_mode` 否决 | 0 | 0.0% |
+| ② NPC 白名单否决 | 9 | 4.5% |
+| ③ **阶段白名单否决** | **81** | **40.9%** |
+| ④ policy 仍为空 | 0 | 0.0% |
+| ✅ 进入诊断 | 108 | 54.5% |
+
+⚠️ **门槛① 实际完全没生效**：`_turn_plan_mode(turn)` 对案例数据 198/198 返回**空串** ——
+案例数据里**没有 `turnPlan` 字段**。artifact 里的 `turnPlan` 是**运行时**产生的，与案例数据
+不是同一来源。即「拿一个案例数据里不存在的字段当门槛」，客观上挡不住任何东西。
+
+**artifact 实际与预测差 26 轮**：
+
+| 组 | 轮数 | 组成 |
+|---|---|---|
+| 有诊断 | **82** | friend 36 / close 21 / married 15 / dating 10 |
+| 无诊断 | **116** | 阶段否决 81（acquaintance 33 / stranger 24 / parent 24）＋ NPC 否决 9 ＋ **白名单内却没测 26** |
+
+⚠️ **这 26 轮（13.1%）是待查的真缺口**：白名单 NPC + 白名单阶段，仍
+`conversation_lead_diagnostic is None`。`_conversation_lead_policy` 调用 `build_stage_policy`
+不带 compact 开关，故线上口径不是原因，尚未定位。
+
+### 三、口径修正（本次最重要的产出）
+
+`conversationLeadKind` 只在 82 轮上真正测量，**分母不是 198**：
+
+| 指标 | 用 198 做分母 | 用实测 82 做分母 |
+|---|---|---|
+| `conversationLeadKind` 非空 | 17.2% | **41.5%** |
+| `missing_conversation_lead` | 23.7% | **57.3%** |
+
+⇒ **拿 198 做分母会把「给玩家留了接话口」的比例低估一半以上**，也会把「缺接话口」
+低估一半以上。任何引用这两个数的结论都必须写明分母是 198 还是 82。
+
+**顺带查实一处记忆错误**：`docs/STATE.md` 中出现的 `19.2%` 共 6 处
+（L705 / L707 / L742 / L743 / L779 / L926），**全部是长度与反问口径**，与 conversation lead
+无关。此前口头把这个数记到 lead 覆盖率上，是记错，特此更正。
+
+### 四、结论与后续
+
+1. **`mechanicalRestatement` 关闭**（真实值 0，人工核验 + 历史批次双重印证）。
+2. **`conversationLeadKind` 保留为观测指标，但引用时必须标明分母**；若要拿它做两臂对照，
+   两臂的**实测轮次集合**必须一致，否则差异可能全部来自覆盖率而非行为。
+3. **两条待办**：① 查清 26 轮白名单内未测的成因；② 决定是否放开门槛②③
+   （放开 = 覆盖面上去，但两臂可比性需重新确认）。
+### 五、用户裁决：只记录、不判分，本线关闭（2026-10-03）
+
+用户原话：
+
+> 只是记录吧，加太多限制感觉反而影响效果，之前我说接不上话感觉更多是生成质量的问题，
+> 现在这种感觉好了不少
+
+据此关闭本线，三条决定：
+
+1. **`conversationLeadKind` 保持「只记录、不进通过门槛」**，不加判分规则。
+2. **门槛①（`turn_plan_mode` 豁免）不修**。它失效是事实，但修正它需要改代码并重跑批次，
+   而唯一收益是让一个**不参与判定**的数字更准 —— 不值得。26 轮未测的成因同样不再追查，
+   白名单（8 NPC × 4 阶段）保持现状不放开。
+3. **因此 `missing_conversation_lead` 的数值长期偏高**（§三 的 57.3% 已含 73.2% 本该豁免的
+   收口场景）。**引用该数字时必须同时说明这一点**，否则会误判为「NPC 普遍不给玩家留话」。
+
+⚠️ **框架层面的修正**：本节的调查起步于「指标覆盖面 / 口径」这条技术线，但用户的判断是
+**「接不上话」的根因在生成质量，而且该体感已明显好转**。即：口径与覆盖面是**次要的观测
+问题**，不是体验问题的根因。这与 §七末之九（长度议题关闭）是同一模式 ——
+**用户的体感判断优先于技术框架的解释**，不得反过来用指标数字去否定体感。
+
+教训与 `stardew-instruction-conflicts` 中「文本层矛盾 ≠ 行为层杠杆」一致：
+**观测层的缺陷不必然对应体验层的缺陷；修观测不改善体验，只改善我们对体验的读数。**
