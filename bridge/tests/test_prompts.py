@@ -8706,6 +8706,37 @@ def test_natural_contract_allows_adjacent_turns_to_change_length_and_shape() -> 
     assert "每轮独立决定一句就停、补一句或交还话头" in natural_contract
 
 
+def test_natural_mode_relaxation_does_not_nullify_the_length_rule() -> None:
+    """自然模式的放开条款只管**形式**，不放开**篇幅**。
+
+    2026-10-03：原文是「自然模式不设固定句数、**字数**或收尾形状」。那句话把篇幅
+    也一并放开了，与同一张卡上文的「中文通常 1–2 句」、以及最后一张自然卡
+    （`natural_detail_override`）互相抵消 —— 按本项目的「取最宽」，模型取的是
+    最松的那一条。实测 `20261003-103622`（n=198）：75.3% 的轮次走
+    `naturalMode` + `answer_plus_detail` 这条路，中位 44 字，而语料中位 25 字。
+    """
+
+    context = {
+        "npcIdentity": {
+            "npcId": "Elliott",
+            "displayName": "Elliott",
+            "stageProfile": {"stage": "married"},
+        },
+        "qualityContext": {"naturalMode": True},
+        "gameState": {},
+        "history": [],
+    }
+
+    messages = PromptBuilder().build(context, "你今天还在写吗？")
+    joined = "\n".join(message.get("content", "") for message in messages)
+
+    # 形式仍自由
+    assert "自然模式不设固定的收尾形状" in joined
+    # ❗ 关键：不能再出现把篇幅一并放开的说法（它会把「1–2 句」整体抵消）
+    assert "不设固定句数、字数" not in joined
+    assert "形式自由不等于篇幅可以铺开" in joined
+
+
 def test_elliott_rhythm_card_does_not_request_performed_pauses_or_fixed_length() -> None:
     """Elliott 的停顿和句长应来自内容，不能由节奏卡硬造。"""
 
