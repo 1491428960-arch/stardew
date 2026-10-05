@@ -193,6 +193,22 @@ CURRENT: tuple[Constraint, ...] = (
         note="阶段卡提高优先级：更严 ⇒ 覆盖通用上限，是**分级**不是矛盾。",
     ),
     Constraint(
+        id="final-whole-response-hook",
+        card="final_role_voice_contract",
+        text="答完要让对方接得上——他顺着能应一句",
+        quantity="length_whole_reply",
+        bound=2,
+        value="1 句「可接应」的收尾（**不是**整条句数）",
+        note=(
+            "⚠ **抽取误判**，与 `topic-source-sentence` 同构：抽取器把「他顺着**能应一句**」"
+            "算成了整条句数 ⇒ 与通用上限并列显示为两种取值。"
+            "**它们不是同一个量** —— 这里说的是「答完要让对方接得上」，"
+            "管的是**收尾的可接续性**，不是「整条回复只许 1 句」⇒ 与 1–2 句**兼容**。"
+            "登记它只为消掉 `--against-scope` 的「未覆盖」报数（2026-10-05），"
+            "**不是新增一条约束**，也不参与冲突判定。"
+        ),
+    ),
+    Constraint(
         id="len-per-sentence",
         card="voice_execution_card",
         text="一句话通常十来个字，最多二十出头",
