@@ -278,6 +278,21 @@
 
 - 2026-09-01 修复“找话题”把内部指令当成玩家消息的问题：C# `ConversationService` 与 `BridgeClient` 现在发送空 `message`、只把 topic 回复写入 NPC 历史；Bridge API 仅允许 topic 使用空消息，ContextBuilder / PromptBuilder 会清除旧客户端内部句子，不追加当前 `player_input`，并以最后的 `topic_response_contract` 指示 NPC 主动开场；OpenAI-compatible、Ollama 默认消息路径也不会为 topic 添加空 user 消息；Dialogue Lab 只显示 NPC 回复，不再生成玩家气泡。修复前定向测试实际为 `3 failed, 183 passed`，修复后 Python 定向回归为 `234 passed, 1 warning`，Bridge 全量回归为 `503 passed, 1 warning`，SMAPI 全量回归为 `175 passed, 0 failed`。重启 5678 后健康检查为 `200/provider=cloud`，本地 fake topic 空消息请求为 `200/fallback=false`，Prompt `user` 数为 `0` 且包含 `topic_response_contract`；当前 `/test/chat` 页面已包含空 topic 发送逻辑且不含旧内部提示。新构建 DLL 已同步到隔离 `Mods-AI-FastTest`，构建与部署 SHA-256 均为 `D815072F13EE2CF53369CB381CBFF83697EAF3A950E6CCF79B61CBBC9C54AEEA`；独立游戏已启动，SMAPI 日志确认从 `Mods-AI-FastTest\\StardewAI.NPC\\StardewAI.NPC.dll` 加载新 DLL，但尚未进入存档实际点击“找话题”，因此游戏内回复内容仍待手动验收。网页端和游戏端历史持久化范围仍按既有边界区分。
 
+> ## ⚠ 2026-10-05 提示：以下五个小节是 2026-09-01 的快照，**不是当前状态**
+>
+> 紧接在本文档标题之后的「总目标 / 已完成 / 当前队列 / 下一步操作（真实动态样本）/
+> 当前停止条件」，写于 **2026-08-31 ~ 09-01**，此后四十天没有任何更新。
+> 它们记录的是**当时**的队列（资料采集、动态分支、Rasmodia 回归），早已执行完毕。
+> **别把它们当成下一步。**
+>
+> - **当前现状与待办** → `docs/STATE.md` §一「2026-10-05 现状（先读这一段就够）」
+> - **工作线归组（接没接 / 测没测 / 实机验没验）** → `docs/worklines-status-2026-10-05.md`
+> - **本轮的现场记录** → 本文档**末尾**各节（`## 2026-10-05 …`）
+>
+> 本文档是**按时间追加**的流水账，**最新内容在最末**，头部从来不是最新。
+
+---
+
 ## 总目标
 
 建立可追溯的原版 / SVE / RomRas NPC 资料库，并让 Rasmodia 的模型上下文真正使用经过验证的原文、背景事实和语气证据。
@@ -8511,3 +8526,531 @@ Sophia 三个角色变红，恢复 320 → 全绿。`test_topic_slot_rotation.py
 底噪，再跑 198 轮只会再得一个「两臂差不多」。
 
 报告：`docs/report-stardew-measurability-2026-10-01.md`
+
+---
+
+## 2026-10-04 · 隐性知识：把「别的 NPC 说了什么」接成一条真通道
+
+**需求原话**（用户，经过三次收窄）：
+
+> 「群聊记忆中别的 npc 说了什么能不能作为一个隐性的知识库这样的形式，
+> **我不主动提到就不唤醒**」
+
+**验收标准**（用户原话）：
+
+> 「我想的『有机连结』大概就是有一个感觉上是连续的 npc 的人格，
+> 他不会因为在 f8 还是 f9 中出现导致不像同一个人」
+
+### 先说清楚这次**没有**做什么
+
+- **没有动晨间对话**。用户明确纠正过：「不要为了统一这边的东西去改晨间对话，
+  而是 f8f9 的自由聊天、预设群聊改动要适应晨间聊天的存在」。
+  晨间是**基准**，不是欠债。
+- **没有动 F8/F9 的按键布局**。用户选过「操作上按键分开确实是更加优质的做法」。
+- **没有重做「群聊 → 私聊」这条已存在的路**。`BridgeClient.RememberGroupTurn`
+  （private，约 L1245）**早就**把她说的话写进私聊发送窗口了，调用点 L601，
+  既有用例 `BridgeClientTests.cs:913`。之前那句「F9 是孤立分支」的判断是**错的**，
+  根因是只按方法名 grep、漏掉了这个 private helper。
+- **没有碰多元关系**。它是材料补齐项，不是这次的主线。
+
+### 真正缺的那一格
+
+`GroupMemoryRules` 只挑玩家的**高亮**，而且是「玩家当着所有参与者说的」——
+在场每人各记一条，`Plan` 是**笛卡尔积**，同一句话重复 N 遍，
+**关于任何 NPC 说了什么，一条记录都没有**。
+
+### 实现：四层，全部 TDD
+
+| 层 | 产物 | 用例 |
+|---|---|---|
+| 规则 | `GroupUtteranceRules` | 10 |
+| 存储 | `StoryStateStore.LatentKnowledge` + `IsLatentKnowledge` | 7 |
+| 落盘 | `LatentKnowledgeWriter` | 7 |
+| 请求体 | `BridgeDialogueRequest.LatentKnowledge` | 4 |
+| 卡片 | `prompts.py` `latent_knowledge` | 9 |
+| 契约 | `models.py` + `app.py` 白名单 | 6 |
+| **穿透** | `payload → ContextBuilder → PromptBuilder` | 6 |
+
+### 三个**不报错**的失效点（这次实测撞到两个）
+
+1. **`app._DIALOGUE_FIELDS` 白名单漏了 `latentKnowledge`** ⇒
+   `_validate_dialogue_request` **静默丢弃**。请求模型收得下、卡片渲染写得对、
+   两端测试全绿 —— 但线上永远空卡。
+   那份白名单的**既有注释**就已经写着「漏进这份白名单就是**静默吞字段**」，
+   而这次还是漏了，属于**明知故犯**。
+2. **`_latent_knowledge_entries` 只认结构化 `Mapping`**，而游戏端发的是纯字符串
+   ⇒ `if not isinstance(item, Mapping): continue` 逐条跳过 ⇒ 空卡。
+   修法是两种形态都接受（游戏端 `list[str]` / Mod 内部 `MemoryRecord`）。
+3. （第 2 个的一体两面）**`NpcContext` 与 `DialogueTestRequest` 之间的接线**。
+
+⇒ 教训落进 `STATE.md` §四 第 10 条：**给 prompt 加新通道必须写穿透用例**。
+
+### 两次「测试自己写错」
+
+- `LatentKnowledgeWiringTests` 里我写过 `item.Contains("练练剑") == false || true`
+  塞在 `Assert.Contains` 外面 —— 恒真，等于把意图写反了。
+  已改成 `Assert.DoesNotContain`。
+- 端到端用例最初拿 `recent_memory` / `relationship_world` 当位置锚点，
+  但这两张卡都是**条件生成**的 ⇒ 实现没坏却空红。
+  改用恒存在的 `final_role_voice_contract` / `player_echo_guard`。
+  ⇒ 教训落进 `STATE.md` §四 第 11 条。
+
+### 关键设计约束（改动前务必先读）
+
+- **`IsLatentKnowledge` 判 `Source` 而不是 `KnowledgeScope`** ——
+  `Participants` 这个 scope 也被 `RecordMemoryHighlight` 用于**玩家**发言，
+  按 scope 判会把玩家的话误判成隐性知识。
+- **`KnowledgeScope = Participants`（不是 `Private`）是承重的** ——
+  `prompts.py:444` 的 `_MEMORY_FACT_PRIVATE_SCOPES` 会把 private 记录
+  **整条丢掉**，那样「玩家问起时能顺口说一句」就不可能了。
+- **必须从 `RecentMemoryFacts` 里排除** —— 那个读取器喂的是 `recent_memory` 卡，
+  指令是「把记忆自然用起来」。两套打架的约束同时在场时，项目实测过
+  **「取最宽」**（跟最松的）⇒「不主动提」会塌成「随便提」。
+- **`MemoryId` 不含日期** ⇒ 同一句话在不同天说仍是同一条知识，不会堆积。
+- **发布顺序 Bridge 先、DLL 后**（`ApiModel` 是 `extra="forbid"`）。
+
+### 验证
+
+- C#：**1101 passed**（全量，零回归）
+- Bridge：**4483 passed**（全量，零回归；本轮 +14）
+- `verify_project.ps1`：**4/4 PASS**
+
+### 未做 / 待办
+
+- **实机端到端未验证**：需要真跑一局群聊，确认 ① 请求体里真的带上了
+  `latentKnowledge`，② 私聊时她能「顺口提一句」而不主动抖出来。
+  这需要用户逐次授权启动游戏（红线①）。
+- `ApplyUtteranceKnowledge` 本身没有单测 —— `GroupDialogueMenu` 继承 SMAPI 菜单基类，
+  实例化需要游戏上下文，该文件**目前零测试**，不宜在这次改动里引入。
+  接缝的类型正确性由编译期保证（`response.Turns` 是 `IReadOnlyList<BridgeGroupTurn>`），
+  且已确认 `GroupTurn.speaker_npc_id` 必填、**玩家发言不在 `Turns` 里**。
+- `GroupUtteranceRules.MaxPerNpc = 6` 是**按次**计数，不是按场次；
+  累积上限目前只由 `MemoryRules.MaxCount` 与读取侧的 ≤12 把着。
+- 工作树仍未提交（红线③：不主动 commit），且**混着三条工作线**。
+
+## 2026-10-04 19:39 · 婚姻的另一端：维克托为什么不知道他妈嫁给了玩家
+
+用户实机观察（原话）：「维克托不知道他妈嫁给我了，这不对吧」。
+**观察属实**，但根因和第一直觉相反。
+
+### 诊断过程（三次修正）
+
+1. **先疑数据缺失** —— 否。data/npc-relations.json 里两条边都在：
+   Olivia → Victor 儿子、Victor → Olivia 妈妈。
+2. **再疑「NPC 互相不认识」** —— 否。实测 PersonaStore.get_persona('Victor')
+   的 	ownRelations 31 条里明确有 Victor：Olivia妈妈、Sophia好朋友。
+   2026-09-24 那条「全镇公共常识」投影是好的。
+3. **真因：婚姻事实只说「X 已婚」，不说「和谁」** ——
+   _public_marriage_views 造出的 view 只有 subjectNpcId（配偶一端）。
+   Victor 读到 {"subjectNpcId": "Olivia", "relationType": "married"}
+   配上自己的 	ownRelations，能推出的上限是「我妈妈结婚了」，
+   **推不出新郎就是正在跟他说话的玩家**。
+
+### 但真正严重的是顺手挖出来的第二层
+
+_public_marriage_views 读的是 act["npcId"]，而 C# 发的是**有向边**
+romNpcId / 	oNpcId。折叠函数 models._fold_relationship_edges
+（2026-09-20 为同一个 422 补的）会把两端 **pop 掉**再合成
+pcId。
+
+⇒ **线上 knowledge 恒为空。**「NPC 知道谁和玩家结了婚」这条通道从来没通过。
+现有单测全绿，因为它们的 fixture 一律手写 {"npcId": ...} ——
+一个生产环境根本不会出现的形状。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| models.py | _fold_relationship_edges 保留 counterpartNpcId（不再无差别 pop 两端）；RelationshipFact 声明该字段（xtra="forbid"） |
+|
+elationship_world.py | _public_marriage_views 输出 counterpartNpcId；project_relationship_context 字段白名单放行它 |
+| prompts.py | _compact_relationship_world **第二份白名单**放行它；_build_relationship_world_card 条件拼接字段说明 |
+| StoryStateModels.cs | RelationshipViewRecord.CounterpartNpcId（可空，旧存档回退 player） |
+| StoryStateStore.cs | 造 public view 时填
+elationship.FromNpcId |
+| 	ests/MarriageCounterpartTests.cs | 新增 4 |
+| 	ests/test_marriage_counterpart.py | 新增 4 |
+| 	ests/test_marriage_counterpart_prompt.py | 新增 3（**穿透**，走 RelationshipWorldContext → ContextBuilder → PromptBuilder） |
+
+用户口径：**「只知道事实，不预设亲属称呼」** —— 不映射「继父 / 后爸」这类词，
+只把 counterpartNpcId: player 交出去，怎么称呼由角色按自己语气决定。
+
+### 验证
+
+- SMAPI 全量 **1105 passed / 0 failed**（基线 1101，+4）
+- Bridge 全量 **4490 passed**（基线 4483，+7）
+- erify_project.ps1 **4/4 PASS**，git diff --check 干净
+
+### 未做（等用户裁决）
+
+- **DLL 未部署**（用户先前指示「先不部署，直接查亲属关系」）。
+  ⚠ 部署顺序：这次 C# 加字段、Bridge 加字段，ApiModel 是 xtra="forbid"，
+  但 RelationshipFact.counterpart_npc_id 是**可选**的，所以两边顺序不敏感。
+- **未实机验证**：需要一次真实对话确认维克托会说得出「我妈嫁给了你」。
+
+### 教训
+
+一条通道「实现了、测过了、上线了」，但现象是「NPC 表现得完全不知道」——
+**先怀疑 fixture 形状**，而不是继续往下游找。见 docs/STATE.md §四第 12 条。
+
+## 2026-10-05 · 群聊「每人一份」私有上下文（「群聊与晨间话题的有机统一」的地基）
+
+用户确认的工作线与顺序：**先地基后素材**。地基 = 让 F9 群聊里每位参与者都拿到自己那份
+关系世界与记忆，使 NPC 在 F8／F9／晨间读起来是同一个连续人格（用户 10-04 08:27 的验收标准：
+「有一个感觉上是连续的 npc 的人格，他不会因为在 f8 还是 f9 中出现导致不像同一个人」）。
+素材（把已接受的多元关系转成打趣）留下一轮。
+
+### 为什么地基是这个
+
+`GroupDialogueMenu.cs` 从 2026-09-22 起就给请求顶层的 `recentFacts` / `relationshipWorld`
+传 null，并在注释里写明**这是刻意的、不是漏接线**：`RecentMemoryFacts(npcId)` 是按 OwnerNpcId
+过滤的单 NPC 视角（含玩家只跟这一个 NPC 私下说过的事），`RelationshipSnapshotFor(npcId)` 是以
+该 NPC 为 viewer 的关系视图，而 `group_scene` 卡里那两个槽位**没有归属** —— 三人场里放谁的都会
+让另外两人读到不属于自己的私事（「把 Alex 的关系网塞给 Shane」），比不传更糟。
+
+同一段注释里已经写下了正确做法：「按参与者拆成『每人一份』的槽位（与参与者角色卡同构），
+那是 Bridge 侧的改动」。本轮做的正是这件事。
+
+### 改动（3 处实现 + 2 个测试文件）
+
+- `smapi/ConversationModels.cs` `GroupDialogueParticipant` 增加两个可选字段
+  `RelationshipWorld` / `RecentFacts`（每人一份的槽位）。
+- `bridge/src/stardew_ai_bridge/models.py` `GroupParticipant` 同步两字段；顶层同名字段保留，
+  只为兼容还在发无归属那一份的旧 DLL。
+- `bridge/src/stardew_ai_bridge/group_conversation.py` 新增 `_participant_private_context` 等
+  helper，把每人的私有上下文渲染成**带归属的卡**（卡名 `participant_private_context_<npcId>`，
+  卡内 `scope` 声明「只属于他、名单里的其他人并不知道」），插在该参与者**边界卡之后、角色卡
+  之前**，归属链连续。沿用 2026-09-22 修 BUG-1/BUG-2 的那套归属思路（模型串味的原因是
+  **没有归属**，不是「它看到了别人的内容」）。
+- `smapi/BridgeClient.cs` `SendGroupAsync` 的 payload 组装补投这两个字段
+  （截断口径与顶层那份一致）。
+- `smapi/GroupDialogueMenu.cs` `SendCurrentAsync` 改为 `participantsWithContext`：每位参与者取
+  `RelationshipSnapshotFor(NpcId)` 与 `RecentMemoryFacts(NpcId)`；顶层两实参传 null。
+  原 2026-09-22 的两段注释已改写（诉求不变，归属从「无主」变成「每人一份」），
+  免得下一个读者照旧判据误判。新增诊断字段 `LastRequestContextCount`（现场证据：
+  谁的那份取空了，光看代码看不出来）。
+- 测试：`bridge/tests/test_group_participant_context.py`（6 条，含一条打通「请求 JSON →
+  模型 → 卡」的穿透测试）、`smapi/tests/GroupDialogueParticipantContextTests.cs`（3 条）。
+- 计划文档：`docs/superpowers/plans/2026-10-05-group-per-participant-context.md`。
+
+### 过程中修掉的一个真问题
+
+`RelationshipWorldContext` 的每个字段默认都是空集合，而生产端的 `RelationshipSnapshotFor`
+**总有对象**（没有关系时也是全空对象，不是 null）。最初的 `model_dump(by_alias=True,
+exclude_none=True)` 会把空字段全部渲染出来：每位参与者都多一张 `objectiveRelationships: []…`
+的空卡，而且 `has_world` 会把它当成「有关系内容」。穿透测试抓到了它，改用 `exclude_defaults=True`。
+（又一例「代理指标代替真对象」：卡「生成了」不等于「有内容」。）
+
+### 验证证据（2026-10-05 04:37）
+
+- 红灯：Bridge 侧 5 failed（`Extra inputs are not permitted` + 卡不存在）；C# 侧编译失败
+  CS1729／CS1061（缺构造函数与属性）。
+- `scripts/verify_project.ps1`：SMAPI **1108 passed / 0 failed**；Bridge **4496 passed**；
+  `compileall` exit=0；`git diff --check` 无空白错误。全绿。
+
+### 未做 / 待办
+
+- **DLL 未部署**，也未实机验证。发布顺序是硬约束：`ApiModel` 是 `extra="forbid"`，
+  必须**先重启 Bridge、再换 DLL**，否则新 DLL + 旧 Bridge = HTTP 422。
+- 阶段二「素材」（多元关系转打趣，进群聊话题与**新增的**晨间条目）留下一轮，需一次产品级
+  对齐：落点是「邀约话题模板」还是「群聊场景卡新增素材段」。约束已记在计划文档末节：
+  **不改晨间现有预设的一个字**（用户 10-04 08:23 的裁定晚于 08:31 前的「加入晨间话题」，
+  晚的那句管着早的那句）、调解只做一次、邀约卡不得宣告关系结果。
+
+---
+
+## 2026-10-05 · 群聊「打趣」：把已接受的多元关系作为加料加进邀约引导（「有机统一」阶段二·素材）
+
+### 落点（用户定 A）
+素材落点两条候选：A. 群聊邀约话题模板（`GroupInvitationTemplates`）；B. 群组场景卡里单开一个素材区。
+用户答「a吧」⇒ 走 A。
+
+**但 A 的具体形态没有按字面走。** 起初设想是「给主题表新增一个 `teasing` 主题」，
+读现场后否掉，理由已写进代码注释：
+
+- 丙的原话是把这个作为打趣**加入**群聊话题 —— 是加料，不是换成「这次群聊聊打趣」；
+- `MatchingTemplates` 最后按 `TemplateId` 字母序决定选中谁，而 `Generate` 只取**第一张**
+  不重复的模板。`teasing` 夹在 25 个主题的中后段 ⇒ 几乎永远轮不到；若为它插队，
+  又会让它每次抢占、别的话题永远轮不到。两头都错。
+- 主题表自己还有一条原则挡着：它声明「主题与例句都来自真实对白」，而原版语料里
+  根本不存在多段亲密关系的场景，没有真实原句可抽，硬「抽取」只能是伪造。
+
+⇒ 最终形态：**话题选择逻辑一个字不动**，只在「这一组里至少两位已接受者」时，
+给**已经被选中的那张**模板的 `Guidance` 追加一段打趣许可。
+
+### 判据
+`StoryStateStore.EnsureSpouseAcceptance` 写下的 `Mediations[].Outcome == "accepted"`。
+`GroupDialogueCoordinator.OnDayStarted` 把它作为 `AcceptedPolyamoryNpcIds` 填进
+`GroupInvitationGenerationContext`（新增的**可选**参数，默认 null ⇒ 现有位置参数调用全部不受影响）。
+
+要求**在场至少两位**：只有一位时，这句话会变成当着外人的面议论不在场者的私事，
+与 friendship 主题写明的「不提不在场的人的具体私事」直接冲突。
+
+### 顺手挖出的真缺陷：`invitation_guidance` 的 500 字是**校验**不是截断
+Bridge 的 `GroupDialogueRequest.invitation_guidance` 是 `Field(max_length=500)`
+—— pydantic **校验**，超了会让整个群聊请求 **422**，玩家看到的是一句「群聊打不开」。
+
+实测（xUnit 全表扫 `GroupInvitationTemplates.All`）：
+- 两人场最坏的一条 `health:demetrius|linus` = **430 字**，离 500 只剩 **70 字**余量；
+- 打趣子句 108 字 ⇒ 直接拼接 = **538 字 ⇒ 必然 422**。
+
+⇒ 新增 `GroupInvitationTemplates.MaxGuidanceLength = 480`；`ClampGuidance(guidance, reserved)`
+先给要追加的内容留位再截断（截断处补省略号，让「这句被截过」在文本里看得见）。
+装饰路径改成 `ClampGuidance(guidance, clause.Length) + clause`，保证总长 ≤ 480。
+
+**只在超限时才动文本** ⇒ 现有够短的模板一个字节都不变。三人场今天没有量
+（`All` 只含两两组合，枚举 10 万组代价太大），但截断现在对它无条件生效。
+
+### 改动
+| 文件 | 改动 |
+|---|---|
+| `smapi/GroupInvitationTemplates.cs` | 新增 `MaxGuidanceLength` / `ClampGuidance` / `TeasingClause`；`BuildGuidance` 返回值过 `ClampGuidance` |
+| `smapi/GroupInvitationGenerator.cs` | `GroupInvitationGenerationContext` 加可选 `AcceptedPolyamoryNpcIds`；新增 `WithTeasing`，在 `CreateInvitation` 之前装饰 |
+| `smapi/GroupDialogueCoordinator.cs` | `OnDayStarted` 填 `AcceptedPolyamoryNpcIds` |
+| `smapi/tests/GroupInvitationTeasingTests.cs` | 新增 8 条 |
+| `smapi/tests/GroupDialogueCoordinatorTests.cs` | 新增 2 条**接线测试**（见下） |
+
+Bridge 侧**零改动**：`group_conversation.py` 的 `group_scene` 卡把 `invitation.guidance` 原样带上
+（L428 多轮 / L518 单轮），且群聊路径对 guidance **没有**长度截断。这条路径 2026-09-20
+刚修过一次「guidance 根本进不了 prompt」，注释还在。
+
+### 接线测试（刻意加的）
+`Generator` 那一层绿了**不等于**它被用上 —— 「能力做好了但没人调用」是这个项目反复出现的
+失败形态（`DiscloseRelationship` 至今零生产调用点）。所以额外两条测试直接驱动
+`GroupDialogueCoordinator.OnDayStarted`：一条证明 accepted 真的被传下去（引导里出现「打趣」），
+一条作对照（没有任何 accepted 记录时，即便这两人就是配偶也不打趣）。
+
+### 证据
+- `dotnet test`（SMAPI 全套）**1118 通过 / 0 失败**（本段基线 1108，新增 10）。
+- `scripts/verify_project.ps1` 全绿：SMAPI 1116 / Bridge **4496 passed**（139 s）/ `compileall` exit=0 /
+  `git diff --check` 无空白错误 —— 记录时点为加接线测试之前，接线测试之后 SMAPI 单跑仍全绿。
+
+### 未做 / 待办
+- ✅ **晨间话题一侧：用户 2026-10-05 裁定不加**（原话「晨间就不加了吧」）。
+  这句晚于丙 2026-10-03 的「加入群聊话题**和**晨间话题」，按「后一句管前一句」收窄为
+  **只进群聊**，晨间那条线就此关闭 —— 既有 163 条预设本来就不许改一个字，
+  现在连**新增**条目也不做。打趣素材的落点到此**只剩群聊邀约引导这一处**。
+- DLL **未部署**、**未实机验证**（需用户逐次授权）。
+- 未提交 git（红线）。
+
+---
+
+## 2026-10-05（续）· ③ 裁定「不做」+ 台账与两处过时说明的清理
+
+### ③ `DiscloseRelationship` 接线：**不做**（用户裁定）
+
+上一轮我提议把 `DiscloseRelationship` 的生产调用点接上，**报价是错的** ——
+我说成「纯本地、零额度、一口气做完」。实际核查后：
+
+- 它的语义是「**玩家主动向某一个 NPC 说明关系**」（设计文档 L348 / L354，
+  写进去的记录 `Source = player_statement`）⇒ 触发它就得知道**玩家刚才那轮是不是在说这件事**
+  ⇒ 必须**模型侧**判断；
+- ⚠ 而设计文档**只定义了接口，从未设计过触发方式** ⇒ 这条腿**从来没有存在过**，
+  不属于「写好了没接上」；
+- ✅ 通道形状有现成先例：`BridgeDialogueResponse.OpenLoop` 已经是
+  「模型识别 → 回传 → DLL 写存档」的完整实现 ⇒ 真要做，是照它加一个字段
+  （涉及 prompt + 协议 + 两端测试 + **部署顺序**）。
+
+**用户裁定（2026-10-05）**：不做。原话
+
+> 「我觉得**不提前准备脚本光靠模型做不出太大的角色之间的区分度**，没必要把这个流程
+> 重复十几次，**只在第一次结婚的时候来一次就行**，不然太容易腻了。」
+
+同日追加确认为**选项 B**：这是给丙那条「调解只做一次」**加注解**，
+**不是**要新做一件事 —— `EnsureSpouseAcceptance` 已经够，这条线就此关闭。
+
+**判据**：`DiscloseRelationship` 天然**可重复**（可以对十个 NPC 各说一次），
+正是用户说的「重复会腻」的形状。而现有落地件**不演任何剧情** ——
+它只往 `StoryState` 写一条 `resolved` / `accepted`，玩家看不见、NPC 也不会因此说话
+⇒ **它不会腻**，用户担心的「重复十几次」在它身上没有对应物。
+
+⚠ 留一条张力备查：丙说「之后发生亲密关系的角色应当**默认了解**」，
+而设计文档 L320 刻意规定「普通恋爱事实没有 `PublicEventId` 时**不会**为其他 NPC
+自动生成 known 视角」。用户读法是：丙那句的重心是「**别再走一遍调解**」
+（已由 `EnsureSpouseAcceptance` 落地），**不是**「系统自动广播知识」。
+⇒ **真正的「首次发现」演出不存在，也不在本轮范围内**（本轮只把它记清楚）。
+
+### 顺手清理（三件，均零请求）
+
+| 项 | 清理前 | 处置 |
+|---|---|---|
+| 体检唯一 FAIL：**台账缺口 1 组** | `final_role_voice_contract × length_whole_reply` | 查实是**抽取误判** —— instruction 里「答完要让对方接得上——他顺着**能应一句**」被读成「整条只许 1 句」，与 `topic-source-sentence`（「一句来源句」）同构 ⇒ 登记为 `final-whole-response-hook`，`note` 写明**不是同一个量、不参与冲突判定**。**已回到 0 组。** |
+| `scripts/health_check.py` 第 5 条说明 | 写着「stranger / parent 两个阶段一个 case 都没有」 | 改为**历史 + 现状**（**stranger 8/8、parent 8/8**）；并更正并集 **255 → 274**；第 ⑤ 层的例子换成现测那 5 组 |
+| `docs/constraint-scope.md`「两个后果」+ `STATE.md` §六 | 同上，写着「测不了」 | **追加**更新块（**不改历史叙述**），并更正结论：「**卡点没消失，只是换成了（阶段 × 话题）配对**」 |
+
+**新数据（`probe_topic_alignment.py` 现测）**：并集 **274** 个 case；阶段分布
+stranger=8 / acquaintance=15 / friend=44 / close=20 / dating=55 / married=124 / parent=8。
+「阶段有样本、话题没有」⇒ **跑全也测不到**的有：`close × 动作`(4 条约束)、
+`stranger × 反问`(2)、`stranger × 换题`(1)、`close × 换题`(1)、`close × 反问`(1)。
+⇒ **补数据要按（阶段 × 话题）配对补，只补阶段不够。**
+
+### 证据
+
+- `check_prompt_consistency --against-scope`：**合计 0 组待铺开**（清理前 1 组）。
+- `constraint_scope.py` 回归自测：**收束前判出 2 条冲突** / **当前状态无冲突** 均 `[OK]`。
+- 本轮全量 `verify_project.ps1` **全绿**（2026-10-05 05:43）：
+  SMAPI **1118 通过 / 0 失败**、Bridge **4496 passed**（144 s）、
+  `compileall` exit=0、`git diff --check` 无空白错误。
+  ⚠ 本轮动的是 `scripts/constraint_scope.py`（**台账数据**），它**不参与**两侧测试
+  ⇒ 台账这件事的验证在**上面两条**（`--against-scope` 0 组 + 自测 `[OK]`），
+  别只看这一行就以为台账也被覆盖了。
+
+---
+
+## 2026-10-05（续二）· 「做前三项吧」：② 补盲区 case + ③ 一轮云端评测 + ① 实机清单
+
+用户接在「讲讲做了什么，接下来做什么」之后给了四个选项，选「做前三项吧」
+（① 写实机验证清单 / ② 补 5 组盲区 case / ③ 一轮云端评测）。
+**这句话同时就是 ③ 的云端花费授权。** 执行顺序取 **② → ③ → ①**：
+②③ 天然成对（补完样本紧接着验它），① 独立且最费笔墨，放最后。
+
+### ② 补 6 条（阶段 × 话题）盲区案例
+
+落点 `bridge/src/stardew_ai_bridge/character_quality_eval.py`：
+新增 `_TOPIC_ALIGNMENT_CASES`（6 条，插在 `_STAGE_COVERAGE_CASES` 与
+`_FEMININE_MALE_CASES` 之间）+ `_TOPIC_ALIGNMENT_FOLLOW_UP_TURNS`
+（6 个 key × 2 轮，紧跟 `_FOLLOW_UP_TURNS.update(...)`）；
+`DEFAULT_CASES` 由字面量改成四元拼接。
+
+对应关系（一条 case 打一个盲区）：
+
+| case | 阶段 | 玩家那句话说成什么样 | 诱发的禁止行为 |
+|---|---|---|---|
+| `elliott-close-gesture` | close | （把椅子挪近了些）你今天写了多久？ | 动作堆叠 |
+| `harvey-close-gesture` | close | （把手搭在椅背上）你还要忙多久？ | 动作堆叠 |
+| `harvey-stranger-question` | stranger | 我最近老在想一件事。 | 反问 |
+| `sam-stranger-topic-control` | stranger | 今天天气不错。 | 主动换题 |
+| `elliott-close-topic-control` | close | 今天谢谢你陪我。 | 不自然收尾 / 追加邀约 |
+| `harvey-close-follow-up` | close | 你小时候最怕什么？ | 泛泛反问 |
+
+**⚠ 造数据的纪律**：补的是**输入**，不是关键词 ——
+每条玩家话都得**真能诱发**那条被禁止的行为，判据写在各条的 `relationship_context` 里。
+**刻意避开了 `turn` 这种宽泛词**：它单独出现就会被探针算作匹配，那属于不诚实地凑词。
+
+**实测**：`validate_quality_cases(DEFAULT_CASES)` = **0 错误**；
+新 key 无对应 case / 新 case 无 follow-up 均为 **无**；
+定向 pytest = **197 passed in 3.40s**；
+探针「阶段有样本、话题没有」= **（无）**，并集 **274 → 280**，
+`DEFAULT_CASES` **66 → 72**。
+
+### ⚠ 中途自查出我自己的一个错
+
+第一遍统计评测通过率时我写的是 `r.get('passed')` —— **这个字段不存在**
+（真字段是 `casePassed`），`None` 恒为假 ⇒ 打印出「**24 条全部 FAIL**」的假象，
+我差点据此报告「新 case 全灭」。
+dump 出 `turns[0]` 的完整结构后改用 `casePassed`，真实结果是 **11/24**。
+
+⇒ 教训：**一个 `get()` 返回出来的数不等于字段真的存在。**
+拿它当真值之前，先把对象本身打印出来看一眼 —— 这与 §2026-10-04 那条
+「先看真实原文再下结论」是同一个形状。
+
+### ③ 一轮云端评测：得到的结论是「判据测不到」，不是「模型做不到」
+
+`--provider cloud --confirm-cloud --stage close,stranger`
+（⚠ PowerShell 里逗号分隔的 `--stage` **必须加引号**，否则被拆成两个 argv），
+24 case / 72 轮 / 103 请求 / 60.6 万 token / 3.6 分钟，`errors 0`。
+
+| 阶段 | 本次 | 2026-10-03 历史批次（同 suite、同 compactPrompt） |
+|---|---|---|
+| stranger | **10/10 = 100%** | 8/8、7/8 |
+| close | **1/14 = 7.1%** | 1/10、2/10 |
+| 合计 | 11/24 = 45.8% | 24/66 = 36.4% |
+
+⇒ **close 那一两成的通过率是 10-03 就有的既有基线**，不是这轮改坏的；
+新补的 6 条与同阶段现有 case 表现一致（stranger 2/2 过、close 0/4 不过）。
+
+**⭐ 真正的产出是这一条**：close 的失败 tag 清一色是
+`missing_conversation_lead` / `missing_current_topic_answer` ——
+**评分器里没有「动作是否堆叠」「是否泛泛反问」「是否主动换题」这些判据。**
+两个人读到的实例：
+
+- `sam-stranger-topic-control`（玩家只说「今天天气不错。」）被判 **PASS**，
+  可实际回复是「嗯，晴天啊。 我刚才练了两个小时吉他，手指都快按麻了。」
+  —— **主动换了题，正是那条约束要禁的行为**；
+- `elliott-close-topic-control`（玩家说「今天谢谢你陪我。」）被判 FAIL，
+  tag 却是 `missing_conversation_lead`，而它真正的问题是回复里**追加了邀约**
+  （「下次退潮的时候…想安静就过来」）—— **判据根本不对口**。
+
+⇒ **补 case 只解决了「有没有样本」，没解决「判不判得了」。**
+这五组约束目前**只能靠人读台词**判定。
+⚠ n=1，上面两个实例是**信号不是结论**，不能写成「模型违反了 X」。
+
+### ① 实机验证清单
+
+`docs/checklist-group-ingame-2026-10-05.md`（照 `checklist-ingame-verify-2026-09-25.md` 的格式）：
+分两层 —— 不开游戏的一层用 `/test/group` + `/api/context/preview`（能直接看到发给模型的卡），
+开游戏的一层用 **F8（私聊，先弹选人名单）/ F9（群聊）**；
+写进部署顺序（**先 Bridge 后 DLL**，`ApiModel` 是 `extra="forbid"`，
+反了会让整个群聊请求 422）；并**单列一节**写上「别信 pass/fail，要人读台词」，
+理由是上面 ③ 的发现。
+
+### 未做
+
+- **DLL 未部署、未实机验证**（红线：需逐次授权并由用户启动游戏）。
+- 探针的 ⚠「样本偏少」仍在（`close × 动作` 2 个匹配、其余各 1 个，阈值 3）。
+  但既已查明**判据侧压根没有对应 tag**，**先补判据比先补样本更值**。
+
+---
+
+## 2026-10-05（续三）· 用户选「A+B 都做」：工作线现状总表 + STATE 现状收拢
+
+用户问「现在干什么，要不要整体过一遍梳理一下」，在四个读法里选了 **D（A+B 都做）**。
+
+### 一、查出三处文档与现实不符（**这是本轮最实的产出**）
+
+| # | 位置 | 文档说 | 实测 |
+|---|---|---|---|
+| 1 | `STATE.md` §五 表格 | 「`rasmodia.json` 已回滚、**当前无改动**」 | ⚠ **假的**：`git diff --stat` = **+36/−4**，加的是 `intimacyPolicy`。那句记的是 **09-28** 的回滚，**10-03** 又加了新内容而表没跟 |
+| 2 | `STATE.md` §五 完整性 | 只登记到 **09-28~09-30** | 实际 **54 项**（35 改 + 19 新）⇒ **关系世界线、亲密尺度线整条没登记** |
+| 3 | `active-work.md` L281–415 | 头部「已完成 / 当前队列 / **下一步操作** / 当前停止条件」 | 全是 **2026-08-31~09-01** 的快照 ⇒ **从开头读的人会先看到四十天前的下一步** |
+
+第 1 条最危险：下一个接手的人读到「rasmodia 无改动」，可能据此**漏掉整批 persona 数据**。
+
+### 二、产出
+
+- **新建 `docs/worklines-status-2026-10-05.md`** —— 7 条工作线 × 「代码 / 单测 / 离线验证 / **实机**」四列；
+  54 项改动按线归组（含行数）；部署顺序与耦合；下一次实机该验什么（按可验性排序）；
+  以及三处文档失真的对照。**含复现命令，并注明「别引用数字而不重跑」。**
+- **`STATE.md` §一 前插「⭐ 2026-10-05 现状」** —— 顶部给现状与下一步；
+  把旧的 30 秒速览**降级标注为「历史原文，未改一字」**；其后附
+  **8 条「已被后续推翻或收窄的结论」对照表**（这才是「收拢」的实质）：
+  4421 passed 已过时 / A2 对照组已结案 / 抽取 69%→64% /
+  **开场方式改动实测为负结果、不可声称已修** / 长度根因被 §七末之八 推翻且议题已关闭 /
+  §六 第 5 条的卡点已从「零 case」换成「（阶段 × 话题）配对」/ rasmodia 那句 / 长度议题勿重开。
+- **`STATE.md` §五 追加两处更新块** —— ①更正 rasmodia 那处；②标明该表覆盖范围并列出漏登记项。
+- **`active-work.md` 头部插指针块** —— 说明那五个小节是化石、**最新内容在末尾**。
+
+⚠ 全程遵守「**历史文档不改写历史**」：旧段落**一字未删**，只在前面加现状与更正块。
+
+### 三、关键判断
+
+- **代码侧没有欠账**：7 条线的实现、单测、离线验证都齐，`verify_project.ps1` 全绿。
+- **唯一共同阻塞是实机验证**：10-04 / 10-05 的全部工作**没有一个进过游戏**。
+- 群聊地基 + 打趣 + 隐性知识**三线必须一起部署**（动同一批协议字段），
+  且**先 Bridge 后 DLL**（`ApiModel` 是 `extra="forbid"`，反了 = 群聊 422，看起来像功能写坏）。
+- ⚠ **`docs/STATE.md` 自身 +975 行未提交** —— 这份「唯一事实来源」的绝大部分
+  目前只存在于工作区。这是一个**单点风险**，已写进两份文档。
+
+### 四、⚠ 提交前验证抓到我自己的一个疏漏
+
+跑 `scripts/verify_project.ps1`，**首跑不是全绿**：
+
+```
+[FAIL] Bridge 测试 —— 2 failed, 4494 passed
+
+test_eval_stage_filter_selects_only_that_stage         assert 10 == 8
+test_eval_stage_filter_accepts_multiple_and_dedupes    assert 18 == 16
+```
+
+- **根因**：上一轮（② 补 6 条盲区 case）加了 **2 条 stranger** 案例，
+  而 `bridge/tests/test_run_character_quality_eval.py` 里**钉着各阶段的 case 数快照**
+  （L232 / L247）。stranger 8→10、stranger+parent 16→18，正好对上。
+- **⚠ 为什么会漏**：上一轮我报「197 passed」时**只跑了
+  `test_character_quality_eval.py` 与 `test_quality_case_validation_edges.py` 两个文件**，
+  没跑全套，因此没碰到这个文件。
+  **教训形状与本项目反复出现过的一模一样：拿局部证据当整体结论。**
+- **修复**：作者本来就写明「这里是数据快照，随案例增减同步更新」⇒
+  按原意同步 8→10、16→18，并补上日期注释。**没有改测试语义。**
+- **复跑**：`verify_project.ps1` **全部通过** —— SMAPI **1118** / Bridge **4496 passed** /
+  compileall / `git diff --check` 四项全 PASS。
+  ⇒ 这也顺带把 §一 里写的「Bridge 4496 passed」从**引用**变成了**实测**。
