@@ -110,6 +110,7 @@ public sealed class StoryStateStore
         return State.Memories
             .Reverse()
             .Where(memory =>
+                IsLatentKnowledge(memory) == false &&
                 string.Equals(memory.OwnerNpcId, npcId, StringComparison.OrdinalIgnoreCase) &&
                 !string.IsNullOrWhiteSpace(memory.Content))
             .Take(cappedLimit)
@@ -118,6 +119,55 @@ public sealed class StoryStateStore
                     ? memory.Content.Trim()
                     : $"记忆（{memory.GameDate.Trim()}）：{memory.Content.Trim()}")
             .ToArray();
+    }
+
+    /// <summary>
+    /// 该 NPC 的**隐性知识**：她在场听见的、**别人**说过的话（2026-10-04）。
+    ///
+    /// 需求原话：「群聊记忆中别的 npc 说了什么能不能作为一个隐性的知识库这样的形式，
+    /// **我不主动提到就不唤醒**」。
+    ///
+    /// ⚠ 与 <see cref="RecentMemoryFacts"/> 是**互斥的两条路**，不是包含关系：
+    /// 隐性知识若同时进 `recent_memory`，那张卡的「把记忆自然用起来」指令会让模型
+    /// 主动提起，与需求正好相反。项目实测过 **「取最宽」** —— 同类约束有多个实例时
+    /// 跟最松的那个，所以两个通道都送等于约束失效。
+    ///
+    /// ⚠ 不带 `记忆（日期）：` 抬头：那是普通记忆的口径。隐性知识卡有自己的结构与
+    /// 指令，套同一层抬头会让模型把两者当成同一类东西。
+    ///
+    /// 条数封顶避免群聊攒久了线性增长挤占 prompt。
+    /// </summary>
+    public IReadOnlyList<string> LatentKnowledge(string npcId, int limit = 12)
+    {
+        if (string.IsNullOrWhiteSpace(npcId) || limit <= 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var cappedLimit = Math.Min(limit, 12);
+        return State.Memories
+            .Reverse()
+            .Where(memory =>
+                IsLatentKnowledge(memory) &&
+                string.Equals(memory.OwnerNpcId, npcId, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(memory.Content))
+            .Take(cappedLimit)
+            .Select(memory => memory.Content.Trim())
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 这条记忆是不是「隐性知识」——判据只有一个：来源是 NPC 之间
+    /// （<see cref="MemorySource.NpcNpcEvent"/>）。
+    ///
+    /// 用 `Source` 而不是 `KnowledgeScope` 判定：`Participants` 这个范围
+    /// **玩家说的话也用**（见 <see cref="RecordMemoryHighlight"/>），拿范围当判据
+    /// 会把玩家的话错分到隐性知识里去。
+    /// </summary>
+    private static bool IsLatentKnowledge(MemoryRecord memory)
+    {
+        return memory.Source == MemorySource.NpcNpcEvent &&
+               memory.Status == MemoryStatus.Active;
     }
 
     public void Replace(StoryStateEnvelope state)
@@ -194,6 +244,13 @@ public sealed class StoryStateStore
             {
                 OwnerNpcId = viewerNpcId,
                 SubjectNpcId = relationship.ToNpcId,
+                // 2026-10-04：婚姻的另一端必须一起投出去。原先这里只写 SubjectNpcId，
+                // 于是「X 已婚」是一句没有宾语的话 —— 配偶的亲属（如 Olivia 的儿子
+                // Victor）读到它，最多推出「我妈妈结婚了」，推不出新郎就是玩家。
+                // 用 relationship.FromNpcId 而不是硬写 "player"：这个循环本身已经
+                // 按 FromNpcId=="player" 过滤，取字段值可以让「将来支持 NPC↔NPC
+                // 婚姻」时这里不用再改一次。
+                CounterpartNpcId = relationship.FromNpcId,
                 RelationType = "married",
                 Visibility = "known",
                 Source = "wedding",
@@ -313,6 +370,91 @@ public sealed class StoryStateStore
         }
     }
 
+    /// <summary>
+    /// 把游戏里现存的婚姻同步成公开关系事实（2026-10-04）。
+    ///
+    /// **为什么需要它**：复数恋爱与婚姻的那一整套世界观（公开发布 / 逐人视角 / 接受度）
+    /// 在 2026-09-05 就建好了，广播通道也是通的——<see cref="RelationshipSnapshotFor"/>
+    /// 会把带 <c>PublicEventId</c> 的婚姻播给**所有** NPC 的 <c>known</c> 视角。
+    /// 但钥匙从来没被拧过：<c>State.Relationships</c> 在生产代码里一个写入点都没有，
+    /// 于是 <see cref="RecordPublicWedding"/> 找不到匹配边就提前 return，
+    /// <c>PublicEventId</c> 恒为 null，广播循环永不执行。
+    /// 表现就是「两个都跟玩家结了婚的人，互相不知道对方存在」。
+    ///
+    /// **为什么在这里收口**：调用方只负责回答「现在谁是配偶」，
+    /// 边与视图的构造复用 <see cref="RecordPublicWedding"/> 的既有语义，
+    /// 不另立第二套广播逻辑——广播由 <see cref="RelationshipSnapshotFor"/> 统一做。
+    /// </summary>
+    /// <returns>本次新增/补全了多少条关系边；0 表示无事可做。</returns>
+    public int SyncMarriages(IReadOnlyList<string>? spouseNpcIds, string gameDate)
+    {
+        if (spouseNpcIds is null || spouseNpcIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var date = string.IsNullOrWhiteSpace(gameDate) ? "unknown" : gameDate.Trim();
+        var wanted = spouseNpcIds
+            .Select(id => id?.Trim() ?? string.Empty)
+            .Where(id => id.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (wanted.Length == 0)
+        {
+            return 0;
+        }
+
+        var relationships = State.Relationships.ToList();
+        var changed = 0;
+        foreach (var spouse in wanted)
+        {
+            var index = relationships.FindIndex(relationship =>
+                string.Equals(relationship.FromNpcId, "player", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(relationship.ToNpcId, spouse, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(relationship.RelationType, "married", StringComparison.Ordinal));
+            var eventId = $"wedding:{spouse}";
+
+            if (index < 0)
+            {
+                relationships.Add(new RelationshipEdgeRecord
+                {
+                    FromNpcId = "player",
+                    ToNpcId = spouse,
+                    RelationType = "married",
+                    Source = "player_spouse",
+                    Canonical = true,
+                    UpdatedOn = date,
+                    StartedOn = date,
+                    PublicEventId = eventId,
+                    PublicOn = date,
+                });
+                changed++;
+                continue;
+            }
+
+            // 已经有边、也已经有公开事件：不动它。婚礼纪念日的【原件】比这次同步更权威。
+            if (!string.IsNullOrWhiteSpace(relationships[index].PublicEventId))
+            {
+                continue;
+            }
+
+            relationships[index] = relationships[index] with
+            {
+                PublicEventId = eventId,
+                PublicOn = date,
+            };
+            changed++;
+        }
+
+        if (changed == 0)
+        {
+            return 0;
+        }
+
+        Replace(State with { Relationships = relationships.ToArray() });
+        return changed;
+    }
+
     public void RecordPublicWedding(string subjectNpcId, string eventId, string gameDate)
     {
         var subject = RequireText(subjectNpcId, nameof(subjectNpcId));
@@ -419,10 +561,19 @@ public sealed class StoryStateStore
             throw new ArgumentException("调解结果无效。", nameof(outcome));
         }
 
+        // 2026-10-04：not_ready 是「这轮没谈成」，不是结论。
+        //
+        // 写成 resolved 会让 NPC 永远停在不接受上——玩家没有第二次机会，
+        // 而设计文档要求情绪靠后续相处与履约恢复，不是一次性判定。
+        // 保留 active，下次对话还能继续谈，直到谈成为止。
+        var status = string.Equals(resolvedOutcome, "not_ready", StringComparison.Ordinal)
+            ? "active"
+            : "resolved";
+
         var mediation = new RelationshipMediationRecord
         {
             NpcId = id,
-            Status = "resolved",
+            Status = status,
             Outcome = resolvedOutcome,
             NextStep = string.IsNullOrWhiteSpace(nextStep) ? null : nextStep.Trim(),
         };
@@ -431,6 +582,60 @@ public sealed class StoryStateStore
             .Append(mediation)
             .ToArray();
         Replace(State with { Mediations = mediations });
+    }
+
+    /// <summary>
+    /// 给已经有婚姻关系的 NPC 落一条「接受」调解记录（2026-10-04）。
+    ///
+    /// **为什么需要**：<c>acceptanceByNpc</c> 在 C# 侧从来没有写入点，Bridge
+    /// 里因此恒为 None，压缩卡就不输出 acceptance 键——Prompt 里【完全没有】
+    /// 当前 NPC 对这段关系的态度。模型遇到「我跟别人也结了婚」只能自己发挥成
+    /// 「歧异 / 需要时间接受」，而存档里她们已经结婚很久了。
+    ///
+    /// **为什么直接写 accepted，而不是走一遍调解流程**：产品规则是「调解只对
+    /// 机制上线时已经存在的那一批角色成立，之后新发生的关系默认已知晓并接受」
+    /// ——每个新伴侣都来一遍协商会困扰玩家。而调解的终态必然是接受，所以对
+    /// 「已经结婚很久」的局面，直接落终态语义等价，只是把该省的那一次对话省掉。
+    ///
+    /// **只写一次**：已经有任何调解记录的 NPC 直接跳过，所以反复读档、每天同步
+    /// 都不会重复写，也不会覆盖玩家真正谈出来的 conditional / not_ready。
+    /// 这也是「首次发现剧情只演一次」的落点。
+    /// </summary>
+    /// <returns>新写入的记录数；0 表示所有配偶都已有记录。</returns>
+    public int EnsureSpouseAcceptance(IReadOnlyList<string>? spouseNpcIds)
+    {
+        if (spouseNpcIds is null || spouseNpcIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var known = new HashSet<string>(
+            State.Mediations.Select(item => item.NpcId),
+            StringComparer.OrdinalIgnoreCase);
+        var added = new List<RelationshipMediationRecord>();
+        foreach (var raw in spouseNpcIds)
+        {
+            var id = raw?.Trim();
+            if (string.IsNullOrEmpty(id) || !known.Add(id))
+            {
+                continue;
+            }
+
+            added.Add(new RelationshipMediationRecord
+            {
+                NpcId = id,
+                Status = "resolved",
+                Outcome = "accepted",
+            });
+        }
+
+        if (added.Count == 0)
+        {
+            return 0;
+        }
+
+        Replace(State with { Mediations = State.Mediations.Concat(added).ToArray() });
+        return added.Count;
     }
 
     public void RecordJealousy(string npcId, string trigger, string intensity, string need)
@@ -496,6 +701,177 @@ public sealed class StoryStateStore
                 : item)
             .ToArray();
         Replace(State with { Jealousies = jealousies });
+    }
+
+    /// <summary>
+    /// 每日关系结算（2026-10-04）：按角色【自己的】对话记录触发或解除嫉妒。
+    ///
+    /// **为什么放 C# 而不是交给模型判**：触发嫉妒需要的全部事实（上次单独说话是
+    /// 哪天、有没有拖着没兑现的约定）在存档里都是现成的结构化数据。本地算零成本、
+    /// 可单测，也不必把「谁被冷落了」这种推断交给模型去猜。
+    ///
+    /// **两道闸门，缺一不可**：
+    /// ① 没有 <see cref="InteractionProgress.LastCountedGameDate"/> 的角色一律不算——
+    ///    没有记录代表「这个维度还没建立」，不等于被冷落。读档时 17 个配偶里只有
+    ///    真聊过的那几个有记录，少了这道闸门就会一觉醒来满镇子集体吃醋。
+    /// ② 已经在吃醋的角色不叠加——同一时刻只保留一条当前情绪，恢复才有意义。
+    ///
+    /// **恢复也在这里**：当天确实和 TA 说过话就解除嫉妒。设计文档要求情绪靠「回应、
+    /// 解释、履约、后续相处」恢复，而不是把状态强制重置，所以这里只认「真的聊过」。
+    /// </summary>
+    /// <returns>人类可读的变更说明，供日志与测试使用。</returns>
+    public IReadOnlyList<string> SettleDailyJealousy(
+        string today,
+        IReadOnlyList<InteractionProgress>? progresses,
+        IReadOnlyList<string>? spouseNpcIds)
+    {
+        var changes = new List<string>();
+        if (string.IsNullOrWhiteSpace(today) || spouseNpcIds is null || spouseNpcIds.Count == 0)
+        {
+            return changes;
+        }
+
+        var todayIndex = DayIndexOf(today);
+        if (todayIndex < 0)
+        {
+            return changes;
+        }
+
+        var byNpc = new Dictionary<string, InteractionProgress>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in progresses ?? Array.Empty<InteractionProgress>())
+        {
+            if (item is not null && !string.IsNullOrWhiteSpace(item.NpcId))
+            {
+                byNpc[item.NpcId.Trim()] = item;
+            }
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in spouseNpcIds)
+        {
+            var id = raw?.Trim();
+            if (string.IsNullOrEmpty(id) || !seen.Add(id))
+            {
+                continue;
+            }
+
+            var jealousy = State.Jealousies.FirstOrDefault(item =>
+                string.Equals(item.NpcId, id, StringComparison.OrdinalIgnoreCase));
+            byNpc.TryGetValue(id, out var recorded);
+            var lastSeen = recorded?.LastCountedGameDate;
+
+            // 今天聊过：恢复优先于一切，先解开心结再谈别的。
+            if (!string.IsNullOrWhiteSpace(lastSeen) &&
+                string.Equals(lastSeen.Trim(), today.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                if (jealousy is { Active: true })
+                {
+                    RecoverJealousy(id, "offer_time");
+                    changes.Add($"恢复:{id}<-{jealousy.Trigger}");
+                }
+
+                continue;
+            }
+
+            if (jealousy is { Active: true })
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(lastSeen))
+            {
+                continue;
+            }
+
+            var seenIndex = DayIndexOf(lastSeen);
+            if (seenIndex < 0)
+            {
+                continue;
+            }
+
+            // 拖着没兑现的约定比「只是没怎么见面」更具体，优先报这个。
+            var stalePromise = State.OpenLoops.FirstOrDefault(loop =>
+                loop is not null &&
+                string.Equals(loop.NpcId, id, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(loop.Status, "open", StringComparison.Ordinal) &&
+                DayIndexOf(loop.CreatedOn) is var createdOn &&
+                createdOn >= 0 &&
+                todayIndex - createdOn >= BrokenPromiseDays);
+            if (stalePromise is not null)
+            {
+                RecordJealousy(id, "broken_promise", "moderate", "把答应过的事做完");
+                changes.Add($"嫉妒:{id}<-broken_promise");
+                continue;
+            }
+
+            var gap = todayIndex - seenIndex;
+            if (gap < 0)
+            {
+                gap += DaysPerYear;
+            }
+
+            var intensity = gap >= CompanionHighDays ? "high"
+                : gap >= CompanionModerateDays ? "moderate"
+                : gap >= CompanionLightDays ? "light"
+                : null;
+            if (intensity is null)
+            {
+                continue;
+            }
+
+            RecordJealousy(id, "companionship", intensity, "固定的相处时间");
+            changes.Add($"嫉妒:{id}<-companionship/{intensity}({gap}d)");
+        }
+
+        return changes;
+    }
+
+    /// <summary>一季 28 天，四季 112 天（存档不含年份，跨年按加一轮处理）。</summary>
+    private const int DaysPerSeason = 28;
+
+    private const int DaysPerYear = DaysPerSeason * 4;
+
+    /// <summary>约定拖着多久没兑现算失信。</summary>
+    private const int BrokenPromiseDays = 7;
+
+    private const int CompanionLightDays = 14;
+
+    private const int CompanionModerateDays = 21;
+
+    private const int CompanionHighDays = 28;
+
+    /// <summary>
+    /// 把 "Spring 14" 这样的日期标签换成可作差的绝对天序号。
+    /// 无法识别时返回 -1——调用方一律跳过。宁可这次不算，也不能把坏数据
+    /// 当成「很久没见面」而凭空制造一场嫉妒。
+    /// </summary>
+    private static int DayIndexOf(string? dateLabel)
+    {
+        if (string.IsNullOrWhiteSpace(dateLabel))
+        {
+            return -1;
+        }
+
+        var parts = dateLabel.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2)
+        {
+            return -1;
+        }
+
+        var season = parts[0].ToLowerInvariant() switch
+        {
+            "spring" => 0,
+            "summer" => 1,
+            "fall" => 2,
+            "winter" => 3,
+            _ => -1,
+        };
+        if (season < 0 || !int.TryParse(parts[1], out var day) || day < 1 || day > DaysPerSeason)
+        {
+            return -1;
+        }
+
+        return season * DaysPerSeason + day;
     }
 
     public void Reset()

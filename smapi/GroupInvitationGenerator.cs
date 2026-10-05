@@ -6,7 +6,10 @@ public sealed record GroupInvitationGenerationContext(
     IReadOnlyList<GroupParticipantCandidate> KnownParticipants,
     IReadOnlyList<GroupDialogueInvitationRecord> ExistingInvitations,
     IReadOnlyList<string> RecentTopicKeys,
-    int? LastCreatedTotalDays);
+    int? LastCreatedTotalDays,
+    // 2026-10-05：已经接受「玩家有多位亲密对象」这件事的角色。可选且默认 null，
+    // 现有（含测试里的）位置参数构造调用因此全部不受影响。
+    IReadOnlyList<string>? AcceptedPolyamoryNpcIds = null);
 
 public sealed class GroupInvitationGenerator
 {
@@ -76,7 +79,7 @@ public sealed class GroupInvitationGenerator
                     continue;
                 }
 
-                return new[] { CreateInvitation(context, template, group) };
+                return new[] { CreateInvitation(context, WithTeasing(template, group, context), group) };
             }
         }
 
@@ -160,6 +163,38 @@ public sealed class GroupInvitationGenerator
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// 这一组里**至少两人**处于已接受的多元关系时，给选中的那张模板追加一段打趣许可。
+    ///
+    /// 为什么是「追加引导」而不是「新增一个打趣主题」（2026-10-05，用户定 A 路线）：
+    /// - 丙的原话是把这个作为打趣**加入**群聊话题 —— 是加料，不是换成「这次聊打趣」；
+    /// - 新增主题会掉进排序问题：<see cref="MatchingTemplates"/> 最后按 TemplateId
+    ///   字母序决定选中谁（<c>Generate</c> 只取第一张不重复的），而 `teasing` 夹在
+    ///   25 个主题的中后段，等于几乎永远轮不到；若为它插队，又会让它每次抢占、
+    ///   别的话题永远轮不到 —— 两头都错。
+    /// 加料则完全不碰话题选择逻辑，回归风险为零。
+    /// </summary>
+    private static GroupInvitationTemplate WithTeasing(
+        GroupInvitationTemplate template,
+        IReadOnlyList<GroupParticipantCandidate> group,
+        GroupInvitationGenerationContext context)
+    {
+        var clause = GroupInvitationTemplates.TeasingClause(
+            group.Select(candidate => candidate.NpcId).ToArray(),
+            context.AcceptedPolyamoryNpcIds);
+        if (clause is null)
+        {
+            return template;
+        }
+
+        // 先给打趣许可留出位置再截引导：两者的总长必须落在 Bridge 的
+        // `max_length=500` 以内，实测最坏的一条模板已有 430 字，直接拼接会 422。
+        return template with
+        {
+            Guidance = GroupInvitationTemplates.ClampGuidance(template.Guidance, clause.Length) + clause,
+        };
     }
 
     private static GroupDialogueInvitationRecord CreateInvitation(

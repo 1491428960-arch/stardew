@@ -110,7 +110,8 @@ public sealed record ConversationRequest(
     IReadOnlyList<string> RecentFacts,
     ItemConversationContext? ItemContext,
     RelationshipWorldSnapshot? RelationshipWorld,
-    string Channel = ConversationChannel.Remote);
+    string Channel = ConversationChannel.Remote,
+    IReadOnlyList<string>? LatentKnowledge = null);
 
 public sealed record ConversationTurnResult(BridgeDialogueResponse Response, bool Recorded)
 {
@@ -122,7 +123,17 @@ public sealed record ConversationTurnResult(BridgeDialogueResponse Response, boo
 public sealed record GroupDialogueParticipant(
     [property: JsonPropertyName("npcId")] string NpcId,
     [property: JsonPropertyName("displayName")] string DisplayName,
-    [property: JsonPropertyName("gameState")] NpcGameState? GameState = null);
+    [property: JsonPropertyName("gameState")] NpcGameState? GameState = null,
+    // 2026-10-05：这位参与者**自己那份**私有上下文。
+    //
+    // 此前群聊只有无归属的单槽位（请求顶层的 RecentFacts / RelationshipWorld，见
+    // GroupDialogueMenu 里 2026-09-22 的判据），多人场里放谁的那一份都会让另外两人
+    // 读到不属于自己的私事，所以生产端一直传 null。槽位下移到参与者身上后，
+    // Bridge 侧按人渲染成带归属的卡（participant_private_context_<npcId>）。
+    [property: JsonPropertyName("relationshipWorld")]
+    RelationshipWorldSnapshot? RelationshipWorld = null,
+    [property: JsonPropertyName("recentFacts")]
+    IReadOnlyList<string>? RecentFacts = null);
 
 /// <summary>
 /// 一次群聊请求所属的**场次身份**：由 F9 菜单在发起请求时带上，<see cref="BridgeClient"/>

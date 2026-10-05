@@ -175,6 +175,11 @@ public sealed class ModEntry : Mod
         {
             var loaded = Helper.Data.ReadSaveData<string>(StoryStateSerializer.StorageKey);
             storyStateStore.Load(loaded);
+
+            // 婚姻事实要在对话发生【之前】进关系图。广播是读时投影
+            // （RelationshipSnapshotFor 按当次请求现算视图），所以这里只需保证边存在，
+            // 不必等任何游戏事件——这正是此前一直缺的那一步。
+            SyncMarriagesFromGame();
             Monitor.Log(
                 $"[StardewAI.State] 已载入存档数据：key={StoryStateSerializer.StorageKey} " +
                 $"长度={loaded?.Length ?? 0} 邀约={storyStateStore.State.GroupDialogueInvitations.Count} 张",
@@ -195,6 +200,76 @@ public sealed class ModEntry : Mod
         LoadChatHistoryArchive();
 
         EnsureTestNpc();
+    }
+
+    /// <summary>
+    /// 把游戏当前的婚姻状态同步进关系图（2026-10-04）。
+    ///
+    /// **为什么只需这两处调用**：整套复数恋爱世界观是「读时投影」——广播发生在
+    /// <see cref="StoryStateStore.RelationshipSnapshotFor"/> 里，它按当次请求现算视图。
+    /// 所以唯一的缺口是「边从没被写进去过」，读档与跨天各补一次写入就够了，
+    /// 不需要订阅婚礼事件。（既有 <see cref="StoryStateStore.RecordPublicWedding"/>
+    /// 是给将来真要接婚礼事件时用的，语义不同，不冲突。）
+    ///
+    /// **失败不抛**：读档是玩家必经路径，这里出错的表现应该是「配偶互不知情」
+    /// 这个老毛病还在，而不是读档失败。
+    /// </summary>
+    private void SyncMarriagesFromGame()
+    {
+        try
+        {
+            var spouses = GameStateCollector.ReadSpouseIds();
+            var date = GameStateCollector.ReadDateLabel();
+            var changed = storyStateStore.SyncMarriages(spouses, date);
+
+            // 接受度和婚姻事实必须同一批落库：Bridge 的 acceptance 现在直接读
+            // mediation.outcome，晚写一步就意味着这一天的对话里【完全没有】她们
+            // 对这段关系的态度，模型又会自己发挥成「需要时间接受」——正是这次
+            // 要修的那个毛病。
+            var accepted = storyStateStore.EnsureSpouseAcceptance(spouses);
+
+            if (changed > 0 || accepted > 0)
+            {
+                Monitor.Log(
+                    $"[StardewAI.State] 已同步 {changed} 条婚姻关系、" +
+                    $"{accepted} 条接受度" +
+                    $"（配偶 {spouses.Count} 人：{string.Join("、", spouses)}）",
+                    LogLevel.Info);
+            }
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"同步婚姻关系失败，已跳过：{exception.Message}", LogLevel.Warn);
+        }
+    }
+
+    /// <summary>
+    /// 每天结算一次关系情绪（2026-10-04）。
+    ///
+    /// **为什么在 await 之前**：这里要碰 Game1（见 <see cref="OnDayStarted"/> 的注释）。
+    /// **为什么在 groupDialogueCoordinator 之前**：晨间邀约要读到刚算出来的嫉妒状态，
+    /// 否则「她今天为什么闷闷不乐」会和真实状态对不上。
+    ///
+    /// **失败不抛**：和同步婚姻一样属于锦上添花，出错的表现应该是「今天没人吃醋」，
+    /// 而不是打断玩家一天的开始。
+    /// </summary>
+    private void SettleRelationshipJealousy()
+    {
+        try
+        {
+            var changes = storyStateStore.SettleDailyJealousy(
+                GameStateCollector.ReadDateLabel(),
+                storyStateStore.State.InteractionProgresses,
+                GameStateCollector.ReadSpouseIds());
+            if (changes.Count > 0)
+            {
+                Monitor.Log($"[StardewAI.State] 关系结算：{string.Join("；", changes)}", LogLevel.Info);
+            }
+        }
+        catch (Exception exception)
+        {
+            Monitor.Log($"关系结算失败，已跳过：{exception.Message}", LogLevel.Warn);
+        }
     }
 
     private void OnSaving(object? sender, SavingEventArgs e)
@@ -325,6 +400,11 @@ public sealed class ModEntry : Mod
         faceToFaceCoordinator?.ResetRepeatTarget();
         if (Context.IsWorldReady)
         {
+            // ⚠ 必须在 await 之前：下面那句 await 恢复后不保证还在主线程，
+            // 而这里要碰 Game1（见 AnnounceMorningMessagesAsync 的同类注释）。
+            // 也必须在 groupDialogueCoordinator 之前：晨间邀约就要用到关系图。
+            SyncMarriagesFromGame();
+            SettleRelationshipJealousy();
             groupDialogueCoordinator?.OnDayStarted();
             Monitor.Log($"[StardewAI.Invite] {groupDialogueCoordinator?.LastDiagnostics}", LogLevel.Info);
             await AnnounceMorningMessagesAsync();

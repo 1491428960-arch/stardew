@@ -119,6 +119,28 @@ public sealed record RelationshipViewRecord
     [JsonPropertyName("subjectNpcId")]
     public string SubjectNpcId { get; init; } = string.Empty;
 
+    /// <summary>
+    /// 这段关系的**另一端**。婚姻事实里就是玩家（<c>"player"</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 2026-10-04 实机事故（用户原话：「维克托不知道他妈嫁给我了，这不对吧」）：
+    /// 这个 view 原先只有 <see cref="SubjectNpcId"/>，等于一句没有宾语的话 ——
+    /// 配偶的亲属读到它，加上自己知道的「Olivia 是我妈妈」，最多推出「我妈妈
+    /// 结婚了」，**推不出新郎就是正在跟他说话的玩家**。
+    /// <para>
+    /// 数据从来都在：<see cref="RelationshipEdgeRecord"/> 是
+    /// <c>FromNpcId → ToNpcId</c> 的有向边，玩家那一端一直是 <c>"player"</c>，
+    /// 只是没被投出来。这里补上，语义上不新增任何事实。
+    /// </para>
+    /// <para>
+    /// 留空表示「旧存档 / 旧 DLL 没写这个字段」，Bridge 侧会回退成 <c>"player"</c>，
+    /// 所以**不需要一次性重写全部存档**。
+    /// </para>
+    /// </remarks>
+    [JsonPropertyName("counterpartNpcId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? CounterpartNpcId { get; init; }
+
     [JsonPropertyName("relationType")]
     public string RelationType { get; init; } = string.Empty;
 

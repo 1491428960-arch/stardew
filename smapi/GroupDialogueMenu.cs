@@ -134,6 +134,15 @@ public sealed class GroupDialogueMenu : IClickableMenu
     internal IReadOnlyList<GroupDialogueParticipant> LastRequestParticipants { get; private set; } =
         Array.Empty<GroupDialogueParticipant>();
 
+    /// <summary>
+    /// 诊断用：最近一次群聊请求里，带上了**自己那份**私有上下文（关系快照与记忆都在）
+    /// 的参与者数量。
+    ///
+    /// 它是「每人一份」这条口径的现场证据：哪一位的快照或记忆取成了空，从代码上看不出来，
+    /// 但这里的计数会少于参与者人数。
+    /// </summary>
+    internal int LastRequestContextCount { get; private set; }
+
     /// <summary>诊断用：最近一次群聊响应的完整 JSON（含 warnings / providerCalls / usage）。</summary>
     internal string? LastResponseJson { get; private set; }
 
@@ -665,55 +674,61 @@ public sealed class GroupDialogueMenu : IClickableMenu
                 var npc = Game1.getCharacterFromName(npcId);
                 return npc is null ? null : GameStateCollector.Collect(npc);
             });
-        var gameState = participantsWithState
+        // 每人一份的私有上下文（2026-10-05）—— 取代此前的「只给 active speaker 一份」。
+        //
+        // 2026-09-22 的决定是**刻意的、不是漏接线**：`RecentMemoryFacts(npcId)` 是按
+        // OwnerNpcId 过滤的单 NPC 视角，里面既有群里当众说过的事，也有玩家**只跟这一个
+        // NPC** 私下说过的事；`RelationshipSnapshotFor(npcId)` 同理，是以该 NPC 为 viewer
+        // 组织的关系视图。而当时 Bridge 的 `group_scene` 卡里这两个槽位都是**无归属的
+        // 单槽位**，把三份并排塞进去等于让另外两人读到别人的私事（「把 Alex 的关系网
+        // 塞给 Shane」）——越界知识，比不传更糟，所以那时一直传 null。
+        //
+        // 现在 Bridge 侧给出了 per-NPC 槽位（`_participant_private_context`，卡名带 npcId、
+        // 卡内声明「只属于他、名单里的其他人并不知道」），归属问题在卡内解决，
+        // 与参与者角色卡同构。因此这里改为**每位参与者带自己那一份**。
+        //
+        // 顶层 RecentFacts / RelationshipWorld 仍然传 null：它们没有归属，
+        // 只会把同一批私事变成无主数据（Bridge 侧保留那两个槽位只为兼容旧 DLL）。
+        var participantsWithContext = participantsWithState
+            .Select(item => item with
+            {
+                RelationshipWorld = storyStateStore.RelationshipSnapshotFor(item.NpcId),
+                RecentFacts = storyStateStore.RecentMemoryFacts(item.NpcId),
+            })
+            .ToArray();
+        var gameState = participantsWithContext
             .FirstOrDefault(item => string.Equals(
                 item.NpcId,
                 activeSpeakerNpcId,
                 StringComparison.OrdinalIgnoreCase))
             ?.GameState;
-        // 诊断证据：请求里每个参与者是否带上了各自的状态。
-        LastRequestParticipants = participantsWithState;
-        LastRequestParticipantIds = participantsWithState
+        // 诊断证据：请求里每个参与者是否带上了各自的状态与私有上下文。
+        LastRequestParticipants = participantsWithContext;
+        LastRequestParticipantIds = participantsWithContext
             .Select(item => item.NpcId)
             .ToArray();
-        LastRequestStateCount = participantsWithState
+        LastRequestStateCount = participantsWithContext
             .Count(item => item.GameState is not null);
-        // 常驻记忆事实（recentFacts）—— 只取 **active speaker 一个人** 的记忆。
-        //
-        // 为什么不是「每人各一份」（2026-09-22 的决定，别再当成漏接线）：
-        // `RecentMemoryFacts(npcId)` 是**单个 NPC 视角**的记忆（按 OwnerNpcId 过滤），
-        // 里面既有群聊里当着所有人说过的事，也有玩家**只跟这一个 NPC** 私下说过的事；
-        // 而 Bridge 侧的场景卡 `group_scene` 里 recentFacts 只是**一个无归属的字符串数组**
-        // （`build_group_messages` 直接 `list(recent_facts)`，不像参与者角色卡那样按人分段）。
-        // 把三份并排塞进那个数组，等于让另外两人读到「玩家只跟 Alex 说过的事」——
-        // 越界知识，比不传更糟（与下面 relationshipWorld 同一类判据）。
-        // 取本轮发起者那一份是安全的：它是这场对话的当前发言人，与私聊口径也一致
-        // （`ConversationService` 用的同样是 `RecentMemoryFacts(该 NPC)`）。
-        // 要做到「每人一份」得先给场景卡加 per-NPC 槽位（Bridge 侧改动），在那之前不合并。
-        var recentFacts = storyStateStore.RecentMemoryFacts(activeSpeakerNpcId);
-
-        // 关系世界（relationshipWorld）—— **本轮有意继续传 null**（2026-09-22）。
-        //
-        // `RelationshipSnapshotFor(npcId)` 是**单个 NPC 视角**的快照（以该 NPC 为 viewer
-        // 组织「我认识谁、谁和谁是什么关系」），而 group_scene 卡里只有**一个**
-        // relationshipWorld 槽位。群聊有 2～3 位参与者，取 active speaker 会让另外两人
-        // 读到不属于自己的关系视图（把 Alex 的关系网塞给 Shane），**比空更糟**；
-        // 取谁的都一样错，所以这一条**不是接线遗漏，是刻意的**。
-        // 正确做法是按参与者拆成「每人一份」的槽位（与参与者角色卡同构），
-        // 那是 Bridge 侧的改动，单独排期——不要顺手把它补成 active speaker 的快照。
+        LastRequestContextCount = participantsWithContext
+            .Count(item =>
+                item.RelationshipWorld is not null && item.RecentFacts is not null);
+        // 上面那两段判据（「只取 active speaker 的记忆」「relationshipWorld 有意传 null」）
+        // 的诉求已由 participantsWithContext 满足：归属从「无主」改成「每人一份」。
         var request = new GroupDialogueRequest(
             opening
                 ? string.Empty
                 : retry
                     ? "请继续回应刚才的群聊话题。"
                     : message,
-            participantsWithState,
+            participantsWithContext,
             string.IsNullOrWhiteSpace(session.Invitation.Topic) ? null : session.Invitation.Topic,
             string.IsNullOrWhiteSpace(session.Invitation.Guidance) ? null : session.Invitation.Guidance,
             session.PublicHistory,
             activeSpeakerNpcId,
             gameState,
-            recentFacts,
+            // 顶层 RecentFacts / RelationshipWorld 保持 null：它们没有归属，
+            // 私有上下文已经在 participants 里一人一份。
+            null,
             null,
             "auto",
             // 场次身份：BridgeClient 用它把这一轮发言并进「这一场」（见 GroupSessionContext）。
@@ -835,6 +850,11 @@ public sealed class GroupDialogueMenu : IClickableMenu
         // Bridge 只挑出值得长期记住的事实或约定；这些是玩家当着所有人说的，
         // 在场的每个 NPC 各记一条，闲聊不会出现在这里。
         ApplyMemoryHighlights(response.MemoryHighlights);
+        // NPC 之间说的话走另一条路（2026-10-04）：每位在场者记住**别人**说的，
+        // 作为「隐性知识」——她知道，但**不主动提起**，玩家问起才顺口说一句。
+        // 这是 F8/F9 人格连续性的另一半：`RememberGroupTurn` 已经保证她记得
+        // **自己**说过什么，这里补上「她记得别人说过什么」。
+        ApplyUtteranceKnowledge(turns);
         hint = string.Empty;
     }
 
@@ -851,6 +871,36 @@ public sealed class GroupDialogueMenu : IClickableMenu
         {
             storyStateStore.RecordMemoryHighlight(write.NpcId, write.Content, gameDate);
         }
+    }
+
+    /// <summary>
+    /// 把「NPC 之间说了什么」写成隐性知识（2026-10-04）。
+    ///
+    /// 需求原话：「群聊记忆中别的 npc 说了什么能不能作为一个隐性的知识库这样的形式，
+    /// **我不主动提到就不唤醒**」。
+    ///
+    /// 与上面 <see cref="ApplyMemoryHighlights"/> 的分工：那个记**玩家**说的话，
+    /// 全体在场者各记一条同一句；这里记 **NPC 之间**说的话，每位在场者只记
+    /// **别人**说的（自己说的走发送窗口，第一人称，见
+    /// <c>BridgeClient.RememberGroupTurn</c>）。
+    ///
+    /// 写入计划与落盘分别由 <see cref="GroupUtteranceRules"/> /
+    /// <see cref="LatentKnowledgeWriter"/> 承担，生产与离线验证共用同一段逻辑。
+    /// </summary>
+    internal void ApplyUtteranceKnowledge(IReadOnlyList<BridgeGroupTurn>? turns)
+    {
+        if (turns is null || turns.Count == 0)
+        {
+            return;
+        }
+
+        LatentKnowledgeWriter.Record(
+            storyStateStore,
+            participants.Select(item => item.NpcId),
+            turns.Select(turn => new GroupUtterance(
+                turn.SpeakerNpcId ?? string.Empty,
+                turn.Content ?? string.Empty)),
+            CurrentDateLabel());
     }
 
     /// <summary>

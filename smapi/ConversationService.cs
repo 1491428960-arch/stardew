@@ -41,7 +41,11 @@ public sealed class ConversationService : IDisposable
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),
                     itemContext,
                     storyStateStore.RelationshipSnapshotFor(state.NpcId ?? string.Empty),
-                    NormalizeChannel(channel)),
+                    NormalizeChannel(channel),
+                    // 隐性知识（2026-10-04）：她在群聊里听别人说过的话。
+                    // 走独立参数而不是并进上面的 RecentFacts —— 后者那张卡的指令
+                    // 是「把记忆自然用起来」（会主动提），而需求是「不主动提就不唤醒」。
+                    storyStateStore.LatentKnowledge(state.NpcId ?? string.Empty)),
                 cancellationToken).ConfigureAwait(false);
             var recorded = !response.Fallback;
             if (recorded)
@@ -81,7 +85,8 @@ public sealed class ConversationService : IDisposable
                     storyStateStore.RecentMemoryFacts(state.NpcId ?? string.Empty),
                     null,
                     storyStateStore.RelationshipSnapshotFor(state.NpcId ?? string.Empty),
-                    NormalizeChannel(channel)),
+                    NormalizeChannel(channel),
+                    storyStateStore.LatentKnowledge(state.NpcId ?? string.Empty)),
                 cancellationToken).ConfigureAwait(false);
             if (!response.Fallback && response.OpenLoop is not null)
             {

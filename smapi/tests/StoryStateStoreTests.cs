@@ -440,4 +440,267 @@ public sealed class StoryStateStoreTests
         Assert.Equal("companionship", Assert.Single(store.State.Jealousies).Trigger);
         Assert.Equal("resolved", Assert.Single(store.State.Mediations).Status);
     }
+
+    /// <summary>
+    /// 回归（2026-10-04）：<c>State.Relationships</c> 此前在生产代码里没有任何写入点，
+    /// 于是 <c>PublicEventId</c> 恒为 null，广播循环永不执行。
+    /// 玩家在游戏里真实表现就是「两个都跟他结了婚的人，互相不知道对方存在」。
+    /// </summary>
+    [Fact]
+    public void SyncMarriages_broadcasts_each_wedding_to_every_spouse()
+    {
+        var store = new StoryStateStore();
+
+        var changed = store.SyncMarriages(new[] { "Sophia", "Abigail" }, "fall 12");
+
+        Assert.Equal(2, changed);
+
+        var sophia = store.RelationshipSnapshotFor("Sophia");
+        var knownSubjects = sophia.Views
+            .Where(view => view.Visibility == "known")
+            .Select(view => view.SubjectNpcId)
+            .ToArray();
+        Assert.Contains("Sophia", knownSubjects);
+        Assert.Contains("Abigail", knownSubjects);
+
+        // 对称：阿比盖尔也要看得到索菲亚，否则只是一半的修复。
+        Assert.Contains(
+            store.RelationshipSnapshotFor("Abigail").Views,
+            view => view.SubjectNpcId == "Sophia");
+
+        // 视角仍然只带自己那条客观关系，不泄底表。
+        Assert.All(sophia.ObjectiveRelationships, edge => Assert.Equal("Sophia", edge.ToNpcId));
+        Assert.All(
+            sophia.Views.Where(view => view.RelationType == "married"),
+            view => Assert.Equal("wedding", view.Source));
+    }
+
+    [Fact]
+    public void SyncMarriages_is_idempotent_and_dedups_case_insensitively()
+    {
+        var store = new StoryStateStore();
+
+        Assert.Equal(2, store.SyncMarriages(new[] { "Sophia", "abigail", "Sophia" }, "fall 12"));
+        Assert.Equal(0, store.SyncMarriages(new[] { "SOPHIA", "Abigail" }, "winter 3"));
+        Assert.Equal(2, store.State.Relationships.Count);
+    }
+
+    [Fact]
+    public void SyncMarriages_backfills_public_event_on_an_existing_edge()
+    {
+        var store = new StoryStateStore();
+        store.Replace(new StoryStateEnvelope
+        {
+            Relationships = new[]
+            {
+                new RelationshipEdgeRecord
+                {
+                    FromNpcId = "player",
+                    ToNpcId = "Sophia",
+                    RelationType = "married",
+                },
+            },
+        });
+
+        Assert.Equal(1, store.SyncMarriages(new[] { "Sophia" }, "fall 12"));
+
+        var edge = Assert.Single(store.State.Relationships);
+        Assert.Equal("wedding:Sophia", edge.PublicEventId);
+        Assert.Equal("fall 12", edge.PublicOn);
+    }
+
+    [Fact]
+    public void SyncMarriages_ignores_blank_input_and_keeps_the_first_wedding_date()
+    {
+        var store = new StoryStateStore();
+
+        Assert.Equal(0, store.SyncMarriages(null, "fall 12"));
+        Assert.Equal(0, store.SyncMarriages(new[] { "  " }, "fall 12"));
+        Assert.Equal(0, store.SyncMarriages(Array.Empty<string>(), "fall 12"));
+        Assert.Empty(store.State.Relationships);
+
+        Assert.Equal(1, store.SyncMarriages(new[] { "Sophia" }, "spring 2"));
+        // 已有的婚礼日期是【原件】，后续同步不得覆盖它。
+        Assert.Equal(0, store.SyncMarriages(new[] { "Sophia" }, "summer 9"));
+        Assert.Equal("spring 2", Assert.Single(store.State.Relationships).PublicOn);
+    }
+
+    /// <summary>
+    /// 回归（2026-10-04）：<c>not_ready</c> 曾经被一律写成 <c>resolved</c>，
+    /// 于是「这轮没谈成」在存档里变成永久结论——NPC 再也没有第二次机会，
+    /// 而设计文档要求情绪靠后续相处与履约恢复，不是一次性判定。
+    /// 现在它必须停在 <c>active</c>，等下一轮继续谈。
+    /// </summary>
+    [Fact]
+    public void ResolveMediation_keeps_not_ready_as_an_open_round()
+    {
+        var store = new StoryStateStore();
+
+        store.ResolveMediation("Sophia", "not_ready", "想先一个人待几天");
+        var pending = Assert.Single(store.State.Mediations);
+        Assert.Equal("active", pending.Status);
+        Assert.Equal("not_ready", pending.Outcome);
+        Assert.Equal("想先一个人待几天", pending.NextStep);
+
+        // 下一轮谈成了就落终态，而不是并存两条记录。
+        store.ResolveMediation("Sophia", "accepted");
+        var settled = Assert.Single(store.State.Mediations);
+        Assert.Equal("resolved", settled.Status);
+        Assert.Equal("accepted", settled.Outcome);
+        Assert.Null(settled.NextStep);
+    }
+
+    /// <summary>
+    /// 产品规则（2026-10-04）：调解只对机制上线时已存在的那批角色成立，
+    /// 之后新发生的关系默认已知晓并接受——每个新伴侣都来一遍协商会困扰玩家。
+    /// 所以这里直接落终态，并且【只落一次】。
+    /// </summary>
+    [Fact]
+    public void EnsureSpouseAcceptance_writes_once_per_npc_and_never_overwrites()
+    {
+        var store = new StoryStateStore();
+
+        Assert.Equal(0, store.EnsureSpouseAcceptance(null));
+        Assert.Equal(0, store.EnsureSpouseAcceptance(new[] { "  " }));
+        Assert.Empty(store.State.Mediations);
+
+        Assert.Equal(2, store.EnsureSpouseAcceptance(new[] { "Sophia", "Abigail" }));
+        Assert.All(store.State.Mediations, item =>
+        {
+            Assert.Equal("resolved", item.Status);
+            Assert.Equal("accepted", item.Outcome);
+        });
+
+        // 反复读档、每天跨天同步都不得重复写。
+        Assert.Equal(0, store.EnsureSpouseAcceptance(new[] { "Sophia", "Abigail" }));
+        Assert.Equal(2, store.State.Mediations.Count);
+
+        // 只补新来的那个。
+        Assert.Equal(1, store.EnsureSpouseAcceptance(new[] { "Sophia", "Leah" }));
+        Assert.Equal(3, store.State.Mediations.Count);
+    }
+
+    /// <summary>
+    /// 玩家真谈出来的结果比默认值权威：<c>conditional</c> 不能被「默认接受」抹平。
+    /// </summary>
+    [Fact]
+    public void EnsureSpouseAcceptance_does_not_clobber_a_negotiated_outcome()
+    {
+        var store = new StoryStateStore();
+        store.ResolveMediation("Sophia", "conditional", "希望周末留给家里");
+
+        Assert.Equal(0, store.EnsureSpouseAcceptance(new[] { "Sophia" }));
+
+        var mediation = Assert.Single(store.State.Mediations);
+        Assert.Equal("conditional", mediation.Outcome);
+        Assert.Equal("希望周末留给家里", mediation.NextStep);
+    }
+
+    private static InteractionProgress Progress(string npcId, string lastCountedOn) => new()
+    {
+        NpcId = npcId,
+        Stage = "friend",
+        LastCountedGameDate = lastCountedOn,
+    };
+
+    /// <summary>
+    /// 第一道闸门（2026-10-04）：没有对话记录的角色不算「被冷落」。
+    /// 少了它，读档后 17 个配偶里没聊过的那些会被一起判定成长期没人陪，
+    /// 一觉醒来满镇子集体吃醋。
+    /// </summary>
+    [Fact]
+    public void SettleDailyJealousy_skips_npcs_without_any_conversation_record()
+    {
+        var store = new StoryStateStore();
+
+        var changes = store.SettleDailyJealousy(
+            "fall 12",
+            Array.Empty<InteractionProgress>(),
+            new[] { "Sophia", "Abigail" });
+
+        Assert.Empty(changes);
+        Assert.Empty(store.State.Jealousies);
+    }
+
+    /// <summary>
+    /// 第二道闸门：已经在吃醋的角色不叠加，否则每天都会重写一遍、强度还会无限刷。
+    /// </summary>
+    [Fact]
+    public void SettleDailyJealousy_escalates_with_the_gap_then_stops_stacking()
+    {
+        var store = new StoryStateStore();
+
+        // fall 12 = 68，summer 26 = 54，差 14 天 -> light
+        var first = store.SettleDailyJealousy(
+            "fall 12", new[] { Progress("Sophia", "summer 26") }, new[] { "Sophia" });
+        Assert.Single(first);
+        Assert.Equal("light", Assert.Single(store.State.Jealousies).Intensity);
+
+        // 隔天仍没见面：保持原样，不重复记录也不升级。
+        var second = store.SettleDailyJealousy(
+            "fall 13", new[] { Progress("Sophia", "summer 26") }, new[] { "Sophia" });
+        Assert.Empty(second);
+        Assert.Single(store.State.Jealousies);
+
+        // 另一个人更久没见（summer 12 = 40，差 28）-> 直接 high
+        var high = store.SettleDailyJealousy(
+            "fall 12", new[] { Progress("Leah", "summer 12") }, new[] { "Leah" });
+        Assert.Single(high);
+        Assert.Contains(store.State.Jealousies, item =>
+            item.NpcId == "Leah" && item.Intensity == "high");
+    }
+
+    /// <summary>
+    /// 情绪靠「真的聊过」恢复，而不是被强制重置。
+    /// </summary>
+    [Fact]
+    public void SettleDailyJealousy_recovers_when_the_npc_was_talked_to_today()
+    {
+        var store = new StoryStateStore();
+        store.RecordJealousy("Sophia", "companionship", "moderate", "固定的相处时间");
+
+        var changes = store.SettleDailyJealousy(
+            "fall 12", new[] { Progress("Sophia", "fall 12") }, new[] { "Sophia" });
+
+        Assert.Single(changes);
+        var jealousy = Assert.Single(store.State.Jealousies);
+        Assert.False(jealousy.Active);
+        Assert.Equal("companionship", jealousy.LastResolvedTrigger);
+    }
+
+    /// <summary>
+    /// 拖着没兑现的约定比「只是没怎么见面」更具体，优先报 broken_promise。
+    /// </summary>
+    [Fact]
+    public void SettleDailyJealousy_prefers_a_broken_promise_over_absence()
+    {
+        var store = new StoryStateStore();
+        store.Replace(new StoryStateEnvelope
+        {
+            // ValidOpenLoop 的 CreatedOn 是 Spring 14 = 14。
+            OpenLoops = new[] { ValidOpenLoop("Sophia", "loop-1", "open") },
+        });
+
+        var changes = store.SettleDailyJealousy(
+            "fall 12", new[] { Progress("Sophia", "fall 10") }, new[] { "Sophia" });
+
+        Assert.Single(changes);
+        Assert.Equal("broken_promise", Assert.Single(store.State.Jealousies).Trigger);
+    }
+
+    /// <summary>
+    /// 日期认不出来时一律跳过：宁可这次不算，也不能把坏数据当成「很久没见」。
+    /// </summary>
+    [Fact]
+    public void SettleDailyJealousy_ignores_unparseable_dates()
+    {
+        var store = new StoryStateStore();
+
+        Assert.Empty(store.SettleDailyJealousy(
+            "not a date", new[] { Progress("Sophia", "summer 12") }, new[] { "Sophia" }));
+
+        Assert.Empty(store.SettleDailyJealousy(
+            "fall 12", new[] { Progress("Sophia", "someday") }, new[] { "Sophia" }));
+        Assert.Empty(store.State.Jealousies);
+    }
 }

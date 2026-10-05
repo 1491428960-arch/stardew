@@ -473,6 +473,75 @@ public static class GameStateCollector
         }
     }
 
+    /// <summary>
+    /// 玩家当前的全部配偶 NPC id（2026-10-04）。
+    ///
+    /// **为什么遍历 friendshipData 而不是只读 <c>player.spouse</c>**：原版那个字段只存得下
+    /// 一个人，多配偶是 PolyamorySweet 这类 mod 做的。但无论用哪个 mod，最终都必须落到
+    /// <c>friendshipData</c> 的 <c>Status</c> 上（<c>Married</c>/<c>Roommate</c>），否则原版的
+    /// 事件与剧情判定会全部失效——SMAPI 日志里那句「switching event condition to isSpouse」
+    /// 正是靠它生效的。这里取并集：任何一边读到都算。
+    ///
+    /// **不依赖具体 mod 的内部字段**：PolyamorySweet 自己有 PlayerSpouses 列表，
+    /// 但那是实现细节，版本一变就碎；friendshipData 是原版契约。
+    ///
+    /// ⚠ **只认 <c>Married</c>，不认 <c>Roommate</c>**：<see cref="DeriveMarriageStatus"/>
+    /// 把两者都归为 married，那是【阶段判定】的口径（同住即婚后）。这里写的是
+    /// **关系事实**，室友（Krobus）不是配偶，不该被广播成婚姻。
+    /// </summary>
+    public static IReadOnlyList<string> ReadSpouseIds()
+    {
+        var result = new List<string>();
+        try
+        {
+            var primary = ReadString(Game1.player, "spouse");
+            if (!string.IsNullOrWhiteSpace(primary))
+            {
+                result.Add(primary.Trim());
+            }
+
+            var data = FriendshipDataAccessor.ReadData(Game1.player);
+            foreach (var npcId in FriendshipDataAccessor.Keys(data))
+            {
+                if (string.IsNullOrWhiteSpace(npcId) ||
+                    !FriendshipDataAccessor.TryGetValue(data, npcId, out var friendship))
+                {
+                    continue;
+                }
+
+                var status = ReadString(friendship, "Status");
+                if (status is not null &&
+                    string.Equals(status.Trim(), "Married", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Add(npcId.Trim());
+                }
+            }
+        }
+        catch
+        {
+            // 取不到就用已经收集到的。这个功能失败的表现是「配偶互不知情」，
+            // 不该因此打断任何正常流程。
+        }
+
+        return result
+            .Where(id => id.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    /// <summary>当前游戏日期的人类可读写法（<c>fall 12</c>），与场次抬头同口径。</summary>
+    public static string ReadDateLabel()
+    {
+        try
+        {
+            return $"{Game1.currentSeason} {Game1.dayOfMonth}";
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     private static (int? Friendship, string? Relationship) ReadFriendship(string? npcId)
     {
         try

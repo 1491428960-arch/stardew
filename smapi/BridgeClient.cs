@@ -41,6 +41,25 @@ public sealed class BridgeDialogueRequest
     [JsonPropertyName("recentFacts")]
     public IReadOnlyList<string> RecentFacts { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// 隐性知识：她在**群聊里听别人说过**的话（2026-10-04）。
+    ///
+    /// ⚠ 与 <see cref="RecentFacts"/> 是**互斥的两条路**，不是包含关系：
+    /// 那张泛记忆卡带的是「把记忆自然用起来」的指令，而隐性知识的要求是
+    /// 「**我不主动提到就不唤醒**」。两个通道都送会让模型同时收到两套打架的
+    /// 约束，项目实测过**「取最宽」**——同类约束有多个实例时跟最松的那个。
+    ///
+    /// 空值不序列化（<see cref="JsonIgnoreCondition.WhenWritingNull"/>）：
+    /// 没有隐性知识时不该凭空出现一张空卡，也避免让 Bridge 白走一遍渲染。
+    ///
+    /// ⚠ Bridge 侧请求模型是 <c>extra="forbid"</c> —— 这个字段**必须先有
+    /// Bridge 侧的支持才能上线**，否则 422、整轮对话退化成兜底。
+    /// 部署顺序是 **Bridge 先、DLL 后**。
+    /// </summary>
+    [JsonPropertyName("latentKnowledge")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? LatentKnowledge { get; init; }
+
     [JsonPropertyName("history")]
     public IReadOnlyList<BridgeDialogueHistoryItem> History { get; init; } =
         Array.Empty<BridgeDialogueHistoryItem>();
@@ -388,7 +407,8 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         string intent = ConversationIntent.Chat,
         ItemConversationContext? itemContext = null,
         RelationshipWorldSnapshot? relationshipWorld = null,
-        string channel = ConversationChannel.Remote)
+        string channel = ConversationChannel.Remote,
+        IReadOnlyList<string>? latentKnowledge = null)
     {
         if (string.IsNullOrWhiteSpace(npcId))
         {
@@ -438,6 +458,14 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                         : Array.Empty<BridgeDialogueHistoryItem>(),
                     // 跨窗口那一份（2026-09-23）：比上面的发送窗口长，取自回看档案。
                     RecentReplies = RecentRepliesFor(npcId),
+                    // 隐性知识（2026-10-04）：她在**群聊里听别人说过**的话。
+                    // 走独立字段而不是并进 `RecentFacts`——后者那张卡的指令是
+                    // 「把记忆自然用起来」（会主动提），而需求是
+                    // 「我不主动提到就不唤醒」。两个通道都送会撞上项目实测的
+                    // **「取最宽」**：同类约束有多个实例时跟最松的那个。
+                    LatentKnowledge = latentKnowledge is null || latentKnowledge.Count == 0
+                        ? null
+                        : latentKnowledge,
                 };
             }
 
@@ -565,7 +593,15 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
                 .Select(item => new GroupDialogueParticipant(
                     item.NpcId.Trim(),
                     Truncate(item.DisplayName?.Trim() ?? item.NpcId.Trim(), 100),
-                    item.GameState))
+                    item.GameState,
+                    // 每人一份的私有上下文：截断口径与顶层那份一致，
+                    // 免得同一批事实在两条路径上有不同的上限。
+                    item.RelationshipWorld,
+                    (item.RecentFacts ?? Array.Empty<string>())
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Take(MaxRecentFactItems)
+                        .Select(value => Truncate(value.Trim(), MaxRecentFactLength))
+                        .ToArray()))
                 .ToArray(),
             ActiveSpeakerNpcId = activeSpeakerNpcId,
             History = boundedHistory,
@@ -906,6 +942,10 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
         return true;
     }
 
+    /// <summary>
+    /// 玩家看过了（打开了这个人的聊天窗）。返回是否**确实清掉了一条**——
+    /// 调用方据此决定要不要立刻存档，没清掉就不必写盘。
+    /// </summary>
     /// <summary>
     /// 玩家看过了（打开了这个人的聊天窗）。返回是否**确实清掉了一条**——
     /// 调用方据此决定要不要立刻存档，没清掉就不必写盘。
@@ -1407,7 +1447,8 @@ public sealed class BridgeClient : IDisposable, IConversationTransport
             request.Intent,
             request.ItemContext,
             request.RelationshipWorld,
-            request.Channel).ConfigureAwait(false);
+            request.Channel,
+            request.LatentKnowledge).ConfigureAwait(false);
     }
 
     public void Dispose()

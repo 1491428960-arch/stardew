@@ -28,6 +28,17 @@ public sealed record GroupInvitationTemplate(
 /// </summary>
 public static class GroupInvitationTemplates
 {
+    /// <summary>
+    /// 引导语的字节预算（2026-10-05）。**这不是美观问题，是硬约束**：
+    /// Bridge 的 <c>GroupDialogueRequest.invitation_guidance</c> 是
+    /// <c>Field(max_length=500)</c> —— pydantic 的**校验**而非截断，超了会让
+    /// 整个群聊请求直接 422，玩家看到的是一句「群聊打不开」。
+    ///
+    /// 实测：两人场最坏的一条（`health:demetrius|linus`）已是 **430 字**，
+    /// 三人场只会更长——所以模板生成与打趣追加都必须在这条线上收敛。
+    /// 留 20 字余量，不贴着 500 走。
+    /// </summary>
+    public const int MaxGuidanceLength = 480;
     /// <summary>三人组合每个主题最多取几条（不限制的话三人组合会很多）。</summary>
     /// <summary>没有任何共同主题时的兜底（名单外角色、资料太薄的组合）。</summary>
     private const string FallbackThemeId = "town";
@@ -128,7 +139,26 @@ public static class GroupInvitationTemplates
         }
 
         lines.Add("上面这些是他们的语气与立场参照，**不要照抄**，也不要假定别人已经知道这些内容。");
-        return string.Join("", lines);
+        return ClampGuidance(string.Join("", lines));
+    }
+
+    /// <summary>
+    /// 把引导截到 <see cref="MaxGuidanceLength"/> 以内，并预留 <paramref name="reserved"/>
+    /// 字给调用方随后要追加的内容（打趣许可就是这么进来的）。
+    ///
+    /// 只在超限时才动文本，所以现有那些本来就够短的模板**一个字节都不变**。
+    /// 截断处补一个省略号：让「这句被截过」在文本里看得见，而不是让模型读到一个
+    /// 断掉的句子却毫不知情。
+    /// </summary>
+    public static string ClampGuidance(string guidance, int reserved = 0)
+    {
+        var limit = Math.Max(0, MaxGuidanceLength - Math.Max(0, reserved));
+        if (guidance.Length <= limit)
+        {
+            return guidance;
+        }
+
+        return limit <= 1 ? string.Empty : guidance.Substring(0, limit - 1) + "…";
     }
 
     /// <summary>组内所有人都聊到过的主题。</summary>
@@ -160,5 +190,42 @@ public static class GroupInvitationTemplates
         }
 
         return shared;
+    }
+
+    /// <summary>
+    /// 「打趣」情境约束（2026-10-05）：**在场至少两位**已接受玩家的多元关系时，
+    /// 返回一段可追加到引导末尾的许可文本；否则返回 null（调用方原样保留模板）。
+    ///
+    /// 判据为什么要求**在场**两位：只有一位时，这句话会变成当着外人的面议论
+    /// 不在场者的私事，与 friendship 主题写明的「不提不在场的人的具体私事」直接冲突。
+    ///
+    /// 这段文字是**手编的**，与主题表那条「主题与例句都来自真实对白」的原则不冲突：
+    /// 手编的是**约束**（能说什么、不能说什么），不是台词 —— 原版语料里根本不存在
+    /// 多段亲密关系的场景，没有真实原句可抽，硬要「抽取」只会是伪造。
+    /// </summary>
+    public static string? TeasingClause(
+        IReadOnlyList<string> group,
+        IReadOnlyList<string>? acceptedNpcIds)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        if (acceptedNpcIds is null || group.Count < 2)
+        {
+            return null;
+        }
+
+        var accepted = new System.Collections.Generic.HashSet<string>(
+            acceptedNpcIds, System.StringComparer.OrdinalIgnoreCase);
+        var inOnIt = group
+            .Where(id => !string.IsNullOrWhiteSpace(id) && accepted.Contains(id))
+            .ToArray();
+        if (inOnIt.Length < 2)
+        {
+            return null;
+        }
+
+        var names = string.Join("、", inOnIt);
+        return $"另外：{names} 和玩家在一起这件事，镇上早就不是秘密了，"
+            + "在场的人可以拿它互相打趣——但只当玩笑：不追问细节、不评判、不替谁表态，"
+            + "**不要宣告任何关系的结论**，也**不要拿不在场的人开玩笑**。";
     }
 }

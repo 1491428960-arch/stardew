@@ -50,7 +50,15 @@ public sealed class GroupDialogueCoordinator
             candidates,
             invitations,
             Array.Empty<string>(),
-            lastCreatedTotalDays));
+            lastCreatedTotalDays,
+            // 已接受「玩家有多位亲密对象」的角色：`EnsureSpouseAcceptance` 在同步婚姻时
+            // 写下的 outcome=accepted。把它交给生成器，让「打趣」只在**在场至少两位**
+            // 已接受者时才作为加料出现在邀约引导里。
+            storyStateStore.State.Mediations
+                .Where(mediation => string.Equals(
+                    mediation.Outcome, "accepted", StringComparison.OrdinalIgnoreCase))
+                .Select(mediation => mediation.NpcId)
+                .ToArray()));
         var pending = invitations.Count(invitation =>
             invitation.Status is GroupInvitationStatus.Unread or
                 GroupInvitationStatus.Deferred or
