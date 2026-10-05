@@ -160,6 +160,12 @@ _DIALOGUE_FIELDS = {
     # 跨窗口的"她最近说过什么"（2026-09-23）：漏进这份白名单就是**静默吞字段**
     # —— 本项目在同类白名单上记过多次（`_compact_stage_policy`、`_STATE_FIELDS`）。
     "recentReplies",
+    # 隐性知识（2026-10-04）：她在群聊里听别人说过的话，不主动提就不唤醒。
+    # ⚠ 这份白名单**又**吞过一次字段，见上面那条注释——`latentKnowledge` 最初
+    # 就是漏在这里：请求模型收得下、卡片渲染写得对、两边测试全绿，
+    # 但请求走到 prompt 前被静默丢弃，线上永远是一张空卡。
+    # 端到端用例见 bridge/tests/test_latent_knowledge_end_to_end.py。
+    "latentKnowledge",
     "gameState",
     "intent",
     "compactPrompt",

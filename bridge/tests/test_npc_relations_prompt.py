@@ -178,6 +178,36 @@ def test_relations_also_reach_the_full_prompt_path() -> None:
 
 
 @pytest.mark.skipif(not INDEX.exists(), reason="派生索引未生成")
+def test_town_relations_reach_every_character() -> None:
+    """全镇公共常识是**人人都有**的一层，和 `npcRelations` 语义不同。
+
+    2026-10-04 实机：索菲亚被问到阿比盖尔，答「阿比……是艾米丽的妹妹吗？」——
+    阿比盖尔是卡罗琳和皮埃尔的女儿。`npc-relations.json` 里那条记录一直存在，
+    但 `get_persona` 只投影当前角色自己认识的人，她对这个名字零信息，就在缺口
+    处编了。亲属和公开身份属于「小镇上人人都知道」的公共常识，所以它不挂在
+    某一个角色身上，而是发给所有角色（含关系表里没有条目的 Linus）。
+    """
+
+    for npc in ("Sophia", "Linus"):
+        rendered = json.dumps(_game_path_messages(npc, "最近怎么样？"), ensure_ascii=False)
+        assert "townRelations" in rendered, npc
+        assert "Abigail：Caroline妈妈、Pierre爸爸" in rendered, npc
+        assert "Emily：Haley姐姐" in rendered, npc
+
+
+def test_town_relations_exclude_private_judgements() -> None:
+    """私人评价不是公共常识。
+
+    `合不来`（Olivia↔Pam）和 `接近朋友的人`（Morris→Andy）是私人感受，
+    `熟人` / `认识` 则是原版 `FriendsAndFamily` 空串的兜底词，信息量为零。
+    这些混进「全镇都知道」那张表里会让角色凭空对别人下判断。
+    """
+
+    rendered = json.dumps(_game_path_messages("Sophia", "最近怎么样？"), ensure_ascii=False)
+    for bad in ("合不来", "接近朋友的人", "熟人"):
+        assert bad not in rendered, bad
+
+
 def test_a_character_without_relations_does_not_get_the_field() -> None:
     """没有关系的角色不能凭空多出一张卡 —— 那是在花 prompt 预算买空气。"""
 

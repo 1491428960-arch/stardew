@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+from .npc_relations import NON_RELATIVE_TERM
 from .source_aliases import normalize_source_marker, source_family, source_matches
 
 
@@ -24,7 +25,7 @@ _DEFAULT_VOICE_STYLE = {
     "sentencePattern": [
         "先回应玩家当前问题，再决定是否展开",
         "不确定时明确说明不确定",
-        "关系变近后更具体，但不编造未发生的经历",
+        "关系变近后更具体；描写当轮真实发生的身体和感官细节，不编造过去没有发生过的事",
     ],
     "responseRules": [
         "先直接回应玩家当前问题",
@@ -68,12 +69,22 @@ _DEFAULT_STAGE_PROFILES = {
         "openness": "主动表达在意和顾虑",
         "topicPool": ["共同安排", "约会和兴趣", "对未来的想象"],
         "boundaries": ["亲密不等于控制或共享全部秘密"],
+        "intimacyPolicy": {
+            "style": "按这个角色一贯的语气表达在意，亲密程度跟着关系走，不突然改用通用的甜言模板",
+            "pace": "一次推进一层，先看对方接不接得住",
+            "avoidWhen": ["对方没有继续的意思", "当前场合不适合"],
+        },
     },
     "married": {
         "addressing": "亲密而平等",
         "openness": "愿意共同讨论生活决定",
         "topicPool": ["共同生活", "家庭分工", "彼此的压力"],
         "boundaries": ["重要决定需要双方确认"],
+        "intimacyPolicy": {
+            "style": "像过日子的伴侣那样自然，允许直接表达欲望和身体接触，具体方式保持这个角色自己的说话习惯",
+            "pace": "可以直接回应，不必层层铺垫，但仍跟着对方的节奏",
+            "avoidWhen": ["对方明确拒绝或已经很疲惫", "当前场合不适合"],
+        },
     },
     "parent": {
         "addressing": "亲密而平等",
@@ -297,6 +308,57 @@ def _load_npc_relations(path: Path) -> dict[str, list[dict[str, str]]]:
 
     return table
 
+# 「全镇公共常识」的过滤口径：哪些 term 属于**人人都知道**的关系事实。
+#
+# 2026-10-04 实机问题：索菲亚被问到阿比盖尔时答「阿比……是艾米丽的妹妹吗？」——
+# 阿比盖尔是卡罗琳和皮埃尔的女儿，艾米丽的妹妹是海莉。`npc-relations.json` 里
+# `Abigail → Caroline/Pierre` 这条记录一直存在，但 `get_persona` 只投影**当前
+# 角色自己认识的人**，索菲亚对「阿比盖尔」这个名字零信息，于是她在缺口处编了。
+#
+# 用户口径（2026-10-04）：「在这种小镇上谁和谁是什么关系，这种基本的应该人人
+# 都知道」。所以亲属和公开身份是**公共常识**，不再当作私人记忆。
+#
+# 排除项是**私人评价**或**信息量为零**的边：
+#   · `熟人` / `认识` —— 原版 `FriendsAndFamily` 的空串语义，等于没说什么；
+#   · `合不来` —— Olivia↔Pam，这是私人感受不是公共事实；
+#   · `接近朋友的人` —— Morris→Andy，措辞本身就说明拿不准。
+_TOWN_RELATION_EXCLUDED_TERMS = frozenset({
+    NON_RELATIVE_TERM,
+    "认识",
+    "合不来",
+    "接近朋友的人",
+})
+
+
+def _build_town_relations(
+    relations: Mapping[str, list[dict[str, str]]],
+) -> list[str]:
+    """把整张关系表压成「全镇公共常识」的一行行文字。
+
+    输出形如 ``Abigail：Caroline妈妈、Pierre爸爸``。按 NPC 名排序保证顺序稳定
+    （同样的输入永远渲染出同样的 prompt，否则缓存和评测口径都会漂）。
+
+    体积实测（2026-10-04）：31 行 / 875 字符。这个量级可以发给每个角色。
+    """
+
+    lines: list[str] = []
+    for name in sorted(relations):
+        parts: list[str] = []
+        seen: set[tuple[str, str]] = set()
+        for entry in relations[name]:
+            other = str(entry.get("npc", "")).strip()
+            term = str(entry.get("term", "")).strip()
+            if not other or term in _TOWN_RELATION_EXCLUDED_TERMS:
+                continue
+            key = (other, term)
+            if key in seen:
+                continue
+            seen.add(key)
+            parts.append(f"{other}{term}")
+        if parts:
+            lines.append(f"{name}：{'、'.join(parts)}")
+    return lines
+
 
 class PersonaStore:
     """从 data/personas 下的 JSON 资料加载 NPC 基础资料和 Mod 覆盖层。"""
@@ -317,6 +379,9 @@ class PersonaStore:
             if relations_path is not None
             else self.data_dir.parent / "npc-relations.json"
         )
+        # 全镇公共常识：从同一张表派生，和 `_relations` 一起在构造期算一次。
+        # 它不随当前角色变化 —— 这是「村里人人都知道的」那一层。
+        self._town_relations = _build_town_relations(self._relations)
         self._personas = self._load()
 
     def _load(self) -> dict[str, dict[str, Any]]:
@@ -392,6 +457,12 @@ class PersonaStore:
         relations = self._relations.get(key) or self._relations.get(canonical_id)
         if relations:
             merged["npcRelations"] = relations
+        # 全镇公共常识与「我认识谁」是两层：
+        # `npcRelations` = 这个角色**自己**的关系（含 note，第一人称知识）；
+        # `townRelations` = 谁是谁的谁，**所有角色共用**，用来堵住「没听说过
+        # 这个人的角色在缺口处自己编」那个洞（2026-10-04 阿比盖尔事故）。
+        if self._town_relations:
+            merged["townRelations"] = list(self._town_relations)
         return merged
 
     def load(self, npc_id: str, source_mods: Iterable[str] = ()) -> dict[str, Any]:

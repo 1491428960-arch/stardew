@@ -180,31 +180,54 @@ def disclose_relationship(
     return updated
 
 
+_SPOUSE_COUNTERPART_NPC_ID = "player"
+
+
 def _public_marriage_views(
     world: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    return {
-        str(fact["npcId"]): {
+    """把公开婚礼投影成「X 和谁结了婚」，而不只是「X 已婚」。
+
+    2026-10-04 实机事故（用户原话：「维克托不知道他妈嫁给我了，这不对吧」）：
+    这里原先只输出 `subjectNpcId`（配偶自己），**另一端完全没有承载**。于是
+    Victor 拿到 `{"subjectNpcId": "Olivia", "relationType": "married"}`，配上他
+    自己的 `townRelations`（`Olivia 是我妈妈`），能推出的上限只有「我妈妈结婚了」，
+    **推不出新郎就是正在跟他说话的玩家**。
+
+    数据从来都在：C# 侧 `RelationshipEdgeRecord` 是 `fromNpcId → toNpcId` 的有向边，
+    玩家那一端一直是 `"player"`。缺的只是把它投出来。
+
+    用户口径是「只知道事实，不预设亲属称呼」——所以这里只补
+    `counterpartNpcId`，**不做「继父 / 后爸」这类亲属词映射**；怎么看待由模型按
+    角色自己发挥。
+    """
+
+    views: dict[str, dict[str, Any]] = {}
+    for fact in _facts(world):
+        if (
+            fact.get("relationType") != "married"
+            or not fact.get("npcId")
+            or not fact.get("publicEventId")
+        ):
+            continue
+
+        view = {
             "subjectNpcId": fact["npcId"],
+            # 另一端由归一化层（`models._fold_relationship_edges`）折叠成
+            # `counterpartNpcId` 带下来。老存档 / 老 DLL 的 payload 没有这个字段，
+            # 而玩家婚姻的另一端恒为 player，所以那一档回退成常量是安全的。
+            "counterpartNpcId": fact.get("counterpartNpcId")
+            or _SPOUSE_COUNTERPART_NPC_ID,
             "relationType": "married",
             "visibility": "known",
             "source": "wedding",
-            **(
-                {"observedOn": fact["publicOn"]}
-                if fact.get("publicOn") is not None
-                else {}
-            ),
-            **(
-                {"evidence": fact["publicEventId"]}
-                if fact.get("publicEventId") is not None
-                else {}
-            ),
         }
-        for fact in _facts(world)
-        if fact.get("relationType") == "married"
-        and fact.get("npcId")
-        and fact.get("publicEventId")
-    }
+        if fact.get("publicOn") is not None:
+            view["observedOn"] = fact["publicOn"]
+        if fact.get("publicEventId") is not None:
+            view["evidence"] = fact["publicEventId"]
+        views[str(fact["npcId"])] = view
+    return views
 
 
 def _project_mediation_state(value: object) -> dict[str, Any]:
@@ -242,6 +265,9 @@ def project_relationship_context(
             key: view[key]
             for key in (
                 "subjectNpcId",
+                # 婚姻的另一端（玩家）。没有它，「已婚」是一句没有宾语的话 ——
+                # 配偶的亲属（如 Olivia 的儿子 Victor）就推不出「我妈嫁给了你」。
+                "counterpartNpcId",
                 "relationType",
                 "visibility",
                 "source",
@@ -261,6 +287,30 @@ def project_relationship_context(
 
     mediation = copied["mediationByNpc"].get(viewer_npc_id)
     jealousy = copied["jealousyByNpc"].get(viewer_npc_id)
+
+    # 2026-10-04：接受度的权威来源是调解结果，不再是兜底猜测。
+    #
+    # acceptanceByNpc 在 C# 侧没有写入点（StoryStateEnvelope 甚至没这个成员），
+    # 所以这里原本恒为 None，压缩卡就不输出 acceptance 键——Prompt 里【完全没有】
+    # 当前 NPC 对这段关系的态度，模型遇到「我跟别人也结了婚」只能自己发挥成
+    # 「歧异 / 需要时间接受」，而存档里她们已经结婚很久了。
+    #
+    # C# 的 ResolveMediation 把结果写进 mediation.outcome，取值恰好就是
+    # accepted / conditional / not_ready，与 AcceptanceOutcomes 完全一致，
+    # 所以直接拿来当接受度，不必再维护第二套状态。
+    acceptance = copied["acceptanceByNpc"].get(viewer_npc_id)
+    if acceptance is None and isinstance(mediation, Mapping):
+        outcome = mediation.get("outcome")
+        if isinstance(outcome, str) and outcome.strip():
+            acceptance = outcome.strip()
+
+    # 还没有任何调解记录时的兜底：婚约本身就是接受的证据，不是凭空推测。
+    # 新 DLL 会给每个配偶落一条 accepted，能走到这里的只剩「DLL 尚未更新」的存档。
+    # 恋人/暧昧阶段仍然留空——那正是需要「逐步接受」的过程。
+    if acceptance is None and any(
+        fact.get("relationType") == "married" for fact in _facts(copied)
+    ):
+        acceptance = "accepted"
     open_loops = [
         deepcopy(loop)
         for loop in _open_loops(copied)
@@ -274,7 +324,7 @@ def project_relationship_context(
             "truthfulDisclosureRequired": True,
         },
         "knowledge": list(knowledge_by_subject.values()),
-        "acceptance": copied["acceptanceByNpc"].get(viewer_npc_id),
+        "acceptance": acceptance,
         "mediation": _project_mediation_state(mediation),
         "jealousy": deepcopy(jealousy) if isinstance(jealousy, Mapping) else {"active": False},
         "openLoops": open_loops,

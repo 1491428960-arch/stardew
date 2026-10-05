@@ -1206,7 +1206,17 @@ def _missing_proactive_affection(
     prompt: list[dict[str, str]],
     reply: object,
 ) -> bool:
-    """判断高亲密回复是否只完成了事务回应，没有落下爱意。"""
+    """判断高亲密回复是否只完成了事务回应，没有落下爱意。
+
+    玩家明确要求亲密的回合（turn plan 为 explicit_intimacy）直接返回 False。
+    那一轮的目标是回应身体和感官细节，而这个判据要求回复里出现想念、偏爱、
+    舍不得一类的爱意措辞 —— 两者目标相反：判据会把已经写好的具体内容打回，
+    重试指令（AFFECTION_RETRY_FINAL_CONTENT）再塞进模板化的「我想你了」，
+    正好抹掉玩家要的细节。冷回复修复在其他回合不受影响。
+    """
+
+    if _turn_plan_mode(prompt) == "explicit_intimacy":
+        return False
 
     mode = _affection_requirement(prompt)
     if mode not in {"proactive", "guarded"} or not isinstance(reply, str):

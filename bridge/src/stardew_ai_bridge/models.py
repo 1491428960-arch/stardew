@@ -88,6 +88,15 @@ class NpcContext(ApiModel):
         alias="recentFacts",
         max_length=50,
     )
+    # 隐性知识（2026-10-04）：她在群聊里听别人说过的话，**不主动提就不唤醒**。
+    # 走独立字段而不是并进 `recent_facts`——后者那张卡的指令会主动提，
+    # 两个通道都送会让「不主动提」在「取最宽」下塌掉。
+    # `prompts._build_context_core` 读的是这个键（`latentKnowledge` / `latent_knowledge`）。
+    latent_knowledge: list[str] = Field(
+        default_factory=list,
+        alias="latentKnowledge",
+        max_length=12,
+    )
 
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
     _strip_display_name = field_validator("display_name", mode="before")(
@@ -228,6 +237,18 @@ class RelationshipFact(ApiModel):
     relation_type: Literal["dating", "engaged", "married"] = Field(
         alias="relationType"
     )
+    # 2026-10-04：关系的另一端。婚姻事实里就是 player。
+    #
+    # 没有它，`{"npcId": "Olivia", "relationType": "married"}` 是一句没有宾语的
+    # 话：配偶的亲属（如 Olivia 的儿子 Victor）读到它，最多推出「我妈妈结婚了」，
+    # 推不出新郎就是玩家。`_fold_relationship_edges` 负责从边的两端折叠出它。
+    #
+    # 可选：老存档 / 老 DLL 的 payload 不带这个键，不能因此 422。
+    counterpart_npc_id: str | None = Field(
+        default=None,
+        alias="counterpartNpcId",
+        max_length=100,
+    )
     started_on: str | None = Field(
         default=None,
         alias="startedOn",
@@ -276,9 +297,21 @@ def _fold_relationship_edges(value: object) -> object:
         if not other or relation not in ("dating", "engaged", "married"):
             continue
         item = dict(edge)
+        # 2026-10-04：**不要丢掉另一端**。原先这里无差别 pop 掉 fromNpcId/toNpcId，
+        # 于是下游 `_public_marriage_views` 再也拿不到「和谁结的婚」，只能拿
+        # `npcId` 单说「X 已婚」——一句没有宾语的话。
+        #
+        # 实机后果（用户原话：「维克托不知道他妈嫁给我了，这不对吧」）：Victor 知道
+        # `Olivia 是我妈妈`，也知道 `Olivia 已婚`，但推不出新郎就是玩家。
+        #
+        # 保留成 `counterpartNpcId` 这个明确的领域名，而不是原样留着 from/to：
+        # 下游只需要「另一端是谁」，留着方向反而容易读反。
         item.pop("fromNpcId", None)
         item.pop("toNpcId", None)
         item["npcId"] = other
+        item["counterpartNpcId"] = (
+            edge.get("fromNpcId") if other == edge.get("toNpcId") else edge.get("toNpcId")
+        )
         folded.append(item)
     normalized = dict(value)
     normalized["objectiveRelationships"] = folded
@@ -486,6 +519,23 @@ class GroupParticipant(ApiModel):
         max_length=50,
     )
     game_state: NpcGameState | None = Field(default=None, alias="gameState")
+    # 2026-10-05：每位参与者**自己那份**私有上下文。
+    #
+    # 此前 `group_scene` 卡里只有无归属的单槽位 `recentFacts` / `relationshipWorld`，
+    # 多人场里取谁的都是把别人的私事摊给全场看（见 `GroupDialogueMenu.cs` 里
+    # 2026-09-22 写下的判据），所以生产端一直传 null。槽位下移到参与者身上后，
+    # 归属由 Bridge 侧的 `participant_private_context` 卡声明，越界问题在卡内解决。
+    #
+    # 顶层同名字段保留，只为兼容还在发无归属那一份的旧版 DLL。
+    relationship_world: RelationshipWorldContext | None = Field(
+        default=None,
+        alias="relationshipWorld",
+    )
+    recent_facts: list[str] = Field(
+        default_factory=list,
+        alias="recentFacts",
+        max_length=50,
+    )
 
     _strip_npc_id = field_validator("npc_id", mode="before")(_strip_text)
     _strip_display_name = field_validator("display_name", mode="before")(
@@ -660,6 +710,27 @@ class DialogueTestRequest(ApiModel):
     )
     game_state: NpcGameState | None = Field(default=None, alias="gameState")
     intent: Literal["chat", "topic", "item"] = "chat"
+    # 隐性知识（2026-10-04）：她在**群聊里听别人说过**的话。需求原话
+    # 「群聊记忆中别的 npc 说了什么能不能作为一个隐性的知识库这样的形式，
+    # **我不主动提到就不唤醒**」。
+    #
+    # ⚠ 与 `recent_facts` 是**互斥的两条路**，不是包含关系：那张泛记忆卡带的是
+    # 「把记忆自然用起来」的指令（会主动提），而这里的要求正好相反。两个通道都送
+    # 会让模型同时收到两套打架的约束，项目实测过**「取最宽」**——同类约束有多个
+    # 实例时跟最松的那个，「不主动提」会直接塌成「随便提」。
+    #
+    # 上限 12 与 C# 侧 `StoryStateStore.LatentKnowledge` 的封顶同源；
+    # 卡片侧另有 `_MAX_LATENT_KNOWLEDGE_FACTS = 6` 做二次收口。
+    #
+    # ⚠️ **发布顺序**：`ApiModel` 是 `extra="forbid"` ⇒ 新 DLL + 旧 Bridge = 422
+    # 退化成兜底回复。**必须先发 Bridge、再发 DLL**（反方向安全：旧 DLL 不发这个键
+    # 时是空列表，与加字段之前的行为一致）。
+    # 契约用例见 bridge/tests/test_latent_knowledge_contract.py。
+    latent_knowledge: list[str] = Field(
+        default_factory=list,
+        alias="latentKnowledge",
+        max_length=12,
+    )
     # 2026-09-20（语义层审计 #46）：这里默认 False，而 C# 侧
     # `BridgeClient.CompactPrompt` 默认 true——**两处不同是刻意的，不要顺手统一**：
     #   · 游戏端（C#）默认走紧凑 prompt：线上往返省 token；
@@ -731,6 +802,7 @@ class DialogueTestRequest(ApiModel):
                 self.game_state.source_mods if self.game_state else []
             ),
             recentFacts=self.recent_facts,
+            latentKnowledge=self.latent_knowledge,
         )
 
 

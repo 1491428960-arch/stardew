@@ -296,3 +296,47 @@ def test_open_loops_are_projected_only_for_current_npc_and_active_status() -> No
 
     assert [item["loopId"] for item in context["openLoops"]] == ["wizard:one"]
     assert [item["loopId"] for item in request["openLoops"]] == ["wizard:one"]
+
+
+def test_acceptance_falls_back_to_the_mediation_outcome() -> None:
+    """2026-10-04：C# 侧只写 mediation，acceptanceByNpc 永远是空的。
+
+    ResolveMediation 的 outcome 取值与 AcceptanceOutcomes 完全一致，所以它才是
+    接受度的权威来源。少了这一步，压缩卡就不输出 acceptance 键，Prompt 里
+    【完全没有】当前 NPC 对这段关系的态度。
+    """
+
+    world = {
+        "objectiveRelationships": [{"npcId": "Sophia", "relationType": "married"}],
+        "views": [],
+        "mediationByNpc": {
+            "Sophia": {"status": "resolved", "outcome": "conditional"},
+        },
+    }
+
+    assert project_relationship_context("Sophia", world)["acceptance"] == "conditional"
+
+
+def test_an_open_mediation_round_is_not_papered_over_by_the_married_default() -> None:
+    """not_ready 是「这轮没谈成」，必须原样透出，不能被已婚兜底抹成 accepted。"""
+
+    world = {
+        "objectiveRelationships": [{"npcId": "Sophia", "relationType": "married"}],
+        "views": [],
+        "mediationByNpc": {
+            "Sophia": {"status": "active", "outcome": "not_ready"},
+        },
+    }
+
+    assert project_relationship_context("Sophia", world)["acceptance"] == "not_ready"
+
+
+def test_explicit_acceptance_map_still_wins_over_the_mediation_outcome() -> None:
+    """兼容路径：显式 acceptanceByNpc 是更直接的来源，优先于调解推导。"""
+
+    world = {
+        "acceptanceByNpc": {"Sophia": "accepted"},
+        "mediationByNpc": {"Sophia": {"status": "resolved", "outcome": "not_ready"}},
+    }
+
+    assert project_relationship_context("Sophia", world)["acceptance"] == "accepted"

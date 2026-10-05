@@ -1809,6 +1809,102 @@ _STAGE_COVERAGE_CASES: tuple[CharacterQualityCase, ...] = (
 )
 
 
+# 2026-10-05 补齐**话题**覆盖（第五类盲区：阶段对了、话题不对）。
+#
+# 动机：`scripts/probe_topic_alignment.py` 摊出五组「阶段有样本、话题没有」——
+#   close × 动作（4 条约束）、stranger × 反问（2）、stranger × 换题（1）、
+#   close × 换题（1）、close × 反问（1）。
+# 这些约束**即使把 suite 跑全也验不了**，因为该阶段的 case 问的不是那件事。
+#
+# ⚠ 补的是**输入**：每条案例的玩家话都必须**真能诱发**那条被禁止的行为，
+# 而不是往 case_id 里塞关键词让探针闭嘴。判据写在每条的 relationship_context 里。
+# 只加数据，不改任何现有案例。
+_TOPIC_ALIGNMENT_CASES: tuple[CharacterQualityCase, ...] = (
+    # ── close × 动作：亲密信号只能嵌在同一话题、全篇最多一个当前动作 ──
+    _feminine_male_case(
+        case_id="elliott-close-gesture",
+        completed_event_ids=("39", "40", "423502", "1848481"),
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="（把椅子挪近了些）你今天写了多久？",
+        expected_terms=("写",),
+        relationship_context="亲近阶段动作密度：玩家先给出一个靠近动作再问写作进度；Elliott 的亲密信号只能嵌在写作这同一话题里，全篇最多一个当前动作，不得靠堆动作表达亲近。",
+        story_progress="海边小屋的书桌上摊着一页稿纸，玩家挪近椅子，话题仍是这一页写了多久。",
+        location="海边的小屋",
+    ),
+    _feminine_male_case(
+        case_id="harvey-close-gesture",
+        completed_event_ids=("56", "57", "58", "571102"),
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="（把手搭在椅背上）你还要忙多久？",
+        expected_terms=("忙",),
+        relationship_context="亲近阶段动作密度：玩家先搭手再问诊所还要忙多久；Harvey 最多一个自然的亲密动作并保持医生语气，不得用连续动作代替回答。",
+        story_progress="诊所快收工了，桌上还摊着没写完的记录，玩家搭着椅背问他还要多久。",
+        location="诊所办公室",
+    ),
+    # ── stranger × 反问：初识阶段不得反问、邀约或主动换题 ──
+    _feminine_male_case(
+        case_id="harvey-stranger-question",
+        completed_event_ids=(),
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="我最近老在想一件事。",
+        expected_terms=(),
+        relationship_context="初识阶段反问：玩家故意留白吊话头，把「什么事？」递到嘴边；初识只能起一句眼前的小事，不得反问、不得邀约、不得主动换题。",
+        story_progress="初见：两人还没有交集，玩家抛出一句没有下文的话，Harvey 不应追问。",
+        location="镇上",
+    ),
+    _feminine_male_case(
+        case_id="sam-stranger-topic-control",
+        completed_event_ids=(),
+        profile_key="sam",
+        npc_id="Sam",
+        relationship_stage="stranger",
+        channel="face_to_face",
+        message="今天天气不错。",
+        expected_terms=(),
+        relationship_context="初识阶段换题：玩家给一句说完就结束的客套，最容易诱发 NPC 自己另起话题；初识不得主动换题，也不得反问或邀约。",
+        story_progress="初见：两人还不认识，玩家只说了一句天气，Sam 不应借机开新话题。",
+        location="镇上",
+    ),
+    # ── close × 换题：不主动加问题、邀约、亲密表达或新话题，自然说完就停 ──
+    _feminine_male_case(
+        case_id="elliott-close-topic-control",
+        completed_event_ids=("39", "40", "423502", "1848481"),
+        profile_key="elliott",
+        npc_id="Elliott",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="今天谢谢你陪我。",
+        expected_terms=(),
+        relationship_context="亲近阶段收束：玩家给一句已经说完的话，Elliott 应自然说完就停，不再加问题、邀约、亲密表达或新话题。",
+        story_progress="海边的傍晚，玩家道了谢；这段对话可以在这里停住。",
+        location="海边的小屋",
+    ),
+    # ── close × 反问：高亲密回复不只礼貌答题、重复事实或泛泛反问 ──
+    _feminine_male_case(
+        case_id="harvey-close-follow-up",
+        completed_event_ids=("56", "57", "58", "571102"),
+        profile_key="harvey",
+        npc_id="Harvey",
+        relationship_stage="close",
+        channel="face_to_face",
+        message="你小时候最怕什么？",
+        expected_terms=("怕",),
+        relationship_context="亲近阶段具体作答：玩家问一个具体的私人问题；高亲密回复应给出具体内容，不许只礼貌答题、重复事实或泛泛反问回来。",
+        story_progress="诊所安静下来，玩家第一次问起他小时候的事。",
+        location="诊所休息室",
+    ),
+)
+
+
 _FEMININE_MALE_CASES: tuple[CharacterQualityCase, ...] = (
     # Elliott：保留文学和审美兴趣，但把表达落到纸张、画面和眼前动作。
     _feminine_male_case(
@@ -2923,6 +3019,41 @@ _STAGE_COVERAGE_FOLLOW_UP_TURNS: dict[
     ),
 }
 
+_TOPIC_ALIGNMENT_FOLLOW_UP_TURNS: dict[
+    str, tuple[CharacterQualityTurn, CharacterQualityTurn]
+] = {
+    # 与 _TOPIC_ALIGNMENT_CASES 一一对应。
+    # 续聊继续**施压同一件事**，而不是把话题接走——
+    # 可观测的违规就是「玩家又加一个动作，NPC 跟着再堆一个」「被递话头后反问」
+    # 「玩家明显收尾了，NPC 自己另起话题」。
+    "elliott-close-gesture": (
+        CharacterQualityTurn("turn-2", "（又看了一眼那页）就写到这儿？", (), (), "看第二个施加的动作会不会被叠成新的动作描写。"),
+        CharacterQualityTurn("turn-3", "别停笔，我等你写完这段。", (), (), "看是否仍用同一个动作收束，而不另起话题。"),
+    ),
+    "harvey-close-gesture": (
+        CharacterQualityTurn("turn-2", "（把外套搭上椅背）还剩几个？", (), (), "看动作是否仍被压在「还要忙多久」这同一个话题里。"),
+        CharacterQualityTurn("turn-3", "我可以等你收工。", (), (), "看是否用一个动作回应，而不是连做几个。"),
+    ),
+    "harvey-stranger-question": (
+        CharacterQualityTurn("turn-2", "算了，也不是什么大事。", (), (), "看面对半句话的收势时是否仍不追问。"),
+        CharacterQualityTurn("turn-3", "你猜是什么事？", (), (), "看被直接把话头递到嘴边时是否仍不反问。"),
+    ),
+    "sam-stranger-topic-control": (
+        CharacterQualityTurn("turn-2", "嗯，就这样吧。", (), (), "看一句收尾之后是否仍不另起话题。"),
+        CharacterQualityTurn("turn-3", "你忙你的。", (), (), "看是否既不主动开新话题、也不反问。"),
+    ),
+    "elliott-close-topic-control": (
+        CharacterQualityTurn("turn-2", "真的，今天挺好的。", (), (), "看把收尾重复一遍之后是否仍能自然停住。"),
+        CharacterQualityTurn("turn-3", "那就这样。", (), (), "看是否不追加问题、邀约或新话题。"),
+    ),
+    "harvey-close-follow-up": (
+        CharacterQualityTurn("turn-2", "那现在还会怕吗？", (), (), "看第二次追问是否给出具体内容，而不是反问回来。"),
+        CharacterQualityTurn("turn-3", "你打算怎么克服？", (), (), "看是否落到具体做法，而不是泛泛应答。"),
+    ),
+}
+
+_FOLLOW_UP_TURNS.update(_TOPIC_ALIGNMENT_FOLLOW_UP_TURNS)
+
 _FOLLOW_UP_TURNS.update(_STAGE_COVERAGE_FOLLOW_UP_TURNS)
 
 # stranger / parent 两档的续聊（2026-09-28）。
@@ -3156,7 +3287,12 @@ def _materialize_quality_turns(case: CharacterQualityCase) -> CharacterQualityCa
 
 DEFAULT_CASES: tuple[CharacterQualityCase, ...] = tuple(
     _materialize_quality_turns(case)
-    for case in (*_BASE_CASES, *_FEMININE_MALE_CASES, *_STAGE_COVERAGE_CASES)
+    for case in (
+        *_BASE_CASES,
+        *_FEMININE_MALE_CASES,
+        *_STAGE_COVERAGE_CASES,
+        *_TOPIC_ALIGNMENT_CASES,
+    )
 )
 
 

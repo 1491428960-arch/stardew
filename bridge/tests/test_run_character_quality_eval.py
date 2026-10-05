@@ -228,8 +228,9 @@ def test_eval_stage_filter_selects_only_that_stage(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["stages"] == ["stranger"]
     # 2026-09-30 给 Elliott / Harvey / Sam 补齐 stranger 后从 5 升到 8；
+    # 2026-10-05 补（阶段 × 话题）盲区时又加了 Harvey / Sam 两条 ⇒ 10。
     # 这里是数据快照，随案例增减同步更新。
-    assert payload["caseCount"] == 8
+    assert payload["caseCount"] == 10
     # caseIds 是给人核对「到底会跑哪些」的，必须与 caseCount 一致。
     assert len(payload["caseIds"]) == payload["caseCount"]
     assert all("stranger" in cid for cid in payload["caseIds"])
@@ -243,8 +244,8 @@ def test_eval_stage_filter_accepts_multiple_and_dedupes(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     # 去重且保持输入顺序。
     assert payload["stages"] == ["stranger", "parent"]
-    # stranger 8 + parent 8（同上，2026-09-30 补齐后的快照）。
-    assert payload["caseCount"] == 16
+    # stranger 10 + parent 8（同上，2026-10-05 补齐后的快照）。
+    assert payload["caseCount"] == 18
 
 
 def test_eval_stage_filter_rejects_unknown_stage(capsys) -> None:

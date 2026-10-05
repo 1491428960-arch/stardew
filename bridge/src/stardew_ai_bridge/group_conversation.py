@@ -136,6 +136,95 @@ def _participant_value(
     return participant.get(alias, participant.get(key))
 
 
+# ---------------------------------------------------------------------------
+# 参与者**私有上下文**卡（2026-10-05：「群聊与晨间话题的有机统一」的地基）
+# ---------------------------------------------------------------------------
+#
+# 场景卡 `group_scene` 里的 `recentFacts` / `relationshipWorld` 是**无归属的单槽位**，
+# 而群聊有 2～3 位参与者：放进去的那一份是「按某个 NPC 视角过滤过的记忆与关系」，
+# 另外两人读到它，就等于知道了「玩家只跟那个人私下说过的事」——比不传更糟。
+# 所以生产端（`GroupDialogueMenu`）从 2026-09-22 起一直给这两个槽位传 null。
+#
+# 正确做法是把槽位下移到参与者身上，并在这里渲染成**带归属的卡**：卡名带 npcId、
+# 卡内写明「这些只属于他，别人并不知道」。这与下面 `_participant_card_boundary`
+# 是同一套思路——2026-09-22 的 BUG-2 已经证明，模型串味的原因是**没有归属**，
+# 而不是「它看到了别人的内容」（multi_turn 本来就会把所有人的卡拼进同一个数组）。
+
+#: 私有上下文卡的名字前缀；与语气样例一样按 npcId 归属化。
+_PARTICIPANT_CONTEXT_NAME = "participant_private_context"
+
+_PARTICIPANT_CONTEXT_SCOPE = (
+    "以下是这位参与者一个人的私有上下文，只属于他：这些记忆与关系视角都是"
+    "他自己知道的事，名单里的其他人并不知道，也没有对他说过这里的内容。"
+    "不要让名单里的其他人说出、知道、认领或转述这里的事实；"
+    "他本人也不必主动提起，只在话题自然相关时才用，"
+    "并且不要把它当成本场群聊里已经公开说过的话。"
+)
+
+
+def _participant_context_name(npc_id: str) -> str:
+    """把私有上下文卡的名字归属化（规则与 `original_style_example_assistant` 一致）。"""
+
+    return _style_example_name(npc_id).replace(
+        _STYLE_EXAMPLE_NAME, _PARTICIPANT_CONTEXT_NAME, 1
+    )
+
+
+def _participant_entry(
+    participants: Sequence[GroupParticipant | Mapping[str, object]],
+    npc_id: str,
+) -> GroupParticipant | Mapping[str, object] | None:
+    """按 npcId 取回参与者条目（大小写不敏感）。"""
+
+    target = npc_id.casefold()
+    for item in participants:
+        if str(_participant_value(item, "npc_id", "npcId")).casefold() == target:
+            return item
+    return None
+
+
+def _participant_private_context(
+    *,
+    npc_id: str,
+    display_name: str,
+    relationship_world: object,
+    recent_facts: object,
+) -> dict[str, str] | None:
+    """这位参与者自己的私有上下文卡；两样都空时返回 None（不插空卡）。"""
+
+    # `exclude_defaults=True` 不是省字：`RelationshipWorldContext` 的每个字段默认都是
+    # 空集合，而生产端的快照**总有对象**（没有关系时也是一个全空对象，而不是 None）。
+    # 不排除默认值的话，每位参与者都会多出一张 `objectiveRelationships: [] …` 的空卡，
+    # 而且 `has_world` 会把它当成"有关系内容"——空卡对模型只是噪声，还白花钱。
+    dump = getattr(relationship_world, "model_dump", None)
+    world = (
+        dump(by_alias=True, exclude_none=True, exclude_defaults=True)
+        if callable(dump)
+        else relationship_world
+    )
+    facts = [
+        str(item).strip() for item in (recent_facts or ()) if str(item).strip()
+    ]
+    has_world = bool(world)
+    if not has_world and not facts:
+        return None
+
+    return {
+        "role": "system",
+        "name": _participant_context_name(npc_id),
+        "content": json.dumps(
+            {
+                "npcId": npc_id,
+                "displayName": display_name,
+                "scope": _PARTICIPANT_CONTEXT_SCOPE,
+                "relationshipWorld": world if has_world else {},
+                "recentFacts": facts,
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+
 def _group_scene_instruction(
     *,
     active_npc_id: str,
@@ -271,6 +360,22 @@ def build_group_messages(
             if merge_cards
             else None
         )
+        # 每人一份的私有上下文：紧跟边界卡，让归属链连续
+        # （边界卡说「这段属于 X」→ 私有上下文说「这些是 X 自己的」→ X 的角色卡）。
+        context_card = None
+        participant_entry = _participant_entry(participants, npc_id)
+        if participant_entry is not None:
+            context_card = _participant_private_context(
+                npc_id=npc_id,
+                display_name=display_name_by_id.get(npc_id.casefold(), ""),
+                relationship_world=_participant_value(
+                    participant_entry, "relationship_world", "relationshipWorld"
+                ),
+                recent_facts=_participant_value(
+                    participant_entry, "recent_facts", "recentFacts"
+                ),
+            )
+        inserted_context = False
         for message in block:
             if not isinstance(message, Mapping):
                 continue
@@ -291,7 +396,14 @@ def build_group_messages(
             if boundary is not None:
                 messages.append(boundary)
                 boundary = None
+            if context_card is not None and not inserted_context:
+                messages.append(context_card)
+                inserted_context = True
             messages.append(entry)
+        # 角色卡一条可保留消息都没有时（取不到卡），私有上下文仍然要落地：
+        # 否则这位参与者在这一轮里完全不可见，比不传更糟。
+        if context_card is not None and not inserted_context:
+            messages.append(context_card)
     messages.append(
         {
             "role": "system",

@@ -5188,6 +5188,14 @@ def test_prompt_limits_voice_refs_and_knowledge_facts_in_compact_context() -> No
             "displayName": "Rasmodia",
             "voiceStyle": {"tone": "克制、学者式，但会直接回应"},
             "stageProfile": {"stage": "friend", "summary": "和玩家熟悉"},
+            # 2026-10-04：`townRelations`（全镇公共常识）在真实链路里**每个角色
+            # 必带**，但本用例原先手工构造 `npcIdentity`，把它漏在外面 ——
+            # 于是这个「防膨胀守卫」对 934 字符的净增完全失明（改完只涨 288，
+            # 那 288 全是 persona_core 的 instruction）。守卫要守的就是真实
+            # 渲染，所以这里用真实数据补上。
+            "townRelations": PersonaStore(PERSONAS_DIR)
+            .get_persona("Wizard")
+            .get("townRelations", []),
         },
         "modSources": ["Romanceable Rasmodius"],
         "gameState": {},
@@ -5270,7 +5278,16 @@ def test_prompt_limits_voice_refs_and_knowledge_facts_in_compact_context() -> No
     # 本用例（`最近怎么样？`，非 topic 请求）实测渲染 4581，净增 21 字 —— 这是
     # **有意**的净增，买到的是「窗口里换了什么，模型真的会读」（约 0.46% 长度）。
     # 阈值随实测上调，余量口径与上一次一致（约 20 字）。
-    assert len(rendered) < 4600
+    # 2026-10-03（破甲改造 ②）：final_role_voice_contract 的 instruction 追加了
+    # 反拒绝样板，压掉「模型跳出角色、用助手口吻声明能力边界」这种失败 ——
+    # 实测里它原样到了玩家眼前（「这段请求超出了我能继续的范畴……你想换个方向
+    # 继续聊吗？」），比一句敷衍的台词更伤，它把虚构直接戳破了。
+    # 本用例实测渲染 4711，净增约 130 字，是**有意**的净增，买到的是元拒绝不再
+    # 漏进对白。阈值 4600 → 4730，余量口径不变。
+    # 2026-10-04（全镇公共常识）：`townRelations` 补进本用例的 context ——
+    # 它不是新增卡片，而是 `persona_core` 里多出的一个字段，31 行／934 字符，
+    # 每个角色必带。阈值随实测上调，余量口径不变。
+    assert len(rendered) < 6036
 
 
 def test_prompt_message_order_is_fixed_and_excludes_secrets() -> None:

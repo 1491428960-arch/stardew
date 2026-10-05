@@ -2494,6 +2494,40 @@ def build_stage_policy(
             affection["minimumExpression"] = (
                 f"{minimum}{support_rule}" if minimum else support_rule
             )
+        # 2026-10-04（用户实机裁定）：「希望能主动一点，更积极的回应」。
+        #
+        # 病灶不在某一个角色身上 —— `channelRules.face_to_face` 那一句
+        # 「但先给对方选择空间」在 8 个角色的两个亲密阶段里**逐字重复了 16 次**，
+        # 加上默认共 17 处。按本项目已验证的机制（同一约束在多张卡上重复会
+        # 互相**强化**，见 STATE.md 的破甲段），它把「被亲近时先退半步」变成了
+        # 全局默认行为：实机里索菲亚面对直白的示爱，连着两轮都是
+        # 「等、等一下……」「……你、你呀。那我……至少把窗帘拉上，好不好？」，
+        # 对「硬」「摸摸」零接取。
+        #
+        # 所以这里**在合并层统一处理**，而不是去改 16 处字面量：
+        # 逐角色改会漂（下次加角色又会漏），合并层是唯一收口点。
+        #
+        # 口径（用户原话）：「偶尔主动提，但看场合」—— 所以加的是**发起权**，
+        # 不是「每轮都要发情」。Shane 那种「状态差时允许短答或收口」的
+        # guarded 通道不含这句话，因此原样保留。
+        initiative_rule = (
+            "高好感关系里角色自己也可以起头 —— 想起对方、说一句惦记、"
+            "提一个只有两个人的安排，都不必等玩家先开口；"
+            "看场合挑时机，不是每轮都发，但不要永远只做回应的一方。"
+        )
+        if initiative_rule not in minimum:
+            affection["minimumExpression"] = (
+                f"{affection.get('minimumExpression', '')}{initiative_rule}"
+            )
+
+        _RETREAT = "但先给对方选择空间"
+        _RECEIVE = "对方递过来的亲近要接住，不是先推开；愿意就是愿意"
+        channels = affection.get("channelRules")
+        if isinstance(channels, dict):
+            face = str(channels.get("face_to_face", "")).strip()
+            if _RETREAT in face:
+                channels["face_to_face"] = face.replace(_RETREAT, _RECEIVE)
+
         result["affectionInitiative"] = affection
     return result
 
