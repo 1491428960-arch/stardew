@@ -2,8 +2,23 @@ from __future__ import annotations
 
 import re
 import json
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+
+# 2026-10-07 B 阶段总开关：允许 NPC 用 `（）` 写**自己的**动作。
+#
+# 关闭（默认）时行为与 B 之前**逐字节一致**：任何括号都判 `stage_direction` 并重试。
+# 打开后只放行**句中**括号；整条被括号包住的仍判死（保护带括号的兜底语）。
+#
+# 用环境变量而不是常量，是为了让开关在**进程级**可切换：改一次重启 Bridge 即可
+# 对比前后，不必改代码；也让测试可以直接 monkeypatch 这个模块级名字。
+NPC_ACTION_MODE = os.environ.get("STARDEW_AI_NPC_ACTION", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 from .behavior_quality import (
     conversation_lead_anchors,
@@ -129,6 +144,17 @@ _LENGTH_RETRY_THRESHOLD = 68
 # **没有测量依据的阶段不要顺手放宽** —— 那正好是本次改动被否掉的做法。
 _LENGTH_RETRY_THRESHOLD_BY_STAGE: dict[str, int] = {"parent": 90}
 
+# 2026-10-07 B：角色动作（括号块）本身的预算，**只在 `NPC_ACTION_MODE` 打开时生效**。
+#
+# 它与 `_LENGTH_RETRY_THRESHOLD` 不是同一个量：那个量约束**说出口的对白**，
+# 这个量约束**动作描述**。之所以要单独设一个，是因为长度判定改成
+# 「只看净对白」之后，把正文塞进括号就能无限绕过长度限制。
+#
+# 取 90 的依据：B2 实测 37 条首答，括号开销 中位 42 / p75 48 / p90 56 / **max 79**，
+# 留 11 字余量。也就是说**当前它一次都不会触发**，它拦的是以后模型学会钻空子的情形。
+# ❗ 不要为了「少触发几次」而调大它 —— 那正好是本次改动被否掉的做法。
+_ACTION_BUDGET_MAX_CHARS = 90
+
 
 def _length_retry_threshold(stage: str | None = None) -> int:
     """取该阶段的重试阈值；未登记的阶段退回全局 68。"""
@@ -206,6 +232,17 @@ META_NARRATION_RETRY_CONTENT = (
     "不要复述设定或规则、不要写旁白。"
 )
 
+#: 2026-10-07 新增。与上面那条**不是一回事**：那条治的是「模型复述任务说明」，
+#: 这条治的是「模型用旁白写角色的动作神态，并用『玩家』称呼对方」。
+#: 触发源是 `ResponseGuard.format_issue` 的 `player_meta_word` 判据，
+#: 只重试、不丢文本。
+PLAYER_META_WORD_RETRY_CONTENT = (
+    "上一条回复是在**叙述**角色做了什么，而不是让角色开口说话"
+    "（例如「抱住玩家，把下巴搁在她肩窝里」，还用了「玩家」来称呼对方）。"
+    "请改写成这个角色此刻真正说出口的台词：直接写她要说的话，"
+    "不要描述她的动作、神态或姿势，也不要用「玩家」「用户」这类称呼。"
+)
+
 
 def is_meta_narration(reply: object, *, at_start_only: bool = False) -> bool:
     """回复是否在复述任务/设定，而不是角色在说话。
@@ -267,7 +304,43 @@ def reply_exceeds_dialogue_length(
     text = reply.strip()
     if not text:
         return False
+    if NPC_ACTION_MODE:
+        # 2026-10-07 B：**括号里的动作不算对白长度**。
+        #
+        # 依据是 37 条首答的实测（`_len_calc.py`，重试前文本，探针挂在
+        # `reply_exceeds_dialogue_length` 上）：
+        #     净对白（去括号）  中位 29 字 / 均值 31.1 / 超 68 字仅 2.7%
+        #     括号开销          中位 42 字 / 均值 40.2 / p90 56 / max 79
+        #     总长              中位 72 字 / 超 68 字 57%
+        # 对照组是关闭态：对白中位 39 字，历史基线超 68 字 5.79%。
+        #
+        # ⇒ B **没有**让对白变啰嗦，净对白反而比关闭态更短（29 vs 39）——
+        #   模型把原本要说的一部分内容搬进了动作里。多出来的 40 字**全是动作开销**。
+        #   按总长判会把 57% 的回复送进重试，而那 57% 里没有一条真的啰嗦；
+        #   实测 B 打开后 over_length 从 23% 涨到 88%，全是这个假阳性。
+        #
+        # ⇒ 所以**不放宽阈值**（那会连带放过真正啰嗦的回复），而是把动作排除在
+        #   长度之外：对白部分仍按原来那个数判，语义与关闭态完全一致。
+        net = _strip_stage_directions(text)
+        if len(net) > _length_retry_threshold(stage):
+            return True
+        # 但动作本身仍要有预算，否则「把正文塞进括号」就能无限绕过长度限制。
+        # 取 90：实测括号开销 max 79，留 11 字余量。目前它一次都不会触发，
+        # 它拦的是以后模型学会钻空子的情形。
+        return len(text) - len(net) > _ACTION_BUDGET_MAX_CHARS
     return len(text) > _length_retry_threshold(stage)
+
+
+def _strip_stage_directions(text: str) -> str:
+    """剔掉回复里的括号动作，只留下说出口的字。
+
+    2026-10-07 B 阶段新增，**只给长度判定用**。
+    出口那条路（`format_issue` 的 `stage_direction` 分流）是**另一个**语义：
+    那边问的是「这条回复该不该打回重写」，这边问的是「对白部分多长」。
+    两者不要合并。
+    """
+
+    return ResponseGuard._stage_direction.sub("", text)
 
 OPENING_RETRY_CONTENT = (
     "上一条回复重复了历史开场。只重新回答最后一条玩家消息；"
@@ -523,6 +596,49 @@ class ResponseGuard:
         re.MULTILINE,
     )
     _stage_direction = re.compile(r"(?:（[^（）\r\n]{1,80}）|\([^()\r\n]{1,80}\))")
+    # 2026-10-07 B 阶段：**整条回复只由括号块构成**（剥掉括号后没有正文）。
+    # 这一形态必须继续判死，它保护的是兜底语
+    # `（暂时没有合适的回复，请稍后再试。）` —— 那条括号是**故意**的
+    # （app.py L770 注释：「括号是有意的，不要去改」）。实测它是全语料里
+    # 唯一的 `whole_wrapped` 形态。
+    #
+    # 与 `_stage_direction` 的分工（B 开关打开时）：
+    #   · 整条被括号包住  ⇒ 纯旁白／兜底语 ⇒ 判死重试
+    #   · 句中出现括号    ⇒ 允许（NPC 写自己的动作）⇒ 放行
+    # 关闭时两者都判死，行为与 B 之前完全一致。
+    _stage_direction_wrapped = re.compile(
+        r"^(?:（[^（）\r\n]{1,80}）|\([^()\r\n]{1,80}\))+$"
+    )
+    # 2026-10-07：第三人称旁白里出现「玩家」这类**元叙述词**——Alex 永远不会管
+    # 对面叫「玩家」。实测语料 255 条非兜底回复里只出现 1 次（0.4%）：
+    #   `抱住玩家，把下巴搁在她肩窝里，声音闷闷的带着点得意。……再抱会儿。`
+    # 这条**没有括号**，所以 `_stage_direction` 抓不到。
+    #
+    # ⚠ **刻意不进 `_META_NARRATION_MARKERS`**（那是模块级 `is_meta_narration` 的判据）。
+    # 两者语义不同：`is_meta_narration` 管的是「模型把任务说明当台词复述」，它的
+    # 兜底 `_discard_meta_narration` 会**丢弃整段文本**换成「……」。把「玩家」放进去，
+    # 这条回复会连旁白带台词整段消失，**比让玩家读到一段旁白更糟**。
+    # 这里只求「触发一次重试」，不丢文本，所以走 `format_issue` 这条路。
+    #
+    # ⚠ 同样**绝对不要写进 prompt**。2026-10-07 实测：在主人格卡里点名
+    # 「不要写动作旁白或舞台说明」，反而把 `stage_direction` 触发率从 7.7% 推到
+    # 28.6% —— **否定式提及本身就是 priming**，越点名越容易出现。改成正面表述
+    # （「最多再追加一个具体的说法」）才压回 12.8%。所以只在出口兜底，不在入口提示。
+    #
+    # 命中率低（0.4%）但零假阳性（NPC 不可能说出「玩家」），加进去只赚不赔。
+    #
+    # ❗ **必须带标点边界，不能只匹配「玩家」两个字**。2026-10-07 第一版写成
+    # `玩家|用户`，当场打断两条既有链路：
+    #   ① `_META_REPLY`「没有玩家输入，需要主动聊起一个话题」被判成 player_meta_word，
+    #      抢在 `is_meta_narration` 之前，本该**丢弃**的回复改走了**重试**；
+    #   ② group 对话的记忆标记「玩家下周要交一份报告。」被当成旁白，重试后
+    #      `memory_highlights` 解析不出来，断言 `[] == ['玩家下周要交一份报告。']`。
+    # 而这两处的「玩家」后面接的都是**动词**（输入／下周要交），真正的旁白里
+    # 「玩家」永远是一个名词短语的**结尾**（「抱住玩家，」「看着玩家。」）。
+    # 用标点边界就能把两者干净切开，且**只收窄不放松**。
+    _player_meta_word = re.compile(
+        r"(?:玩家|用户)(?=[，,。、；;：:！!？?…）)\s]|$|的)"
+    )
     _english_word = re.compile(r"(?<![A-Za-z])[A-Za-z]{3,}(?![A-Za-z])")
     # 中文对白不会以逗号／顿号／分号／冒号起句。上游偶发把整段开头的标点留下
     # （删掉前一分句却没删标点，或从长句中间截断），玩家看到的就是
@@ -534,6 +650,18 @@ class ResponseGuard:
     # 兜底剥离用：同一个字符集，但**连续剥离**并连带吃掉中间的空格。
     # 两个模式必须一起改——`check` 剥完还会再跑一次 `format_issue` 自查。
     _leading_punctuation_strip = re.compile(r"^[\s，,、；;：:]+")
+    # 2026-10-07：模型偶发把整条回复写成**引号块串联**，形态来自"复述对话"：
+    #   `"嗯？""……不走了。""你这一抱…"`
+    # 这不是动作旁白（`_stage_direction` 管的是括号），所以原先四条判据都拦不住，
+    # 玩家会在气泡里看到一串引号。**引号里的字是好的，只有壳是多余的**——
+    # 与 `leading_punctuation` 同理，剥离比判死好（判死会把它换成兜底回复，更糟）。
+    #
+    # ⚠ **刻意不注册进 `format_issue`**：那会触发一次格式重试，而重试照样可能带引号，
+    # 还多花一次调用。剥离是无损的，直接做掉即可。
+    #
+    # ⚠ 只处理「整条回复由引号块与空白构成」的情况。像 `他说"你好"` 这种
+    # 引号外还有正文的，**原样不动**——内层引号是合法用法，剥了会改语义。
+    _quoted_block = re.compile(r"[“\"]([^“”\"]*)[”\"]")
     # 名单见 npc_names.ALLOWED_LATIN。
     #
     # ⚠ **不要再把它内联回这个类**：reply_scrub._KEEP_LATIN 要用同一份 ——
@@ -574,6 +702,9 @@ class ResponseGuard:
                 remaining = self.format_issue(text)
                 if remaining:
                     return GuardResult(False, f"format_{remaining}", "")
+            text = self.strip_reply_quotes(text)
+            if not text:
+                return GuardResult(False, "empty", "")
             if len(text) > self.max_chars:
                 return GuardResult(True, "truncated", text[: self.max_chars])
             return GuardResult(True, "accepted", text)
@@ -591,8 +722,30 @@ class ResponseGuard:
             return None
         if cls._markdown_format.search(text):
             return "markdown"
+        # 2026-10-07 B 阶段分流。默认（NPC_ACTION_MODE 为假）与 B 之前
+        # **逐字节一致**：只要出现括号就判 `stage_direction` 并重试。
+        #
+        # 开关打开后只放行**句中出现**的括号 —— 那是 NPC 在写自己的动作；
+        # 整条被括号包住的仍然判死，因为那正是兜底语
+        # `（暂时没有合适的回复，请稍后再试。）` 的形态（app.py 明确注明
+        # 「括号是有意的，不要去改」），也是"整条只有旁白、没有台词"的病态输出。
+        #
+        # ⚠ 这里**刻意不做"括号里是不是在讲玩家"的语义判断**。B 阶段实测过：
+        # 那需要判断句子的主要动作属于谁，正则做不到，硬做必然误伤；而误伤的
+        # 代价是判死 ⇒ 重试 ⇒ 重试仍不行就退化成兜底回复，比读到一句旁白更糟。
+        # 复述玩家的问题交给 prompt 侧的正面规则（`_NPC_ACTION_CONTRACT`）。
         if cls._stage_direction.search(text):
-            return "stage_direction"
+            if not NPC_ACTION_MODE or cls._stage_direction_wrapped.search(text):
+                return "stage_direction"
+        # 排在 stage_direction 之后：同一条既带括号又带「玩家」时，先按括号重试，
+        # 模型对「去掉括号」的理解比「别说玩家」更直接。
+        #
+        # ⚠ reason 取 `player_meta_word` 而**不是** `meta_narration`：后者是
+        # `retry_for_format_noise` 里另一条独立重试路径（L1575 的 `is_meta_narration`）
+        # 的 issue 名，两者兜底方式不同（一个重试、一个丢文本）。同名会让
+        # warnings 里分不清是哪条触发，也会让 L1575 的 `issue is None` 判断失准。
+        if cls._player_meta_word.search(text):
+            return "player_meta_word"
         for match in cls._english_word.finditer(text):
             if match.group(0).casefold() not in cls._allowed_english:
                 return "english"
@@ -609,6 +762,30 @@ class ResponseGuard:
         if not isinstance(reply, str):
             return ""
         return cls._leading_punctuation_strip.sub("", reply)
+
+    @classmethod
+    def strip_reply_quotes(cls, reply: object) -> str:
+        """整条回复都由引号块构成时，拆掉引号壳并接回正文。
+
+        `"嗯？""……不走了。""你这一抱…"` → `嗯？……不走了。你这一抱…`
+
+        只在**引号之外没有别的正文**时才动手。`他说"你好"` 这种会原样返回，
+        因为内层引号在那里是合法用法，剥掉会改变语义。
+        """
+
+        if not isinstance(reply, str):
+            return ""
+        text = reply.strip()
+        if not text:
+            return ""
+        matches = list(cls._quoted_block.finditer(text))
+        if not matches:
+            return text
+        # 引号之外还有正文字符 ⇒ 不是「整条都是引号块」，不动。
+        if cls._quoted_block.sub("", text).strip():
+            return text
+        merged = "".join(match.group(1).strip() for match in matches)
+        return merged or text
 
     @classmethod
     def is_topic_prompt_echo(cls, reply: object) -> bool:
@@ -1502,7 +1679,14 @@ def retry_for_format_noise(
         missing_conversation_lead = _missing_conversation_lead(prompt, current.reply)
         retry_needs_conversation_lead = False
         retry_preserves_conversation_lead = False
-        if (
+        if issue == "player_meta_word":
+            # 2026-10-07：旁白里出现「玩家」这种元叙述词，走专门的重试话术。
+            # 放在最前：它由 `format_issue` 直接判定，不该被后面任何一条
+            # `issue is None` 的条件覆盖，也不该被亲近信号抢走重试名额。
+            # `retry_kind` 独立取名，方便在 warnings 里与 `meta_narration` 区分。
+            retry_kind = "player_meta_word"
+            retry_content = PLAYER_META_WORD_RETRY_CONTENT
+        elif (
             issue is not None
             and missing_personal_affection
             and max_retries is not None

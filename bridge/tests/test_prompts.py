@@ -908,8 +908,19 @@ def test_prompt_treats_current_scene_facts_as_hard_without_forcing_them_into_rep
         message for message in messages if message["name"] == "safety_rules"
     )
 
-    assert "天气、时间和地点是当前场景的硬事实" in safety_message["content"]
+    # 2026-10-06：硬事实的覆盖面从「天气、时间和地点」扩到**玩家自述的当下状态**。
+    # 起因（用户实测）：玩家说「来床上抱」，Alex 答「……过来吧，但只准躺着聊」——
+    # 玩家发起的邀请被 NPC 反转成对**玩家**的指令。真因不是禁止描述动作
+    # （L7312 本就允许「用自己的行动接话」），而是玩家自述的状态进不了「事实」
+    # 那一栏，只能按话题处理，动作方向于是由 NPC 临场编造。
+    assert "天气、时间、地点" in safety_message["content"]
+    assert "玩家在本场对话中说明的自己的位置、姿势和动作" in safety_message["content"]
+    assert "都是当前场景的硬事实" in safety_message["content"]
     assert "不要为了显得贴合而硬塞" in safety_message["content"]
+    # ⚠ 防回归：2026-10-06 当天曾在同一处写过「场景可以自然推进（起身、走动、靠近…）」。
+    # 模型把「靠近」读成了**要求玩家靠近的许可**，回放实测缺陷率 12.5% → 25.0%
+    # （同模板各 8 次）。**不得再引入任何需要模型自己维护的状态描述。**
+    assert "靠近" not in safety_message["content"]
 
 
 def test_rasmodia_voice_style_captures_source_rhythm_and_register() -> None:
@@ -1154,6 +1165,14 @@ def test_prompt_projects_original_dialogue_as_high_signal_voice_few_shots() -> N
     ]
 
     assert "原版对白语气示例" in style_instruction["content"]
+    # 2026-10-07：这张卡原写「学习句式、节奏、停顿和收尾」，而语料里
+    # `styleSamples` 的收尾常常是**告别语**（如「回头见啦」）。游戏内 1 日
+    # 06:00 实测：Alex 首句复述了该样本，玩家把她叫回来，她答「我明天还得
+    # 早起防摔呢」——把清晨当成了这一天已经过完。「收尾」必须限定为句内收尾。
+    assert "句内收尾" in style_instruction["content"]
+    assert "停顿和收尾" not in style_instruction["content"]
+    assert "告别语" in style_instruction["content"]
+    assert "不代表本场对话已经或即将结束" in style_instruction["content"]
     assert not example_users
     assert len(example_assistants) == 2
     assert all(message["role"] == "assistant" for message in example_assistants)
