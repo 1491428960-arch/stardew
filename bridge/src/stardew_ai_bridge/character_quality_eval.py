@@ -1821,6 +1821,10 @@ _STAGE_COVERAGE_CASES: tuple[CharacterQualityCase, ...] = (
 # 只加数据，不改任何现有案例。
 _TOPIC_ALIGNMENT_CASES: tuple[CharacterQualityCase, ...] = (
     # ── close × 动作：亲密信号只能嵌在同一话题、全篇最多一个当前动作 ──
+    # ⚠ 2026-10-05：「全篇最多一个动作」**没有机器判据** —— 动作靠语义读出，
+    #    回复里没有括号 / 星号标记，6 组正则的同类先例只命中 1/4（见 L4601）。
+    #    ⇒ 这两条 case 的 FAIL **不反映动作密度**，必须人读台词。
+    #      登记见 `docs/constraint-scope.md` 三次追加。
     _feminine_male_case(
         case_id="elliott-close-gesture",
         completed_event_ids=("39", "40", "423502", "1848481"),

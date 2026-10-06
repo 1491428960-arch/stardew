@@ -118,6 +118,10 @@ Get-NetTCPConnection -LocalPort 5678 -State Listen | Select-Object OwningProcess
 - `elliott-close-topic-control`（玩家说「今天谢谢你陪我。」）被判 FAIL，
   标签却是 `missing_conversation_lead` —— 而它真正的问题是回答里**加了邀约**
   （「下次退潮的时候…想安静就过来」），**判据根本不对口**。
+- **`elliott-close-gesture` 被判 FAIL，但人读是合格的** —— 它的约束是
+  「亲密信号只能嵌在同一话题，**全篇最多一个动作**」，实际回复只用了 1 个动作 ✓，
+  可它挂在 `missing_conversation_lead` 上。⇒ **失败标签和它该管的约束不是一回事**，
+  而且**动作密度这一条根本没有机器判据**（详见 `docs/constraint-scope.md` 三次追加）。
 
 ⇒ **结论：实机时别拿 pass/fail 当准绳，要人读台词。**
 上面第三节那些「打勾项」都是照这个原则写的 —— 能看的都是**能直接读到的话**。
