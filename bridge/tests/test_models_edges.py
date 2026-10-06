@@ -14,6 +14,7 @@ from stardew_ai_bridge.models import (
     ApiModel,
     ItemConversationContext,
     NpcContext,
+    RelationshipWorldContext,
     _strip_dialogue_message,
     _strip_mapping_keys,
     _strip_text,
@@ -143,3 +144,100 @@ def test_item_context_rejects_an_unknown_action() -> None:
     # action 是 Literal：原版物品交互之外的写法一律拒绝。
     with pytest.raises(ValidationError):
         ItemConversationContext(**_item_context(action="eat"))
+
+
+# --- relationshipWorld 的跨侧形状折叠 ---------------------------------------
+#
+# 2026-10-06 实机事故：游戏里每次对话都回「暂时联系不上她」
+# （`ChatInputMenu.cs` 的 fallback 文案），根因是 Bridge 返回 **HTTP 422**——
+# 游戏端发的关系世界快照里有 `RelationshipFact`／`RelationshipView` 不认识的
+# 槽位，而 `ApiModel` 是 `extra="forbid"`。折叠点此前只 pop 了 fromNpcId／
+# toNpcId，其余字段原样透传。
+#
+# 下面两个 helper 刻意照抄游戏端**真实发出的形状**（取自实机抓到的请求体），
+# 而不是构造一个「刚好合法」的理想形状——上一版测试正是因此漏掉了它。
+
+
+def _csharp_edge(**overrides: object) -> dict[str, object]:
+    """游戏端 `objectiveRelationships` 实际发出的**有向边**。"""
+
+    payload: dict[str, object] = {
+        "fromNpcId": "player",
+        "toNpcId": "Alex",
+        "relationType": "married",
+        "strength": 0,
+        "tension": 0,
+        "source": "player_spouse",
+        "canonical": True,
+        "updatedOn": "spring 28",
+        "startedOn": "spring 28",
+        "publicEventId": "wedding:Alex",
+        "publicOn": "spring 28",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _csharp_view(**overrides: object) -> dict[str, object]:
+    """游戏端 `views` 实际发出的**单条视图**（注意 counterpartNpcId）。"""
+
+    payload: dict[str, object] = {
+        "ownerNpcId": "Alex",
+        "subjectNpcId": "Olivia",
+        "counterpartNpcId": "player",
+        "relationType": "married",
+        "visibility": "known",
+        "source": "wedding",
+        "observedOn": "spring 28",
+        "evidence": "wedding:Olivia",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_relationship_world_accepts_the_full_csharp_edge_shape() -> None:
+    world = RelationshipWorldContext(
+        objectiveRelationships=[_csharp_edge()],
+        views=[_csharp_view()],
+    )
+
+    assert world.objective_relationships[0].npc_id == "Alex"
+    # 另一端必须保留：它是「和谁结的婚」的唯一来源（见 2026-10-04 的落实注释）。
+    assert world.objective_relationships[0].counterpart_npc_id == "player"
+    assert world.objective_relationships[0].public_event_id == "wedding:Alex"
+
+
+def test_relationship_world_drops_edge_only_keys_instead_of_raising() -> None:
+    """裁剪是**静默丢弃**，不是报错：游戏端多余的游戏内字段不该毁掉一次对话。"""
+
+    world = RelationshipWorldContext(objectiveRelationships=[_csharp_edge(strength=7)])
+    dumped = world.objective_relationships[0].model_dump(by_alias=True)
+
+    assert dumped == {
+        "npcId": "Alex",
+        "relationType": "married",
+        "counterpartNpcId": "player",
+        "startedOn": "spring 28",
+        "publicEventId": "wedding:Alex",
+        "publicOn": "spring 28",
+    }
+
+
+def test_relationship_world_accepts_a_view_carrying_counterpart_npc_id() -> None:
+    """只要关系世界里存在**一条** view，旧代码就必然 422。"""
+
+    world = RelationshipWorldContext(views=[_csharp_view()])
+    dumped = world.views[0].model_dump(by_alias=True)
+
+    assert "counterpartNpcId" not in dumped
+    assert dumped["ownerNpcId"] == "Alex"
+    assert dumped["subjectNpcId"] == "Olivia"
+    assert dumped["visibility"] == "known"
+
+
+def test_relationship_world_still_rejects_unknown_top_level_keys() -> None:
+    """白名单只作用于**嵌套条目**；`extra="forbid"` 对顶层依然生效，
+    否则跨侧契约漂移会被整体掩盖。"""
+
+    with pytest.raises(ValidationError):
+        RelationshipWorldContext(unexpectedTopLevel={})

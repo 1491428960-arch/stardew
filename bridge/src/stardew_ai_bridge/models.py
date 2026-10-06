@@ -270,6 +270,48 @@ class RelationshipFact(ApiModel):
 
 
 
+# RelationshipFact／RelationshipView 各自认识的槽位。
+#
+# 折叠函数一律**按白名单裁剪**，而不是逐个 pop 已知的多余键。
+# 原因见 2026-10-06 的实机事故：`_fold_relationship_edges` 当初只 pop 了
+# fromNpcId／toNpcId，C# 后来往边上加了 strength／tension／source／canonical／
+# updatedOn，于是 `extra="forbid"` 立刻把整轮对话打成 422、退化成兜底回复
+# （玩家看到的是「暂时联系不上她」）。逐个 pop 的写法要求每次跨侧加字段都
+# 记得同步改这里，而漏掉一次的代价是**整条对话链路静默失效**。
+# 白名单的代价是新字段被静默丢弃——由 test_relationship_world_contract.py 兜底。
+_RELATIONSHIP_FACT_KEYS = frozenset(
+    {
+        "npcId",
+        "relationType",
+        "counterpartNpcId",
+        "startedOn",
+        "publicEventId",
+        "publicOn",
+    }
+)
+
+_RELATIONSHIP_VIEW_KEYS = frozenset(
+    {
+        "ownerNpcId",
+        "subjectNpcId",
+        "relationType",
+        "visibility",
+        "source",
+        "observedOn",
+        "evidence",
+    }
+)
+
+
+def _keep_known_keys(item: Mapping, allowed: frozenset[str]) -> dict:
+    """只保留目标模型认识的键，其余丢弃。
+
+    `ApiModel` 是 `extra="forbid"`，所以多一个键就是 422；折叠点的职责正是
+    把游戏端的形状转成 Bridge 的形状，裁剪在这里是**本分**而不是掩盖问题。
+    """
+    return {key: value for key, value in item.items() if key in allowed}
+
+
 def _fold_relationship_edges(value: object) -> object:
     """把游戏端发来的**关系边**折叠成 Bridge 期望的**单对象事实**。
 
@@ -277,6 +319,10 @@ def _fold_relationship_edges(value: object) -> object:
     （fromNpcId／toNpcId／strength／tension…），而 RelationshipFact 必填 npcId
     且 ApiModel 是 extra="forbid"——于是校验 422、请求退化成兜底回复。
     mediation／jealousy 有专门的形状转换，**唯独 objectiveRelationships 漏了**。
+
+    2026-10-06 修（实机 422）：上一条只 pop 掉 fromNpcId／toNpcId，边上的
+    strength／tension／source／canonical／updatedOn 仍原样透传，照样 422。
+    现在统一按 `_RELATIONSHIP_FACT_KEYS` 白名单裁剪。
     """
     if not isinstance(value, Mapping):
         return value
@@ -289,7 +335,7 @@ def _fold_relationship_edges(value: object) -> object:
             folded.append(edge)
             continue
         if "npcId" in edge:
-            folded.append(edge)
+            folded.append(_keep_known_keys(edge, _RELATIONSHIP_FACT_KEYS))
             continue
         # 取边的“另一端”：玩家的边是 player→npc，所以优先 toNpcId。
         other = edge.get("toNpcId") or edge.get("fromNpcId")
@@ -312,9 +358,37 @@ def _fold_relationship_edges(value: object) -> object:
         item["counterpartNpcId"] = (
             edge.get("fromNpcId") if other == edge.get("toNpcId") else edge.get("toNpcId")
         )
-        folded.append(item)
+        folded.append(_keep_known_keys(item, _RELATIONSHIP_FACT_KEYS))
     normalized = dict(value)
     normalized["objectiveRelationships"] = folded
+    return normalized
+
+
+def _fold_relationship_views(value: object) -> object:
+    """裁掉游戏端 views 里 Bridge 不认识的槽位。
+
+    2026-10-06 实机 422：C# 的每条 view 都带 `counterpartNpcId`（它记的是
+    「subject 是和谁结的婚」），而 `RelationshipView` 只有 ownerNpcId／
+    subjectNpcId／relationType／visibility／source／observedOn／evidence。
+    于是**只要关系世界里存在一条 view，整轮对话就 422**。
+
+    这里裁掉而不是给 `RelationshipView` 加槽位：view 的语义是
+    「owner 知道 subject 和**玩家**是 relationType」，玩家是隐含的，
+    `counterpartNpcId` 是冗余信息，裁掉不丢语义。
+    """
+    if not isinstance(value, Mapping):
+        return value
+    views = value.get("views")
+    if not isinstance(views, (list, tuple)) or not views:
+        return value
+    folded: list[object] = []
+    for view in views:
+        if not isinstance(view, Mapping):
+            folded.append(view)
+            continue
+        folded.append(_keep_known_keys(view, _RELATIONSHIP_VIEW_KEYS))
+    normalized = dict(value)
+    normalized["views"] = folded
     return normalized
 class RelationshipView(ApiModel):
     owner_npc_id: str = Field(alias="ownerNpcId", min_length=1, max_length=100)
@@ -459,6 +533,7 @@ class RelationshipWorldContext(ApiModel):
     @classmethod
     def _normalize_csharp_snapshot_shape(cls, value: object) -> object:
         value = _fold_relationship_edges(value)
+        value = _fold_relationship_views(value)
 
         """兼容游戏端按当前 NPC 发送的单对象关系快照。"""
 
