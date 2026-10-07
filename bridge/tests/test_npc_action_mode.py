@@ -433,3 +433,69 @@ def test_non_face_channel_bracket_reply_is_still_retried(
     monkeypatch.setattr(guard, "NPC_ACTION_MODE", True)
     _, retried = _retry_probe("（挪开一点）行，陪你一会儿", channel="remote")
     assert retried >= 1
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-07 B：`voice_execution_card` 是「禁止动作旁白」的**第五处**，
+# 也是唯一一处此前**没有开关**的 —— 它写的是最绝对的措辞
+# （「只输出对白文字」），而这张卡只要角色有 tone / stage / speechParticles
+# 之一就会挂载（`ContextBuilder.build` 的 `voice_card_sent`），
+# 所以那个措辞在实机上真的生效、且与 B 直接对立。
+# 以下断言把它并回同一道门：非当面逐字退回关闭态，当面才换正面样例。
+# ---------------------------------------------------------------------------
+
+OLD_VOICE_CARD_CLAUSE = "即使原版示例或历史中出现动作，也不要输出动作旁白；只输出对白文字。"
+NEW_VOICE_CARD_CLAUSE = "客观片段"
+
+
+def _voice_card_identity() -> dict[str, object]:
+    """构造一张**非空**的 voice card —— 空卡会提前 return {}，测不到 instruction。"""
+
+    return {
+        "voiceStyle": {"signatureMoves": ["先说实际情况，不写漂亮总结"]},
+        "stageProfile": {"stage": "friend"},
+    }
+
+
+def _card_instruction(channel: str | None = None) -> str:
+    card = prompts._build_voice_execution_card(
+        _voice_card_identity(), channel=channel
+    )
+    return str(card.get("instruction", ""))
+
+
+def test_voice_card_is_gated_off_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """没给 channel 时保守关闭：卡文逐字保留原文。"""
+
+    monkeypatch.setattr(prompts, "NPC_ACTION_MODE", True)
+
+    assert OLD_VOICE_CARD_CLAUSE in _card_instruction()
+
+
+@pytest.mark.parametrize("channel", NON_FACE_CHANNELS)
+def test_voice_card_non_face_channel_is_byte_identical_to_off(
+    monkeypatch: pytest.MonkeyPatch, channel: str | None
+) -> None:
+    """开关打开但渠道非当面时，整张卡必须与关闭态逐字相同。"""
+
+    monkeypatch.setattr(prompts, "NPC_ACTION_MODE", False)
+    off_text = _card_instruction()
+    monkeypatch.setattr(prompts, "NPC_ACTION_MODE", True)
+
+    assert _card_instruction(channel=channel) == off_text
+
+
+def test_voice_card_face_to_face_swaps_in_the_positive_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """当面渠道必须换成正面样例，且绝对禁令消失。"""
+
+    monkeypatch.setattr(prompts, "NPC_ACTION_MODE", True)
+    face = _card_instruction(channel=FACE_TO_FACE)
+
+    assert NEW_VOICE_CARD_CLAUSE in face
+    assert OLD_VOICE_CARD_CLAUSE not in face
+    # 反面守卫：换掉的那句之外，卡的其他部分不能跟着丢。
+    assert "这是最终生成前的角色说话动作卡" in face

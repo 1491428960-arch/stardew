@@ -5868,6 +5868,7 @@ def _build_voice_execution_card(
     *,
     history: object = (),
     topic_opening: bool = False,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """提取最终生成前真正需要执行的少量角色说话动作。
 
@@ -5959,7 +5960,18 @@ def _build_voice_execution_card(
             "不能连续重复同一口语颗粒，不能作为固定句首，不要把开场、正文和收尾机械拼接。"
             "voiceActions 只用于控制句长、节奏和回应动作，不是固定台词；"
             "不要为了展示角色特征而硬塞主题或示例事实。"
-            "即使原版示例或历史中出现动作，也不要输出动作旁白；只输出对白文字。"
+            # 2026-10-07 B：这一句此前**无条件**写「只输出对白文字」，是四份
+            # 「禁止动作旁白」副本之外漏掉的一处 —— 而这张卡只要角色有 tone /
+            # stage / speechParticles 之一就会挂载（`ContextBuilder.build` 的
+            # `voice_card_sent`），所以它的措辞在实机上真的生效。
+            # 关闭态逐字保留原文；打开态与 `_stage_execution_instruction` 用同一口径
+            # 的正面样例（「（）」标出、客观片段、不带「我」），避免两卡对打。
+            + (
+                "动作只写成这个角色自己做的客观片段，用「（）」括起来；"
+                "只输出台词与这种动作片段，不写散文旁白。"
+                if _action_mode_active(channel)
+                else "即使原版示例或历史中出现动作，也不要输出动作旁白；只输出对白文字。"
+            )
         )
     }
     if stage:
@@ -8894,6 +8906,7 @@ class PromptBuilder:
             identity,
             history=history,
             topic_opening=topic_request,
+            channel=_interaction_channel(interaction),
         )
         # 这张卡本轮到底发不发，决定开场许可走哪条路（见 topic 契约末尾那处兜底）。
         voice_card_sent = bool(voice_execution_card) and not natural_light_turn

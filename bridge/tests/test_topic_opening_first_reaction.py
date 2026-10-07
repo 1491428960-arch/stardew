@@ -274,7 +274,7 @@ def test_permission_falls_back_to_the_contract_when_the_voice_card_is_not_sent(
     monkeypatch.setattr(
         prompts,
         "_build_voice_execution_card",
-        lambda identity, *, history=(), topic_opening=False: {},
+        lambda identity, *, history=(), topic_opening=False, channel=None: {},
     )
 
     assert _TOPIC_REACTION_OPENING_PERMISSION in _contract(_topic_messages(SOPHIA_MOVES))
