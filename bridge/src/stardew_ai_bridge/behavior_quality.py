@@ -1255,7 +1255,15 @@ def _conversation_topic_answered(player_input: str, reply: str) -> bool:
         player_pattern.search(player_input)
         for player_pattern, _ in _CONVERSATION_TOPIC_SEMANTIC_EQUIVALENCES
     )
-    normalized_input = re.sub(r"[\s，。！？!?、；;：:,.]+", "", player_input.casefold())
+    # 字面通道的用处是承认「她接住了玩家说出口的话」。括号里的动作不是玩家说的话 ——
+    # 复述动作词（「但你都拍被子了」）凑出的 n-gram 命中不该算作回答请求的证据。
+    # 但玩家台词常常只有一个祈使词（「过来」「别走」），此时字面通道本就不适用，
+    # 一律择源会把「嘿，这就来」这种真实回应误判成没回答，所以只在台词够长时才收窄。
+    _dialogue_only = re.sub(r"[（(][^（）()]{0,120}[）)]", "", player_input).strip()
+    _literal_source = player_input
+    if len(re.sub(r"[\s，。！？!?、；;：:,.]+", "", _dialogue_only)) >= 3:
+        _literal_source = _dialogue_only
+    normalized_input = re.sub(r"[\s，。！？!?、；;：:,.]+", "", _literal_source.casefold())
     normalized_reply = re.sub(r"[\s，。！？!?、；;：:,.]+", "", reply.casefold())
     if semantic_input and "慢一点" in player_input and "慢一点" in reply:
         # “慢一点修机器”这类事务句不应借用亲密回合的节奏词过关。
@@ -1287,8 +1295,10 @@ def _conversation_topic_answered(player_input: str, reply: str) -> bool:
         or _CONVERSATION_DRINK_BEACH_INPUT_PATTERN.search(player_input)
     ):
         return False
-    input_anchors = set(_conversation_lead_anchor_candidates(player_input))
-    reply_anchors = set(conversation_lead_anchors(player_input, reply))
+    # 同样按择源：anchor 的本意是「两边都提到的具体对象」，
+    # 但括号里的动作不是玩家说过的话 —— 否则 NPC 只要回一句「被子」就算接住了话题。
+    input_anchors = set(_conversation_lead_anchor_candidates(_literal_source))
+    reply_anchors = set(conversation_lead_anchors(_literal_source, reply))
     if input_anchors.intersection(reply_anchors):
         return True
     if _CONVERSATION_LEAD_STATUS_QUESTION_PATTERN.search(player_input):

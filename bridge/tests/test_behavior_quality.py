@@ -2697,3 +2697,49 @@ def test_affection_diagnostic_keeps_shane_guarded_exit_without_forcing_personal_
     assert diagnostic["initiativeDetected"] is True
     assert "guarded_exit_allowed" in diagnostic["initiativeTags"]
     assert "missing_personal_affection" not in diagnostic["initiativeTags"]
+
+
+def test_conversation_lead_does_not_treat_a_restated_action_as_an_answer() -> None:
+    """玩家台词较长时，NPC 顺着括号里的动作词说下去不构成回答。
+
+    实测样本（06:53:13）：玩家「（坐到床边，拍拍被子）过来，再陪我一会」，
+    NPC 只点评了「拍被子」这个动作，始终没答应陪她。
+    anchor 通道若不剔除括号内容，回复里一个「被子」就能凑出假回答。
+    """
+    result = diagnose_conversation_lead(
+        _high_affection_case(),
+        {"initiative_expectation": "responsive"},
+        "你床边的位置是好，不过我先说好，躺着可不算锻炼。刚还想做几组俯卧撑"
+        "——但你都拍被子了，那今天的训练指标……改做陪聊也算数吧。说吧，什么事？",
+        player_input="（坐到床边，拍拍被子）过来，再陪我一会",
+    )
+
+    assert result["answeredCurrentTopic"] is False
+
+
+def test_conversation_lead_still_accepts_a_short_request_answered_directly() -> None:
+    """台词只剩一个祈使词时字面通道本就不工作，不能因此把真实回应判成没回答。
+
+    这是上一条的边界：同样的动作、同样的「被子」，但台词只有「过来」两个字，
+    NPC 答的是「这就来」——这正是玩家判为好的那类回应。
+    """
+    result = diagnose_conversation_lead(
+        _high_affection_case(),
+        {"initiative_expectation": "responsive"},
+        "嘿，这就来。被子拍那么响，今天又想懒着还是真有事？",
+        player_input="（坐到床边，拍拍被子）过来",
+    )
+
+    assert result["answeredCurrentTopic"] is True
+
+
+def test_conversation_lead_accepts_a_reply_that_answers_the_spoken_line() -> None:
+    """NPC 提到玩家的动作对象本身不是缺陷，只要她确实回应了台词就算回答。"""
+    result = diagnose_conversation_lead(
+        _high_affection_case(),
+        {"initiative_expectation": "responsive"},
+        '……别闹。你这叫「只是抱抱」？耳朵很痒的……再抱紧一点也行。',
+        player_input="（抱住她，轻轻咬她的耳朵并吹气）我只是想抱抱我的爱人啊",
+    )
+
+    assert result["answeredCurrentTopic"] is True
