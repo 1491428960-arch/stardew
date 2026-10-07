@@ -54,6 +54,24 @@ NPC_ACTION_MODE = os.environ.get("STARDEW_AI_NPC_ACTION", "").strip().lower() in
 }
 
 
+def _action_mode_active(channel: str | None = None) -> bool:
+    """B 是否对**这一轮对话**生效：开关打开 **且** 当前是当面聊天。
+
+    2026-10-07 用户指出：对话分线上线下两种，而动作是**物理在场**才成立的东西 ——
+    线上说「（挪开一点，把被子往你那边推了推）」本身就荒谬。项目里 `channel`
+    这套机制本来就有（SMAPI 侧 `PrivateChatRosterRules` 按 NPC 是否在场自动选
+    `face_to_face` / `remote`），prompt 里也早有分渠道指令
+    （`_CHANNEL_INSTRUCTIONS`：「远程…不要写成已经见面」）。B 却只看了环境变量，
+    对两种渠道一视同仁 —— 这是疏漏，现在补上。
+
+    `channel` 为 `None` 或空串时**保守关闭**。理由是不对称的：线上误写动作会直接
+    破坏「不假装碰面」这条既有约束（评测里 20+ 条 remote 用例专门守它），
+    而当面少写一个动作只是少一层表达，不构成错误。
+    """
+
+    return NPC_ACTION_MODE and channel == "face_to_face"
+
+
 _IDENTITY_FIELDS = (
     "npcId",
     "displayName",
@@ -4317,6 +4335,7 @@ def _stage_execution_instruction(
     *,
     natural_light_turn: bool = False,
     topic_request: bool = False,
+    channel: str | None = None,
 ) -> str:
     # 2026-10-07 B：这一句在本函数里有**四个**分支各写一遍（原文逐字相同），
     # 内容都是「禁止动作旁白」。它与 B 的目标直接对立，四个副本本身也是
@@ -4332,7 +4351,7 @@ def _stage_execution_instruction(
         "动作只写成这个角色自己做的客观片段，用「（）」括起来、夹在台词中间或跟在后面："
         "像「（挪开一点，把被子往你那边推了推）」这样，不带「我」，也不对对方说话，"
         "不要写成对对方的叙述；"
-        if NPC_ACTION_MODE
+        if _action_mode_active(channel)
         else "禁止动作旁白，包括括号、星号或其他舞台说明和环境描写。"
     )
     stage = _text(value.get("stage"), limit=40).casefold() if isinstance(value, Mapping) else ""
@@ -4424,7 +4443,7 @@ def _stage_execution_instruction(
             + (
                 "他写在括号里的做法当成已经发生的事接住，用这个角色自己的行动或说法回应，"
                 "不要把他的做法换个说法还给他；"
-                if NPC_ACTION_MODE
+                if _action_mode_active(channel)
                 else "不要先复述、改写或总结玩家原话；"
             )
             + ""
@@ -4464,7 +4483,7 @@ def _stage_execution_instruction(
         + (
             "他写在括号里的做法当成已经发生的事接住，用这个角色自己的行动或说法回应，"
             "不要把他的做法换个说法还给他；"
-            if NPC_ACTION_MODE
+            if _action_mode_active(channel)
             else "不要先复述、改写或总结玩家原话；"
         )
         + "只按 responseShape、"
@@ -4485,7 +4504,7 @@ def _stage_execution_instruction(
         + (
             "表达预算：角色自己的态度或反应写在台词里，动作写成客观片段；"
             "最多再追加一个具体说法（细节、追问、选择或小安排）；"
-            if NPC_ACTION_MODE
+            if _action_mode_active(channel)
             else "表达预算：角色自己的态度或反应就写在台词里，不要用旁白；"
             "最多再追加一个具体的说法（细节、追问、选择或小安排）；"
         )
@@ -4796,7 +4815,21 @@ def _build_affection_priority_final_card(
     return {"instruction": instruction}
 
 
-def _build_final_role_voice_contract(identity: object) -> dict[str, Any]:
+def _interaction_channel(interaction: object) -> str | None:
+    """从 `interaction` 取规范化后的渠道名；取不到时返回 None（保守关闭动作）。
+
+    与 `ContextBuilder.build` 里判 `interaction["channel"]` 的是同一份数据，
+    只是这里把「没写 / 值不合法」统一收敛成 None，调用方不必各自判空。
+    """
+
+    if not isinstance(interaction, Mapping):
+        return None
+    return _text(interaction.get("channel"), limit=30).casefold() or None
+
+
+def _build_final_role_voice_contract(
+    identity: object, *, channel: str | None = None
+) -> dict[str, Any]:
     """在最终生成前压缩注入当前 NPC 最容易辨认的表达指纹。"""
 
     if not isinstance(identity, Mapping):
@@ -4860,7 +4893,7 @@ def _build_final_role_voice_contract(identity: object) -> dict[str, Any]:
                 "动作可以写，但只写这个角色自己做的、客观的片段，用「（）」括起来、"
                 "夹在台词中间或跟在后面：像「（挪开一点，把被子往你那边推了推）」这样，"
                 "不带「我」，也不对对方说话，不要写成对对方的叙述；"
-                if NPC_ACTION_MODE
+                if _action_mode_active(channel)
                 else "只写对白，不写动作旁白或舞台说明；"
             )
             + "不要只把对方说过的内容应一声，要有自己的态度、事实或动作，说够；"
@@ -8740,6 +8773,9 @@ class PromptBuilder:
                             stage_policy,
                             natural_light_turn=natural_light_stage,
                             topic_request=topic_request,
+                            channel=_interaction_channel(
+                                safe_context.get("interaction")
+                            ),
                         ),
                     }),
                 }
@@ -9054,7 +9090,9 @@ class PromptBuilder:
                     }
                 )
             if not natural_light_turn:
-                final_role_voice_contract = _build_final_role_voice_contract(identity)
+                final_role_voice_contract = _build_final_role_voice_contract(
+                    identity, channel=_interaction_channel(interaction)
+                )
                 if final_role_voice_contract:
                     messages.append(
                         {
@@ -9160,7 +9198,9 @@ class PromptBuilder:
                     }
                 )
             if not natural_light_turn:
-                final_role_voice_contract = _build_final_role_voice_contract(identity)
+                final_role_voice_contract = _build_final_role_voice_contract(
+                    identity, channel=_interaction_channel(interaction)
+                )
                 if final_role_voice_contract:
                     messages.append(
                         {

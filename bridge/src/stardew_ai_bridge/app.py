@@ -495,6 +495,7 @@ def _retry_for_format_noise(
     *,
     attempts: list[ProviderResult] | None = None,
     stage: str | None = None,
+    channel: str | None = None,
 ) -> ProviderResult:
     def generate(retry_messages: list[dict[str, str]]) -> ProviderResult:
         retried = provider_router.generate(
@@ -511,6 +512,7 @@ def _retry_for_format_noise(
         generate,
         skip=result.provider == fake_provider.name,
         stage=stage,
+        channel=channel,
     )
 
 
@@ -757,15 +759,20 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         result = provider_router.generate(request, messages=prompt)
 
     attempts = [result]
+    # B（`STARDEW_AI_NPC_ACTION`）只在**当面聊天**生效：动作是物理在场才成立的
+    # 东西，线上写动作会破坏「不假装碰面」这条既有约束。渠道取自请求本身，
+    # 与 prompt 侧 `_interaction_channel` 同源。
+    dialogue_channel = getattr(request, "channel", None)
     result = _retry_for_format_noise(
         request,
         prompt,
         result,
         attempts=attempts,
         stage=_stage_from_context(context),
+        channel=dialogue_channel,
     )
 
-    guarded = response_guard.check(result.reply)
+    guarded = response_guard.check(result.reply, channel=dialogue_channel)
     if not guarded.accepted:
         fallback = fallback_provider.generate(request)
         # ⚠ **默认配置下 `fallback_guarded.accepted` 恒为 False**，所以每次都走下面的
@@ -783,7 +790,9 @@ def test_dialogue(payload: dict[str, object]) -> DialogueResponse:
         #
         # 所以：看到这条 warning 不等于「守卫拦下了一条坏回复」，只是**兜底文案的形态**。
         # 下面这一支检查留着，是为了兜住 `BRIDGE_FALLBACK_REPLY` 被配成别的文案的情况。
-        fallback_guarded = response_guard.check(fallback.reply)
+        fallback_guarded = response_guard.check(
+            fallback.reply, channel=dialogue_channel
+        )
         warnings = [
             *result.warnings,
             f"response_guard: {guarded.reason}",

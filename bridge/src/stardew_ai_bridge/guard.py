@@ -20,6 +20,24 @@ NPC_ACTION_MODE = os.environ.get("STARDEW_AI_NPC_ACTION", "").strip().lower() in
     "on",
 }
 
+
+def _action_mode_active(channel: str | None = None) -> bool:
+    """B 是否对**这一轮对话**生效：开关打开 **且** 当前是当面聊天。
+
+    2026-10-07 用户指出：对话分线上线下两种，而动作是**物理在场**才成立的东西 ——
+    线上说「（挪开一点，把被子往你那边推了推）」本身就荒谬。项目里 `channel`
+    这套机制本来就有（SMAPI 侧 `PrivateChatRosterRules` 按 NPC 是否在场自动选
+    `face_to_face` / `remote`），prompt 里也早有分渠道指令
+    （`_CHANNEL_INSTRUCTIONS`：「远程…不要写成已经见面」）。B 却只看了环境变量，
+    对两种渠道一视同仁 —— 这是疏漏，现在补上。
+
+    `channel` 为 `None` 或空串时**保守关闭**。理由是不对称的：线上误写动作会直接
+    破坏「不假装碰面」这条既有约束（评测里 20+ 条 remote 用例专门守它），
+    而当面少写一个动作只是少一层表达，不构成错误。
+    """
+
+    return NPC_ACTION_MODE and channel == "face_to_face"
+
 from .behavior_quality import (
     conversation_lead_anchors,
     conversation_lead_has_new_anchor,
@@ -287,6 +305,7 @@ def reply_exceeds_dialogue_length(
     reply: object,
     *,
     stage: str | None = None,
+    channel: str | None = None,
 ) -> bool:
     """对白是否**明显**超过长度上限 —— 这是**重试的判据**，
     不是截断的判据。
@@ -296,7 +315,8 @@ def reply_exceeds_dialogue_length(
     不要合并。
 
     ``stage`` 只影响阈值取值（见 `_LENGTH_RETRY_THRESHOLD_BY_STAGE`）。
-    传 None 时行为与加这个参数之前完全一致。
+    ``channel`` 只决定动作是否参与长度计算（见 `_action_mode_active`）。
+    两个参数传 None 时行为与加它们之前完全一致。
     """
 
     if not isinstance(reply, str):
@@ -304,7 +324,7 @@ def reply_exceeds_dialogue_length(
     text = reply.strip()
     if not text:
         return False
-    if NPC_ACTION_MODE:
+    if _action_mode_active(channel):
         # 2026-10-07 B：**括号里的动作不算对白长度**。
         #
         # 依据是 37 条首答的实测（`_len_calc.py`，重试前文本，探针挂在
@@ -677,7 +697,7 @@ class ResponseGuard:
     def __init__(self, max_chars: int = 1000) -> None:
         self.max_chars = max(1, int(max_chars))
 
-    def check(self, reply: object) -> GuardResult:
+    def check(self, reply: object, *, channel: str | None = None) -> GuardResult:
         try:
             if not isinstance(reply, str):
                 return GuardResult(False, "non_text", "")
@@ -688,7 +708,7 @@ class ResponseGuard:
                 return GuardResult(False, "prompt_leakage", "")
             if self._state_modification.search(text):
                 return GuardResult(False, "state_modification", "")
-            format_issue = self.format_issue(text)
+            format_issue = self.format_issue(text, channel=channel)
             if format_issue:
                 if format_issue != "leading_punctuation":
                     return GuardResult(False, f"format_{format_issue}", "")
@@ -699,7 +719,7 @@ class ResponseGuard:
                 text = self.strip_leading_punctuation(text)
                 if not text:
                     return GuardResult(False, "empty", "")
-                remaining = self.format_issue(text)
+                remaining = self.format_issue(text, channel=channel)
                 if remaining:
                     return GuardResult(False, f"format_{remaining}", "")
             text = self.strip_reply_quotes(text)
@@ -712,8 +732,11 @@ class ResponseGuard:
             return GuardResult(False, "guard_error", "")
 
     @classmethod
-    def format_issue(cls, reply: object) -> str | None:
-        """识别需要向模型重试一次的轻量输出格式噪声。"""
+    def format_issue(cls, reply: object, *, channel: str | None = None) -> str | None:
+        """识别需要向模型重试一次的轻量输出格式噪声。
+
+        ``channel`` 只影响括号动作的放行（见 `_action_mode_active`）。
+        """
 
         if not isinstance(reply, str):
             return None
@@ -735,7 +758,7 @@ class ResponseGuard:
         # 代价是判死 ⇒ 重试 ⇒ 重试仍不行就退化成兜底回复，比读到一句旁白更糟。
         # 复述玩家的问题交给 prompt 侧的正面规则（`_NPC_ACTION_CONTRACT`）。
         if cls._stage_direction.search(text):
-            if not NPC_ACTION_MODE or cls._stage_direction_wrapped.search(text):
+            if not _action_mode_active(channel) or cls._stage_direction_wrapped.search(text):
                 return "stage_direction"
         # 排在 stage_direction 之后：同一条既带括号又带「玩家」时，先按括号重试，
         # 模型对「去掉括号」的理解比「别说玩家」更直接。
@@ -1513,12 +1536,13 @@ def _retry_quality_key(
     reply: object,
     *,
     stage: str | None = None,
+    channel: str | None = None,
 ) -> tuple[int, ...]:
     """硬约束优先，爱意强度次之，轻微语气问题最后处理。"""
 
     format_clean = int(
         isinstance(reply, str)
-        and ResponseGuard.format_issue(reply) is None
+        and ResponseGuard.format_issue(reply, channel=channel) is None
         and not ResponseGuard.is_topic_prompt_echo(reply)
     )
     close_clean = int(not _reopens_after_player_close(prompt, reply))
@@ -1545,7 +1569,9 @@ def _retry_quality_key(
         # `best` 会保留超长的那条，重试就白做了（与 2026-09-24
         # 粒度那次同形）。阈值必须与触发判据同源，否则按阶段放宽后
         # 会出现「触发了重试、择优时却仍按旧阈值判长度」的口径分叉。
-        and not reply_exceeds_dialogue_length(reply, stage=stage)
+        and not reply_exceeds_dialogue_length(
+            reply, stage=stage, channel=channel
+        )
     )
     variation_clean = int(not _repeats_personal_affection_shape(prompt, reply))
     event_gate_clean = int(not _violates_event_gate(prompt, reply))
@@ -1613,6 +1639,7 @@ def retry_for_format_noise(
     skip: bool = False,
     max_retries: int | None = None,
     stage: str | None = None,
+    channel: str | None = None,
 ) -> ProviderResult:
     """对真实上游做有限格式重试，供 Bridge 和评测共用。
 
@@ -1620,7 +1647,8 @@ def retry_for_format_noise(
     原有的按问题类型限额行为。
 
     ``stage`` 只用于按阶段取长度阈值（`parent` 放宽到 90，其余仍是 68）。
-    **默认 None ⇒ 不传就是改动前的行为**，所以既有调用方与测试替身
+    ``channel`` 只用于决定动作是否参与长度计算与放行（见 `_action_mode_active`）。
+    **两个参数默认 None ⇒ 不传就是改动前的行为**，所以既有调用方与测试替身
     无需一起改。
     """
 
@@ -1672,7 +1700,7 @@ def retry_for_format_noise(
     # 不同问题可能交替出现（例如格式噪声修掉后又变回冷回复）；
     # 总预算要足够让各自的有限重试完成，但每类问题仍受 retry_limit 限制。
     for _ in range(5):
-        issue = ResponseGuard.format_issue(current.reply)
+        issue = ResponseGuard.format_issue(current.reply, channel=channel)
         retry_kind = "format"
         retry_content = FORMAT_RETRY_CONTENT
         missing_personal_affection = _missing_proactive_affection(prompt, current.reply)
@@ -1787,7 +1815,7 @@ def retry_for_format_noise(
         # 排在语气粒度之后：两者都是「这一轮自己就带得太多」，
         # 但粒度只影响语气，长度会直接让玩家看到一大段。
         elif issue is None and reply_exceeds_dialogue_length(
-            current.reply, stage=stage
+            current.reply, stage=stage, channel=channel
         ):
             issue = "over_length"
             retry_kind = "length"
@@ -1927,8 +1955,10 @@ def retry_for_format_noise(
             }
         )
         improved_this_round = _retry_quality_key(
-            prompt, current.reply, stage=stage
-        ) > _retry_quality_key(prompt, best.reply, stage=stage)
+            prompt, current.reply, stage=stage, channel=channel
+        ) > _retry_quality_key(
+            prompt, best.reply, stage=stage, channel=channel
+        )
         if improved_this_round:
             best = current
         any_retry_improved = bool(any_retry_improved) or improved_this_round
@@ -2091,5 +2121,7 @@ def _prompt_assistant_replies(prompt: list[dict[str, str]]) -> list[str]:
     return replies
 
 
-def guard_response(reply: object, max_chars: int = 1000) -> GuardResult:
-    return ResponseGuard(max_chars=max_chars).check(reply)
+def guard_response(
+    reply: object, max_chars: int = 1000, *, channel: str | None = None
+) -> GuardResult:
+    return ResponseGuard(max_chars=max_chars).check(reply, channel=channel)

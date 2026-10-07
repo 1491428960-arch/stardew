@@ -1973,7 +1973,10 @@ def test_high_stage_prompt_projects_one_role_move_instead_of_a_full_script(
     lead_text = lead["content"]
     fingerprint = stage_policy["voiceFingerprint"]
 
-    assert "角色自己的态度或反应就写在台词里" in stage_text
+    # 措辞随动作开关变化（关闭态「…就写在台词里」，当面打开态「…写在台词里，
+    # 动作写成客观片段」），只钉「表达预算里有这条」这个意图，不钉虚词。
+    assert "角色自己的态度或反应" in stage_text
+    assert "写在台词里" in stage_text
     assert "不要强行同时解释、表达情绪、追问和安排" in stage_text
     assert fingerprint in stage_text
     assert "角色自己的态度或反应就写在台词里" in lead_text
