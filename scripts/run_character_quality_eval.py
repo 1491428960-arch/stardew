@@ -46,6 +46,7 @@ from stardew_ai_bridge.models import (  # noqa: E402
 )
 from stardew_ai_bridge.profile_index import ProfileIndexStore  # noqa: E402
 from stardew_ai_bridge.prompts import ContextBuilder, PromptBuilder  # noqa: E402
+from stardew_ai_bridge import guard as guard_module  # noqa: E402
 from stardew_ai_bridge.personas import canonical_npc_id  # noqa: E402
 from stardew_ai_bridge.relationship_world import (  # noqa: E402
     project_relationship_context,
@@ -886,11 +887,14 @@ def run_evaluation(
             if provider != "fake":
                 if evaluation_budget.max_npc_retries is None:
                     # 兼容既有调用方和测试替身：未显式限制时保持旧的三参数契约。
+                    # `channel` 决定动作放行是否生效，必须与线上同源；
+                    # 不传则命中保守默认（关闭），量到的是 B 之前的行为。
                     result = retry_for_format_noise(
                         result,
                         messages,
                         generate_attempt,
                         stage=case.relationship_stage,
+                        channel=case.channel,
                     )
                 else:
                     result = retry_for_format_noise(
@@ -899,6 +903,7 @@ def run_evaluation(
                         generate_attempt,
                         max_retries=evaluation_budget.max_npc_retries,
                         stage=case.relationship_stage,
+                        channel=case.channel,
                     )
             turn_request_count = npc_request_count - npc_requests_before
             turn_retry_count = max(0, turn_request_count - 1)
@@ -915,7 +920,11 @@ def run_evaluation(
                 history=conversation_history,
                 player_input=actual_message,
             )
-            format_issue = ResponseGuard.format_issue(result.reply)
+            # 评分必须与线上同口径：`face_to_face` 用例要按放行后的判据打分，
+            # 否则会把 NPC 合法的动作误判成 `format_noise` 并扣掉这一轮。
+            format_issue = ResponseGuard.format_issue(
+                result.reply, channel=case.channel
+            )
             if format_issue:
                 score["tags"] = {
                     *score.get("tags", set()),
@@ -1500,6 +1509,10 @@ def run_evaluation(
     )
     summary: dict[str, object] = {
         "schemaVersion": 2,
+        # 动作开关（B）由环境变量 `STARDEW_AI_NPC_ACTION` 控制，**评测口径依赖它**：
+        # 关闭时 `channel` 参数一律不生效，量到的是 B 之前的行为。不记下来就
+        # 无法判断这批数据属于哪种口径。
+        "npcActionMode": bool(guard_module.NPC_ACTION_MODE),
         "suite": normalized_suite,
         "caseCount": len(selected_cases),
         "processedCaseCount": len(records),
