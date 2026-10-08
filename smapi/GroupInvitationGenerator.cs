@@ -25,6 +25,21 @@ public sealed class GroupInvitationGenerator
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        // dev 造的卡（Source = "dev"）是验收工具，**不参与生成器的任何历史判定** ——
+        // 去重、主题冷却、一次性主题耗尽、「上一张是几人」，一处都不能看见它。
+        // 否则按一下 Ctrl+Shift+F9 就会改变这个存档后面会自然长出什么。
+        //
+        // 在这一处滤掉，而不是在每个判定点各写一遍 `!IsDevAuthored(...)`：
+        // 判定点有三处（L56 的 lastParticipantCount、L71 的 isRecentDuplicate、
+        // IsThemeUnavailable），漏掉任何一处都是同一种 bug —— dev 卡偷偷吃掉
+        // 玩家那次真正的机会，而且症状只在真机上过几天才显形。
+        context = context with
+        {
+            ExistingInvitations = context.ExistingInvitations
+                .Where(invitation => !IsDevAuthored(invitation))
+                .ToArray(),
+        };
+
         // 只受时间间隔约束：待处理再多也不阻止生成（用户反馈“每个刷了就得清太蠢”）。
         // 不会无限堆积的理由见 GroupInvitationRules.ShouldGenerate 的注释。
         if (!GroupInvitationRules.ShouldGenerate(
@@ -62,7 +77,7 @@ public sealed class GroupInvitationGenerator
                           lastParticipantCount < GroupInvitationRules.MaxParticipants;
                           foreach (var group in EnumerateGroups(candidates, preferThree))
         {
-            foreach (var template in MatchingTemplates(group))
+            foreach (var template in MatchingTemplates(group, context))
             {
                 // 与 `GroupInvitationRules.BuildDuplicateKey` 保持同一种归一化（含模板 ID 小写），
                 // 否则两边算出的键会因大小写不同而判不出重复。
@@ -79,7 +94,7 @@ public sealed class GroupInvitationGenerator
                     continue;
                 }
 
-                return new[] { CreateInvitation(context, WithTeasing(template, group, context), group) };
+                return new[] { CreateInvitation(context, template, group) };
             }
         }
 
@@ -87,26 +102,176 @@ public sealed class GroupInvitationGenerator
     }
 
     /// <summary>
-    /// 为这组人取可用模板。**按需生成**：模板是按「角色 × 共同主题」算出来的，
-    /// 全组合预生成会有 35 万个对象（约 150 MB），对 mod 不可接受。
+    /// 为这组人取可用模板，**并决定这次先聊哪个主题**。
+    ///
+    /// 排序（2026-10-09 改）：
+    /// 1. 在场人数多的优先（三人场更像群聊）；
+    /// 2. 打趣主题在 <see cref="GroupInvitationTemplates.CanTease"/> 成立、且不在冷却期时
+    ///    **排到队首**；
+    /// 3. 其余按**该主题最近一次被用到的天数**升序 —— 最久没聊过的先聊；
+    /// 4. 稳定哈希兜底，避免「所有主题都没用过」时又退化成字母序。
+    ///
+    /// ⚠️ 第 3 条修的是一个**真实缺陷**（用户 2026-10-09 反馈「群聊全是动物」）：
+    /// 此前这里最后是 `ThenBy(TemplateId, Ordinal)` —— 纯字母序，而 `Generate`
+    /// 只取第一张不重复的。`animals` 以 "a" 开头，**永远排第一**，于是存档里
+    /// 连续三张卡全落到「养的动物」。去重闸门也拦不住：键里含参与者组合，
+    /// 换一组人、或从两人换三人，`animals` 立刻重新可用。
+    ///
+    /// **按需生成**：模板是按「角色 × 共同主题」算出来的，全组合预生成会有
+    /// 35 万个对象（约 150 MB），对 mod 不可接受。
     /// </summary>
     private IEnumerable<GroupInvitationTemplate> MatchingTemplates(
-        IReadOnlyList<GroupParticipantCandidate> group)
+        IReadOnlyList<GroupParticipantCandidate> group,
+        GroupInvitationGenerationContext context)
     {
-
         var groupIds = group.Select(candidate => candidate.NpcId).ToArray();
         // 按需生成：模板由「角色 × 共同主题」算出，全组合预生成会有 35 万个对象
         // （约 150 MB），对 mod 不可接受。这里只为当前这组候选算一次。
         var generated = GroupInvitationTemplates.ForGroup(groupIds);
-        return templates
+        var teasingReady = GroupInvitationTemplates.CanTease(
+                groupIds, context.AcceptedPolyamoryNpcIds)
+            && !IsThemeUnavailable(GroupInvitationTemplates.TeasingThemeId, context);
+
+        var candidates = templates
             .Concat(generated)
             .Where(template => template.RequiredParticipants.Count == 0 ||
                 template.RequiredParticipants.All(required =>
                     groupIds.Contains(required, StringComparer.OrdinalIgnoreCase)))
             .GroupBy(template => template.TemplateId, StringComparer.Ordinal)
             .Select(grouping => grouping.First())
+            .ToList();
+
+        if (teasingReady)
+        {
+            candidates.Add(GroupInvitationTemplates.CreateTeasing(
+                groupIds, context.AcceptedPolyamoryNpcIds));
+        }
+
+        return candidates
             .OrderByDescending(template => template.RequiredParticipants.Count)
-            .ThenBy(template => template.TemplateId, StringComparer.Ordinal);
+            .ThenByDescending(template => teasingReady && IsTeasing(template) ? 1 : 0)
+            .ThenBy(template => ThemeLastUsedTotalDays(template, context))
+            .ThenBy(template => StableHash(template.TemplateId))
+            .ToArray();
+    }
+
+    private static bool IsTeasing(GroupInvitationTemplate template) =>
+        string.Equals(
+            ThemeIdOf(template.TemplateId),
+            GroupInvitationTemplates.TeasingThemeId,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 该主题在已有邀约里**最近一次**出现的总天数；从没出现过返回
+    /// <see cref="int.MinValue"/>，于是升序排在最先 —— 这就是「最久没聊过的先聊」。
+    /// </summary>
+    private static int ThemeLastUsedTotalDays(
+        GroupInvitationTemplate template,
+        GroupInvitationGenerationContext context)
+    {
+        var themeId = ThemeIdOf(template.TemplateId);
+        return themeId.Length == 0
+            ? int.MinValue
+            : LastUsedTotalDays(themeId, context) ?? int.MinValue;
+    }
+
+    /// <summary>
+    /// 该主题现在还能不能生成。
+    ///
+    /// 分两类：
+    ///
+    /// ① **一次性主题**（<see cref="GroupInvitationTemplates.OneShotThemeIds"/>）：
+    ///    自然来过一次就**永久出局**。曾经的实现是「按
+    ///    <see cref="GroupInvitationRules.ExpirationDays"/> 冷却 7 天」，2026-10-09
+    ///    用户判断「多次来真的很无聊」，于是从冷却语义改成耗尽语义。
+    ///    判据只看自然生成的历史，dev 入口造的卡不算 —— 见 <see cref="IsDevAuthored"/>。
+    ///
+    /// ② 其余主题：仍按 <see cref="GroupInvitationRules.ExpirationDays"/> 冷却 ——
+    ///    与「邀约卡的生命周期」取同一个数，语义一致：一张卡还看得见的时候不会再生成第二张。
+    /// </summary>
+    private static bool IsThemeUnavailable(
+        string themeId,
+        GroupInvitationGenerationContext context)
+    {
+        if (GroupInvitationTemplates.OneShotThemeIds.Contains(themeId))
+        {
+            // ⚠ 这里**不能**复用 LastUsedTotalDays：它的语义是「最近一次是多久以前」，
+            // 而过期的卡并不会从 ExistingInvitations 里消失
+            // （`ExpireInvitations` 只改 Status，不删记录），
+            // 所以「存在过」和「最近一次」是两件事，必须分开表达。
+            //
+            // 这里不必再判一次 dev 卡：Generate 入口已经把 Source = "dev" 的记录
+            // 整个滤掉了，能传到这里的历史天然只有自然生成的那些。
+            return context.ExistingInvitations.Any(invitation => string.Equals(
+                ThemeIdOf(invitation.TemplateId),
+                themeId,
+                StringComparison.OrdinalIgnoreCase));
+        }
+
+        var last = LastUsedTotalDays(themeId, context);
+        return last.HasValue
+            && context.CurrentTotalDays - last.Value < GroupInvitationRules.ExpirationDays;
+    }
+
+    /// <summary>
+    /// 这张卡是不是开发入口（Ctrl+Shift+F9 / <c>ainpc_invite</c>）造的。
+    ///
+    /// dev 卡不参与「一次性主题是否用过」的判定 —— 它是验收工具，
+    /// 不该吃掉玩家这档真正的那一次机会。
+    /// </summary>
+    private static bool IsDevAuthored(GroupDialogueInvitationRecord invitation) =>
+        string.Equals(
+            invitation.Source,
+            GroupInvitationRules.DevSource,
+            StringComparison.OrdinalIgnoreCase);
+
+    private static int? LastUsedTotalDays(
+        string themeId,
+        GroupInvitationGenerationContext context)
+    {
+        return context.ExistingInvitations
+            .Where(invitation => string.Equals(
+                ThemeIdOf(invitation.TemplateId), themeId, StringComparison.OrdinalIgnoreCase))
+            .Select(invitation => (int?)invitation.CreatedTotalDays)
+            .Max();
+    }
+
+    /// <summary>
+    /// 从 `"{themeId}:{groupKey}"` 取主题前缀。旧格式（不含冒号）返回空串，
+    /// 于是它既不参与轮换、也不会被误判成某个主题。
+    /// </summary>
+    private static string ThemeIdOf(string? templateId)
+    {
+        if (string.IsNullOrWhiteSpace(templateId))
+        {
+            return string.Empty;
+        }
+
+        var id = templateId.Trim();
+        var separator = id.IndexOf(':');
+        return separator > 0 ? id[..separator] : string.Empty;
+    }
+
+    /// <summary>
+    /// 确定性哈希，只用来在「主题最近使用天数全部并列」时打散顺序
+    /// （全新存档里所有主题都是 <see cref="int.MinValue"/>，不比这一步就会退回字母序）。
+    ///
+    /// **不能用 `string.GetHashCode`** —— .NET 的字符串哈希默认逐进程随机化，
+    /// 会让同一份存档在不同启动之间选出不同主题，破坏代码里反复强调的
+    /// 「不引入随机数，生成结果可测、可复现」。
+    /// </summary>
+    private static int StableHash(string value)
+    {
+        unchecked
+        {
+            var hash = 17;
+            foreach (var ch in value)
+            {
+                hash = (hash * 31) + ch;
+            }
+
+            return hash & 0x7FFFFFFF;
+        }
     }
 
     /// <summary>
@@ -166,41 +331,48 @@ public sealed class GroupInvitationGenerator
     }
 
     /// <summary>
-    /// 这一组里**至少两人**处于已接受的多元关系时，给选中的那张模板追加一段打趣许可。
+    /// 开发用：**绕开冷却与去重**，直接为指定这组人造一张打趣卡。
     ///
-    /// 为什么是「追加引导」而不是「新增一个打趣主题」（2026-10-05，用户定 A 路线）：
-    /// - 丙的原话是把这个作为打趣**加入**群聊话题 —— 是加料，不是换成「这次聊打趣」；
-    /// - 新增主题会掉进排序问题：<see cref="MatchingTemplates"/> 最后按 TemplateId
-    ///   字母序决定选中谁（<c>Generate</c> 只取第一张不重复的），而 `teasing` 夹在
-    ///   25 个主题的中后段，等于几乎永远轮不到；若为它插队，又会让它每次抢占、
-    ///   别的话题永远轮不到 —— 两头都错。
-    /// 加料则完全不碰话题选择逻辑，回归风险为零。
+    /// 存在理由（2026-10-09）：真机上要看到一张新打趣卡，得同时等过
+    /// <see cref="GroupInvitationRules.ExpirationDays"/>（7 天）冷却、每
+    /// <see cref="GroupInvitationRules.GenerationIntervalDays"/> 天一轮的生成节奏、
+    /// 以及那一轮恰好挑中 ≥2 位已接受者 —— 三道闸门叠加，改一次措辞要等一周才能验一次。
+    /// 这个入口把「验措辞」和「等生成」解耦，而且**不动任何冷却参数**。
+    ///
+    /// 走的是与正式路径同一个 <see cref="CreateInvitation"/>，因此 Topic / Title /
+    /// Guidance / Expires* 与自然生成的卡逐字段一致 —— 验的就是真东西。
+    /// `group` 由调用方给定：ModEntry 那边能拿到 <c>Game1</c> 取本地化显示名，这里拿不到。
     /// </summary>
-    private static GroupInvitationTemplate WithTeasing(
-        GroupInvitationTemplate template,
-        IReadOnlyList<GroupParticipantCandidate> group,
-        GroupInvitationGenerationContext context)
+    public IReadOnlyList<GroupDialogueInvitationRecord> GenerateForcedTeasing(
+        int currentTotalDays,
+        string currentDateLabel,
+        IReadOnlyList<GroupParticipantCandidate> group)
     {
-        var clause = GroupInvitationTemplates.TeasingClause(
-            group.Select(candidate => candidate.NpcId).ToArray(),
-            context.AcceptedPolyamoryNpcIds);
-        if (clause is null)
-        {
-            return template;
-        }
-
-        // 先给打趣许可留出位置再截引导：两者的总长必须落在 Bridge 的
-        // `max_length=500` 以内，实测最坏的一条模板已有 430 字，直接拼接会 422。
-        return template with
-        {
-            Guidance = GroupInvitationTemplates.ClampGuidance(template.Guidance, clause.Length) + clause,
-        };
+        ArgumentNullException.ThrowIfNull(group);
+        var groupIds = group.Select(candidate => candidate.NpcId).ToArray();
+        var template = GroupInvitationTemplates.CreateTeasing(groupIds, groupIds);
+        // 空记录表 + 空 RecentTopicKeys + 空 lastCreated ⇒ 冷却与去重两道闸门自然失效，
+        // 而不是靠一个 `ignoreCooldown` 开关去旁路判断逻辑（后者会让 dev 路径
+        // 与正式路径的差异随时间漂移）。
+        var context = new GroupInvitationGenerationContext(
+            currentTotalDays,
+            currentDateLabel,
+            group,
+            Array.Empty<GroupDialogueInvitationRecord>(),
+            Array.Empty<string>(),
+            null,
+            groupIds);
+        // Source 换成 dev：卡片其余字段与自然生成逐项一致，但生成器判断
+        // 「一次性主题是否用过」时会跳过它 —— 按 Ctrl+Shift+F9 不该消耗掉
+        // 玩家这档真正的那一次机会（见 GroupInvitationTemplates.OneShotThemeIds）。
+        return new[] { CreateInvitation(context, template, group, GroupInvitationRules.DevSource) };
     }
 
     private static GroupDialogueInvitationRecord CreateInvitation(
         GroupInvitationGenerationContext context,
         GroupInvitationTemplate template,
-        IReadOnlyList<GroupParticipantCandidate> group)
+        IReadOnlyList<GroupParticipantCandidate> group,
+        string? sourceOverride = null)
     {
         var pairKey = GroupInvitationRules.BuildPairKey(group.Select(candidate => candidate.NpcId));
         return new GroupDialogueInvitationRecord
@@ -216,7 +388,9 @@ public sealed class GroupInvitationGenerator
             ExpiresOn = $"day {context.CurrentTotalDays + GroupInvitationRules.ExpirationDays}",
             CreatedTotalDays = context.CurrentTotalDays,
             ExpiresTotalDays = context.CurrentTotalDays + GroupInvitationRules.ExpirationDays,
-            Source = template.Source,
+            // dev 卡走同一个入口、只换来源标记：卡片其余字段与自然生成逐项一致，
+            // 这样它才既是「真卡」又不会被算进一次性主题的历史。
+            Source = sourceOverride ?? template.Source,
             Status = GroupInvitationStatus.Unread,
         };
     }

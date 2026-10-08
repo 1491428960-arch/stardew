@@ -69,7 +69,9 @@ public sealed class GroupDialogueCoordinatorTests
         coordinator.OnDayStarted();
 
         var invitation = Assert.Single(store.State.GroupDialogueInvitations);
-        Assert.Contains("打趣", invitation.Guidance);
+        // 打趣现在是**主题**（2026-10-09），所以断言落在 TemplateId 前缀上 ——
+        // 比 `Contains("打趣", Guidance)` 强：它证明真的换了话题，而不只是加了段附注。
+        Assert.StartsWith(GroupInvitationTemplates.TeasingThemeId + ":", invitation.TemplateId);
     }
 
     [Fact]
@@ -92,6 +94,8 @@ public sealed class GroupDialogueCoordinatorTests
         coordinator.OnDayStarted();
 
         var invitation = Assert.Single(store.State.GroupDialogueInvitations);
+        Assert.False(invitation.TemplateId.StartsWith(
+            GroupInvitationTemplates.TeasingThemeId + ":"));
         Assert.DoesNotContain("打趣", invitation.Guidance);
     }
 }

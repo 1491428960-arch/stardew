@@ -35,7 +35,24 @@ public sealed class ModEntry : Mod
     private static readonly KeybindList SampleHistoryClearKey =
         new(new Keybind(SButton.LeftControl, SButton.F9));
 
+    /// <summary>
+    /// 开发用：造一张打趣邀约卡（2026-10-09）。
+    ///
+    /// 为什么要有它：真机上看到一张**新**打趣卡要同时等过三道闸门 ——
+    /// <see cref="GroupInvitationRules.ExpirationDays"/>（7 天）主题冷却、
+    /// <see cref="GroupInvitationRules.GenerationIntervalDays"/>（2 天）生成节奏、
+    /// 以及那一轮恰好挑中 ≥2 位已接受者。改一次措辞要等一周才能验一次，改不动。
+    /// 这个入口把「验措辞」和「等生成」解耦，**而且不动任何冷却参数**。
+    ///
+    /// 用 Ctrl+Shift+F9：F9 是群聊、Ctrl+F9 是清示例记录，带 Shift 的三键组合是空位。
+    /// 同 <see cref="SampleHistoryKey"/> 一样写死、不进 config —— 验收工具不该出现在
+    /// 玩家的配置面板里，而误触会把一张人造卡写进他自己的存档。
+    /// </summary>
+    private static readonly KeybindList TeasingInviteKey =
+        new(new Keybind(SButton.LeftControl, SButton.LeftShift, SButton.F9));
+
     private const string SampleHistoryCommand = "ainpc_sample";
+    private const string TeasingInviteCommand = "ainpc_invite";
     private readonly StoryStateStore storyStateStore = new();
     private readonly ShareFriendshipLedger shareFriendshipLedger = new();
     private readonly EventAuditObserver eventAuditObserver = new();
@@ -132,6 +149,12 @@ public sealed class ModEntry : Mod
             "开发用：往 F8 回看档案注入示例聊天记录（只进内存，玩家保存后才随存档落盘）。"
                 + $"用法：{SampleHistoryCommand} [inject|stress [npcId]|clear|status]，不带参数等于 inject。",
             OnSampleHistoryCommand);
+        helper.ConsoleCommands.Add(
+            TeasingInviteCommand,
+            "开发用：无视冷却与生成节奏，直接造一张「打趣」群聊邀约卡塞进队列"
+                + "（⚠ 是正常卡：会随存档落盘，并占掉打趣主题的 7 天冷却）。"
+                + $"用法：{TeasingInviteCommand} [npcId...]；不带参数时自动取已接受对象。",
+            OnTeasingInviteCommand);
         helper.Events.GameLoop.UpdateTicked += faceToFaceCoordinator.OnUpdateTicked;
         helper.Events.Player.Warped += OnPlayerWarped;
         helper.Events.Display.MenuChanged += faceToFaceCoordinator.OnMenuChanged;
@@ -983,6 +1006,15 @@ public sealed class ModEntry : Mod
         // 示例记录入口放在最前面：这三组键都带 Ctrl，命中后要把 F8 / F9 吃掉，
         // 免得同一次按键又去开对话或群聊面板。先查更具体的 Ctrl+Shift+F8，再查 Ctrl+F8
         // —— 前者的按键集合是后者的超集，反过来的话压力注入永远轮不到。
+        // Ctrl+Shift+F9：造一张打趣邀约卡。必须先于下面 F9 的群聊检查，并 Suppress 掉 F9，
+        // 否则一次按键既造卡又开面板。
+        if (TeasingInviteKey.JustPressed())
+        {
+            Helper.Input.Suppress(e.Button);
+            InjectTeasingInvitation();
+            return;
+        }
+
         if (SampleHistoryStressKey.JustPressed())
         {
             Helper.Input.Suppress(e.Button);
@@ -1328,6 +1360,76 @@ public sealed class ModEntry : Mod
                     LogLevel.Info);
                 break;
         }
+    }
+
+    /// <summary>控制台命令 <c>ainpc_invite</c> 的分发：与 Ctrl+Shift+F9 共用下面那个方法。</summary>
+    private void OnTeasingInviteCommand(string command, string[] args)
+    {
+        _ = command;
+        InjectTeasingInvitation(args.Length == 0 ? null : args);
+    }
+
+    /// <summary>
+    /// 开发用：造一张打趣邀约卡（Ctrl+Shift+F9 / 控制台 <c>ainpc_invite</c>）。
+    ///
+    /// 默认参与者是**存档里已接受「玩家有多位亲密对象」的角色**的前
+    /// <see cref="GroupInvitationRules.MaxParticipants"/> 位 —— 这正是真实打趣卡的人群来源
+    /// （<see cref="GroupDialogueCoordinator.OnDayStarted"/> 用的是同一份
+    /// <c>Mediations</c> 名单）。也可以显式给 npcId 覆盖，用于验特定组合。
+    ///
+    /// ⚠ 造出来的是一张**正常卡**：会随存档落盘，也会占掉打趣主题的 7 天冷却。
+    /// 这是「验的就是真东西」的代价 —— 它走的是与自然生成同一个
+    /// <c>GroupInvitationGenerator.CreateInvitation</c>，字段逐项一致。
+    /// </summary>
+    private void InjectTeasingInvitation(string[]? explicitNpcIds = null)
+    {
+        if (groupDialogueCoordinator is null || !Context.IsWorldReady)
+        {
+            var reason = groupDialogueCoordinator is null ? "对话功能未开启" : "还没进入存档";
+            Monitor.Log($"[StardewAI.Invite] 未造卡：{reason}。", LogLevel.Warn);
+            NotifyPlayer($"未造打趣卡：{reason}");
+            return;
+        }
+
+        var npcIds = explicitNpcIds is { Length: > 0 }
+            ? explicitNpcIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .Take(GroupInvitationRules.MaxParticipants)
+                .ToArray()
+            : storyStateStore.State.Mediations
+                .Where(mediation => string.Equals(
+                    mediation.Outcome, "accepted", StringComparison.OrdinalIgnoreCase))
+                .Select(mediation => mediation.NpcId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(GroupInvitationRules.MaxParticipants)
+                .ToArray();
+
+        if (npcIds.Length < GroupInvitationRules.MinParticipants)
+        {
+            var message =
+                $"已接受对象只有 {npcIds.Length} 位，打趣至少要 {GroupInvitationRules.MinParticipants} 位"
+                + $"（可显式指定：{TeasingInviteCommand} Abigail Alex Andy）";
+            Monitor.Log($"[StardewAI.Invite] 未造卡：{message}。", LogLevel.Warn);
+            NotifyPlayer($"未造打趣卡：{message}");
+            return;
+        }
+
+        // 显示名走游戏本地化名 —— 否则卡片列表里会一半中文一半英文。
+        var group = npcIds
+            .Select(npcId => new GroupParticipantCandidate(
+                npcId,
+                Game1.getCharacterFromName(npcId)?.displayName ?? npcId,
+                HasFriendshipRecord: true))
+            .ToArray();
+        var summary = groupDialogueCoordinator.TryInjectTeasingInvitation(group);
+        Monitor.Log(
+            $"[StardewAI.Invite] {summary}。"
+                + "⚠ 这是一张正常卡：会随存档落盘，并占掉打趣主题的 7 天冷却；"
+                + "按 F9 打开面板就能看到它。",
+            LogLevel.Info);
+        NotifyPlayer(
+            $"已造打趣卡：按 F9 查看（{string.Join("/", group.Select(item => item.DisplayName))}）");
     }
 
     /// <summary>

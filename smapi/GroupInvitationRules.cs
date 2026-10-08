@@ -31,11 +31,30 @@ public static class GroupInvitationRules
         "social-perspective",
     };
 
+    /// <summary>
+    /// 开发用入口（Ctrl+Shift+F9 / 控制台 <c>ainpc_invite</c>）造出来的邀约卡。
+    ///
+    /// 它**必须是合法来源**：<see cref="StoryStateValidation"/> 会按白名单校验，
+    /// 不在名单里的卡会在**存档时被静默丢弃** —— 玩家按 F9 看得见、存个档回来就没了，
+    /// 只会被当成 bug。
+    ///
+    /// 但生成器判断「一次性主题是否已经用过」时会**跳过**它：dev 造的卡不算数，
+    /// 否则按一下 Ctrl+Shift+F9 就把玩家这档真正的那次机会消耗掉了。
+    /// </summary>
+    public const string DevSource = "dev";
+
+    /// <summary>
+    /// 合法来源白名单。<c>Ordinal</c>：这些值是存档里的字面量，不做大小写折叠。
+    ///
+    /// ⚠ 往这里加值之前先看 <see cref="StoryStateValidation"/> —— 它拿这份名单校验，
+    /// 漏加就是「卡存不进去」这种静默失败。
+    /// </summary>
     private static readonly HashSet<string> Sources = new(StringComparer.Ordinal)
     {
         "periodic",
         "relationship",
         "story",
+        DevSource,
     };
 
     public static bool IsValidParticipantCount(int count)

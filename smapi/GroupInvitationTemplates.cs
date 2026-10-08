@@ -35,7 +35,7 @@ public static class GroupInvitationTemplates
     /// 整个群聊请求直接 422，玩家看到的是一句「群聊打不开」。
     ///
     /// 实测：两人场最坏的一条（`health:demetrius|linus`）已是 **430 字**，
-    /// 三人场只会更长——所以模板生成与打趣追加都必须在这条线上收敛。
+    /// 三人场只会更长——所以模板生成必须在这条线上收敛。
     /// 留 20 字余量，不贴着 500 走。
     /// </summary>
     public const int MaxGuidanceLength = 480;
@@ -89,7 +89,7 @@ public static class GroupInvitationTemplates
             shared.Add(FallbackThemeId);
         }
 
-        var groupKey = string.Join("|", group.Select(id => id.ToLowerInvariant()));
+        var groupKey = BuildGroupKey(group);
         var templates = new List<GroupInvitationTemplate>();
         foreach (var themeId in shared)
         {
@@ -144,7 +144,10 @@ public static class GroupInvitationTemplates
 
     /// <summary>
     /// 把引导截到 <see cref="MaxGuidanceLength"/> 以内，并预留 <paramref name="reserved"/>
-    /// 字给调用方随后要追加的内容（打趣许可就是这么进来的）。
+    /// 字给调用方随后要追加的内容。
+    ///
+    /// （2026-10-09 起生产路径已无调用方 —— 打趣从「追加到引导末尾」改成了独立主题。
+    /// 参数保留，因为它描述的是截断语义本身，将来要拼接别的内容时不至于重写这里。）
     ///
     /// 只在超限时才动文本，所以现有那些本来就够短的模板**一个字节都不变**。
     /// 截断处补一个省略号：让「这句被截过」在文本里看得见，而不是让模型读到一个
@@ -192,40 +195,81 @@ public static class GroupInvitationTemplates
         return shared;
     }
 
+    /// <summary>情境主题的 ID（不进 <see cref="GroupInvitationThemes.ThemesByNpc"/>）。</summary>
+    public const string TeasingThemeId = "teasing";
+
     /// <summary>
-    /// 「打趣」情境约束（2026-10-05）：**在场至少两位**已接受玩家的多元关系时，
-    /// 返回一段可追加到引导末尾的许可文本；否则返回 null（调用方原样保留模板）。
+    /// **一次性主题**：同一个存档里只该出现一次，来过就永远不再来
+    /// （2026-10-09 用户判断：「打趣当个甜点话题触发一次就够了，多次来真的很无聊」）。
+    ///
+    /// 为什么它是「耗尽」而不是「冷却」：`animals` 那类日常话题可以反复聊，
+    /// 因为信息量在话题本身；打趣的信息量全在「这件事被摆到台面上」的那一下，
+    /// 第二次就只剩重复。重放数据也一致 —— 打趣命中率只有 1/3–1/2，
+    /// 靠的正是意外感。
+    ///
+    /// 判据只看**自然生成**的历史：dev 入口
+    /// （<see cref="GroupInvitationRules.DevSource"/>）造的卡不算数，
+    /// 否则按一下 Ctrl+Shift+F9 就把玩家这档真正的那次机会用掉了。
+    /// </summary>
+    public static readonly IReadOnlySet<string> OneShotThemeIds =
+        new HashSet<string>(StringComparer.Ordinal) { TeasingThemeId };
+
+    /// <summary>
+    /// 「打趣」的**触发判据**（2026-10-05 定，2026-10-09 沿用）：**在场至少两位**
+    /// 已接受玩家的多元关系。
     ///
     /// 判据为什么要求**在场**两位：只有一位时，这句话会变成当着外人的面议论
     /// 不在场者的私事，与 friendship 主题写明的「不提不在场的人的具体私事」直接冲突。
-    ///
-    /// 这段文字是**手编的**，与主题表那条「主题与例句都来自真实对白」的原则不冲突：
-    /// 手编的是**约束**（能说什么、不能说什么），不是台词 —— 原版语料里根本不存在
-    /// 多段亲密关系的场景，没有真实原句可抽，硬要「抽取」只会是伪造。
     /// </summary>
-    public static string? TeasingClause(
+    public static bool CanTease(
         IReadOnlyList<string> group,
         IReadOnlyList<string>? acceptedNpcIds)
     {
         ArgumentNullException.ThrowIfNull(group);
+        return InOnIt(group, acceptedNpcIds).Length >= 2;
+    }
+
+    /// <summary>
+    /// 「打趣」主题的模板（2026-10-09）。**不来自共同主题表，而是情境触发** ——
+    /// 由生成器在 <see cref="CanTease"/> 成立且不在冷却期时注入。
+    ///
+    /// 为什么从「引导末尾的加料」改成「主题本体」（2026-10-09 实测转向）：
+    /// 作为加料，这段文本确实一字不差地进了每一次请求，但模型在 **22 次受控重放里
+    /// 一次都没有采纳**。原因有两层：① 引导在 prompt 里只是与 `instruction` 平级的
+    /// `invitation.guidance` 字段，还被 `scope` 声明成「不是 NPC 已确认的事实」；
+    /// ② 模型真正的锚点是 `topic` —— 观测量到，动物主题的卡进去就真的在聊动物。
+    /// 「让模型看见一段许可」和「让模型把这件事当成主任务」是两回事。
+    /// </summary>
+    public static GroupInvitationTemplate CreateTeasing(
+        IReadOnlyList<string> group,
+        IReadOnlyList<string>? acceptedNpcIds)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        var theme = GroupInvitationThemes.All[TeasingThemeId];
+        var names = string.Join("、", InOnIt(group, acceptedNpcIds));
+        return new GroupInvitationTemplate(
+            $"{TeasingThemeId}:{BuildGroupKey(group)}",
+            theme.Title,
+            theme.Direction,
+            ClampGuidance($"{names} 和玩家在一起这件事，镇上早就不是秘密了。{theme.Guidance}"),
+            "periodic",
+            group);
+    }
+
+    private static string[] InOnIt(IReadOnlyList<string> group, IReadOnlyList<string>? acceptedNpcIds)
+    {
         if (acceptedNpcIds is null || group.Count < 2)
         {
-            return null;
+            return System.Array.Empty<string>();
         }
 
         var accepted = new System.Collections.Generic.HashSet<string>(
             acceptedNpcIds, System.StringComparer.OrdinalIgnoreCase);
-        var inOnIt = group
+        return group
             .Where(id => !string.IsNullOrWhiteSpace(id) && accepted.Contains(id))
             .ToArray();
-        if (inOnIt.Length < 2)
-        {
-            return null;
-        }
-
-        var names = string.Join("、", inOnIt);
-        return $"另外：{names} 和玩家在一起这件事，镇上早就不是秘密了，"
-            + "在场的人可以拿它互相打趣——但只当玩笑：不追问细节、不评判、不替谁表态，"
-            + "**不要宣告任何关系的结论**，也**不要拿不在场的人开玩笑**。";
     }
+
+    private static string BuildGroupKey(IReadOnlyList<string> group) =>
+        string.Join("|", group.Select(id => id.ToLowerInvariant()));
 }

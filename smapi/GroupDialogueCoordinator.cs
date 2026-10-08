@@ -53,7 +53,7 @@ public sealed class GroupDialogueCoordinator
             lastCreatedTotalDays,
             // 已接受「玩家有多位亲密对象」的角色：`EnsureSpouseAcceptance` 在同步婚姻时
             // 写下的 outcome=accepted。把它交给生成器，让「打趣」只在**在场至少两位**
-            // 已接受者时才作为加料出现在邀约引导里。
+            // 已接受者时才成为话题（2026-10-09 前是加在引导末尾的一段许可）。
             storyStateStore.State.Mediations
                 .Where(mediation => string.Equals(
                     mediation.Outcome, "accepted", StringComparison.OrdinalIgnoreCase))
@@ -75,6 +75,40 @@ public sealed class GroupDialogueCoordinator
         {
             GroupDialogueInvitations = invitations.Concat(generated).ToArray(),
         });
+    }
+
+    /// <summary>
+    /// 开发用：无视冷却与生成节奏，直接塞一张打趣卡进队列
+    /// （Ctrl+Shift+F9 / 控制台 <c>ainpc_invite</c>）。
+    ///
+    /// 参与者由调用方给定 —— ModEntry 那边能拿到 <c>Game1</c> 填本地化显示名，
+    /// 而本类只有 provider，拿不到。
+    ///
+    /// ⚠ 造出来的是一张**正常卡**：会随存档落盘，也会占掉打趣主题的 7 天冷却。
+    /// 这正是「验的就是真东西」的代价，不是缺陷。
+    /// </summary>
+    public string TryInjectTeasingInvitation(IReadOnlyList<GroupParticipantCandidate> group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        if (group.Count < GroupInvitationRules.MinParticipants)
+        {
+            return $"参与者只有 {group.Count} 位，打趣至少要 {GroupInvitationRules.MinParticipants} 位";
+        }
+
+        var generated = invitationGenerator.GenerateForcedTeasing(
+            currentTotalDaysProvider(),
+            currentDateLabelProvider(),
+            group);
+        var invitations = storyStateStore.State.GroupDialogueInvitations;
+        storyStateStore.Replace(storyStateStore.State with
+        {
+            GroupDialogueInvitations = invitations.Concat(generated).ToArray(),
+        });
+        var summary =
+            $"已造出打趣卡 {generated[0].InvitationId}；参与者 " +
+            $"{string.Join("/", group.Select(candidate => candidate.NpcId))}";
+        LastDiagnostics = $"dev 注入：{summary}";
+        return summary;
     }
 
     public bool TryOpen()
