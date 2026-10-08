@@ -9779,3 +9779,18 @@ L169 的 `-Command "pwsh -NoProfile -File $launcher"` **没给内层脚本路径
   `"D:\...\StardewModdingAPI.exe" %command%`。
   **教训：同一 key 在配置文件里可多次出现，不能取第一个匹配；解析失败要如实说「解析不到」，
   不能升级成「配置没设」。**
+
+## 2026-10-09 · 环境清理：删除无触发器的死任务 \DSH-Launch-Stardew
+
+背景：该任务建于 2026-09-19，动作是直接起 `StardewModdingAPI.exe`，用途是不经过
+Steam 启动游戏。但它**从来没有触发器**，只能手动 `Start-ScheduledTask`；而 Steam
+启动选项已配好（指向同一个 exe），所以它自 09-20 那次之后就没再被用过。
+
+用户确认后删除。**删除前做过依赖检查**：worktree 与 hub 的可执行脚本
+（`*.ps1` / `*.cmd` / `*.mjs` / `*.js`）零引用。`docs\archive\session-*.md` 里有
+历史留痕，但那只是当时创建过程的会话记录，**不构成依赖** —— 第一遍检查时把归档
+md 也算进去了，误判成「存在引用」，是检查范围写错，不是真有依赖。
+
+删除后与星露谷/Bridge 相关的计划任务只剩两个：
+- `\DS-Bridge`（Running）—— **DeepSeek 自己的** bridge，跑 `.codex\ds_bridge.py`，与星露谷无关
+- `\DSH\StardewBridge`（Ready，触发器 1 个）—— 本轮新配的登录自启
