@@ -36,9 +36,18 @@
 
 - **存档内容**：我能直接读 `Saves\芒种_449912068\`
 - **真实请求日志**：`E:\workspace\.scratch\dialogue-live.jsonl` 记着每一次真实请求的完整 body
-- **Bridge 运行日志**：`E:\workspace\.scratch\bridge-out.log` / `bridge-err.log`
+- **Bridge 运行日志**：`%LOCALAPPDATA%\StardewAI.NPC\logs\bridge-out.log` / `bridge-err.log`
 - **代码与测试**：整个仓库在 `E:\workspace\projects\stardew-ai-npc.worktrees\story-memory\`
 - **是不是已知问题**：`docs/known-limitations.md` 里列了六条
+
+### Bridge 不用你管（2026-10-09 起）
+
+**登录 Windows 后 30 秒，Bridge 会自动起来**（计划任务 `\DSH\StardewBridge`）。
+所以正常流程就是：**开机 → 点 Steam → 玩**，中间没有任何手动步骤。
+
+唯一要留意的：如果遇到「AI 完全不理人」，直接告诉我就行 —— 我会去确认 Bridge 是否活着，
+**这同样不用你动手**。区分方法：Bridge 挂了的表现是 **F8/F9 毫无反应**（连转圈都没有），
+而不是「回复变差」或「内容不对」。
 
 ### 什么描述最没用（反面例子）
 
