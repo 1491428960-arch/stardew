@@ -117,14 +117,36 @@ def test_an_empty_player_message_uses_the_opening_instruction() -> None:
     instruction, messages = _messages("")
 
     assert "第一个发言的人先接玩家" not in instruction
-    assert not any(m.get("role") == "user" for m in messages)
+    _assert_opening_nudge_is_safe(messages)
 
 
 def test_a_whitespace_only_message_also_counts_as_opening() -> None:
     instruction, messages = _messages("   ")
 
     assert "第一个发言的人先接玩家" not in instruction
-    assert not any(m.get("role") == "user" for m in messages)
+    _assert_opening_nudge_is_safe(messages)
+
+
+def _assert_opening_nudge_is_safe(messages: list[dict[str, str]]) -> None:
+    """开场必须给模型一条 user 轮次，而且那条必须**不假定玩家说过话**。
+
+    2026-10-09：这里原先断言的是 `not any(m.get("role") == "user")`，
+    把「不要塞**空**消息」编码成了「不许有任何 user 消息」。
+    实测（同一 prompt 原地重放 8 次，空 message 开场）证明那条过严：
+    messages 里只有 system 时，模型看不到「该回答什么」，
+    首答 7/8 不是合法 JSON —— 64% 把 JSON 包进 ``` 围栏、27% 干脆只吐对白。
+
+    ⚠ 2026-09-20 真正的病根是**空 content**（当时无条件 append 的正是
+    `{"role": "user", "content": ""}`），不是「有 user 轮次」这回事。
+    所以断言收窄成：可以有，但必须是**非空**且**明确声明玩家尚未开口**的旁白。
+    """
+    user_messages = [m for m in messages if m.get("role") == "user"]
+    assert len(user_messages) == 1
+    content = user_messages[0]["content"]
+    assert content.strip()
+    # 不得冒充玩家发言：必须明说玩家还没开口。
+    assert "玩家还没有说话" in content
+    assert content.strip() != ""
 
 
 def test_a_real_player_message_keeps_the_normal_flow() -> None:
@@ -225,8 +247,13 @@ def test_the_invitation_reaches_the_multi_turn_scene_card() -> None:
 
     assert invitation["topic"] == "养的动物"
     assert invitation["guidance"] == "说自己的观察和照料方式。"
-    # 约定必须写明：方向不是已确认的事实
-    assert "不是" in invitation["scope"]
+    # 约定必须写明：方向不是已确认的事实。
+    # 2026-10-09 起这段文案从「陈述这不是事实」改成「命令模型别把它当成事实」
+    # —— scope 是给模型的指令而非描述，后者更准确。所以这里断言
+    # 「否定词 + 事实概念」同在，而不是死锚某一句字面，免得下次改文案又误报。
+    scope = invitation["scope"]
+    assert "不要" in scope
+    assert "事实" in scope
 
 
 def test_no_invitation_means_an_empty_object() -> None:

@@ -980,6 +980,133 @@ def test_parse_multi_turn_payload_still_rejects_invalid_turns_when_memory_presen
         )
 
 
+# ---------------------------------------------------------------------------
+# 2026-10-09：开场首答不是合法 JSON 的解析容错
+# ---------------------------------------------------------------------------
+# 实测（同一 prompt 原地重放 8 次）：开场首答 7/8 不是合法 JSON ——
+# 64% 把 JSON 包进 ``` 围栏、27% 干脆只吐对白、9% 轮数越界。
+# 下面锁住「围栏 / 夹带旁白」两类的兜底，以及「纯对白仍须失败」这条不许误伤的边界。
+
+
+def test_parse_multi_turn_payload_unwraps_json_code_fence() -> None:
+    fenced = (
+        "```json\n"
+        + _multi_turn_reply_with_memory(["玩家下周要交一份报告。"])
+        + "\n```"
+    )
+
+    turns, memory = parse_multi_turn_payload(
+        fenced,
+        participant_ids={"Abigail", "Emily"},
+        expected_turn_count=2,
+    )
+
+    assert [turn.speaker_npc_id for turn in turns] == ["Abigail"]
+    assert memory == ["玩家下周要交一份报告。"]
+
+
+def test_parse_multi_turn_payload_unwraps_bare_code_fence() -> None:
+    # 不带语言标签的 ``` 也要认。
+    fenced = "```\n" + _multi_turn_reply_with_memory([]) + "\n```"
+
+    turns, _ = parse_multi_turn_payload(
+        fenced,
+        participant_ids={"Abigail", "Emily"},
+        expected_turn_count=2,
+    )
+
+    assert [turn.speaker_npc_id for turn in turns] == ["Abigail"]
+
+
+def test_parse_multi_turn_payload_extracts_object_between_narration() -> None:
+    # 模型先说了句话、再补 JSON 的形态。
+    noisy = (
+        "好的，这就来：\n"
+        + _multi_turn_reply_with_memory(["玩家下周要交一份报告。"])
+        + "\n就这些。"
+    )
+
+    turns, _ = parse_multi_turn_payload(
+        noisy,
+        participant_ids={"Abigail", "Emily"},
+        expected_turn_count=2,
+    )
+
+    assert [turn.speaker_npc_id for turn in turns] == ["Abigail"]
+
+
+def test_parse_multi_turn_reply_keeps_brace_inside_content_intact() -> None:
+    # 对白正文里带 `}` 时不能被提前截断（括号配平 + 字符串状态机）。
+    reply = json.dumps(
+        {
+            "turns": [
+                {"speakerNpcId": "Abigail", "content": "他说「到此为止}」，然后就走了。"}
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    turns = parse_multi_turn_reply(
+        "```json\n" + reply + "\n```",
+        participant_ids={"Abigail", "Emily"},
+        expected_turn_count=2,
+    )
+
+    assert turns[0].content == "他说「到此为止}」，然后就走了。"
+
+
+def test_parse_multi_turn_payload_still_rejects_pure_dialogue() -> None:
+    # ⚠ 纯对白（压根没吐 JSON）**不能**被兜底悄悄救活 —— 那一类要靠 prompt 侧解决，
+    # 在这里蒙一个发言人只会把 A 的话安到 B 头上，比失败更糟。
+    with pytest.raises(GroupResponseError):
+        parse_multi_turn_payload(
+            "嘿，小灰今早把烤牛排叼到沙发底下吃，跟藏宝似的。你那边的动物也这么精？",
+            participant_ids={"Abigail", "Emily"},
+            expected_turn_count=2,
+        )
+
+
+def test_parse_multi_turn_payload_leaves_plain_json_untouched() -> None:
+    # 原文本来就合法时，兜底路径完全不参与。
+    turns, _ = parse_multi_turn_payload(
+        _multi_turn_reply_with_memory(["玩家下周要交一份报告。"]),
+        participant_ids={"Abigail", "Emily"},
+        expected_turn_count=2,
+    )
+
+    assert [turn.speaker_npc_id for turn in turns] == ["Abigail"]
+
+
+def test_parse_multi_turn_payload_truncates_turn_overflow_keeping_the_head() -> None:
+    # 2026-10-09：模型多给轮次（实测 4 轮 vs 上限 2）时**不再整条拒绝** ——
+    # 多出来的是自然的群聊推进，而整条丢掉正是玩家看到的「无可用回复」。
+    # 保留头部：开场靠「起头 + 话题落地」这两轮，尾部多是收尾寒暄。
+    turns, _ = parse_multi_turn_payload(
+        _multi_turn_reply_with_memory(
+            [],
+            turns=[
+                {"speakerNpcId": "Abigail", "content": "第一轮。"},
+                {"speakerNpcId": "Emily", "content": "第二轮。"},
+                {"speakerNpcId": "Abigail", "content": "第三轮。"},
+            ],
+        ),
+        participant_ids={"Abigail", "Emily"},
+        expected_turn_count=2,
+    )
+
+    assert [turn.content for turn in turns] == ["第一轮。", "第二轮。"]
+
+
+def test_parse_multi_turn_payload_still_rejects_an_empty_turn_list() -> None:
+    # ⚠ 但「一个回合都没有」仍然必须失败 —— 那不是轮数问题，是压根没东西可说。
+    with pytest.raises(GroupResponseError):
+        parse_multi_turn_payload(
+            _multi_turn_reply_with_memory([], turns=[]),
+            participant_ids={"Abigail", "Emily"},
+            expected_turn_count=2,
+        )
+
+
 def test_parse_multi_turn_reply_stays_a_turns_only_entry_point() -> None:
     turns = parse_multi_turn_reply(
         _multi_turn_reply_with_memory(["玩家下周要交一份报告。"]),

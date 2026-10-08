@@ -2740,13 +2740,72 @@ def _opening_prefixes(openings: Iterable[str]) -> list[str]:
             prefix = _opening_prefix_of(candidate)
             if prefix and prefix not in prefixes:
                 prefixes.append(prefix)
-    return prefixes[:4]
+    return [p for p in prefixes if not _is_degenerate_opening_prefix(p)][:4]
+
+
+# 2026-10-08：退化前缀不再进反重复表。
+#
+# 离线复算（`dialogue-live.jsonl`，127 条含 history 的请求，其中真机 10 条）
+# 显示下表里占多数的前缀根本不携带「开场结构」信息，却让判定大范围误伤：
+#
+#   - **纯标点**：「……」在真机里出现 7 次。历史里只要有一条回复以省略号起头
+#     （Shane 这类角色大量如此），任何以「……」开头的回复都会被判 `repeated`
+#     ⇒ **整条回复被丢弃重写**。2026-10-08 实机 22:53:11「（抱住不让她走）」
+#     那一轮，`prefixes == ['（起','……','（侧']`、命中 True，带身体动作的版本
+#     就是这样被换成「……鸡又不会跑。」的。
+#   - **括号旁白**：「（起」4 次、「（肩」3 次、「（侧」2 次、「（站」2 次。
+#     `_opening_prefix_of` 退回 `value[:2]` 时会把左括号一起吃进来，于是前缀比较
+#     的是**身体部位**而不是开场结构——命中面覆盖一切同部位的动作描写。
+#   - **单字词**（「热」32 次、「好」2 次）：一个字撑不起开场结构，却会把所有以
+#     该字起头的回复卷进来。
+#
+# ⚠ **语气颗粒（「嘿」「啊」「嗯」）不在此列，必须保留**：用原样候选去比，
+# `reply_opens_with_marker("嘿，你！", ("嘿",))` 为 True，它抓的是「两条回复都以
+# **同一个**语气词开头」——误伤面限于该语气词本身，远小于上面三类，而抓取能力是
+# 真的。`test_opening_repeat_detection` 与 `test_prompts` 各自钉住了这条行为。
+#
+# 过滤只作用于「表里放什么」，不改判定函数本身：`guard._has_repeated_opening`
+# 与 `reply_opens_with_marker` 一行未动，评测口径不变。代价是短期少拦一些真重复。
+_CJK_OR_ALPHA = re.compile(r"[\u4e00-\u9fffA-Za-z]")
+
+
+def _is_degenerate_opening_prefix(prefix: str) -> bool:
+    """这个前缀是否不携带开场结构信息（口径见上方 2026-10-08 注释）。"""
+
+    if not prefix:
+        return True
+    if not _CJK_OR_ALPHA.search(prefix):
+        return True
+    if prefix.startswith(("（", "(")):
+        return True
+    if strip_leading_speech_particles(prefix) != prefix:
+        return False
+    return len(_CJK_OR_ALPHA.findall(prefix)) == 1
+
+
+# 开场里的前导噪声：括号旁白（动作描写）与其后的停顿标点。
+#
+# 2026-10-08：此前 `_opening_prefix_of` 直接取 `value[:2]`，于是
+# `（侧过脸，蹭了蹭自己肩膀）……查理该饿了` 得到的是 **「（侧」**——左括号被
+# 吃进来，前缀比的是**身体部位**，命中面覆盖一切同部位的动作描写。先剥掉旁白
+# 再取前缀，拿到的才是「查理该饿了」里的内容词，判据也才回到「有没有复用开场」
+# 这个本意上。剥完为空（整条都是旁白）时返回空串，由
+# `_is_degenerate_opening_prefix` 挡在表外。
+#
+# ⚠ 正则要求尾部**至少跟一个标点或空白**，这样「嘿，你！」这类以语气词直起的
+# 开场不会被误剥——它本来就没有前导噪声。
+_LEADING_OPENING_NOISE = re.compile(
+    r"^(?:[（(][^）)]*[）)])*[\s….、，,。！？!?；;:：—\-]+"
+)
 
 
 def _opening_prefix_of(text: str) -> str:
-    """单个开场前缀：优先取「1–3 字 + 标点」的口语颗粒，否则退回前两个字。"""
+    """单个开场前缀：剥掉括号旁白后，优先取「1–3 字 + 标点」的口语颗粒，否则退回前两个字。"""
 
     value = text.strip()
+    if not value:
+        return ""
+    value = _LEADING_OPENING_NOISE.sub("", value)
     if not value:
         return ""
     match = re.match(r"^([\u4e00-\u9fffA-Za-z]{1,3})(?=[，,。！？!?…]|$)", value)

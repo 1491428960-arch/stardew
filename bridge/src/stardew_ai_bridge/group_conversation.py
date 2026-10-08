@@ -43,6 +43,10 @@ _GROUP_NATURAL_CONTRACT = (
     "多数时候直接说事实、动作或短感受。"
 )
 
+# 开场（接受邀约后、玩家一句话都还没说）时补给模型的那条 user 消息。
+# ⚠ 必须是**非空**且**不假定玩家说过话**的旁白 —— 见 build_group_messages 里的注释。
+_GROUP_OPENING_NUDGE = "（玩家还没有说话，你们先聊。）"
+
 # 解析失败只重试一次：把整条多轮结果丢掉太亏，但也不能无限重试。
 _FORMAT_REPAIR_RULE = (
     "上一次输出不是合法 JSON，或者回合数超出了上限。现在只输出一个 JSON 对象："
@@ -232,6 +236,7 @@ def _group_scene_instruction(
     strategy: str,
     turn_count: int | None,
     is_opening: bool = False,
+    topic: str | None = None,
 ) -> str:
     """群聊场景指令。
 
@@ -251,9 +256,19 @@ def _group_scene_instruction(
         if is_opening
         else "第一个发言的人先接玩家，之后由内容和角色决定谁接；"
     )
+    # 2026-10-09：把邀约由头提到 instruction 的**最前面**。
+    # 此前 topic 只是 group_scene JSON 里的一个字段，排在 1500 字格式规则之后，
+    # 而那段规则明写「这些回合不需要推进话题」「允许打岔、突然说起别的事」——
+    # 模型因此有理有据地不聊主题。instruction 是它唯一会逐字读的地方。
+    topic_lead = (
+        f"本次群聊的由头：{topic}。这轮对话要真的围绕这个由头展开，"
+        "不要跑题去聊天气、农活或别处的传闻。"
+        if topic
+        else ""
+    )
     if strategy == "multi_turn":
         limit = turn_budget(turn_count, len(roster_ids))
-        return (
+        return topic_lead + (
             "这是公开线上群聊，channel=remote。像几个熟人同时在群里说话，"
             "不要写成轮流做任务汇报。"
             "自然节奏优先于任何格式要求：长度要参差，可以只有两三个字，也可以连着说两三句，"
@@ -295,7 +310,7 @@ def _group_scene_instruction(
             "每条写成一句简短陈述，例如“玩家说下周要交报告”；"
             "闲聊、寒暄、当轮情绪和 NPC 自己的近况都不要写，没有就省略或给空数组。"
         )
-    return (
+    return topic_lead + (
         "这是公开线上群聊，channel=remote。"
         f"当前策略是 {strategy}，当前发言人只能说 {active_npc_id} 自己的话。"
         + other_rule
@@ -417,6 +432,7 @@ def build_group_messages(
                         turn_count=turn_count,
                         # 玩家消息为空（或纯空白）⇒ 这是开场：NPC 自己起话题。
                         is_opening=not player_message.strip(),
+                        topic=invitation_topic,
                     ),
                     # 2026-09-20 修：这里此前**没有 invitation**，而实际用的正是多轮路径，
                     # 于是邀约的 topic/guidance 根本进不了 prompt —— 模型只知道“这是群聊”，
@@ -426,8 +442,16 @@ def build_group_messages(
                         {
                             "topic": invitation_topic,
                             "guidance": invitation_guidance,
-                            "scope": "这是邀约给出的讨论方向，不是 NPC 已确认的事实、"
-                            "NPC 记忆或未来承诺。",
+                            # 2026-10-09 改：原文是「…不是 NPC 已确认的事实、NPC 记忆或
+                            # 未来承诺。」这句对「聊动物」那类主题无害（聊动物不需要
+                            # "已确认的事实"），但对**依赖关系事实**的主题是致命的：
+                            # 打趣要的全部内容就是「你和玩家在一起这件事」，而 scope
+                            # 先把这件事降级成"不是事实"⇒ 模型回避得完全合理。
+                            # 实测：同一张打趣卡，四种 topic/guidance 写法 4/4 都退化成寒暄。
+                            # 保护意图（别把邀约内容当成记忆或承诺写下去）保留，
+                            # 只把「否定事实」改成「禁止据它推断」。
+                            "scope": "这是本次邀约给出的讨论方向，用来给这轮聊天定题；"
+                            "不要把它当成 NPC 已经知道的事实、既有记忆或做出过的承诺。",
                         }
                         if (invitation_topic or invitation_guidance)
                         else {}
@@ -458,6 +482,18 @@ def build_group_messages(
     )
     if player_message.strip():
         messages.append({"role": "user", "content": player_message})
+    else:
+        # 2026-10-09：开场（接受邀约后）这里原本**完全不发 user 消息**，于是整个
+        # messages 里只有 system —— 模型看不到「该回答什么」，8 次原地重放实测
+        # 7 次首答不是合法 JSON（64% 把 JSON 包进 ``` 围栏、27% 干脆只吐对白）。
+        #
+        # ⚠ 2026-09-20 的教训是「**不要塞空消息**」（当时无条件 append 一条
+        # `content=""`，模型只能凭空猜），不是「不要塞任何消息」。这里补的是
+        # **非空、且明确声明玩家尚未开口**的旁白：既给模型一个必须回应的
+        # user 轮次，又不假定玩家说过任何话，与 `_group_scene_instruction` 里
+        # `is_opening` 的措辞（「玩家还没有说话，请由名单里最自然的那个人先起个头」）
+        # 完全一致，不构成矛盾。
+        messages.append({"role": "user", "content": _GROUP_OPENING_NUDGE})
     return messages
 
 
@@ -732,6 +768,91 @@ def guard_memory_highlights(
     return kept, warnings
 
 
+_FENCE_LANGUAGE_TAGS = frozenset({"", "json", "json5", "js", "javascript"})
+
+
+def _strip_code_fence(text: str) -> str:
+    """剥掉包裹 JSON 的 markdown 代码围栏。
+
+    2026-10-09 实测：**开场**（messages 里只有 system、没有 user）时，云侧模型
+    有 64% 的概率把本该裸输出的 JSON 包进 ` ```json … ``` `。围栏对人眼毫无
+    歧义，对 `json.loads` 却是致命的 —— 而 `_FORMAT_REPAIR_RULE` 早已明写
+    「不要 Markdown 代码块」，重试仍有 57% 救不回来，说明**光靠提示词约束不住**。
+
+    这里做**无损**剥离：剥完能解析出合法对象，就等价于模型当初没加围栏。
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    body = stripped[3:]
+    newline = body.find("\n")
+    if newline < 0:
+        # 没有换行 ⇒ 不是完整围栏（可能是 `` ` `` 开头的普通文本），原样返回。
+        return stripped
+    if body[:newline].strip().casefold() not in _FENCE_LANGUAGE_TAGS:
+        return stripped
+    body = body[newline + 1 :].rstrip()
+    if body.endswith("```"):
+        body = body[:-3]
+    return body.strip()
+
+
+def _extract_json_object(text: str) -> str | None:
+    """从 JSON 前后夹带的旁白或解释里，抠出第一个完整的 `{…}`。
+
+    用括号配平 + 字符串状态机而不是正则，避免正文里的 `}` 提前截断。
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _load_multi_turn_json(reply: object) -> object:
+    """解析模型回复；裸 JSON 走原路，**只有失败时**才尝试剥围栏 / 抠对象。
+
+    ⚠ 兜底只在 `json.loads(reply)` 抛错后触发 —— 原文本来就合法时行为完全不变。
+    不猜、不补、不修内容，只做「把 JSON 从包装里取出来」这一件事。
+    ⚠ 纯对白（压根没吐 JSON）仍然会失败，那一类要靠 prompt 侧解决。
+    """
+    try:
+        return json.loads(reply)
+    except (TypeError, json.JSONDecodeError):
+        pass
+
+    if not isinstance(reply, str):
+        raise GroupResponseError("multi_turn 回复不是有效 JSON")
+
+    candidate = _extract_json_object(_strip_code_fence(reply))
+    if candidate is None:
+        raise GroupResponseError("multi_turn 回复不是有效 JSON")
+    try:
+        return json.loads(candidate)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise GroupResponseError("multi_turn 回复不是有效 JSON") from exc
+
+
 def parse_multi_turn_payload(
     reply: str,
     *,
@@ -739,19 +860,29 @@ def parse_multi_turn_payload(
     expected_turn_count: int,
 ) -> tuple[list[GroupTurn], list[str]]:
     """解析多轮回复，并取出可选 memory 字段（值得长期记住的事实或约定）。"""
-    try:
-        parsed = json.loads(reply)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise GroupResponseError("multi_turn 回复不是有效 JSON") from exc
+    parsed = _load_multi_turn_json(reply)
 
     if not isinstance(parsed, Mapping) or not isinstance(parsed.get("turns"), list):
         raise GroupResponseError("multi_turn 回复缺少 turns")
-    if not parsed["turns"] or len(parsed["turns"]) > expected_turn_count:
-        raise GroupResponseError("multi_turn 返回轮数越界")
+    if not parsed["turns"]:
+        raise GroupResponseError("multi_turn 没有可用回合")
+
+    turn_payloads = parsed["turns"]
+    if len(turn_payloads) > expected_turn_count:
+        # 2026-10-09：模型经常**多给 1～2 轮**（实测 4 轮 vs 上限 2）。
+        # 但多出来的内容是**自然的群聊推进**，不是坏输出 —— 00:18:03 那次的结构是
+        # 「起头 → 话题落地 → 追问 → 收尾寒暄」，整条丢掉等于把好台词全扔了，
+        # 而丢的结果正是玩家看到的「无可用回复」。
+        #
+        # 保守截断：**保留最前面的 N 轮**。开场最要紧的是「有人起头 + 话题落地」，
+        # 头部两轮承担这个职能；尾部多是收尾寒暄，丢掉损失最小。
+        # ⚠ 与「轮数不足」不同，这条**不再整条拒绝**，但也不算通过 ——
+        # 上层据此仍能看出模型超出了上限（见 parse 的调用方）。
+        turn_payloads = turn_payloads[:expected_turn_count]
 
     normalized_ids = set(_canonical_participant_ids(participant_ids))
     turns: list[GroupTurn] = []
-    for item in parsed["turns"]:
+    for item in turn_payloads:
         if not isinstance(item, Mapping):
             raise GroupResponseError("multi_turn 中存在无效回合")
         speaker = item.get("speakerNpcId")
