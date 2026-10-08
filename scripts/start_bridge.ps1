@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 
 # 默认连接项目已验证的隔离 Ollama；调用方显式设置环境变量时保留其覆盖值。
 if ([string]::IsNullOrWhiteSpace($env:BRIDGE_LOCAL_URL)) {
@@ -72,7 +72,17 @@ function Test-BridgePython {
 $python = Get-BridgePythonPath
 $sourceRoot = Join-Path $projectRoot "bridge\src"
 
-& $python -m uvicorn stardew_ai_bridge.app:app `
+# 默认挂真 Bridge。把 BRIDGE_APP_MODULE 设成 `bridge_debug_app:application`
+# 即可换成带**对白落盘**的观测版（实现在 `bridge/src/bridge_debug_app.py`）：
+# 它把每次 `/api/dialogue/*` 的一问一答原样抄进 `dialogue-live.jsonl`。
+# 这是排查「单场之内跑题」的唯一通道 —— 游戏端的回看档案要存档时才写盘，
+# 而 SMAPI 日志只记 provider/fallback 元数据，从不记正文。
+$appModule = 'stardew_ai_bridge.app:app'
+if (-not [string]::IsNullOrWhiteSpace($env:BRIDGE_APP_MODULE)) {
+    $appModule = $env:BRIDGE_APP_MODULE
+}
+
+& $python -m uvicorn $appModule `
     --app-dir $sourceRoot `
     --host 127.0.0.1 `
     --port 5678

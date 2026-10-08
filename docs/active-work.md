@@ -9294,3 +9294,428 @@ NPC 永远不会管对面叫「玩家」。已在 `guard.py` 增加 `_player_met
 
 **通例：一个「投递到 Session 1」的脚本，若它本身可能已运行在 Session 1，
 就必须先判 Session，不能无条件再投递。**
+
+---
+
+## 2026-10-08 接手会话 · 回复质量判据体检（**零请求**）
+
+**目标**：STATE.md §一 下一步第 3 条「补自动判据」—— 评分器缺
+「动作堆叠 / 泛泛反问 / 主动换题」tag，这几组约束此前只能靠人读。
+
+**纪律**：**不新增 tag、不改 `casePassRate`**（毁历史可比性 + 放宽判据的诱导风险），
+新建**只读诊断通道** `scripts/audit_reply_quality.py`：只读 `results.jsonl`，零云端请求，
+末尾 `return 0`（与 `audit_opening_style.py` / `probe_*.py` 同族）。
+判据分层：**够格做真判据**的只有动作堆叠，其余**只摊开不判定**。
+
+### 全库结果（411 批 / 11216 回合）
+
+| 项 | 结果 | 够不够格做判据 |
+|---|---|---|
+| 动作堆叠（括号块计数） | `0 段: 11168  1 段: 48` ⇒ **从无 2 段** | 机制✅ 但**无样本可判** |
+| 泛泛反问 | 含问句 3237，泛泛 **301（9.3%）** | ❌ 只摊开 |
+| 主动换题 | 候选 **1535**（占答上题 6225 的 24.7%） | ❌ 只摊开 |
+| 量词问句假阴性 | 命中 34 条，其中 13 条判 False | 见下 |
+
+### ⭐ 主要产出：推翻并更正 10-08 早先登记的「80pp」
+
+1. **数字复现不出**：case 级 33.3% vs 88.2%、turn 级 50.0% vs 82.2%，都不是 13.3% / 93.3%
+   （那两个数的分母是 15，而产物里 gesture 只有 6 个有效 turn）。
+2. **⚠ 跨批差值本身就是假的**：同批内干净对照
+   `eval-topic-alignment-20261005` = **gesture 2/3 vs clinic 2/3（完全相同）**；
+   `pre-change-20261006-cloud` = 1/3 vs 2/3（每格 3 样本，差 1 条无意义）。
+   混合值来自 clinic 跨 51 条记录、gesture 只 9 条。
+3. **引文是凭记忆改写的**：全文检索「还有两份没写完」「乔治的血压记录」，
+   **除 `constraint-scope.md` 自己外无第二处**；产物实际是「还剩三份——都是老乔治的复查跟进」。
+4. **机制仍成立**：人读确认「你今天写了多久？」→「三页」、「氧化的那截还能撑多久？」→「撑到入冬没问题」
+   这类**真答被判 False**；同批 `【本地演示·非真实 AI】` 占位回复判 False 是**对的**
+   ⇒ 判据不是普遍失灵，是**只在量词问句上**失灵。
+5. **两条修法都不落地**：monkey-patch 常量 + 调用**同一个**生产函数，全量 11216 回合重算 ——
+   - A（只扩 `..._QUESTION_PATTERN`）：F→T **1** / 外溢 False→True **0** / 外溢 True→False **0**
+   - B（A + 扩 `..._REPLY_PATTERN` 为「数词+量词」）：F→T **9** / 外溢 False→True **3（全假阳性）**
+   - B 还有一条**歪打正着**：问「那块颜色你晾了多久？」回复「从午饭前就一直摆在那儿……来回改了三次」，
+     B 靠**无关的**「三次」判 True —— 结论对，理由错。
+   - 「很可能已匹配 QUESTION 常量」这句也**实测证伪**：「你还要忙多久？」不匹配该常量
+     （它要求以 `忙吗 / 累吗 / 还好吗 …` 结尾）。
+6. **处置不变（登记不修），理由改写**：从「已确认 80pp 假阴性」改为
+   「**机制已确认、影响面未量化、样本量不足**」。
+
+### 落盘
+
+- 新增 `scripts/audit_reply_quality.py`（零请求，可随时重跑 `--all`；含 §0 可测性前置、
+  §1–§3 摊开、§4 翻转矩阵、§5/§5b 口径对账、§6 全量外溢检查、§7 同批内对照）
+- `docs/constraint-scope.md`：L620 就地加更正行 + 文末新增「2026-10-08 当日复核」节（含 5 条引用纪律）
+- `docs/STATE.md`：§一「下一步」第 3 条更新为体检结论 + 新增「10-08 判据体检」小节 +
+  测试基线 4561 → **4568**
+- 阶段 0 现场验收（`verify_project.ps1`）全绿：SMAPI 1118 / Bridge **4568** / compileall /
+  `git diff --check` 全部通过
+
+### 未做
+
+未 commit（红线 3）；未开游戏；未发云端请求；未改任何判据代码。
+
+---
+
+## 2026-10-08 · 反重复判据误伤（实机发现 → 修复 → 实机复验）
+
+### 1. 现象（用户实机报的，不是自查出来的）
+
+连发 `（抱住不让她走）` 时，Shane 的回复从
+
+> （侧过脸，蹭了蹭自己肩膀）……查理该饿了。我去看一眼鸡舍。
+
+退化成
+
+> ……鸡又不会跑。
+
+**身体动作整段消失**——这是用户肉眼读台词读出来的。⚠ 我此前两次误判：
+先归因 `response_length_retry`（错），再归因过短（错）。**以用户的读法为准。**
+
+### 2. 定位
+
+`guard._has_repeated_opening` 判 `repeated` ⇒ **整条回复被丢弃重写**。
+它读 `avoidOpeningPrefixes`（不是 `recentReplies`），而表里占多数的是**不携带开场结构**的前缀：
+
+| 退化前缀 | 真机次数 | 为什么有害 |
+|---|---|---|
+| `……` | 7 | 命中**一切**省略号开头；Shane 这类角色大量如此 |
+| `（起` `（肩` `（侧` `（站` | 11 | `_opening_prefix_of` 退回 `value[:2]` 时**把左括号一起吃进来** ⇒ 比的是**身体部位**，命中一切同部位动作描写 |
+| `热` `好` | 34 | 单字撑不起开场结构，却把所有以该字起头的回复卷进来 |
+
+2026-10-08T22:53:11 那条实机记录 `prefixes == ['（起','……','（侧']` ⇒ 命中 True ⇒
+带动作的版本被换成「……鸡又不会跑。」**链条已确认，非推断。**
+
+### 3. 修法（`prompts.py`，+61 / −2，只此一文件）
+
+1. `_opening_prefix_of` **先剥前导噪声**（括号旁白 + 其后标点）再取前缀 ⇒
+   `（侧过脸，蹭了蹭自己肩膀）……查理该饿了` 从「（侧」变成「查理」；
+2. `_opening_prefixes` 末尾加 `_is_degenerate_opening_prefix`，滤掉纯标点 / 括号开头 / 单字非语气词。
+
+⚠ **语气颗粒（「嘿」「啊」）刻意保留**——第一版我把它们也滤了，打翻两条既有测试
+（`test_opening_prefixes_include_structure_beyond_the_leading_particle`、
+`test_prompt_emits_structured_opening_avoidance_constraints` 都钉住「嘿」）。
+**回看它们钉得对**：`reply_opens_with_marker` 用原样候选比对，抓的是「两条回复都以
+**同一个**语气词开头」，误伤面远小于上表三类。**我没有为了通过测试去改断言。**
+
+**`guard.py` 一行未动**，判定口径不变——改的只是「表里放什么」。
+
+### 4. 验证
+
+- 全量 **4568 passed**（与基线一致，零回归）；SMAPI 未复跑。
+- 离线复算（`dialogue-live.jsonl`，127 条含 `history`）：
+  - 改前：78 条有前缀，命中 **26（33.3%）**；真机 10 条命中 **2**。
+  - 改后：真机命中 **0**，前缀表从 `['（起','……','（侧']` 变成 `['可能','你手','查理']`。
+- **端到端真机复验**（Bridge 重启 + 池一，PID 53388）：用户连发 6 次 `（抱住不让她走）`，
+  **5 条 `requestCount=1` / `warnings=[]` / 动作全在**。用户读后判定：**效果相当不错**。
+
+### 5. ⚠ 如实记：没做到的
+
+- **离线复现与线上真实 `avoidOpenings` 仍有出入**——我的近似口径下 23:05:13 判命中，
+  线上却是 `requestCount=1`。**方向可信，具体数字不可当线上行为用。**
+- `dialogue-live.jsonl` 存的是**重试后**的回复，**不能拿它直接算命中率**。
+- 前缀表**收窄后对 Shane 这类「动作旁白 + 省略号」开场角色只剩 3/10 条非空**——
+  我把这条如实报告了，没有拿 0% 当喜报。
+
+### 6. 顺带发现（已定性、**不修**，用户裁定）
+
+23:44:04 那条 `requestCount=2`、`warnings=['response_opening_retry: repeated']`。
+`retry-drop.jsonl`（探针首次真正抓到东西）显示**被丢弃的回复 `has_action=true`**：
+
+```json
+{"ts":"2026-10-08T23:44:02","decision":"_has_repeated_opening",
+ "chars":90,"has_action":true,
+ "reply":"（站着没动，肩膀慢慢松了一点）……你手上沾着露水。凉。鸡舍那边我先去了。…"}
+```
+
+重试又生成几乎逐字相同的一版 ⇒ **判据抓的是真重复、没冤枉谁，但重试改不动开场，白花一次调用。**
+**用户裁定：连发六次同一句是我的压力测试、不是真实用法，不值得为此动 `guard` 判定链。**
+
+### 落盘
+
+- `bridge/src/stardew_ai_bridge/prompts.py`：`_opening_prefix_of` 剥前导噪声 + 新增
+  `_LEADING_OPENING_NOISE` / `_CJK_OR_ALPHA` / `_is_degenerate_opening_prefix`
+- `docs/STATE.md`：速览日期 10-07 → **10-08**、下一步加第 5 条、新增
+  「10-08 反重复判据误伤」小节
+- 一次性脚本在 `E:\workspace\.scratch\`（`audit_prefix_filter_20261008.py`、
+  `replay_round4_20261008.py`、`look_20261008.py`）
+
+### 未做
+
+未 commit（红线 3）；未改 `guard.py`；未复跑 SMAPI；未动其它判据。
+
+## 2026-10-08 · F9 群聊开场「无可用回复」排查
+
+- 现象：接受邀约后**空 message 开场**，SMAPI 显示「无可用回复(fb=False n=0)」，NPC 一个都不开口。
+- 证据（`dialogue-live.jsonl` 23:58:41）：`provider=cloud, fallback=False, turns=[], providerCalls=2,
+  providerErrors=['multi_turn 回复不是有效 JSON；重试后仍失败：…']`，
+  `usage={inputTokens:47327, outputTokens:323}`。
+- 对照（23:58:47，玩家先打一句）：`providerCalls=1, turns=2, providerErrors=[],
+  inputTokens=23441`。⇒ **单次 prompt 与开场同级；47327 是重试累加（×2），不是 prompt 膨胀。**
+  修正：先前把 46k 读成「开场 prompt 是 2 倍」是错的。
+- 已排除「prompt 缺 JSON 契约」：`group_conversation.py` L292 已要求
+  `只输出 JSON 对象 {"turns":[...]}，不要输出 Markdown 或解释`。
+- 已排除 2026-09-20 那个老 bug（空 message 被 `SendGroupAsync` 拦在 HTTP 之前）：
+  请求确实到达 Bridge 并烧了两次 provider 调用。
+- **重放实验**：用 23:58:41 的真实请求、还原 `message=""` 原地重放一次 ⇒ **成功**
+  （`turns=2, providerCalls=1, providerErrors=[], inputTokens=18005`）。⇒ **该失败非确定性**，
+  单次重放不能定性。
+  ⚠ 重放无法还原 `completedEventIds`（jsonl 只存了 count 替身），单次 prompt 比实机小 ~5.6k tokens。
+- **独立缺陷（与随机性无关）**：`group_conversation.py` L954
+  `fallback=any(result.fallback for result in provider_results)`
+  —— 「provider 成功但解析出 0 回合」时 `fallback=False`，错误只进 `providerErrors`。
+  ⚠ 但 `GroupSessionRules.cs` L175 对两种判据一致（都不画气泡、不记档）⇒ **SMAPI 行为无误**，
+  这是语义标错，影响的是排障可读性，不是现场表现。
+- **已加旁路探针（不改判据）**：`bridge/src/bridge_debug_app.py` 末尾包
+  `group_conversation.parse_multi_turn_payload`，失败时把模型原文写入
+  `E:\workspace\.scratch\group-parse-fail.jsonl`（含 `has_fence` / `json_starts_at`）。
+  Bridge 已重启（PID 71020，**池一 key 同步重新注入**）⇒ 下次失败自动留证。
+- **未改任何解析逻辑、未修任何判据** —— 模型原文尚未拿到，不猜方向。
+- 待办：拿到原文后决定修法（剥 ``` 围栏 / 抽取 JSON 子串 / 开场补 user 消息 / 增加重试次数）。
+- 另记：「每人一份」在手动那一轮**表现正常** —— Alex 提小灰（第 2 步私聊内容）、
+  Abigail 提旧矿洞（第 1 步私聊内容），**无交叉**。用户感到「没逼出来」是因为
+  「你们俩最近都在忙什么？」问得过泛。
+
+### ⭐ 铁证：开场首答失败率 87.5%（8 次重放实测）
+
+用 23:58:41 的真实请求、`message=""` 原地重放 8 次（同一 prompt，温度是唯一变量）：
+
+| 指标 | 值 |
+|---|---|
+| **首答不是合法 JSON** | **7 / 8 = 87.5%** |
+| 重试挽救 | 3 / 7 = 43% |
+| **最终失败（无可用回合）** | **4 / 8 = 50%** |
+| run 1/6/8 | `turns=2` 但 **`providerCalls=2`** ⇒ 也是首答失败后救回的 |
+| run 7 | 唯一一次 `providerCalls=1` 一次过 |
+
+⚠ 探针 11 条记录 = **7 次首答失败 + 4 次重试失败**（每次失败产生 2 条）。
+
+**三种失败模式（原文已存 `E:\workspace\.scratch\group-parse-fail-20261008-baseline.jsonl`）**：
+
+| 模式 | 条数 | 样例 |
+|---|---|---|
+| A. ```` ```json ```` 围栏包裹 | **7（64%）** | ` ```json\n{"turns":[…]}\n``` ` |
+| B. 纯对白，压根没 JSON | **3（27%）** | 「嘿，小灰今早把烤牛排叼到沙发底下吃…」 |
+| C. JSON 合法但轮数越界 | 1（9%） | 给了 3 轮，`turn_count=2` ⇒ 「multi_turn 返回轮数越界」 |
+
+**关键对照**：有玩家消息那次（23:58:47）`providerCalls=1` 一次过。**只有空 message 的开场炸。**
+原因：开场 `messages` 里**只有 system、没有 user**，模型看不到「该回答什么」，
+于是要么直接开口说话（模式 B），要么把 JSON 当代码块包进 ```` ``` ````（模式 A）。
+
+⇒ 2026-09-20 那次修复（去掉「无条件 append 空 user 消息」）**方向对、修过头**：
+不能塞**空**消息，不代表不能塞**非空的中性**消息。
+
+**拟定修法（三层，风险递增）**：
+1. **解析层容错**：剥 ```` ``` ```` 围栏 + 抽取首个平衡 `{…}` 子串 ⇒ 直接救模式 A（64%）。纯增益。
+2. **开场补一条非空中性 user 消息**（如「（你们先聊）」）⇒ 让模型进入「回复」模式，治模式 B。
+   ⚠ 需回归 `GroupOpeningBridgeClientTests` 的约束（不得塞空消息、不得假定玩家说过话）。
+3. 模式 C（轮数越界）**不擅自改**：截断 vs 拒绝涉及语义，需另行讨论。
+
+### ⭐ 修复：开场「无可用回复」三层改造（已实测 0% 失败）
+
+**改动文件**：`bridge/src/stardew_ai_bridge/group_conversation.py`、`bridge/tests/test_group_conversation.py`、
+`bridge/tests/test_group_opening_edges.py`
+
+| # | 层 | 做法 | 治哪一类 |
+|---|---|---|---|
+| 1 | 解析 | 新增 `_strip_code_fence` / `_extract_json_object` / `_load_multi_turn_json`：裸 JSON 走原路，**只在 `json.loads` 抛错后**才剥 ```` ``` ```` 围栏、抠首个平衡 `{…}` | 模式 A（64%） |
+| 2 | prompt | `build_group_messages` 开场补一条 `_GROUP_OPENING_NUDGE = "（玩家还没有说话，你们先聊。）"` —— **非空**且**不假定玩家说过话** | 模式 B（27%） |
+| 3 | 解析 | 轮数超出 `expected_turn_count` 时**保留头部 N 轮**，不再整条拒绝 | 模式 C（9%） |
+
+**为什么修法 1 是主力**：`_FORMAT_REPAIR_RULE` 早就写了「不要 Markdown 代码块」，
+重试仍有 57% 救不回来 ⇒ **提示词约束不住，只能靠解析层兜底**。
+
+**⚠ 修法 2 触碰了 `test_group_opening_edges.py` 的旧断言** `not any(m.get("role") == "user")`：
+那条把「不要塞**空**消息」编码成了「不许有任何 user 消息」。
+2026-09-20 的病根是**空 content**（无条件 append 的正是 `{"role":"user","content":""}`），
+不是「有 user 轮次」。断言已收窄为「必须恰好一条、非空、且明说玩家尚未开口」。
+**先实测证明有效（50%→12.5%）才改的断言，不是先改断言再找理由。**
+
+**实测（同一 prompt 原地重放，`message=""`）**：
+
+| 阶段 | 首答失败 | 最终失败 |
+|---|---|---|
+| 基线 | **7/8 = 87.5%** | **4/8 = 50%** |
+| +修法 1、2 | 4/8 = 50% | 1/8 = 12.5% |
+| +修法 3 | **1/8 = 12.5%** | **0/8 = 0%** |
+
+最后一次 8 连：**8 成功 0 失败**，nudge 无副作用（NPC 没有去回应那句话，都正常起头）。
+**测试**：Bridge 全量 **4576 passed**（基线 4568，+8 为本次新增），零回归。
+
+**遗留（不是本次范围）**：run 3 与 run 8 产出了一模一样的台词
+（「你来了！今天有什么新发现吗？」/「嘿，怎么了？」）—— 属模型多样性问题，与本次解析/轮数无关。
+
+### ⭐ 实机复验通过（10-09 00:30，用户亲测）
+
+**SMAPI 日志铁证对照**（`SMAPI-latest.txt` L33054 / L33056 / L33057）：
+
+| 时刻 | fallback | turnCount | warningCount | 说明 |
+|---|---|---|---|---|
+| 23:58:41 | **true** | **0** | 1 | ← 用户报的「无可用回复」现场 |
+| 23:58:47 | false | 2 | 0 | 同晚带玩家发言的对照 |
+| **00:30:39** | **false** | 1 | 0 | ← 修复后 |
+| **00:30:45** | **false** | 1 | 0 | ← 修复后 |
+
+**用户实机两句逼问与回应**（`dialogue-live.jsonl`，均 `calls=1` / `fallback=false` / 无 error）：
+
+- 「阿比盖尔，你昨天那块**紫水晶**后来给谁看了？」→ **Abigail**：「给我爸看了，他非说像块糖，差点没收走。」
+- 「亚历克斯，**小灰**今天挑食没有？**冰箱上层那块**还在不在？」→ **Alex**：「那块还在，小灰今天倒是吃了——不过啃了一半就跑去晒太阳了，比我还会挑时候。」
+
+**技术判定**：① 问谁谁答，未答错人；② 各自接住**只有私聊里说过**的事（紫水晶 / 冰箱上层那块）；
+③ **无串味** —— Abigail 没提小灰、Alex 没提紫水晶。这正是 checklist §三 反向失败信号的反面。
+**⇒ 「群聊每人一份」实机通过（技术上）。** 体验判定仍以用户人读台词为准（checklist §四）。
+
+**关于 `turnCount=1`**：不是退化。`models.py:648` 为 `turn_count: int | None = Field(default=None)`，
+注释明写「没指定则**由服务按在场人数算**」；2 人场上限 2。用户**指名问了某一个人**，
+模型就让该人回答，1 ≤ 2 合法，非截断。
+
+### 2026-10-09 打趣改主题 + 话题轮换（代码改完，测试全绿，待实机）
+
+用户定 C：**轮换为主** + 打趣在条件满足时排队首 + 用掉后进冷却。
+
+改动：
+- `GroupInvitationThemes.All` 加 `["teasing"]`（Title/Topic = 镇上那点风声）。
+  **故意不进 `ThemesByNpc`** ⇒ `SharedThemes` 永远算不出它，只能显式注入；
+  同时它在前缀白名单里，`IsKnownTemplateId` 认 `teasing:`（2026-09-20 那条疤：判非法会在
+  DayStarted 里抛异常、之后再也不生成任何邀约）。
+- `GroupInvitationTemplates`：`TeasingClause`（返回文本）→ `CanTease`（判据）+ `CreateTeasing`（工厂）。
+- `GroupInvitationGenerator`：删 `WithTeasing`；`MatchingTemplates(group, context)` 新排序
+  = 在场人数 ↓ → 打趣排队首 → 主题最近使用天数 ↑ → 稳定哈希兜底。
+  **这修的是「群聊全是动物」的真因**：此前最后一步是 `ThenBy(TemplateId, Ordinal)`，
+  纯字母序，`animals` 以 a 开头永远第一，而 `Generate` 只取第一张不重复的；
+  去重键含参与者组合，换组人或两人↔三人就重置，所以拦不住。
+- 冷却长度取 `ExpirationDays`（7 天），与卡片生命周期同数。
+- 测试：`GroupInvitationTeasingTests` 重写（语义从「加料」变「主题」）；
+  新增 `GroupInvitationTopicRotationTests`（3 条回归，含「隔一天必须换主题」）。
+
+结果：`dotnet test` **1123 passed / 0 failed**（基线 1118 + 新增 5）。
+未提交（用户未要求）。
+
+阻塞：游戏在运行（StardewModdingAPI PID 68060, Session 1），Mods 里的 DLL 被锁，
+部署失败 —— 需用户退出游戏后重试。
+
+## 2026-10-09 群聊打趣「内容不对」：根因与修正
+
+**用户反馈**：「第一个对了，第二个也对了。但是内容不对」—— 主题轮换 ✓、打趣卡出现 ✓，
+但台词根本没在打趣。
+
+**真机现场**（`dialogue-live.jsonl` ts=02:29:00）：topic「镇上那点风声」、guidance 107 字、
+参与者 Abigail/Alex/Andy，三条全是寒暄（「今天地里怎么样？」…），整场没碰主题。
+对照 animals 卡（topic「养的动物」）三条全在聊鸡/牛/猪 ⇒ topic 是强锚点，而打趣的 topic 不可用。
+
+**两层根因**
+
+1. Bridge 侧（`group_conversation.py`）
+   - `invitation.scope` 原文「…不是 NPC 已确认的事实、NPC 记忆或未来承诺。」对打趣是致命的：
+     打趣要的全部内容就是「你和玩家在一起这件事」，而 scope 先把这件事降级成"不是事实"，
+     模型回避得完全合理。animals 不受影响 —— 聊动物不需要"已确认的事实"。
+   - topic 只作为 `group_scene` JSON 的一个字段，排在 1500 字格式规则之后，而那段规则明写
+     「这些回合不需要推进话题」「允许打岔、突然说起别的事」⇒ 模型有理有据地不聊主题。
+2. SMAPI 侧（`GroupInvitationThemes`）：`Direction`（会原样变成 topic）写的是氛围标题
+   「镇上那点风声」而非话题域；`Guidance` 100% 是否定子句，没有一句"要做什么"。
+
+**改动**
+
+- Bridge：`scope` →「这是本次邀约给出的讨论方向，用来给这轮聊天定题；不要把它当成 NPC
+  已经知道的事实、既有记忆或做出过的承诺。」（保留保护意图，只把「否定事实」改成「禁止据它推断」）
+- Bridge：新增 `topic_lead`，把「本次群聊的由头：{topic}。这轮对话要真的围绕这个由头展开，
+  不要跑题去聊天气、农活或别处的传闻。」提到 `instruction` **最前面**。
+- SMAPI：`Direction` →「几个人和玩家之间的来往」；`Guidance` 改成先正面指示、再划红线。
+- 新增守卫测试 `Teasing_direction_is_a_topic_domain_and_guidance_leads_with_a_positive_instruction`。
+- SMAPI 测试 **1124 通过 / 0 失败**（基线 1123）。
+
+**实测（Bridge 直连重放，不写存档）**
+
+改前 4/4 全败（全是寒暄）。改后命中例：
+
+- 「听说镇上有人说到你们的事了」＋「有话直说。」
+- 「……你们俩。」
+- 「你们俩到底是要一起去还是分开去？」
+
+未命中例则跑题去聊矿洞晶石／矿井里的发光眼睛／湖边水潭／蜂房。⇒ **有效但仍不稳定，约 1/3 ~ 1/2**。
+
+**试过并放弃的写法**
+
+- topic 用动作句「拿彼此和玩家的来往互相打趣」⇒ 照样跑题。
+- guidance 加三句「口气参照」示例台词 ⇒ 模型 2/2 **逐字照抄**成对白
+  （「你们俩倒是挺有默契。」「……行吧，我什么都没听见。」）。推断原因：`animals` 的样例带出处
+  （「Abigail 以前说过：…」）被读成历史记录，而裸列在引号里的样例被读成台词模板。
+  虽命中判据却不是自然对话，比不放更差 ⇒ 撤掉。
+
+**代价与遗留**
+
+- Bridge 侧共 16 次云调用（池一），**超出事先商定的 6–8 次**。
+- 打趣卡冷却期是 `ExpirationDays`（7 天），真机上那张 teaser 卡已消耗，
+  验证修正后的新卡要等下一次生成。
+- `.env.local` 里存的 key 不是池一（指纹 `61fbc7fa9f` vs 池一 `76bb669efc`）：
+  任何不经 `$env:BRIDGE_CLOUD_API_KEY` 注入的重启都会静默掉到别的池。
+
+### 2026-10-09 附：launch-game.ps1 内层路径未加引号（同一处第二次踩）
+
+部署后启动游戏失败，报「'D:\sbeam\steamapps\common\Stardew' 无法识别为脚本文件」——
+L169 的 `-Command "pwsh -NoProfile -File $launcher"` **没给内层脚本路径加引号**，
+而 `$GamePath` 含空格（`Stardew Valley`），cmd.exe 把它拆成了两截。
+坑在于报错文本仍然写「内层没有回显 PID」，极易再次被误判成 `$env:TEMP` 那个老问题
+——本次我第一反应就是错的。已改为 `-Command "pwsh -NoProfile -File `"$launcher`""`。
+
+重跑成功：PID=49636、SessionId=1、Loaded 65 mods、StardewAI.NPC 已被 SMAPI 加载。
+
+### 2026-10-09 新增开发入口：直接造一张打趣卡（Ctrl+Shift+F9 / ainpc_invite）
+
+**起因**：用户问「你不能加个测试功能直接弄张卡出来吗」。此前验一次打趣措辞要同时等过
+7 天主题冷却 + 2 天生成节奏 + 那一轮恰好挑中 ≥2 位已接受者 —— 改一次措辞等一周，根本改不动。
+
+**三处改动（+4 条测试，1128 通过 / 0 失败）**
+
+- `GroupInvitationGenerator.GenerateForcedTeasing(...)`：用**空的** `ExistingInvitations` /
+  `RecentTopicKeys` / `LastCreatedTotalDays` 造 context，让冷却与去重两道闸门**自然失效**，
+  而不是加一个 `ignoreCooldown` 开关去旁路判断逻辑 —— 后者会让 dev 路径与正式路径的差异
+  随时间漂移。卡仍走同一个 `CreateInvitation`，Topic / Title / Guidance / Expires* 逐项一致。
+- `GroupDialogueCoordinator.TryInjectTeasingInvitation(group)`：把卡并进
+  `State.GroupDialogueInvitations`；参与者不足 2 位时拒绝，且不留半张卡。
+- `ModEntry`：Ctrl+Shift+F9 + 控制台 `ainpc_invite [npcId...]`。默认参与者取
+  `State.Mediations` 里 `outcome=accepted` 的前 3 位（与 `OnDayStarted` 用的**同一份**名单）；
+  显示名走 `Game1.getCharacterFromName(id).displayName`，否则卡片面板里半中半英。
+
+**两个易踩的点**
+
+- 键位选 Ctrl+Shift+F9：F9 是群聊、Ctrl+F9 是清示例记录，带 Shift 的三键是空位。
+  按键处理**必须排在 F9 那条之前**，并 `Suppress` 掉 F9 —— 否则一次按键既造卡又开面板。
+- ⚠ 造出来的是**正常卡**：随存档落盘，并占掉打趣主题的 7 天冷却。
+  这是「验的就是真东西」的代价，不是缺陷。
+
+**测试守的是两件相反的事**：① 确实绕过了冷却（自然路径在同一时刻产不出打趣卡）；
+② 没把卡做坏（字段逐项对齐 + 2026-09-20 踩过的模板白名单校验 + 协调器真的塞进了队列，
+而不只是生成器能造出来 —— 「能力做好了但没人调用」是本项目反复出现的失败形态）。
+
+### 2026-10-09 打趣改成「这档只来一次」
+
+**用户判断**：「把这个当个甜点话题触发一次就够了，多次来真的很无聊」。
+原实现是按 `ExpirationDays` 冷却 7 天 —— 过了 7 天它还会再来。
+
+**为什么是「耗尽」而不是「冷却」**：`animals` 那类日常话题可以反复聊，信息量在话题本身；
+打趣的信息量全在「这件事被摆到台面上」的那一下，第二次就只剩重复。
+重放数据也一致（命中率 1/3–1/2，靠的正是意外感）。
+
+**实现**
+
+- `GroupInvitationTemplates.OneShotThemeIds`：一次性主题集合，目前只有 `teasing`。
+- `GroupInvitationGenerator.IsThemeUnavailable(themeId, context)` 取代 `IsThemeOnCooldown`：
+  一次性主题走「历史里存在过就永久出局」，其余主题仍走 7 天冷却。
+  ⚠ 判「存在过」**不能**复用 `LastUsedTotalDays` —— 它的语义是「最近一次是多久以前」，
+  而过期的卡并不会从 `ExistingInvitations` 里消失（`ExpireInvitations` 只改 Status、不删记录），
+  「存在过」和「最近一次」是两件事，必须分开表达。
+- dev 卡（`GroupInvitationRules.DevSource = "dev"`）**不算数**：生成器在 `Generate` 入口
+  把它一次性滤掉。加进合法来源白名单是必须的 —— 不加会在存档时被静默丢弃。
+
+**⚠ 差点埋的坑（写测试时才暴露）**
+
+只排除冷却那一条路是不够的：dev 卡的 `TemplateId` 和 pairKey 与自然生成**完全相同**，
+在 7 天窗口内会让 `isRecentDuplicate` 判为真 ⇒ 自然生成被**去重**挡死，而不是被冷却挡死。
+症状是「Ctrl+Shift+F9 按过一次，这档就再也不出打趣」，且只在真机上过几天才显形 ——
+最难倒查的一类 bug。这也是改成「在 `Generate` 入口统一过滤」而不是
+「在四个判定点各写一遍 `!IsDevAuthored(...)`」的原因：漏掉任何一处都是同一个 bug。
+
+**⚠ 对 test2 存档的直接影响**：该档第 140 天已自然来过一次打趣（`Source = periodic`），
+按新规则**以后永久不再自然出现**。这是预期行为，不是回归。
+
+**测试**：+3 条（换组人一路推到第 400 天也不回来 / dev 卡不消耗机会 / dev 来源过持久化白名单），
+共 1131 通过 / 0 失败。

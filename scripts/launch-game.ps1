@@ -151,7 +151,13 @@ if ($mySession -eq 1) {
 
     # ⚠ invoke-in-session.ps1 的 -Command 由 cmd.exe 执行：
     #    不能用内联 Start-Process（退出码 9009），必须落到一个无空格的 .ps1 再跑。
-    $launcher = Join-Path $env:TEMP 'stardew-launch-inner.ps1'
+    #
+    # ⚠ 2026-10-09 事故：本脚本常被从 Session 0 调用，而那里的 `$env:TEMP` 是
+    #    `C:\WINDOWS\TEMP` —— Session 1 的 pwsh **读不到**它写下的那个文件，
+    #    内层启动器报「无法识别为脚本文件」（退出码 64），投递白跑一趟；
+    #    而报错文本指向「内层没有回显 PID」，很容易被误判成权限或二次投递问题。
+    #    落到游戏目录：Session 1 必然可读，而且本就有写权限。
+    $launcher = Join-Path $GamePath 'stardew-launch-inner.ps1'
     @"
 `$ErrorActionPreference = 'Stop'
 `$exe = '$smapiExe'
@@ -160,7 +166,14 @@ if (-not (Test-Path -LiteralPath `$exe -PathType Leaf)) { throw "找不到 `$exe
 "PID=`$(`$p.Id)"
 "@ | Set-Content -LiteralPath $launcher -Encoding UTF8
 
-    $out = & pwsh -File $invokeHelper -Command "pwsh -NoProfile -File $launcher" `
+    # ⚠ 2026-10-09 事故（同一处第二次踩）：`$GamePath` 含空格，而这里的 -Command
+    #    字符串原先**没给内层脚本路径加引号** ⇒ cmd.exe 把
+    #    `D:\sbeam\steamapps\common\Stardew Valley\stardew-launch-inner.ps1`
+    #    拆成 `D:\sbeam\steamapps\common\Stardew` + `Valley\...`，报
+    #    「无法识别为脚本文件」。坑在于报错文本仍会说「内层没有回显 PID」，
+    #    于是极容易被再次误判成上面那个 $env:TEMP 老问题（本次即如此）。
+    #    cmd.exe 只认双引号，单引号在此无效。
+    $out = & pwsh -File $invokeHelper -Command "pwsh -NoProfile -File `"$launcher`"" `
                   -WorkDir $GamePath -TimeoutSeconds 90 2>&1 | Out-String
     Write-Host $out
 
@@ -173,6 +186,8 @@ if (-not (Test-Path -LiteralPath `$exe -PathType Leaf)) { throw "找不到 `$exe
         Write-Warn2 '提示：若从 Session 0 调用，确认 invoke-in-session.ps1 未被二次投递'
         exit 1
     }
+
+    Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
 }
 
 # ---------- 等进程 ----------
